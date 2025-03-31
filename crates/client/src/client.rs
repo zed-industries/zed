@@ -618,11 +618,10 @@ impl Client {
     }
 
     pub fn peer_id(&self) -> Option<PeerId> {
-        match &*self.status().borrow() { Status::Connected { peer_id, .. } => {
-            Some(*peer_id)
-        } _ => {
-            None
-        }}
+        match &*self.status().borrow() {
+            Status::Connected { peer_id, .. } => Some(*peer_id),
+            _ => None,
+        }
     }
 
     pub fn status(&self) -> watch::Receiver<Status> {
@@ -1429,11 +1428,10 @@ impl Client {
     }
 
     fn connection_id(&self) -> Result<ConnectionId> {
-        match *self.status().borrow() { Status::Connected { connection_id, .. } => {
-            Ok(connection_id)
-        } _ => {
-            Err(anyhow!("not connected"))
-        }}
+        match *self.status().borrow() {
+            Status::Connected { connection_id, .. } => Ok(connection_id),
+            _ => Err(anyhow!("not connected")),
+        }
     }
 
     pub fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
@@ -1452,7 +1450,8 @@ impl Client {
     pub fn request_stream<T: RequestMessage>(
         &self,
         request: T,
-    ) -> impl Future<Output = Result<impl Stream<Item = Result<T::Response>> + use<T>>> + use<T> {
+    ) -> impl Future<Output = Result<impl Stream<Item = Result<T::Response>> + use<T>>> + use<T>
+    {
         let client_id = self.id.load(Ordering::SeqCst);
         log::debug!(
             "rpc request start. client_id:{}. name:{}",
@@ -1533,40 +1532,43 @@ impl Client {
             message,
             self.clone().into(),
             cx.clone(),
-        ) { Some(future) => {
-            let client_id = self.id();
-            log::debug!(
-                "rpc message received. client_id:{}, sender_id:{:?}, type:{}",
-                client_id,
-                original_sender_id,
-                type_name
-            );
-            cx.spawn(async move |_| match future.await {
-                Ok(()) => {
-                    log::debug!(
-                        "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
-                        client_id,
-                        original_sender_id,
-                        type_name
-                    );
-                }
-                Err(error) => {
-                    log::error!(
+        ) {
+            Some(future) => {
+                let client_id = self.id();
+                log::debug!(
+                    "rpc message received. client_id:{}, sender_id:{:?}, type:{}",
+                    client_id,
+                    original_sender_id,
+                    type_name
+                );
+                cx.spawn(async move |_| match future.await {
+                    Ok(()) => {
+                        log::debug!(
+                            "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
+                            client_id,
+                            original_sender_id,
+                            type_name
+                        );
+                    }
+                    Err(error) => {
+                        log::error!(
                         "error handling message. client_id:{}, sender_id:{:?}, type:{}, error:{:?}",
                         client_id,
                         original_sender_id,
                         type_name,
                         error
                     );
-                }
-            })
-            .detach();
-        } _ => {
-            log::info!("unhandled message {}", type_name);
-            self.peer
-                .respond_with_unhandled_message(sender_id.into(), request_id, type_name)
-                .log_err();
-        }}
+                    }
+                })
+                .detach();
+            }
+            _ => {
+                log::info!("unhandled message {}", type_name);
+                self.peer
+                    .respond_with_unhandled_message(sender_id.into(), request_id, type_name)
+                    .log_err();
+            }
+        }
     }
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {

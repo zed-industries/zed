@@ -528,7 +528,11 @@ impl SummaryIndex {
         }
     }
 
-    fn summarize_code(code: &str, path: &Path, cx: &App) -> impl Future<Output = Result<String>> + use<> {
+    fn summarize_code(
+        code: &str,
+        path: &Path,
+        cx: &App,
+    ) -> impl Future<Output = Result<String>> + use<> {
         let start = Instant::now();
         let (summary_model_id, use_cache): (LanguageModelId, bool) = (
             "Qwen/Qwen2-7B-Instruct".to_string().into(), // TODO read this from the user's settings.
@@ -570,11 +574,10 @@ impl SummaryIndex {
                 let answer: String = stream
                     .await?
                     .filter_map(|event| async {
-                        match event { Ok(LanguageModelCompletionEvent::Text(text)) => {
-                            Some(text)
-                        } _ => {
-                            None
-                        }}
+                        match event {
+                            Ok(LanguageModelCompletionEvent::Text(text)) => Some(text),
+                            _ => None,
+                        }
                     })
                     .collect()
                     .await;

@@ -489,19 +489,20 @@ impl Vim {
         self.update_editor(window, cx, |vim, editor, _window, cx| {
             let selection = editor.selections.newest_anchor();
             if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
-                let filename = match buffer.read(cx).file() { Some(file) => {
-                    if count.is_some() {
-                        if let Some(local) = file.as_local() {
-                            local.abs_path(cx).to_string_lossy().to_string()
+                let filename = match buffer.read(cx).file() {
+                    Some(file) => {
+                        if count.is_some() {
+                            if let Some(local) = file.as_local() {
+                                local.abs_path(cx).to_string_lossy().to_string()
+                            } else {
+                                file.full_path(cx).to_string_lossy().to_string()
+                            }
                         } else {
-                            file.full_path(cx).to_string_lossy().to_string()
+                            file.path().to_string_lossy().to_string()
                         }
-                    } else {
-                        file.path().to_string_lossy().to_string()
                     }
-                } _ => {
-                    "[No Name]".into()
-                }};
+                    _ => "[No Name]".into(),
+                };
                 let buffer = buffer.read(cx);
                 let snapshot = buffer.snapshot();
                 let lines = buffer.max_point().row + 1;

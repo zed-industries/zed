@@ -179,24 +179,22 @@ impl ActiveCall {
             return Task::ready(Ok(()));
         }
 
-        let room = match self.room().cloned() { Some(room) => {
-            Some(Task::ready(Ok(room)).shared())
-        } _ => {
-            self.pending_room_creation.clone()
-        }};
+        let room = match self.room().cloned() {
+            Some(room) => Some(Task::ready(Ok(room)).shared()),
+            _ => self.pending_room_creation.clone(),
+        };
 
-        let invite = match room { Some(room) => {
-            cx.spawn(async move |_, cx| {
+        let invite = match room {
+            Some(room) => cx.spawn(async move |_, cx| {
                 let room = room.await.map_err(|err| anyhow!("{:?}", err))?;
 
-                let initial_project_id = match initial_project { Some(initial_project) => {
-                    Some(
+                let initial_project_id = match initial_project {
+                    Some(initial_project) => Some(
                         room.update(cx, |room, cx| room.share_project(initial_project, cx))?
                             .await?,
-                    )
-                } _ => {
-                    None
-                }};
+                    ),
+                    _ => None,
+                };
 
                 room.update(cx, move |room, cx| {
                     room.call(called_user_id, initial_project_id, cx)
@@ -204,42 +202,43 @@ impl ActiveCall {
                 .await?;
 
                 anyhow::Ok(())
-            })
-        } _ => {
-            let client = self.client.clone();
-            let user_store = self.user_store.clone();
-            let room = cx
-                .spawn(async move |this, cx| {
-                    let create_room = async {
-                        let room = cx
-                            .update(|cx| {
-                                Room::create(
-                                    called_user_id,
-                                    initial_project,
-                                    client,
-                                    user_store,
-                                    cx,
-                                )
-                            })?
-                            .await?;
+            }),
+            _ => {
+                let client = self.client.clone();
+                let user_store = self.user_store.clone();
+                let room = cx
+                    .spawn(async move |this, cx| {
+                        let create_room = async {
+                            let room = cx
+                                .update(|cx| {
+                                    Room::create(
+                                        called_user_id,
+                                        initial_project,
+                                        client,
+                                        user_store,
+                                        cx,
+                                    )
+                                })?
+                                .await?;
 
-                        this.update(cx, |this, cx| this.set_room(Some(room.clone()), cx))?
-                            .await?;
+                            this.update(cx, |this, cx| this.set_room(Some(room.clone()), cx))?
+                                .await?;
 
-                        anyhow::Ok(room)
-                    };
+                            anyhow::Ok(room)
+                        };
 
-                    let room = create_room.await;
-                    this.update(cx, |this, _| this.pending_room_creation = None)?;
-                    room.map_err(Arc::new)
+                        let room = create_room.await;
+                        this.update(cx, |this, _| this.pending_room_creation = None)?;
+                        room.map_err(Arc::new)
+                    })
+                    .shared();
+                self.pending_room_creation = Some(room.clone());
+                cx.background_spawn(async move {
+                    room.await.map_err(|err| anyhow!("{:?}", err))?;
+                    anyhow::Ok(())
                 })
-                .shared();
-            self.pending_room_creation = Some(room.clone());
-            cx.background_spawn(async move {
-                room.await.map_err(|err| anyhow!("{:?}", err))?;
-                anyhow::Ok(())
-            })
-        }};
+            }
+        };
 
         cx.spawn(async move |this, cx| {
             let result = invite.await;
@@ -292,11 +291,12 @@ impl ActiveCall {
             return Task::ready(Err(anyhow!("cannot join while on another call")));
         }
 
-        let call = match self.incoming_call.0.borrow_mut().take() { Some(call) => {
-            call
-        } _ => {
-            return Task::ready(Err(anyhow!("no incoming call")));
-        }};
+        let call = match self.incoming_call.0.borrow_mut().take() {
+            Some(call) => call,
+            _ => {
+                return Task::ready(Err(anyhow!("no incoming call")));
+            }
+        };
 
         if self.pending_room_creation.is_some() {
             return Task::ready(Ok(()));
@@ -373,12 +373,13 @@ impl ActiveCall {
         Audio::end_call(cx);
 
         let channel_id = self.channel_id(cx);
-        match self.room.take() { Some((room, _)) => {
-            cx.emit(Event::RoomLeft { channel_id });
-            room.update(cx, |room, cx| room.leave(cx))
-        } _ => {
-            Task::ready(Ok(()))
-        }}
+        match self.room.take() {
+            Some((room, _)) => {
+                cx.emit(Event::RoomLeft { channel_id });
+                room.update(cx, |room, cx| room.leave(cx))
+            }
+            _ => Task::ready(Ok(())),
+        }
     }
 
     pub fn share_project(
@@ -386,12 +387,13 @@ impl ActiveCall {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<u64>> {
-        match self.room.as_ref() { Some((room, _)) => {
-            self.report_call_event("Project Shared", cx);
-            room.update(cx, |room, cx| room.share_project(project, cx))
-        } _ => {
-            Task::ready(Err(anyhow!("no active call")))
-        }}
+        match self.room.as_ref() {
+            Some((room, _)) => {
+                self.report_call_event("Project Shared", cx);
+                room.update(cx, |room, cx| room.share_project(project, cx))
+            }
+            _ => Task::ready(Err(anyhow!("no active call"))),
+        }
     }
 
     pub fn unshare_project(
@@ -399,12 +401,13 @@ impl ActiveCall {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        match self.room.as_ref() { Some((room, _)) => {
-            self.report_call_event("Project Unshared", cx);
-            room.update(cx, |room, cx| room.unshare_project(project, cx))
-        } _ => {
-            Err(anyhow!("no active call"))
-        }}
+        match self.room.as_ref() {
+            Some((room, _)) => {
+                self.report_call_event("Project Unshared", cx);
+                room.update(cx, |room, cx| room.unshare_project(project, cx))
+            }
+            _ => Err(anyhow!("no active call")),
+        }
     }
 
     pub fn location(&self) -> Option<&WeakEntity<Project>> {
@@ -430,34 +433,37 @@ impl ActiveCall {
             Task::ready(Ok(()))
         } else {
             cx.notify();
-            match room { Some(room) => {
-                if room.read(cx).status().is_offline() {
+            match room {
+                Some(room) => {
+                    if room.read(cx).status().is_offline() {
+                        self.room = None;
+                        Task::ready(Ok(()))
+                    } else {
+                        let subscriptions = vec![
+                            cx.observe(&room, |this, room, cx| {
+                                if room.read(cx).status().is_offline() {
+                                    this.set_room(None, cx).detach_and_log_err(cx);
+                                }
+
+                                cx.notify();
+                            }),
+                            cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
+                        ];
+                        self.room = Some((room.clone(), subscriptions));
+                        let location = self
+                            .location
+                            .as_ref()
+                            .and_then(|location| location.upgrade());
+                        let channel_id = room.read(cx).channel_id();
+                        cx.emit(Event::RoomJoined { channel_id });
+                        room.update(cx, |room, cx| room.set_location(location.as_ref(), cx))
+                    }
+                }
+                _ => {
                     self.room = None;
                     Task::ready(Ok(()))
-                } else {
-                    let subscriptions = vec![
-                        cx.observe(&room, |this, room, cx| {
-                            if room.read(cx).status().is_offline() {
-                                this.set_room(None, cx).detach_and_log_err(cx);
-                            }
-
-                            cx.notify();
-                        }),
-                        cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
-                    ];
-                    self.room = Some((room.clone(), subscriptions));
-                    let location = self
-                        .location
-                        .as_ref()
-                        .and_then(|location| location.upgrade());
-                    let channel_id = room.read(cx).channel_id();
-                    cx.emit(Event::RoomJoined { channel_id });
-                    room.update(cx, |room, cx| room.set_location(location.as_ref(), cx))
                 }
-            } _ => {
-                self.room = None;
-                Task::ready(Ok(()))
-            }}
+            }
         }
     }
 

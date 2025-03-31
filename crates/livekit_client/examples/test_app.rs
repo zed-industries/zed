@@ -245,55 +245,62 @@ impl LivekitWindow {
     }
 
     fn toggle_mute(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match &self.microphone_track { Some(track) => {
-            if track.is_muted() {
-                track.unmute(cx);
-            } else {
-                track.mute(cx);
+        match &self.microphone_track {
+            Some(track) => {
+                if track.is_muted() {
+                    track.unmute(cx);
+                } else {
+                    track.mute(cx);
+                }
+                cx.notify();
             }
-            cx.notify();
-        } _ => {
-            let room = self.room.clone();
-            cx.spawn_in(window, async move |this, cx| {
-                let (publication, stream) = room.publish_local_microphone_track(cx).await.unwrap();
-                this.update(cx, |this, cx| {
-                    this.microphone_track = Some(publication);
-                    this.microphone_stream = Some(stream);
-                    cx.notify();
+            _ => {
+                let room = self.room.clone();
+                cx.spawn_in(window, async move |this, cx| {
+                    let (publication, stream) =
+                        room.publish_local_microphone_track(cx).await.unwrap();
+                    this.update(cx, |this, cx| {
+                        this.microphone_track = Some(publication);
+                        this.microphone_stream = Some(stream);
+                        cx.notify();
+                    })
                 })
-            })
-            .detach();
-        }}
+                .detach();
+            }
+        }
     }
 
     fn toggle_screen_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.screen_share_track.take() { Some(track) => {
-            self.screen_share_stream.take();
-            let participant = self.room.local_participant();
-            cx.spawn(async move |_, cx| {
-                participant.unpublish_track(track.sid(), cx).await.unwrap();
-            })
-            .detach();
-            cx.notify();
-        } _ => {
-            let participant = self.room.local_participant();
-            let sources = cx.screen_capture_sources();
-            cx.spawn_in(window, async move |this, cx| {
-                let sources = sources.await.unwrap()?;
-                let source = sources.into_iter().next().unwrap();
-
-                let (publication, stream) = participant
-                    .publish_screenshare_track(&*source, cx)
-                    .await
-                    .unwrap();
-                this.update(cx, |this, cx| {
-                    this.screen_share_track = Some(publication);
-                    this.screen_share_stream = Some(stream);
-                    cx.notify();
+        match self.screen_share_track.take() {
+            Some(track) => {
+                self.screen_share_stream.take();
+                let participant = self.room.local_participant();
+                cx.spawn(async move |_, cx| {
+                    participant.unpublish_track(track.sid(), cx).await.unwrap();
                 })
-            })
-            .detach();
-        }}
+                .detach();
+                cx.notify();
+            }
+            _ => {
+                let participant = self.room.local_participant();
+                let sources = cx.screen_capture_sources();
+                cx.spawn_in(window, async move |this, cx| {
+                    let sources = sources.await.unwrap()?;
+                    let source = sources.into_iter().next().unwrap();
+
+                    let (publication, stream) = participant
+                        .publish_screenshare_track(&*source, cx)
+                        .await
+                        .unwrap();
+                    this.update(cx, |this, cx| {
+                        this.screen_share_track = Some(publication);
+                        this.screen_share_stream = Some(stream);
+                        cx.notify();
+                    })
+                })
+                .detach();
+            }
+        }
     }
 
     fn toggle_remote_audio_for_participant(
@@ -335,15 +342,16 @@ impl Render for LivekitWindow {
                 div().bg(rgb(0xffd4a8)).flex().flex_row().children([
                     button()
                         .id("toggle-mute")
-                        .child(match &self.microphone_track { Some(track) => {
-                            if track.is_muted() {
-                                "Unmute"
-                            } else {
-                                "Mute"
+                        .child(match &self.microphone_track {
+                            Some(track) => {
+                                if track.is_muted() {
+                                    "Unmute"
+                                } else {
+                                    "Mute"
+                                }
                             }
-                        } _ => {
-                            "Publish mic"
-                        }})
+                            _ => "Publish mic",
+                        })
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_mute(window, cx))),
                     button()
                         .id("toggle-screen-share")

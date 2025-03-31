@@ -77,35 +77,45 @@ impl RenderedMessage {
     }
 
     fn append_thinking(&mut self, text: &String, window: &Window, cx: &mut App) {
-        match self.segments.last_mut()
-        { Some(RenderedMessageSegment::Thinking {
-            content,
-            scroll_handle,
-        }) => {
-            content.update(cx, |markdown, cx| {
-                markdown.append(text, cx);
-            });
-            scroll_handle.scroll_to_bottom();
-        } _ => {
-            self.segments.push(RenderedMessageSegment::Thinking {
-                content: render_markdown(text.into(), self.language_registry.clone(), window, cx),
-                scroll_handle: ScrollHandle::default(),
-            });
-        }}
+        match self.segments.last_mut() {
+            Some(RenderedMessageSegment::Thinking {
+                content,
+                scroll_handle,
+            }) => {
+                content.update(cx, |markdown, cx| {
+                    markdown.append(text, cx);
+                });
+                scroll_handle.scroll_to_bottom();
+            }
+            _ => {
+                self.segments.push(RenderedMessageSegment::Thinking {
+                    content: render_markdown(
+                        text.into(),
+                        self.language_registry.clone(),
+                        window,
+                        cx,
+                    ),
+                    scroll_handle: ScrollHandle::default(),
+                });
+            }
+        }
     }
 
     fn append_text(&mut self, text: &String, window: &Window, cx: &mut App) {
-        match self.segments.last_mut() { Some(RenderedMessageSegment::Text(markdown)) => {
-            markdown.update(cx, |markdown, cx| markdown.append(text, cx));
-        } _ => {
-            self.segments
-                .push(RenderedMessageSegment::Text(render_markdown(
-                    SharedString::from(text),
-                    self.language_registry.clone(),
-                    window,
-                    cx,
-                )));
-        }}
+        match self.segments.last_mut() {
+            Some(RenderedMessageSegment::Text(markdown)) => {
+                markdown.update(cx, |markdown, cx| markdown.append(text, cx));
+            }
+            _ => {
+                self.segments
+                    .push(RenderedMessageSegment::Text(render_markdown(
+                        SharedString::from(text),
+                        self.language_registry.clone(),
+                        window,
+                        cx,
+                    )));
+            }
+        }
     }
 
     fn push_segment(&mut self, segment: &MessageSegment, window: &Window, cx: &mut App) {
@@ -929,21 +939,18 @@ impl ActiveThread {
         let message_content =
             v_flex()
                 .gap_1p5()
-                .child(
-                    match edit_message_editor.clone() { Some(edit_message_editor) => {
-                        div()
-                            .key_context("EditMessageEditor")
-                            .on_action(cx.listener(Self::cancel_editing_message))
-                            .on_action(cx.listener(Self::confirm_editing_message))
-                            .min_h_6()
-                            .child(edit_message_editor)
-                    } _ => {
-                        div()
-                            .min_h_6()
-                            .text_ui(cx)
-                            .child(self.render_message_content(message_id, rendered_message, cx))
-                    }},
-                )
+                .child(match edit_message_editor.clone() {
+                    Some(edit_message_editor) => div()
+                        .key_context("EditMessageEditor")
+                        .on_action(cx.listener(Self::cancel_editing_message))
+                        .on_action(cx.listener(Self::confirm_editing_message))
+                        .min_h_6()
+                        .child(edit_message_editor),
+                    _ => div()
+                        .min_h_6()
+                        .text_ui(cx)
+                        .child(self.render_message_content(message_id, rendered_message, cx)),
+                })
                 .when_some(context, |parent, context| {
                     if !context.is_empty() {
                         parent.child(h_flex().flex_wrap().gap_1().children(
@@ -1412,7 +1419,11 @@ impl ActiveThread {
         )
     }
 
-    fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_tool_use(
+        &self,
+        tool_use: ToolUse,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let is_open = self
             .expanded_tool_uses
             .get(&tool_use.id)

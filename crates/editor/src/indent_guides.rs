@@ -36,17 +36,18 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) -> Option<Vec<IndentGuide>> {
         let show_indent_guides = self.should_show_indent_guides().unwrap_or_else(|| {
-            match self.buffer().read(cx).as_singleton() { Some(buffer) => {
-                language_settings(
-                    buffer.read(cx).language().map(|l| l.name()),
-                    buffer.read(cx).file(),
-                    cx,
-                )
-                .indent_guides
-                .enabled
-            } _ => {
-                true
-            }}
+            match self.buffer().read(cx).as_singleton() {
+                Some(buffer) => {
+                    language_settings(
+                        buffer.read(cx).language().map(|l| l.name()),
+                        buffer.read(cx).file(),
+                        cx,
+                    )
+                    .indent_guides
+                    .enabled
+                }
+                _ => true,
+            }
         });
 
         if !show_indent_guides {

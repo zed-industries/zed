@@ -167,7 +167,10 @@ impl AssistantConfiguration {
             )
     }
 
-    fn render_context_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_context_servers_section(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let context_servers = self.context_server_manager.read(cx).all_servers().clone();
         let tools_by_source = self.tools.tools_by_source(cx);
         let empty = Vec::new();

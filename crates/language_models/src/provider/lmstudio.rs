@@ -328,22 +328,23 @@ impl LanguageModel for LmStudioLanguageModel {
                             // Try to parse the delta as ChatMessage
                             match serde_json::from_value::<ChatMessage>(
                                 fragment.choices[0].delta.clone(),
-                            ) { Ok(chat_message) => {
-                                let content = match chat_message {
-                                    ChatMessage::User { content } => content,
-                                    ChatMessage::Assistant { content, .. } => {
-                                        content.unwrap_or_default()
+                            ) {
+                                Ok(chat_message) => {
+                                    let content = match chat_message {
+                                        ChatMessage::User { content } => content,
+                                        ChatMessage::Assistant { content, .. } => {
+                                            content.unwrap_or_default()
+                                        }
+                                        ChatMessage::System { content } => content,
+                                    };
+                                    if !content.is_empty() {
+                                        Some(Ok(content))
+                                    } else {
+                                        None
                                     }
-                                    ChatMessage::System { content } => content,
-                                };
-                                if !content.is_empty() {
-                                    Some(Ok(content))
-                                } else {
-                                    None
                                 }
-                            } _ => {
-                                None
-                            }}
+                                _ => None,
+                            }
                         }
                         Err(error) => Some(Err(error)),
                     }

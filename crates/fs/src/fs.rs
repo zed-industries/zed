@@ -429,9 +429,9 @@ impl Fs for RealFs {
         use objc::{class, msg_send, sel, sel_impl};
 
         unsafe {
-            unsafe fn ns_string(string: &str) -> id { unsafe {
-                NSString::alloc(nil).init_str(string).autorelease()
-            }}
+            unsafe fn ns_string(string: &str) -> id {
+                unsafe { NSString::alloc(nil).init_str(string).autorelease() }
+            }
 
             let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
             let array: id = msg_send![class!(NSArray), arrayWithObject: url];
@@ -814,17 +814,16 @@ impl Fs for RealFs {
         // Now check whether it's possible to create file2
         let case_sensitive = match self.create_file(&test_file_2, create_opts).await {
             Ok(_) => Ok(true),
-            Err(e) => {
-                match e.downcast_ref::<io::Error>() { Some(io_error) => {
+            Err(e) => match e.downcast_ref::<io::Error>() {
+                Some(io_error) => {
                     if io_error.kind() == io::ErrorKind::AlreadyExists {
                         Ok(false)
                     } else {
                         Err(e)
                     }
-                } _ => {
-                    Err(e)
-                }}
-            }
+                }
+                _ => Err(e),
+            },
         };
 
         temp_dir.close()?;
@@ -952,22 +951,25 @@ impl FakeFsState {
                     Component::Normal(name) => {
                         let current_entry = entry_stack.last().cloned()?;
                         let current_entry = current_entry.lock();
-                        match &*current_entry { FakeFsEntry::Dir { entries, .. } => {
-                            let entry = entries.get(name.to_str().unwrap()).cloned()?;
-                            if path_components.peek().is_some() || follow_symlink {
-                                let entry = entry.lock();
-                                if let FakeFsEntry::Symlink { target, .. } = &*entry {
-                                    let mut target = target.clone();
-                                    target.extend(path_components);
-                                    path = target;
-                                    continue 'outer;
+                        match &*current_entry {
+                            FakeFsEntry::Dir { entries, .. } => {
+                                let entry = entries.get(name.to_str().unwrap()).cloned()?;
+                                if path_components.peek().is_some() || follow_symlink {
+                                    let entry = entry.lock();
+                                    if let FakeFsEntry::Symlink { target, .. } = &*entry {
+                                        let mut target = target.clone();
+                                        target.extend(path_components);
+                                        path = target;
+                                        continue 'outer;
+                                    }
                                 }
+                                entry_stack.push(entry.clone());
+                                canonical_path = canonical_path.join(name);
                             }
-                            entry_stack.push(entry.clone());
-                            canonical_path = canonical_path.join(name);
-                        } _ => {
-                            return None;
-                        }}
+                            _ => {
+                                return None;
+                            }
+                        }
                     }
                 }
             }
@@ -1266,25 +1268,26 @@ impl FakeFs {
         let entry = state.read_path(dot_git).context("open .git")?;
         let mut entry = entry.lock();
 
-        match &mut *entry { FakeFsEntry::Dir { git_repo_state, .. } => {
-            let repo_state = git_repo_state.get_or_insert_with(|| {
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    dot_git.to_path_buf(),
-                    state.git_event_tx.clone(),
-                )))
-            });
-            let mut repo_state = repo_state.lock();
+        match &mut *entry {
+            FakeFsEntry::Dir { git_repo_state, .. } => {
+                let repo_state = git_repo_state.get_or_insert_with(|| {
+                    Arc::new(Mutex::new(FakeGitRepositoryState::new(
+                        dot_git.to_path_buf(),
+                        state.git_event_tx.clone(),
+                    )))
+                });
+                let mut repo_state = repo_state.lock();
 
-            let result = f(&mut repo_state);
+                let result = f(&mut repo_state);
 
-            if emit_git_event {
-                state.emit_event([(dot_git, None)]);
+                if emit_git_event {
+                    state.emit_event([(dot_git, None)]);
+                }
+
+                Ok(result)
             }
-
-            Ok(result)
-        } _ => {
-            Err(anyhow!("not a directory"))
-        }}
+            _ => Err(anyhow!("not a directory")),
+        }
     }
 
     pub fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
@@ -1995,22 +1998,20 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock();
-        match state.try_read_path(&path, true) { Some((_, canonical_path)) => {
-            Ok(canonical_path)
-        } _ => {
-            Err(anyhow!("path does not exist: {}", path.display()))
-        }}
+        match state.try_read_path(&path, true) {
+            Some((_, canonical_path)) => Ok(canonical_path),
+            _ => Err(anyhow!("path does not exist: {}", path.display())),
+        }
     }
 
     async fn is_file(&self, path: &Path) -> bool {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock();
-        match state.try_read_path(&path, true) { Some((entry, _)) => {
-            entry.lock().is_file()
-        } _ => {
-            false
-        }}
+        match state.try_read_path(&path, true) {
+            Some((entry, _)) => entry.lock().is_file(),
+            _ => false,
+        }
     }
 
     async fn is_dir(&self, path: &Path) -> bool {
@@ -2024,59 +2025,63 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         let mut state = self.state.lock();
         state.metadata_call_count += 1;
-        match state.try_read_path(&path, false) { Some((mut entry, _)) => {
-            let is_symlink = entry.lock().is_symlink();
-            if is_symlink {
-                match state.try_read_path(&path, true).map(|e| e.0) { Some(e) => {
-                    entry = e;
-                } _ => {
-                    return Ok(None);
-                }}
-            }
+        match state.try_read_path(&path, false) {
+            Some((mut entry, _)) => {
+                let is_symlink = entry.lock().is_symlink();
+                if is_symlink {
+                    match state.try_read_path(&path, true).map(|e| e.0) {
+                        Some(e) => {
+                            entry = e;
+                        }
+                        _ => {
+                            return Ok(None);
+                        }
+                    }
+                }
 
-            let entry = entry.lock();
-            Ok(Some(match &*entry {
-                FakeFsEntry::File {
-                    inode, mtime, len, ..
-                } => Metadata {
-                    inode: *inode,
-                    mtime: *mtime,
-                    len: *len,
-                    is_dir: false,
-                    is_symlink,
-                    is_fifo: false,
-                },
-                FakeFsEntry::Dir {
-                    inode, mtime, len, ..
-                } => Metadata {
-                    inode: *inode,
-                    mtime: *mtime,
-                    len: *len,
-                    is_dir: true,
-                    is_symlink,
-                    is_fifo: false,
-                },
-                FakeFsEntry::Symlink { .. } => unreachable!(),
-            }))
-        } _ => {
-            Ok(None)
-        }}
+                let entry = entry.lock();
+                Ok(Some(match &*entry {
+                    FakeFsEntry::File {
+                        inode, mtime, len, ..
+                    } => Metadata {
+                        inode: *inode,
+                        mtime: *mtime,
+                        len: *len,
+                        is_dir: false,
+                        is_symlink,
+                        is_fifo: false,
+                    },
+                    FakeFsEntry::Dir {
+                        inode, mtime, len, ..
+                    } => Metadata {
+                        inode: *inode,
+                        mtime: *mtime,
+                        len: *len,
+                        is_dir: true,
+                        is_symlink,
+                        is_fifo: false,
+                    },
+                    FakeFsEntry::Symlink { .. } => unreachable!(),
+                }))
+            }
+            _ => Ok(None),
+        }
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let state = self.state.lock();
-        match state.try_read_path(&path, false) { Some((entry, _)) => {
-            let entry = entry.lock();
-            match &*entry { FakeFsEntry::Symlink { target } => {
-                Ok(target.clone())
-            } _ => {
-                Err(anyhow!("not a symlink: {}", path.display()))
-            }}
-        } _ => {
-            Err(anyhow!("path does not exist: {}", path.display()))
-        }}
+        match state.try_read_path(&path, false) {
+            Some((entry, _)) => {
+                let entry = entry.lock();
+                match &*entry {
+                    FakeFsEntry::Symlink { target } => Ok(target.clone()),
+                    _ => Err(anyhow!("not a symlink: {}", path.display())),
+                }
+            }
+            _ => Err(anyhow!("path does not exist: {}", path.display())),
+        }
     }
 
     async fn read_dir(
@@ -2129,21 +2134,22 @@ impl Fs for FakeFs {
         let state = self.state.lock();
         let entry = state.read_path(abs_dot_git).unwrap();
         let mut entry = entry.lock();
-        match &mut *entry { FakeFsEntry::Dir { git_repo_state, .. } => {
-            git_repo_state.get_or_insert_with(|| {
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    abs_dot_git.to_path_buf(),
-                    state.git_event_tx.clone(),
-                )))
-            });
-            Some(Arc::new(fake_git_repo::FakeGitRepository {
-                fs: self.this.upgrade().unwrap(),
-                executor: self.executor.clone(),
-                dot_git_path: abs_dot_git.to_path_buf(),
-            }))
-        } _ => {
-            None
-        }}
+        match &mut *entry {
+            FakeFsEntry::Dir { git_repo_state, .. } => {
+                git_repo_state.get_or_insert_with(|| {
+                    Arc::new(Mutex::new(FakeGitRepositoryState::new(
+                        abs_dot_git.to_path_buf(),
+                        state.git_event_tx.clone(),
+                    )))
+                });
+                Some(Arc::new(fake_git_repo::FakeGitRepository {
+                    fs: self.this.upgrade().unwrap(),
+                    executor: self.executor.clone(),
+                    dot_git_path: abs_dot_git.to_path_buf(),
+                }))
+            }
+            _ => None,
+        }
     }
 
     fn git_init(

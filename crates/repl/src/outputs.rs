@@ -359,11 +359,12 @@ impl ExecutionView {
             ),
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
-                match self.apply_terminal_text(&result.text, window, cx) { Some(new_terminal) => {
-                    new_terminal
-                } _ => {
-                    return;
-                }}
+                match self.apply_terminal_text(&result.text, window, cx) {
+                    Some(new_terminal) => new_terminal,
+                    _ => {
+                        return;
+                    }
+                }
             }
             JupyterMessageContent::ErrorOutput(result) => {
                 let terminal =

@@ -360,13 +360,16 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) {
-        match self.includes_thread(&thread.read(cx).id()) { Some(context_id) => {
-            if remove_if_exists {
-                self.remove_context(context_id);
+        match self.includes_thread(&thread.read(cx).id()) {
+            Some(context_id) => {
+                if remove_if_exists {
+                    self.remove_context(context_id);
+                }
             }
-        } _ => {
-            self.insert_thread(thread, cx);
-        }}
+            _ => {
+                self.insert_thread(thread, cx);
+            }
+        }
     }
 
     fn insert_thread(&mut self, thread: Entity<Thread>, cx: &App) {
@@ -756,8 +759,8 @@ fn refresh_file_text(
 ) -> Option<Task<()>> {
     let id = file_context.id;
     let task = refresh_context_buffer(&file_context.context_buffer, cx);
-    match task { Some(task) => {
-        Some(cx.spawn(async move |cx| {
+    match task {
+        Some(task) => Some(cx.spawn(async move |cx| {
             let context_buffer = task.await;
             context_store
                 .update(cx, |context_store, _| {
@@ -765,10 +768,9 @@ fn refresh_file_text(
                     context_store.replace_context(AssistantContext::File(new_file_context));
                 })
                 .ok();
-        }))
-    } _ => {
-        None
-    }}
+        })),
+        _ => None,
+    }
 }
 
 fn refresh_directory_text(
@@ -780,14 +782,15 @@ fn refresh_directory_text(
     let futures = directory_context
         .context_buffers
         .iter()
-        .map(|context_buffer| {
-            match refresh_context_buffer(context_buffer, cx) { Some(refresh_task) => {
-                stale = true;
-                future::Either::Left(refresh_task)
-            } _ => {
-                future::Either::Right(future::ready((*context_buffer).clone()))
-            }}
-        })
+        .map(
+            |context_buffer| match refresh_context_buffer(context_buffer, cx) {
+                Some(refresh_task) => {
+                    stale = true;
+                    future::Either::Left(refresh_task)
+                }
+                _ => future::Either::Right(future::ready((*context_buffer).clone())),
+            },
+        )
         .collect::<Vec<_>>();
 
     if !stale {
@@ -816,8 +819,8 @@ fn refresh_symbol_text(
 ) -> Option<Task<()>> {
     let id = symbol_context.id;
     let task = refresh_context_symbol(&symbol_context.context_symbol, cx);
-    match task { Some(task) => {
-        Some(cx.spawn(async move |cx| {
+    match task {
+        Some(task) => Some(cx.spawn(async move |cx| {
             let context_symbol = task.await;
             context_store
                 .update(cx, |context_store, _| {
@@ -825,10 +828,9 @@ fn refresh_symbol_text(
                     context_store.replace_context(AssistantContext::Symbol(new_symbol_context));
                 })
                 .ok();
-        }))
-    } _ => {
-        None
-    }}
+        })),
+        _ => None,
+    }
 }
 
 fn refresh_thread_text(

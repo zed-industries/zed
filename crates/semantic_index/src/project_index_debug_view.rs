@@ -122,12 +122,9 @@ impl ProjectIndexDebugView {
                         chunks.len(),
                         gpui::ListAlignment::Top,
                         px(100.),
-                        move |ix, _, cx| {
-                            match view.upgrade() { Some(view) => {
-                                view.update(cx, |view, cx| view.render_chunk(ix, cx))
-                            } _ => {
-                                div().into_any()
-                            }}
+                        move |ix, _, cx| match view.upgrade() {
+                            Some(view) => view.update(cx, |view, cx| view.render_chunk(ix, cx)),
+                            _ => div().into_any(),
                         },
                     ),
                     chunks,
@@ -200,8 +197,8 @@ impl ProjectIndexDebugView {
 
 impl Render for ProjectIndexDebugView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        match self.selected_path.as_ref() { Some(selected_path) => {
-            v_flex()
+        match self.selected_path.as_ref() {
+            Some(selected_path) => v_flex()
                 .child(
                     div()
                         .id("selected-path-name")
@@ -221,66 +218,67 @@ impl Render for ProjectIndexDebugView {
                 )
                 .child(list(selected_path.list_state.clone()).size_full())
                 .size_full()
-                .into_any_element()
-        } _ => {
-            let mut list = uniform_list(
-                cx.entity().clone(),
-                "ProjectIndexDebugView",
-                self.rows.len(),
-                move |this, range, _, cx| {
-                    this.rows[range]
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, row)| match row {
-                            Row::Worktree(root_path) => div()
-                                .id(ix)
-                                .child(Label::new(root_path.to_string_lossy().to_string())),
-                            Row::Entry(worktree_id, file_path) => div()
-                                .id(ix)
-                                .pl_8()
-                                .child(Label::new(file_path.to_string_lossy().to_string()))
-                                .on_mouse_move(cx.listener(
-                                    move |this, _: &MouseMoveEvent, _, cx| {
-                                        if this.hovered_row_ix != Some(ix) {
-                                            this.hovered_row_ix = Some(ix);
-                                            cx.notify();
+                .into_any_element(),
+            _ => {
+                let mut list = uniform_list(
+                    cx.entity().clone(),
+                    "ProjectIndexDebugView",
+                    self.rows.len(),
+                    move |this, range, _, cx| {
+                        this.rows[range]
+                            .iter()
+                            .enumerate()
+                            .map(|(ix, row)| match row {
+                                Row::Worktree(root_path) => div()
+                                    .id(ix)
+                                    .child(Label::new(root_path.to_string_lossy().to_string())),
+                                Row::Entry(worktree_id, file_path) => div()
+                                    .id(ix)
+                                    .pl_8()
+                                    .child(Label::new(file_path.to_string_lossy().to_string()))
+                                    .on_mouse_move(cx.listener(
+                                        move |this, _: &MouseMoveEvent, _, cx| {
+                                            if this.hovered_row_ix != Some(ix) {
+                                                this.hovered_row_ix = Some(ix);
+                                                cx.notify();
+                                            }
+                                        },
+                                    ))
+                                    .cursor(CursorStyle::PointingHand)
+                                    .on_click(cx.listener({
+                                        let worktree_id = *worktree_id;
+                                        let file_path = file_path.clone();
+                                        move |this, _, window, cx| {
+                                            this.handle_path_click(
+                                                worktree_id,
+                                                file_path.clone(),
+                                                window,
+                                                cx,
+                                            );
                                         }
-                                    },
-                                ))
-                                .cursor(CursorStyle::PointingHand)
-                                .on_click(cx.listener({
-                                    let worktree_id = *worktree_id;
-                                    let file_path = file_path.clone();
-                                    move |this, _, window, cx| {
-                                        this.handle_path_click(
-                                            worktree_id,
-                                            file_path.clone(),
-                                            window,
-                                            cx,
-                                        );
-                                    }
-                                })),
-                        })
-                        .collect()
-                },
-            )
-            .track_scroll(self.list_scroll_handle.clone())
-            .size_full()
-            .text_bg(cx.theme().colors().background)
-            .into_any_element();
+                                    })),
+                            })
+                            .collect()
+                    },
+                )
+                .track_scroll(self.list_scroll_handle.clone())
+                .size_full()
+                .text_bg(cx.theme().colors().background)
+                .into_any_element();
 
-            canvas(
-                move |bounds, window, cx| {
-                    list.prepaint_as_root(bounds.origin, bounds.size.into(), window, cx);
-                    list
-                },
-                |_, mut list, window, cx| {
-                    list.paint(window, cx);
-                },
-            )
-            .size_full()
-            .into_any_element()
-        }}
+                canvas(
+                    move |bounds, window, cx| {
+                        list.prepaint_as_root(bounds.origin, bounds.size.into(), window, cx);
+                        list
+                    },
+                    |_, mut list, window, cx| {
+                        list.paint(window, cx);
+                    },
+                )
+                .size_full()
+                .into_any_element()
+            }
+        }
     }
 }
 

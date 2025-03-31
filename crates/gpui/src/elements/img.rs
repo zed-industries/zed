@@ -346,26 +346,29 @@ impl Element for Img {
                         }
                         None => {
                             if let Some(state) = &mut state {
-                                match state.started_loading { Some((started_loading, _)) => {
-                                    if started_loading.elapsed() > LOADING_DELAY {
-                                        if let Some(loading) = self.style.loading.as_ref() {
-                                            let mut element = loading();
-                                            replacement_id =
-                                                Some(element.request_layout(window, cx));
-                                            layout_state.replacement = Some(element);
+                                match state.started_loading {
+                                    Some((started_loading, _)) => {
+                                        if started_loading.elapsed() > LOADING_DELAY {
+                                            if let Some(loading) = self.style.loading.as_ref() {
+                                                let mut element = loading();
+                                                replacement_id =
+                                                    Some(element.request_layout(window, cx));
+                                                layout_state.replacement = Some(element);
+                                            }
                                         }
                                     }
-                                } _ => {
-                                    let current_view = window.current_view();
-                                    let task = window.spawn(cx, async move |cx| {
-                                        cx.background_executor().timer(LOADING_DELAY).await;
-                                        cx.update(move |_, cx| {
-                                            cx.notify(current_view);
-                                        })
-                                        .ok();
-                                    });
-                                    state.started_loading = Some((Instant::now(), task));
-                                }}
+                                    _ => {
+                                        let current_view = window.current_view();
+                                        let task = window.spawn(cx, async move |cx| {
+                                            cx.background_executor().timer(LOADING_DELAY).await;
+                                            cx.update(move |_, cx| {
+                                                cx.notify(current_view);
+                                            })
+                                            .ok();
+                                        });
+                                        state.started_loading = Some((Instant::now(), task));
+                                    }
+                                }
                             }
                         }
                     }
@@ -420,8 +423,8 @@ impl Element for Img {
             hitbox.as_ref(),
             window,
             cx,
-            |style, window, cx| {
-                match source.use_data(window, cx) { Some(Ok(data)) => {
+            |style, window, cx| match source.use_data(window, cx) {
+                Some(Ok(data)) => {
                     let new_bounds = self
                         .style
                         .object_fit
@@ -439,9 +442,12 @@ impl Element for Img {
                             self.style.grayscale,
                         )
                         .log_err();
-                } _ => if let Some(replacement) = &mut layout_state.replacement {
-                    replacement.paint(window, cx);
-                }}
+                }
+                _ => {
+                    if let Some(replacement) = &mut layout_state.replacement {
+                        replacement.paint(window, cx);
+                    }
+                }
             },
         )
     }
@@ -553,28 +559,11 @@ impl Asset for ImageAssetLoader {
                 }
             };
 
-            let data = match image::guess_format(&bytes) { Ok(format) => {
-                let data = match format {
-                    ImageFormat::Gif => {
-                        let decoder = GifDecoder::new(Cursor::new(&bytes))?;
-                        let mut frames = SmallVec::new();
-
-                        for frame in decoder.into_frames() {
-                            let mut frame = frame?;
-                            // Convert from RGBA to BGRA.
-                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                                pixel.swap(0, 2);
-                            }
-                            frames.push(frame);
-                        }
-
-                        frames
-                    }
-                    ImageFormat::WebP => {
-                        let mut decoder = WebPDecoder::new(Cursor::new(&bytes))?;
-
-                        if decoder.has_animation() {
-                            let _ = decoder.set_background_color(Rgba([0, 0, 0, 0]));
+            let data = match image::guess_format(&bytes) {
+                Ok(format) => {
+                    let data = match format {
+                        ImageFormat::Gif => {
+                            let decoder = GifDecoder::new(Cursor::new(&bytes))?;
                             let mut frames = SmallVec::new();
 
                             for frame in decoder.into_frames() {
@@ -587,8 +576,38 @@ impl Asset for ImageAssetLoader {
                             }
 
                             frames
-                        } else {
-                            let mut data = DynamicImage::from_decoder(decoder)?.into_rgba8();
+                        }
+                        ImageFormat::WebP => {
+                            let mut decoder = WebPDecoder::new(Cursor::new(&bytes))?;
+
+                            if decoder.has_animation() {
+                                let _ = decoder.set_background_color(Rgba([0, 0, 0, 0]));
+                                let mut frames = SmallVec::new();
+
+                                for frame in decoder.into_frames() {
+                                    let mut frame = frame?;
+                                    // Convert from RGBA to BGRA.
+                                    for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                        pixel.swap(0, 2);
+                                    }
+                                    frames.push(frame);
+                                }
+
+                                frames
+                            } else {
+                                let mut data = DynamicImage::from_decoder(decoder)?.into_rgba8();
+
+                                // Convert from RGBA to BGRA.
+                                for pixel in data.chunks_exact_mut(4) {
+                                    pixel.swap(0, 2);
+                                }
+
+                                SmallVec::from_elem(Frame::new(data), 1)
+                            }
+                        }
+                        _ => {
+                            let mut data =
+                                image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
 
                             // Convert from RGBA to BGRA.
                             for pixel in data.chunks_exact_mut(4) {
@@ -597,35 +616,26 @@ impl Asset for ImageAssetLoader {
 
                             SmallVec::from_elem(Frame::new(data), 1)
                         }
-                    }
-                    _ => {
-                        let mut data =
-                            image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
+                    };
 
-                        // Convert from RGBA to BGRA.
-                        for pixel in data.chunks_exact_mut(4) {
-                            pixel.swap(0, 2);
-                        }
-
-                        SmallVec::from_elem(Frame::new(data), 1)
-                    }
-                };
-
-                RenderImage::new(data)
-            } _ => {
-                let pixmap =
+                    RenderImage::new(data)
+                }
+                _ => {
+                    let pixmap =
                     // TODO: Can we make svgs always rescale?
                     svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(SMOOTH_SVG_SCALE_FACTOR))?;
 
-                let mut buffer =
-                    ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
+                    let mut buffer =
+                        ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
+                            .unwrap();
 
-                for pixel in buffer.chunks_exact_mut(4) {
-                    swap_rgba_pa_to_bgra(pixel);
+                    for pixel in buffer.chunks_exact_mut(4) {
+                        swap_rgba_pa_to_bgra(pixel);
+                    }
+
+                    RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))
                 }
-
-                RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))
-            }};
+            };
 
             Ok(Arc::new(data))
         }

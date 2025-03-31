@@ -163,17 +163,16 @@ impl DiagnosticSet {
             cursor.next(buffer);
         }
         iter::from_fn({
-            move || {
-                match cursor.item() { Some(diagnostic) => {
+            move || match cursor.item() {
+                Some(diagnostic) => {
                     if reversed {
                         cursor.prev(buffer);
                     } else {
                         cursor.next(buffer);
                     }
                     Some(diagnostic.resolve(buffer))
-                } _ => {
-                    None
-                }}
+                }
+                _ => None,
             }
         })
     }

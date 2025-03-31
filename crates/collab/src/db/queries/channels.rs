@@ -108,45 +108,50 @@ impl Database {
                 match self
                     .pending_invite_for_channel(&channel, user_id, &tx)
                     .await?
-                { Some(invitation) => {
-                    // note, this may be a parent channel
-                    role = Some(invitation.role);
-                    channel_member::Entity::update(channel_member::ActiveModel {
-                        accepted: ActiveValue::Set(true),
-                        ..invitation.into_active_model()
-                    })
-                    .exec(&*tx)
-                    .await?;
+                {
+                    Some(invitation) => {
+                        // note, this may be a parent channel
+                        role = Some(invitation.role);
+                        channel_member::Entity::update(channel_member::ActiveModel {
+                            accepted: ActiveValue::Set(true),
+                            ..invitation.into_active_model()
+                        })
+                        .exec(&*tx)
+                        .await?;
 
-                    accept_invite_result = Some(
-                        self.calculate_membership_updated(&channel, user_id, &tx)
-                            .await?,
-                    );
+                        accept_invite_result = Some(
+                            self.calculate_membership_updated(&channel, user_id, &tx)
+                                .await?,
+                        );
 
-                    debug_assert!(
-                        self.channel_role_for_user(&channel, user_id, &tx).await? == role
-                    );
-                } _ => if channel.visibility == ChannelVisibility::Public {
-                    role = Some(ChannelRole::Guest);
-                    channel_member::Entity::insert(channel_member::ActiveModel {
-                        id: ActiveValue::NotSet,
-                        channel_id: ActiveValue::Set(channel.root_id()),
-                        user_id: ActiveValue::Set(user_id),
-                        accepted: ActiveValue::Set(true),
-                        role: ActiveValue::Set(ChannelRole::Guest),
-                    })
-                    .exec(&*tx)
-                    .await?;
+                        debug_assert!(
+                            self.channel_role_for_user(&channel, user_id, &tx).await? == role
+                        );
+                    }
+                    _ => {
+                        if channel.visibility == ChannelVisibility::Public {
+                            role = Some(ChannelRole::Guest);
+                            channel_member::Entity::insert(channel_member::ActiveModel {
+                                id: ActiveValue::NotSet,
+                                channel_id: ActiveValue::Set(channel.root_id()),
+                                user_id: ActiveValue::Set(user_id),
+                                accepted: ActiveValue::Set(true),
+                                role: ActiveValue::Set(ChannelRole::Guest),
+                            })
+                            .exec(&*tx)
+                            .await?;
 
-                    accept_invite_result = Some(
-                        self.calculate_membership_updated(&channel, user_id, &tx)
-                            .await?,
-                    );
+                            accept_invite_result = Some(
+                                self.calculate_membership_updated(&channel, user_id, &tx)
+                                    .await?,
+                            );
 
-                    debug_assert!(
-                        self.channel_role_for_user(&channel, user_id, &tx).await? == role
-                    );
-                }}
+                            debug_assert!(
+                                self.channel_role_for_user(&channel, user_id, &tx).await? == role
+                            );
+                        }
+                    }
+                }
             }
 
             if role.is_none() || role == Some(ChannelRole::Banned) {

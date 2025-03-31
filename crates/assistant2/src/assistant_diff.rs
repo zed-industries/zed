@@ -48,17 +48,18 @@ impl AssistantDiff {
                 .items_of_type::<AssistantDiff>(cx)
                 .find(|diff| diff.read(cx).thread == thread)
         })?;
-        match existing_diff { Some(existing_diff) => {
-            workspace.update(cx, |workspace, cx| {
+        match existing_diff {
+            Some(existing_diff) => workspace.update(cx, |workspace, cx| {
                 workspace.activate_item(&existing_diff, true, true, window, cx);
-            })
-        } _ => {
-            let assistant_diff =
-                cx.new(|cx| AssistantDiff::new(thread.clone(), workspace.clone(), window, cx));
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_item_to_center(Box::new(assistant_diff), window, cx);
-            })
-        }}
+            }),
+            _ => {
+                let assistant_diff =
+                    cx.new(|cx| AssistantDiff::new(thread.clone(), workspace.clone(), window, cx));
+                workspace.update(cx, |workspace, cx| {
+                    workspace.add_item_to_center(Box::new(assistant_diff), window, cx);
+                })
+            }
+        }
     }
 
     pub fn new(

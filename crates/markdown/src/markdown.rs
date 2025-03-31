@@ -422,29 +422,32 @@ impl MarkdownElement {
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
                     if phase.bubble() {
-                        match rendered_text.link_for_position(event.position) { Some(link) => {
-                            markdown.pressed_link = Some(link.clone());
-                        } _ => {
-                            let source_index =
-                                match rendered_text.source_index_for_position(event.position) {
-                                    Ok(ix) | Err(ix) => ix,
+                        match rendered_text.link_for_position(event.position) {
+                            Some(link) => {
+                                markdown.pressed_link = Some(link.clone());
+                            }
+                            _ => {
+                                let source_index =
+                                    match rendered_text.source_index_for_position(event.position) {
+                                        Ok(ix) | Err(ix) => ix,
+                                    };
+                                let range = if event.click_count == 2 {
+                                    rendered_text.surrounding_word_range(source_index)
+                                } else if event.click_count == 3 {
+                                    rendered_text.surrounding_line_range(source_index)
+                                } else {
+                                    source_index..source_index
                                 };
-                            let range = if event.click_count == 2 {
-                                rendered_text.surrounding_word_range(source_index)
-                            } else if event.click_count == 3 {
-                                rendered_text.surrounding_line_range(source_index)
-                            } else {
-                                source_index..source_index
-                            };
-                            markdown.selection = Selection {
-                                start: range.start,
-                                end: range.end,
-                                reversed: false,
-                                pending: true,
-                            };
-                            window.focus(&markdown.focus_handle);
-                            window.prevent_default();
-                        }}
+                                markdown.selection = Selection {
+                                    start: range.start,
+                                    end: range.end,
+                                    reversed: false,
+                                    pending: true,
+                                };
+                                window.focus(&markdown.focus_handle);
+                                window.prevent_default();
+                            }
+                        }
 
                         cx.notify();
                     }
@@ -487,11 +490,14 @@ impl MarkdownElement {
                 if phase.bubble() {
                     if let Some(pressed_link) = markdown.pressed_link.take() {
                         if Some(&pressed_link) == rendered_text.link_for_position(event.position) {
-                            match markdown.open_url.as_mut() { Some(open_url) => {
-                                open_url(pressed_link.destination_url, window, cx);
-                            } _ => {
-                                cx.open_url(&pressed_link.destination_url);
-                            }}
+                            match markdown.open_url.as_mut() {
+                                Some(open_url) => {
+                                    open_url(pressed_link.destination_url, window, cx);
+                                }
+                                _ => {
+                                    cx.open_url(&pressed_link.destination_url);
+                                }
+                            }
                         }
                     }
                 } else if markdown.selection.pending {
@@ -644,11 +650,12 @@ impl Element for MarkdownElement {
                             builder.push_div(div().pl_4(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
-                            let bullet = match builder.next_bullet_index() { Some(bullet_index) => {
-                                format!("{}.", bullet_index)
-                            } _ => {
-                                "•".to_string()
-                            }};
+                            let bullet = match builder.next_bullet_index() {
+                                Some(bullet_index) => {
+                                    format!("{}.", bullet_index)
+                                }
+                                _ => "•".to_string(),
+                            };
                             builder.push_div(
                                 div()
                                     .mb_1()
@@ -1136,33 +1143,38 @@ impl MarkdownElementBuilder {
         self.pending_line.text.push_str(text);
         self.current_source_index = source_index + text.len();
 
-        match self.code_block_stack.last() { Some(Some(language)) => {
-            let mut offset = 0;
-            for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
-                if range.start > offset {
+        match self.code_block_stack.last() {
+            Some(Some(language)) => {
+                let mut offset = 0;
+                for (range, highlight_id) in
+                    language.highlight_text(&Rope::from(text), 0..text.len())
+                {
+                    if range.start > offset {
+                        self.pending_line
+                            .runs
+                            .push(self.text_style().to_run(range.start - offset));
+                    }
+
+                    let mut run_style = self.text_style();
+                    if let Some(highlight) = highlight_id.style(&self.syntax_theme) {
+                        run_style = run_style.highlight(highlight);
+                    }
+                    self.pending_line.runs.push(run_style.to_run(range.len()));
+                    offset = range.end;
+                }
+
+                if offset < text.len() {
                     self.pending_line
                         .runs
-                        .push(self.text_style().to_run(range.start - offset));
+                        .push(self.text_style().to_run(text.len() - offset));
                 }
-
-                let mut run_style = self.text_style();
-                if let Some(highlight) = highlight_id.style(&self.syntax_theme) {
-                    run_style = run_style.highlight(highlight);
-                }
-                self.pending_line.runs.push(run_style.to_run(range.len()));
-                offset = range.end;
             }
-
-            if offset < text.len() {
+            _ => {
                 self.pending_line
                     .runs
-                    .push(self.text_style().to_run(text.len() - offset));
+                    .push(self.text_style().to_run(text.len()));
             }
-        } _ => {
-            self.pending_line
-                .runs
-                .push(self.text_style().to_run(text.len()));
-        }}
+        }
     }
 
     fn trim_trailing_newline(&mut self) {

@@ -1184,11 +1184,10 @@ pub fn handle_settings_file_changes(
         .background_executor()
         .block(user_settings_file_rx.next())
         .unwrap();
-    let user_settings_content = match migrate_settings(&content) { Ok(Some(migrated_content)) => {
-        migrated_content
-    } _ => {
-        content
-    }};
+    let user_settings_content = match migrate_settings(&content) {
+        Ok(Some(migrated_content)) => migrated_content,
+        _ => content,
+    };
     SettingsStore::update_global(cx, |store, cx| {
         let result = store.set_user_settings(&user_settings_content, cx);
         if let Err(err) = &result {
@@ -1201,13 +1200,16 @@ pub fn handle_settings_file_changes(
             let user_settings_content;
             let content_migrated;
 
-            match migrate_settings(&content) { Ok(Some(migrated_content)) => {
-                user_settings_content = migrated_content;
-                content_migrated = true;
-            } _ => {
-                user_settings_content = content;
-                content_migrated = false;
-            }}
+            match migrate_settings(&content) {
+                Ok(Some(migrated_content)) => {
+                    user_settings_content = migrated_content;
+                    content_migrated = true;
+                }
+                _ => {
+                    user_settings_content = content;
+                    content_migrated = false;
+                }
+            }
 
             cx.update(|cx| {
                 if let Some(notifier) = MigrationNotification::try_global(cx) {
@@ -1554,62 +1556,71 @@ fn open_local_file(
         .read(cx)
         .visible_worktrees(cx)
         .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
-    match worktree { Some(worktree) => {
-        let tree_id = worktree.read(cx).id();
-        cx.spawn_in(window, async move |workspace, cx| {
-            if let Some(dir_path) = settings_relative_path.parent() {
-                if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+    match worktree {
+        Some(worktree) => {
+            let tree_id = worktree.read(cx).id();
+            cx.spawn_in(window, async move |workspace, cx| {
+                if let Some(dir_path) = settings_relative_path.parent() {
+                    if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+                        project
+                            .update(cx, |project, cx| {
+                                project.create_entry((tree_id, dir_path), true, cx)
+                            })?
+                            .await
+                            .context("worktree was removed")?;
+                    }
+                }
+
+                if worktree.update(cx, |tree, _| {
+                    tree.entry_for_path(settings_relative_path).is_none()
+                })? {
                     project
                         .update(cx, |project, cx| {
-                            project.create_entry((tree_id, dir_path), true, cx)
+                            project.create_entry((tree_id, settings_relative_path), false, cx)
                         })?
                         .await
                         .context("worktree was removed")?;
                 }
-            }
 
-            if worktree.update(cx, |tree, _| {
-                tree.entry_for_path(settings_relative_path).is_none()
-            })? {
-                project
-                    .update(cx, |project, cx| {
-                        project.create_entry((tree_id, settings_relative_path), false, cx)
+                let editor = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_path(
+                            (tree_id, settings_relative_path),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        )
                     })?
-                    .await
-                    .context("worktree was removed")?;
-            }
+                    .await?
+                    .downcast::<Editor>()
+                    .context("unexpected item type: expected editor item")?;
 
-            let editor = workspace
-                .update_in(cx, |workspace, window, cx| {
-                    workspace.open_path((tree_id, settings_relative_path), None, true, window, cx)
-                })?
-                .await?
-                .downcast::<Editor>()
-                .context("unexpected item type: expected editor item")?;
-
-            editor
-                .downgrade()
-                .update(cx, |editor, cx| {
-                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                        if buffer.read(cx).is_empty() {
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.edit([(0..0, initial_contents)], None, cx)
-                            });
+                editor
+                    .downgrade()
+                    .update(cx, |editor, cx| {
+                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                            if buffer.read(cx).is_empty() {
+                                buffer.update(cx, |buffer, cx| {
+                                    buffer.edit([(0..0, initial_contents)], None, cx)
+                                });
+                            }
                         }
-                    }
-                })
-                .ok();
+                    })
+                    .ok();
 
-            anyhow::Ok(())
-        })
-        .detach();
-    } _ => {
-        struct NoOpenFolders;
+                anyhow::Ok(())
+            })
+            .detach();
+        }
+        _ => {
+            struct NoOpenFolders;
 
-        workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
-            cx.new(|cx| MessageNotification::new("This project has no folders open.", cx))
-        })
-    }}
+            workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
+                cx.new(|cx| MessageNotification::new("This project has no folders open.", cx))
+            })
+        }
+    }
 }
 
 fn open_telemetry_log_file(

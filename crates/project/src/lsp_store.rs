@@ -1003,12 +1003,12 @@ impl LocalLspStore {
                     if *language_server_path != worktree_id {
                         return None;
                     }
-                    match self.language_servers.get(id)
-                    { Some(LanguageServerState::Running { server, .. }) => {
-                        return Some(server);
-                    } _ => {
-                        None
-                    }}
+                    match self.language_servers.get(id) {
+                        Some(LanguageServerState::Running { server, .. }) => {
+                            return Some(server);
+                        }
+                        _ => None,
+                    }
                 })
             })
     }
@@ -1444,15 +1444,18 @@ impl LocalLspStore {
                                 })
                             })?;
 
-                            match default_lsp { Some(default_lsp) => {
-                                break 'language_server default_lsp;
-                            } _ => {
-                                log::warn!(
+                            match default_lsp {
+                                Some(default_lsp) => {
+                                    break 'language_server default_lsp;
+                                }
+                                _ => {
+                                    log::warn!(
                                     "No language server found to format buffer '{:?}'. Skipping",
                                     buffer_path_abs.as_path().to_string_lossy()
                                 );
-                                continue 'formatters;
-                            }}
+                                    continue 'formatters;
+                                }
+                            }
                         };
 
                         zlog::trace!(
@@ -2452,17 +2455,20 @@ impl LocalLspStore {
                 .buffer_snapshots
                 .get_mut(&buffer_id)
                 .and_then(|m| m.get_mut(&server_id))
-            { Some(snapshots) => {
-                snapshots
-            } _ => if version == 0 {
-                // Some language servers report version 0 even if the buffer hasn't been opened yet.
-                // We detect this case and treat it as if the version was `None`.
-                return Ok(buffer.read(cx).text_snapshot());
-            } else {
-                return Err(anyhow!(
-                    "no snapshots found for buffer {buffer_id} and server {server_id}"
-                ));
-            }};
+            {
+                Some(snapshots) => snapshots,
+                _ => {
+                    if version == 0 {
+                        // Some language servers report version 0 even if the buffer hasn't been opened yet.
+                        // We detect this case and treat it as if the version was `None`.
+                        return Ok(buffer.read(cx).text_snapshot());
+                    } else {
+                        return Err(anyhow!(
+                            "no snapshots found for buffer {buffer_id} and server {server_id}"
+                        ));
+                    }
+                }
+            };
 
             let found_snapshot = snapshots
                     .binary_search_by_key(&version, |e| e.version)
@@ -3496,15 +3502,20 @@ impl LspStore {
             .detach();
         cx.subscribe(&toolchain_store, Self::on_toolchain_store_event)
             .detach();
-        match extension::ExtensionEvents::try_global(cx).as_ref() { Some(extension_events) => {
-            cx.subscribe(
-                extension_events,
-                Self::reload_zed_json_schemas_on_extensions_changed,
-            )
-            .detach();
-        } _ => {
-            log::info!("No extension events global found. Skipping JSON schema auto-reload setup");
-        }}
+        match extension::ExtensionEvents::try_global(cx).as_ref() {
+            Some(extension_events) => {
+                cx.subscribe(
+                    extension_events,
+                    Self::reload_zed_json_schemas_on_extensions_changed,
+                )
+                .detach();
+            }
+            _ => {
+                log::info!(
+                    "No extension events global found. Skipping JSON schema auto-reload setup"
+                );
+            }
+        }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
 
@@ -3911,20 +3922,25 @@ impl LspStore {
                 })
                 .detach();
             }
-        } else { match self.upstream_client() { Some((upstream_client, upstream_project_id)) => {
-            let buffer_id = buffer.read(cx).remote_id().to_proto();
-            cx.background_spawn(async move {
-                upstream_client
-                    .request(proto::RegisterBufferWithLanguageServers {
-                        project_id: upstream_project_id,
-                        buffer_id,
+        } else {
+            match self.upstream_client() {
+                Some((upstream_client, upstream_project_id)) => {
+                    let buffer_id = buffer.read(cx).remote_id().to_proto();
+                    cx.background_spawn(async move {
+                        upstream_client
+                            .request(proto::RegisterBufferWithLanguageServers {
+                                project_id: upstream_project_id,
+                                buffer_id,
+                            })
+                            .await
                     })
-                    .await
-            })
-            .detach();
-        } _ => {
-            panic!("oops!");
-        }}}
+                    .detach();
+                }
+                _ => {
+                    panic!("oops!");
+                }
+            }
+        }
         handle
     }
 
@@ -4020,20 +4036,23 @@ impl LspStore {
 
         let content = buffer.as_rope();
         let available_language = self.languages.language_for_file(file, Some(content), cx);
-        match &available_language { Some(available_language) => {
-            if let Some(Ok(Ok(new_language))) = self
-                .languages
-                .load_language(available_language)
-                .now_or_never()
-            {
-                self.set_language_for_buffer(buffer_handle, new_language, cx);
+        match &available_language {
+            Some(available_language) => {
+                if let Some(Ok(Ok(new_language))) = self
+                    .languages
+                    .load_language(available_language)
+                    .now_or_never()
+                {
+                    self.set_language_for_buffer(buffer_handle, new_language, cx);
+                }
             }
-        } _ => {
-            cx.emit(LspStoreEvent::LanguageDetected {
-                buffer: buffer_handle.clone(),
-                new_language: None,
-            });
-        }}
+            _ => {
+                cx.emit(LspStoreEvent::LanguageDetected {
+                    buffer: buffer_handle.clone(),
+                    new_language: None,
+                });
+            }
+        }
 
         available_language
     }
@@ -4437,34 +4456,43 @@ impl LspStore {
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<ProjectTransaction>> {
-        match self.upstream_client() { Some((upstream_client, project_id)) => {
-            let request = proto::ApplyCodeAction {
-                project_id,
-                buffer_id: buffer_handle.read(cx).remote_id().into(),
-                action: Some(Self::serialize_code_action(&action)),
-            };
-            let buffer_store = self.buffer_store();
-            cx.spawn(async move |_, cx| {
-                let response = upstream_client
-                    .request(request)
-                    .await?
-                    .transaction
-                    .ok_or_else(|| anyhow!("missing transaction"))?;
+        match self.upstream_client() {
+            Some((upstream_client, project_id)) => {
+                let request = proto::ApplyCodeAction {
+                    project_id,
+                    buffer_id: buffer_handle.read(cx).remote_id().into(),
+                    action: Some(Self::serialize_code_action(&action)),
+                };
+                let buffer_store = self.buffer_store();
+                cx.spawn(async move |_, cx| {
+                    let response = upstream_client
+                        .request(request)
+                        .await?
+                        .transaction
+                        .ok_or_else(|| anyhow!("missing transaction"))?;
 
-                buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.deserialize_project_transaction(response, push_to_history, cx)
-                    })?
-                    .await
-            })
-        } _ => if self.mode.is_local() {
-            let Some((lsp_adapter, lang_server)) = buffer_handle.update(cx, |buffer, cx| {
-                self.language_server_for_local_buffer(buffer, action.server_id, cx)
-                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
-            }) else {
-                return Task::ready(Ok(ProjectTransaction::default()));
-            };
-            cx.spawn(async move |this,  cx| {
+                    buffer_store
+                        .update(cx, |buffer_store, cx| {
+                            buffer_store.deserialize_project_transaction(
+                                response,
+                                push_to_history,
+                                cx,
+                            )
+                        })?
+                        .await
+                })
+            }
+            _ => {
+                if self.mode.is_local() {
+                    let Some((lsp_adapter, lang_server)) =
+                        buffer_handle.update(cx, |buffer, cx| {
+                            self.language_server_for_local_buffer(buffer, action.server_id, cx)
+                                .map(|(adapter, server)| (adapter.clone(), server.clone()))
+                        })
+                    else {
+                        return Task::ready(Ok(ProjectTransaction::default()));
+                    };
+                    cx.spawn(async move |this,  cx| {
                 LocalLspStore::try_resolve_code_action(&lang_server, &mut action)
                     .await
                     .context("resolving a code action")?;
@@ -4521,9 +4549,11 @@ impl LspStore {
 
                 Ok(ProjectTransaction::default())
             })
-        } else {
-            Task::ready(Err(anyhow!("no upstream client and not local")))
-        }}
+                } else {
+                    Task::ready(Err(anyhow!("no upstream client and not local")))
+                }
+            }
+        }
     }
 
     pub fn apply_code_action_kind(
@@ -4549,38 +4579,43 @@ impl LspStore {
                 })?;
                 result
             })
-        } else { match self.upstream_client() { Some((client, project_id)) => {
-            let buffer_store = self.buffer_store();
-            cx.spawn(async move |lsp_store, cx| {
-                let result = client
-                    .request(proto::ApplyCodeActionKind {
-                        project_id,
-                        kind: kind.as_str().to_owned(),
-                        buffer_ids: buffers
-                            .iter()
-                            .map(|buffer| buffer.update(cx, |buffer, _| buffer.remote_id().into()))
-                            .collect::<Result<_>>()?,
-                    })
-                    .await
-                    .and_then(|result| result.transaction.context("missing transaction"));
-                lsp_store.update(cx, |lsp_store, _| {
-                    lsp_store.update_last_formatting_failure(&result);
-                })?;
+        } else {
+            match self.upstream_client() {
+                Some((client, project_id)) => {
+                    let buffer_store = self.buffer_store();
+                    cx.spawn(async move |lsp_store, cx| {
+                        let result = client
+                            .request(proto::ApplyCodeActionKind {
+                                project_id,
+                                kind: kind.as_str().to_owned(),
+                                buffer_ids: buffers
+                                    .iter()
+                                    .map(|buffer| {
+                                        buffer.update(cx, |buffer, _| buffer.remote_id().into())
+                                    })
+                                    .collect::<Result<_>>()?,
+                            })
+                            .await
+                            .and_then(|result| result.transaction.context("missing transaction"));
+                        lsp_store.update(cx, |lsp_store, _| {
+                            lsp_store.update_last_formatting_failure(&result);
+                        })?;
 
-                let transaction_response = result?;
-                buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.deserialize_project_transaction(
-                            transaction_response,
-                            push_to_history,
-                            cx,
-                        )
-                    })?
-                    .await
-            })
-        } _ => {
-            Task::ready(Ok(ProjectTransaction::default()))
-        }}}
+                        let transaction_response = result?;
+                        buffer_store
+                            .update(cx, |buffer_store, cx| {
+                                buffer_store.deserialize_project_transaction(
+                                    transaction_response,
+                                    push_to_history,
+                                    cx,
+                                )
+                            })?
+                            .await
+                    })
+                }
+                _ => Task::ready(Ok(ProjectTransaction::default())),
+            }
+        }
     }
 
     pub fn resolve_inlay_hint(
@@ -4590,54 +4625,58 @@ impl LspStore {
         server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<InlayHint>> {
-        match self.upstream_client() { Some((upstream_client, project_id)) => {
-            let request = proto::ResolveInlayHint {
-                project_id,
-                buffer_id: buffer_handle.read(cx).remote_id().into(),
-                language_server_id: server_id.0 as u64,
-                hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
-            };
-            cx.spawn(async move |_, _| {
-                let response = upstream_client
-                    .request(request)
-                    .await
-                    .context("inlay hints proto request")?;
-                match response.hint {
-                    Some(resolved_hint) => InlayHints::proto_to_project_hint(resolved_hint)
-                        .context("inlay hints proto resolve response conversion"),
-                    None => Ok(hint),
-                }
-            })
-        } _ => {
-            let Some(lang_server) = buffer_handle.update(cx, |buffer, cx| {
-                self.language_server_for_local_buffer(buffer, server_id, cx)
-                    .map(|(_, server)| server.clone())
-            }) else {
-                return Task::ready(Ok(hint));
-            };
-            if !InlayHints::can_resolve_inlays(&lang_server.capabilities()) {
-                return Task::ready(Ok(hint));
+        match self.upstream_client() {
+            Some((upstream_client, project_id)) => {
+                let request = proto::ResolveInlayHint {
+                    project_id,
+                    buffer_id: buffer_handle.read(cx).remote_id().into(),
+                    language_server_id: server_id.0 as u64,
+                    hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
+                };
+                cx.spawn(async move |_, _| {
+                    let response = upstream_client
+                        .request(request)
+                        .await
+                        .context("inlay hints proto request")?;
+                    match response.hint {
+                        Some(resolved_hint) => InlayHints::proto_to_project_hint(resolved_hint)
+                            .context("inlay hints proto resolve response conversion"),
+                        None => Ok(hint),
+                    }
+                })
             }
-            let buffer_snapshot = buffer_handle.read(cx).snapshot();
-            cx.spawn(async move |_, cx| {
-                let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
-                    InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
-                );
-                let resolved_hint = resolve_task
-                    .await
-                    .context("inlay hint resolve LSP request")?;
-                let resolved_hint = InlayHints::lsp_to_project_hint(
-                    resolved_hint,
-                    &buffer_handle,
-                    server_id,
-                    ResolveState::Resolved,
-                    false,
-                    cx,
-                )
-                .await?;
-                Ok(resolved_hint)
-            })
-        }}
+            _ => {
+                let Some(lang_server) = buffer_handle.update(cx, |buffer, cx| {
+                    self.language_server_for_local_buffer(buffer, server_id, cx)
+                        .map(|(_, server)| server.clone())
+                }) else {
+                    return Task::ready(Ok(hint));
+                };
+                if !InlayHints::can_resolve_inlays(&lang_server.capabilities()) {
+                    return Task::ready(Ok(hint));
+                }
+                let buffer_snapshot = buffer_handle.read(cx).snapshot();
+                cx.spawn(async move |_, cx| {
+                    let resolve_task = lang_server
+                        .request::<lsp::request::InlayHintResolveRequest>(
+                            InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
+                        );
+                    let resolved_hint = resolve_task
+                        .await
+                        .context("inlay hint resolve LSP request")?;
+                    let resolved_hint = InlayHints::lsp_to_project_hint(
+                        resolved_hint,
+                        &buffer_handle,
+                        server_id,
+                        ResolveState::Resolved,
+                        false,
+                        cx,
+                    )
+                    .await?;
+                    Ok(resolved_hint)
+                })
+            }
+        }
     }
 
     pub(crate) fn linked_edit(
@@ -4703,53 +4742,58 @@ impl LspStore {
         trigger: String,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        match self.upstream_client() { Some((client, project_id)) => {
-            let request = proto::OnTypeFormatting {
-                project_id,
-                buffer_id: buffer.read(cx).remote_id().into(),
-                position: Some(serialize_anchor(&position)),
-                trigger,
-                version: serialize_version(&buffer.read(cx).version()),
-            };
-            cx.spawn(async move |_, _| {
-                client
-                    .request(request)
-                    .await?
-                    .transaction
-                    .map(language::proto::deserialize_transaction)
-                    .transpose()
-            })
-        } _ => if let Some(local) = self.as_local_mut() {
-            let buffer_id = buffer.read(cx).remote_id();
-            local.buffers_being_formatted.insert(buffer_id);
-            cx.spawn(async move |this, cx| {
-                let _cleanup = defer({
-                    let this = this.clone();
-                    let mut cx = cx.clone();
-                    move || {
-                        this.update(&mut cx, |this, _| {
-                            if let Some(local) = this.as_local_mut() {
-                                local.buffers_being_formatted.remove(&buffer_id);
+        match self.upstream_client() {
+            Some((client, project_id)) => {
+                let request = proto::OnTypeFormatting {
+                    project_id,
+                    buffer_id: buffer.read(cx).remote_id().into(),
+                    position: Some(serialize_anchor(&position)),
+                    trigger,
+                    version: serialize_version(&buffer.read(cx).version()),
+                };
+                cx.spawn(async move |_, _| {
+                    client
+                        .request(request)
+                        .await?
+                        .transaction
+                        .map(language::proto::deserialize_transaction)
+                        .transpose()
+                })
+            }
+            _ => {
+                if let Some(local) = self.as_local_mut() {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    local.buffers_being_formatted.insert(buffer_id);
+                    cx.spawn(async move |this, cx| {
+                        let _cleanup = defer({
+                            let this = this.clone();
+                            let mut cx = cx.clone();
+                            move || {
+                                this.update(&mut cx, |this, _| {
+                                    if let Some(local) = this.as_local_mut() {
+                                        local.buffers_being_formatted.remove(&buffer_id);
+                                    }
+                                })
+                                .ok();
                             }
-                        })
-                        .ok();
-                    }
-                });
+                        });
 
-                buffer
-                    .update(cx, |buffer, _| {
-                        buffer.wait_for_edits(Some(position.timestamp))
-                    })?
-                    .await?;
-                this.update(cx, |this, cx| {
-                    let position = position.to_point_utf16(buffer.read(cx));
-                    this.on_type_format(buffer, position, trigger, false, cx)
-                })?
-                .await
-            })
-        } else {
-            Task::ready(Err(anyhow!("No upstream client or local language server")))
-        }}
+                        buffer
+                            .update(cx, |buffer, _| {
+                                buffer.wait_for_edits(Some(position.timestamp))
+                            })?
+                            .await?;
+                        this.update(cx, |this, cx| {
+                            let position = position.to_point_utf16(buffer.read(cx));
+                            this.on_type_format(buffer, position, trigger, false, cx)
+                        })?
+                        .await
+                    })
+                } else {
+                    Task::ready(Err(anyhow!("No upstream client or local language server")))
+                }
+            }
+        }
     }
 
     pub fn on_type_format<T: ToPointUtf16>(
@@ -4802,74 +4846,79 @@ impl LspStore {
         kinds: Option<Vec<CodeActionKind>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
-        match self.upstream_client() { Some((upstream_client, project_id)) => {
-            let request_task = upstream_client.request(proto::MultiLspQuery {
-                buffer_id: buffer_handle.read(cx).remote_id().into(),
-                version: serialize_version(&buffer_handle.read(cx).version()),
-                project_id,
-                strategy: Some(proto::multi_lsp_query::Strategy::All(
-                    proto::AllLanguageServers {},
-                )),
-                request: Some(proto::multi_lsp_query::Request::GetCodeActions(
+        match self.upstream_client() {
+            Some((upstream_client, project_id)) => {
+                let request_task = upstream_client.request(proto::MultiLspQuery {
+                    buffer_id: buffer_handle.read(cx).remote_id().into(),
+                    version: serialize_version(&buffer_handle.read(cx).version()),
+                    project_id,
+                    strategy: Some(proto::multi_lsp_query::Strategy::All(
+                        proto::AllLanguageServers {},
+                    )),
+                    request: Some(proto::multi_lsp_query::Request::GetCodeActions(
+                        GetCodeActions {
+                            range: range.clone(),
+                            kinds: kinds.clone(),
+                        }
+                        .to_proto(project_id, buffer_handle.read(cx)),
+                    )),
+                });
+                let buffer = buffer_handle.clone();
+                cx.spawn(async move |weak_project, cx| {
+                    let Some(project) = weak_project.upgrade() else {
+                        return Ok(Vec::new());
+                    };
+                    let responses = request_task.await?.responses;
+                    let actions = join_all(
+                        responses
+                            .into_iter()
+                            .filter_map(|lsp_response| match lsp_response.response? {
+                                proto::lsp_response::Response::GetCodeActionsResponse(response) => {
+                                    Some(response)
+                                }
+                                unexpected => {
+                                    debug_panic!("Unexpected response: {unexpected:?}");
+                                    None
+                                }
+                            })
+                            .map(|code_actions_response| {
+                                GetCodeActions {
+                                    range: range.clone(),
+                                    kinds: kinds.clone(),
+                                }
+                                .response_from_proto(
+                                    code_actions_response,
+                                    project.clone(),
+                                    buffer.clone(),
+                                    cx.clone(),
+                                )
+                            }),
+                    )
+                    .await;
+
+                    Ok(actions
+                        .into_iter()
+                        .collect::<Result<Vec<Vec<_>>>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect())
+                })
+            }
+            _ => {
+                let all_actions_task = self.request_multiple_lsp_locally(
+                    buffer_handle,
+                    Some(range.start),
                     GetCodeActions {
                         range: range.clone(),
                         kinds: kinds.clone(),
-                    }
-                    .to_proto(project_id, buffer_handle.read(cx)),
-                )),
-            });
-            let buffer = buffer_handle.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
-                    return Ok(Vec::new());
-                };
-                let responses = request_task.await?.responses;
-                let actions = join_all(
-                    responses
-                        .into_iter()
-                        .filter_map(|lsp_response| match lsp_response.response? {
-                            proto::lsp_response::Response::GetCodeActionsResponse(response) => {
-                                Some(response)
-                            }
-                            unexpected => {
-                                debug_panic!("Unexpected response: {unexpected:?}");
-                                None
-                            }
-                        })
-                        .map(|code_actions_response| {
-                            GetCodeActions {
-                                range: range.clone(),
-                                kinds: kinds.clone(),
-                            }
-                            .response_from_proto(
-                                code_actions_response,
-                                project.clone(),
-                                buffer.clone(),
-                                cx.clone(),
-                            )
-                        }),
-                )
-                .await;
-
-                Ok(actions
-                    .into_iter()
-                    .collect::<Result<Vec<Vec<_>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect())
-            })
-        } _ => {
-            let all_actions_task = self.request_multiple_lsp_locally(
-                buffer_handle,
-                Some(range.start),
-                GetCodeActions {
-                    range: range.clone(),
-                    kinds: kinds.clone(),
-                },
-                cx,
-            );
-            cx.spawn(async move |_, _| Ok(all_actions_task.await.into_iter().flatten().collect()))
-        }}
+                    },
+                    cx,
+                );
+                cx.spawn(async move |_, _| {
+                    Ok(all_actions_task.await.into_iter().flatten().collect())
+                })
+            }
+        }
     }
 
     pub fn code_lens(
@@ -4877,59 +4926,66 @@ impl LspStore {
         buffer_handle: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
-        match self.upstream_client() { Some((upstream_client, project_id)) => {
-            let request_task = upstream_client.request(proto::MultiLspQuery {
-                buffer_id: buffer_handle.read(cx).remote_id().into(),
-                version: serialize_version(&buffer_handle.read(cx).version()),
-                project_id,
-                strategy: Some(proto::multi_lsp_query::Strategy::All(
-                    proto::AllLanguageServers {},
-                )),
-                request: Some(proto::multi_lsp_query::Request::GetCodeLens(
-                    GetCodeLens.to_proto(project_id, buffer_handle.read(cx)),
-                )),
-            });
-            let buffer = buffer_handle.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
-                    return Ok(Vec::new());
-                };
-                let responses = request_task.await?.responses;
-                let code_lens = join_all(
-                    responses
-                        .into_iter()
-                        .filter_map(|lsp_response| match lsp_response.response? {
-                            proto::lsp_response::Response::GetCodeLensResponse(response) => {
-                                Some(response)
-                            }
-                            unexpected => {
-                                debug_panic!("Unexpected response: {unexpected:?}");
-                                None
-                            }
-                        })
-                        .map(|code_lens_response| {
-                            GetCodeLens.response_from_proto(
-                                code_lens_response,
-                                project.clone(),
-                                buffer.clone(),
-                                cx.clone(),
-                            )
-                        }),
-                )
-                .await;
+        match self.upstream_client() {
+            Some((upstream_client, project_id)) => {
+                let request_task = upstream_client.request(proto::MultiLspQuery {
+                    buffer_id: buffer_handle.read(cx).remote_id().into(),
+                    version: serialize_version(&buffer_handle.read(cx).version()),
+                    project_id,
+                    strategy: Some(proto::multi_lsp_query::Strategy::All(
+                        proto::AllLanguageServers {},
+                    )),
+                    request: Some(proto::multi_lsp_query::Request::GetCodeLens(
+                        GetCodeLens.to_proto(project_id, buffer_handle.read(cx)),
+                    )),
+                });
+                let buffer = buffer_handle.clone();
+                cx.spawn(async move |weak_project, cx| {
+                    let Some(project) = weak_project.upgrade() else {
+                        return Ok(Vec::new());
+                    };
+                    let responses = request_task.await?.responses;
+                    let code_lens = join_all(
+                        responses
+                            .into_iter()
+                            .filter_map(|lsp_response| match lsp_response.response? {
+                                proto::lsp_response::Response::GetCodeLensResponse(response) => {
+                                    Some(response)
+                                }
+                                unexpected => {
+                                    debug_panic!("Unexpected response: {unexpected:?}");
+                                    None
+                                }
+                            })
+                            .map(|code_lens_response| {
+                                GetCodeLens.response_from_proto(
+                                    code_lens_response,
+                                    project.clone(),
+                                    buffer.clone(),
+                                    cx.clone(),
+                                )
+                            }),
+                    )
+                    .await;
 
-                Ok(code_lens
-                    .into_iter()
-                    .collect::<Result<Vec<Vec<_>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect())
-            })
-        } _ => {
-            let code_lens_task =
-                self.request_multiple_lsp_locally(buffer_handle, None::<usize>, GetCodeLens, cx);
-            cx.spawn(async move |_, _| Ok(code_lens_task.await.into_iter().flatten().collect()))
-        }}
+                    Ok(code_lens
+                        .into_iter()
+                        .collect::<Result<Vec<Vec<_>>>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect())
+                })
+            }
+            _ => {
+                let code_lens_task = self.request_multiple_lsp_locally(
+                    buffer_handle,
+                    None::<usize>,
+                    GetCodeLens,
+                    cx,
+                );
+                cx.spawn(async move |_, _| Ok(code_lens_task.await.into_iter().flatten().collect()))
+            }
+        }
     }
 
     #[inline(never)]
@@ -4942,70 +4998,80 @@ impl LspStore {
     ) -> Task<Result<Option<Vec<Completion>>>> {
         let language_registry = self.languages.clone();
 
-        match self.upstream_client() { Some((upstream_client, project_id)) => {
-            let task = self.send_lsp_proto_request(
-                buffer.clone(),
-                upstream_client,
-                project_id,
-                GetCompletions { position, context },
-                cx,
-            );
-            let language = buffer.read(cx).language().cloned();
+        match self.upstream_client() {
+            Some((upstream_client, project_id)) => {
+                let task = self.send_lsp_proto_request(
+                    buffer.clone(),
+                    upstream_client,
+                    project_id,
+                    GetCompletions { position, context },
+                    cx,
+                );
+                let language = buffer.read(cx).language().cloned();
 
-            // In the future, we should provide project guests with the names of LSP adapters,
-            // so that they can use the correct LSP adapter when computing labels. For now,
-            // guests just use the first LSP adapter associated with the buffer's language.
-            let lsp_adapter = language.as_ref().and_then(|language| {
-                language_registry
-                    .lsp_adapters(&language.name())
-                    .first()
-                    .cloned()
-            });
+                // In the future, we should provide project guests with the names of LSP adapters,
+                // so that they can use the correct LSP adapter when computing labels. For now,
+                // guests just use the first LSP adapter associated with the buffer's language.
+                let lsp_adapter = language.as_ref().and_then(|language| {
+                    language_registry
+                        .lsp_adapters(&language.name())
+                        .first()
+                        .cloned()
+                });
 
-            cx.foreground_executor().spawn(async move {
-                let completions = task.await?;
-                let mut result = Vec::new();
-                populate_labels_for_completions(completions, language, lsp_adapter, &mut result)
+                cx.foreground_executor().spawn(async move {
+                    let completions = task.await?;
+                    let mut result = Vec::new();
+                    populate_labels_for_completions(
+                        completions,
+                        language,
+                        lsp_adapter,
+                        &mut result,
+                    )
                     .await;
-                Ok(Some(result))
-            })
-        } _ => if let Some(local) = self.as_local() {
-            let snapshot = buffer.read(cx).snapshot();
-            let offset = position.to_offset(&snapshot);
-            let scope = snapshot.language_scope_at(offset);
-            let language = snapshot.language().cloned();
-            let completion_settings = language_settings(
-                language.as_ref().map(|language| language.name()),
-                buffer.read(cx).file(),
-                cx,
-            )
-            .completions;
-            if !completion_settings.lsp {
-                return Task::ready(Ok(None));
+                    Ok(Some(result))
+                })
             }
+            _ => {
+                if let Some(local) = self.as_local() {
+                    let snapshot = buffer.read(cx).snapshot();
+                    let offset = position.to_offset(&snapshot);
+                    let scope = snapshot.language_scope_at(offset);
+                    let language = snapshot.language().cloned();
+                    let completion_settings = language_settings(
+                        language.as_ref().map(|language| language.name()),
+                        buffer.read(cx).file(),
+                        cx,
+                    )
+                    .completions;
+                    if !completion_settings.lsp {
+                        return Task::ready(Ok(None));
+                    }
 
-            let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
-                local
-                    .language_servers_for_buffer(buffer, cx)
-                    .filter(|(_, server)| server.capabilities().completion_provider.is_some())
-                    .filter(|(adapter, _)| {
-                        scope
-                            .as_ref()
-                            .map(|scope| scope.language_allowed(&adapter.name))
-                            .unwrap_or(true)
-                    })
-                    .map(|(_, server)| server.server_id())
-                    .collect()
-            });
+                    let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
+                        local
+                            .language_servers_for_buffer(buffer, cx)
+                            .filter(|(_, server)| {
+                                server.capabilities().completion_provider.is_some()
+                            })
+                            .filter(|(adapter, _)| {
+                                scope
+                                    .as_ref()
+                                    .map(|scope| scope.language_allowed(&adapter.name))
+                                    .unwrap_or(true)
+                            })
+                            .map(|(_, server)| server.server_id())
+                            .collect()
+                    });
 
-            let buffer = buffer.clone();
-            let lsp_timeout = completion_settings.lsp_fetch_timeout_ms;
-            let lsp_timeout = if lsp_timeout > 0 {
-                Some(Duration::from_millis(lsp_timeout))
-            } else {
-                None
-            };
-            cx.spawn(async move |this,  cx| {
+                    let buffer = buffer.clone();
+                    let lsp_timeout = completion_settings.lsp_fetch_timeout_ms;
+                    let lsp_timeout = if lsp_timeout > 0 {
+                        Some(Duration::from_millis(lsp_timeout))
+                    } else {
+                        None
+                    };
+                    cx.spawn(async move |this,  cx| {
                 let mut tasks = Vec::with_capacity(server_ids.len());
                 this.update(cx, |lsp_store, cx| {
                     for server_id in server_ids {
@@ -5068,9 +5134,11 @@ impl LspStore {
                     Ok(None)
                 }
             })
-        } else {
-            Task::ready(Err(anyhow!("No upstream client or local language server")))
-        }}
+                } else {
+                    Task::ready(Err(anyhow!("No upstream client or local language server")))
+                }
+            }
+        }
     }
 
     pub fn resolve_completions(
@@ -5087,82 +5155,85 @@ impl LspStore {
 
         cx.spawn(async move |this, cx| {
             let mut did_resolve = false;
-            match client { Some((client, project_id)) => {
-                for completion_index in completion_indices {
-                    let server_id = {
-                        let completion = &completions.borrow()[completion_index];
-                        completion.source.server_id()
-                    };
-                    if let Some(server_id) = server_id {
-                        if Self::resolve_completion_remote(
-                            project_id,
-                            server_id,
-                            buffer_id,
-                            completions.clone(),
-                            completion_index,
-                            client.clone(),
-                        )
-                        .await
-                        .log_err()
-                        .is_some()
-                        {
-                            did_resolve = true;
+            match client {
+                Some((client, project_id)) => {
+                    for completion_index in completion_indices {
+                        let server_id = {
+                            let completion = &completions.borrow()[completion_index];
+                            completion.source.server_id()
+                        };
+                        if let Some(server_id) = server_id {
+                            if Self::resolve_completion_remote(
+                                project_id,
+                                server_id,
+                                buffer_id,
+                                completions.clone(),
+                                completion_index,
+                                client.clone(),
+                            )
+                            .await
+                            .log_err()
+                            .is_some()
+                            {
+                                did_resolve = true;
+                            }
+                        } else {
+                            resolve_word_completion(
+                                &buffer_snapshot,
+                                &mut completions.borrow_mut()[completion_index],
+                            );
                         }
-                    } else {
-                        resolve_word_completion(
-                            &buffer_snapshot,
-                            &mut completions.borrow_mut()[completion_index],
-                        );
                     }
                 }
-            } _ => {
-                for completion_index in completion_indices {
-                    let server_id = {
-                        let completion = &completions.borrow()[completion_index];
-                        completion.source.server_id()
-                    };
-                    if let Some(server_id) = server_id {
-                        let server_and_adapter = this
-                            .read_with(cx, |lsp_store, _| {
-                                let server = lsp_store.language_server_for_id(server_id)?;
-                                let adapter =
-                                    lsp_store.language_server_adapter_for_id(server.server_id())?;
-                                Some((server, adapter))
-                            })
-                            .ok()
-                            .flatten();
-                        let Some((server, adapter)) = server_and_adapter else {
-                            continue;
+                _ => {
+                    for completion_index in completion_indices {
+                        let server_id = {
+                            let completion = &completions.borrow()[completion_index];
+                            completion.source.server_id()
                         };
+                        if let Some(server_id) = server_id {
+                            let server_and_adapter = this
+                                .read_with(cx, |lsp_store, _| {
+                                    let server = lsp_store.language_server_for_id(server_id)?;
+                                    let adapter = lsp_store
+                                        .language_server_adapter_for_id(server.server_id())?;
+                                    Some((server, adapter))
+                                })
+                                .ok()
+                                .flatten();
+                            let Some((server, adapter)) = server_and_adapter else {
+                                continue;
+                            };
 
-                        let resolved = Self::resolve_completion_local(
-                            server,
-                            &buffer_snapshot,
-                            completions.clone(),
-                            completion_index,
-                        )
-                        .await
-                        .log_err()
-                        .is_some();
-                        if resolved {
-                            Self::regenerate_completion_labels(
-                                adapter,
+                            let resolved = Self::resolve_completion_local(
+                                server,
                                 &buffer_snapshot,
                                 completions.clone(),
                                 completion_index,
                             )
                             .await
-                            .log_err();
-                            did_resolve = true;
+                            .log_err()
+                            .is_some();
+                            if resolved {
+                                Self::regenerate_completion_labels(
+                                    adapter,
+                                    &buffer_snapshot,
+                                    completions.clone(),
+                                    completion_index,
+                                )
+                                .await
+                                .log_err();
+                                did_resolve = true;
+                            }
+                        } else {
+                            resolve_word_completion(
+                                &buffer_snapshot,
+                                &mut completions.borrow_mut()[completion_index],
+                            );
                         }
-                    } else {
-                        resolve_word_completion(
-                            &buffer_snapshot,
-                            &mut completions.borrow_mut()[completion_index],
-                        );
                     }
                 }
-            }}
+            }
 
             Ok(did_resolve)
         })
@@ -5263,15 +5334,18 @@ impl LspStore {
         match completion_item
             .as_ref()
             .and_then(|completion_item| completion_item.documentation.clone())
-        { Some(lsp_documentation) => {
-            let mut completions = completions.borrow_mut();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(lsp_documentation.into());
-        } _ => {
-            let mut completions = completions.borrow_mut();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(CompletionDocumentation::Undocumented);
-        }}
+        {
+            Some(lsp_documentation) => {
+                let mut completions = completions.borrow_mut();
+                let completion = &mut completions[completion_index];
+                completion.documentation = Some(lsp_documentation.into());
+            }
+            _ => {
+                let mut completions = completions.borrow_mut();
+                let completion = &mut completions[completion_index];
+                completion.documentation = Some(CompletionDocumentation::Undocumented);
+            }
+        }
 
         let mut new_label = match completion_item {
             Some(completion_item) => {
@@ -5417,116 +5491,121 @@ impl LspStore {
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        match self.upstream_client() { Some((client, project_id)) => {
-            let buffer = buffer_handle.read(cx);
-            let buffer_id = buffer.remote_id();
-            cx.spawn(async move |_, cx| {
-                let request = {
-                    let completion = completions.borrow()[completion_index].clone();
-                    proto::ApplyCompletionAdditionalEdits {
-                        project_id,
-                        buffer_id: buffer_id.into(),
-                        completion: Some(Self::serialize_completion(&CoreCompletion {
-                            old_range: completion.old_range,
-                            new_text: completion.new_text,
-                            source: completion.source,
-                        })),
-                    }
-                };
-
-                match client.request(request).await?.transaction { Some(transaction) => {
-                    let transaction = language::proto::deserialize_transaction(transaction)?;
-                    buffer_handle
-                        .update(cx, |buffer, _| {
-                            buffer.wait_for_edits(transaction.edit_ids.iter().copied())
-                        })?
-                        .await?;
-                    if push_to_history {
-                        buffer_handle.update(cx, |buffer, _| {
-                            buffer.push_transaction(transaction.clone(), Instant::now());
-                        })?;
-                    }
-                    Ok(Some(transaction))
-                } _ => {
-                    Ok(None)
-                }}
-            })
-        } _ => {
-            let Some(server) = buffer_handle.update(cx, |buffer, cx| {
-                let completion = &completions.borrow()[completion_index];
-                let server_id = completion.source.server_id()?;
-                Some(
-                    self.language_server_for_local_buffer(buffer, server_id, cx)?
-                        .1
-                        .clone(),
-                )
-            }) else {
-                return Task::ready(Ok(None));
-            };
-            let snapshot = buffer_handle.read(&cx).snapshot();
-
-            cx.spawn(async move |this, cx| {
-                Self::resolve_completion_local(
-                    server.clone(),
-                    &snapshot,
-                    completions.clone(),
-                    completion_index,
-                )
-                .await
-                .context("resolving completion")?;
-                let completion = completions.borrow()[completion_index].clone();
-                let additional_text_edits = completion
-                    .source
-                    .lsp_completion(true)
-                    .as_ref()
-                    .and_then(|lsp_completion| lsp_completion.additional_text_edits.clone());
-                if let Some(edits) = additional_text_edits {
-                    let edits = this
-                        .update(cx, |this, cx| {
-                            this.as_local_mut().unwrap().edits_from_lsp(
-                                &buffer_handle,
-                                edits,
-                                server.server_id(),
-                                None,
-                                cx,
-                            )
-                        })?
-                        .await?;
-
-                    buffer_handle.update(cx, |buffer, cx| {
-                        buffer.finalize_last_transaction();
-                        buffer.start_transaction();
-
-                        for (range, text) in edits {
-                            let primary = &completion.old_range;
-                            let start_within = primary.start.cmp(&range.start, buffer).is_le()
-                                && primary.end.cmp(&range.start, buffer).is_ge();
-                            let end_within = range.start.cmp(&primary.end, buffer).is_le()
-                                && range.end.cmp(&primary.end, buffer).is_ge();
-
-                            //Skip additional edits which overlap with the primary completion edit
-                            //https://github.com/zed-industries/zed/pull/1871
-                            if !start_within && !end_within {
-                                buffer.edit([(range, text)], None, cx);
-                            }
+        match self.upstream_client() {
+            Some((client, project_id)) => {
+                let buffer = buffer_handle.read(cx);
+                let buffer_id = buffer.remote_id();
+                cx.spawn(async move |_, cx| {
+                    let request = {
+                        let completion = completions.borrow()[completion_index].clone();
+                        proto::ApplyCompletionAdditionalEdits {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            completion: Some(Self::serialize_completion(&CoreCompletion {
+                                old_range: completion.old_range,
+                                new_text: completion.new_text,
+                                source: completion.source,
+                            })),
                         }
+                    };
 
-                        let transaction = if buffer.end_transaction(cx).is_some() {
-                            let transaction = buffer.finalize_last_transaction().unwrap().clone();
-                            if !push_to_history {
-                                buffer.forget_transaction(transaction.id);
+                    match client.request(request).await?.transaction {
+                        Some(transaction) => {
+                            let transaction =
+                                language::proto::deserialize_transaction(transaction)?;
+                            buffer_handle
+                                .update(cx, |buffer, _| {
+                                    buffer.wait_for_edits(transaction.edit_ids.iter().copied())
+                                })?
+                                .await?;
+                            if push_to_history {
+                                buffer_handle.update(cx, |buffer, _| {
+                                    buffer.push_transaction(transaction.clone(), Instant::now());
+                                })?;
                             }
-                            Some(transaction)
-                        } else {
-                            None
-                        };
-                        Ok(transaction)
-                    })?
-                } else {
-                    Ok(None)
-                }
-            })
-        }}
+                            Ok(Some(transaction))
+                        }
+                        _ => Ok(None),
+                    }
+                })
+            }
+            _ => {
+                let Some(server) = buffer_handle.update(cx, |buffer, cx| {
+                    let completion = &completions.borrow()[completion_index];
+                    let server_id = completion.source.server_id()?;
+                    Some(
+                        self.language_server_for_local_buffer(buffer, server_id, cx)?
+                            .1
+                            .clone(),
+                    )
+                }) else {
+                    return Task::ready(Ok(None));
+                };
+                let snapshot = buffer_handle.read(&cx).snapshot();
+
+                cx.spawn(async move |this, cx| {
+                    Self::resolve_completion_local(
+                        server.clone(),
+                        &snapshot,
+                        completions.clone(),
+                        completion_index,
+                    )
+                    .await
+                    .context("resolving completion")?;
+                    let completion = completions.borrow()[completion_index].clone();
+                    let additional_text_edits =
+                        completion.source.lsp_completion(true).as_ref().and_then(
+                            |lsp_completion| lsp_completion.additional_text_edits.clone(),
+                        );
+                    if let Some(edits) = additional_text_edits {
+                        let edits = this
+                            .update(cx, |this, cx| {
+                                this.as_local_mut().unwrap().edits_from_lsp(
+                                    &buffer_handle,
+                                    edits,
+                                    server.server_id(),
+                                    None,
+                                    cx,
+                                )
+                            })?
+                            .await?;
+
+                        buffer_handle.update(cx, |buffer, cx| {
+                            buffer.finalize_last_transaction();
+                            buffer.start_transaction();
+
+                            for (range, text) in edits {
+                                let primary = &completion.old_range;
+                                let start_within = primary.start.cmp(&range.start, buffer).is_le()
+                                    && primary.end.cmp(&range.start, buffer).is_ge();
+                                let end_within = range.start.cmp(&primary.end, buffer).is_le()
+                                    && range.end.cmp(&primary.end, buffer).is_ge();
+
+                                //Skip additional edits which overlap with the primary completion edit
+                                //https://github.com/zed-industries/zed/pull/1871
+                                if !start_within && !end_within {
+                                    buffer.edit([(range, text)], None, cx);
+                                }
+                            }
+
+                            let transaction = if buffer.end_transaction(cx).is_some() {
+                                let transaction =
+                                    buffer.finalize_last_transaction().unwrap().clone();
+                                if !push_to_history {
+                                    buffer.forget_transaction(transaction.id);
+                                }
+                                Some(transaction)
+                            } else {
+                                None
+                            };
+                            Ok(transaction)
+                        })?
+                    } else {
+                        Ok(None)
+                    }
+                })
+            }
+        }
     }
 
     pub fn inlay_hints(
@@ -5541,46 +5620,49 @@ impl LspStore {
         let buffer_id = buffer.remote_id().into();
         let lsp_request = InlayHints { range };
 
-        match self.upstream_client() { Some((client, project_id)) => {
-            let request = proto::InlayHints {
-                project_id,
-                buffer_id,
-                start: Some(serialize_anchor(&range_start)),
-                end: Some(serialize_anchor(&range_end)),
-                version: serialize_version(&buffer_handle.read(cx).version()),
-            };
-            cx.spawn(async move |project, cx| {
-                let response = client
-                    .request(request)
+        match self.upstream_client() {
+            Some((client, project_id)) => {
+                let request = proto::InlayHints {
+                    project_id,
+                    buffer_id,
+                    start: Some(serialize_anchor(&range_start)),
+                    end: Some(serialize_anchor(&range_end)),
+                    version: serialize_version(&buffer_handle.read(cx).version()),
+                };
+                cx.spawn(async move |project, cx| {
+                    let response = client
+                        .request(request)
+                        .await
+                        .context("inlay hints proto request")?;
+                    LspCommand::response_from_proto(
+                        lsp_request,
+                        response,
+                        project.upgrade().ok_or_else(|| anyhow!("No project"))?,
+                        buffer_handle.clone(),
+                        cx.clone(),
+                    )
                     .await
-                    .context("inlay hints proto request")?;
-                LspCommand::response_from_proto(
-                    lsp_request,
-                    response,
-                    project.upgrade().ok_or_else(|| anyhow!("No project"))?,
+                    .context("inlay hints proto response conversion")
+                })
+            }
+            _ => {
+                let lsp_request_task = self.request_lsp(
                     buffer_handle.clone(),
-                    cx.clone(),
-                )
-                .await
-                .context("inlay hints proto response conversion")
-            })
-        } _ => {
-            let lsp_request_task = self.request_lsp(
-                buffer_handle.clone(),
-                LanguageServerToQuery::FirstCapable,
-                lsp_request,
-                cx,
-            );
-            cx.spawn(async move |_, cx| {
-                buffer_handle
-                    .update(cx, |buffer, _| {
-                        buffer.wait_for_edits(vec![range_start.timestamp, range_end.timestamp])
-                    })?
-                    .await
-                    .context("waiting for inlay hint request range edits")?;
-                lsp_request_task.await.context("inlay hints LSP request")
-            })
-        }}
+                    LanguageServerToQuery::FirstCapable,
+                    lsp_request,
+                    cx,
+                );
+                cx.spawn(async move |_, cx| {
+                    buffer_handle
+                        .update(cx, |buffer, _| {
+                            buffer.wait_for_edits(vec![range_start.timestamp, range_end.timestamp])
+                        })?
+                        .await
+                        .context("waiting for inlay hint request range edits")?;
+                    lsp_request_task.await.context("inlay hints LSP request")
+                })
+            }
+        }
     }
 
     pub fn signature_help<T: ToPointUtf16>(
@@ -5591,70 +5673,74 @@ impl LspStore {
     ) -> Task<Vec<SignatureHelp>> {
         let position = position.to_point_utf16(buffer.read(cx));
 
-        match self.upstream_client() { Some((client, upstream_project_id)) => {
-            let request_task = client.request(proto::MultiLspQuery {
-                buffer_id: buffer.read(cx).remote_id().into(),
-                version: serialize_version(&buffer.read(cx).version()),
-                project_id: upstream_project_id,
-                strategy: Some(proto::multi_lsp_query::Strategy::All(
-                    proto::AllLanguageServers {},
-                )),
-                request: Some(proto::multi_lsp_query::Request::GetSignatureHelp(
-                    GetSignatureHelp { position }.to_proto(upstream_project_id, buffer.read(cx)),
-                )),
-            });
-            let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
-                    return Vec::new();
-                };
-                join_all(
-                    request_task
-                        .await
-                        .log_err()
-                        .map(|response| response.responses)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter_map(|lsp_response| match lsp_response.response? {
-                            proto::lsp_response::Response::GetSignatureHelpResponse(response) => {
-                                Some(response)
-                            }
-                            unexpected => {
-                                debug_panic!("Unexpected response: {unexpected:?}");
-                                None
-                            }
-                        })
-                        .map(|signature_response| {
-                            let response = GetSignatureHelp { position }.response_from_proto(
-                                signature_response,
-                                project.clone(),
-                                buffer.clone(),
-                                cx.clone(),
-                            );
-                            async move { response.await.log_err().flatten() }
-                        }),
-                )
-                .await
-                .into_iter()
-                .flatten()
-                .collect()
-            })
-        } _ => {
-            let all_actions_task = self.request_multiple_lsp_locally(
-                buffer,
-                Some(position),
-                GetSignatureHelp { position },
-                cx,
-            );
-            cx.spawn(async move |_, _| {
-                all_actions_task
+        match self.upstream_client() {
+            Some((client, upstream_project_id)) => {
+                let request_task = client.request(proto::MultiLspQuery {
+                    buffer_id: buffer.read(cx).remote_id().into(),
+                    version: serialize_version(&buffer.read(cx).version()),
+                    project_id: upstream_project_id,
+                    strategy: Some(proto::multi_lsp_query::Strategy::All(
+                        proto::AllLanguageServers {},
+                    )),
+                    request: Some(proto::multi_lsp_query::Request::GetSignatureHelp(
+                        GetSignatureHelp { position }
+                            .to_proto(upstream_project_id, buffer.read(cx)),
+                    )),
+                });
+                let buffer = buffer.clone();
+                cx.spawn(async move |weak_project, cx| {
+                    let Some(project) = weak_project.upgrade() else {
+                        return Vec::new();
+                    };
+                    join_all(
+                        request_task
+                            .await
+                            .log_err()
+                            .map(|response| response.responses)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter_map(|lsp_response| match lsp_response.response? {
+                                proto::lsp_response::Response::GetSignatureHelpResponse(
+                                    response,
+                                ) => Some(response),
+                                unexpected => {
+                                    debug_panic!("Unexpected response: {unexpected:?}");
+                                    None
+                                }
+                            })
+                            .map(|signature_response| {
+                                let response = GetSignatureHelp { position }.response_from_proto(
+                                    signature_response,
+                                    project.clone(),
+                                    buffer.clone(),
+                                    cx.clone(),
+                                );
+                                async move { response.await.log_err().flatten() }
+                            }),
+                    )
                     .await
                     .into_iter()
                     .flatten()
-                    .filter(|help| !help.label.is_empty())
-                    .collect::<Vec<_>>()
-            })
-        }}
+                    .collect()
+                })
+            }
+            _ => {
+                let all_actions_task = self.request_multiple_lsp_locally(
+                    buffer,
+                    Some(position),
+                    GetSignatureHelp { position },
+                    cx,
+                );
+                cx.spawn(async move |_, _| {
+                    all_actions_task
+                        .await
+                        .into_iter()
+                        .flatten()
+                        .filter(|help| !help.label.is_empty())
+                        .collect::<Vec<_>>()
+                })
+            }
+        }
     }
 
     pub fn hover(
@@ -5663,146 +5749,160 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Hover>> {
-        match self.upstream_client() { Some((client, upstream_project_id)) => {
-            let request_task = client.request(proto::MultiLspQuery {
-                buffer_id: buffer.read(cx).remote_id().into(),
-                version: serialize_version(&buffer.read(cx).version()),
-                project_id: upstream_project_id,
-                strategy: Some(proto::multi_lsp_query::Strategy::All(
-                    proto::AllLanguageServers {},
-                )),
-                request: Some(proto::multi_lsp_query::Request::GetHover(
-                    GetHover { position }.to_proto(upstream_project_id, buffer.read(cx)),
-                )),
-            });
-            let buffer = buffer.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
-                    return Vec::new();
-                };
-                join_all(
-                    request_task
-                        .await
-                        .log_err()
-                        .map(|response| response.responses)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter_map(|lsp_response| match lsp_response.response? {
-                            proto::lsp_response::Response::GetHoverResponse(response) => {
-                                Some(response)
-                            }
-                            unexpected => {
-                                debug_panic!("Unexpected response: {unexpected:?}");
-                                None
-                            }
-                        })
-                        .map(|hover_response| {
-                            let response = GetHover { position }.response_from_proto(
-                                hover_response,
-                                project.clone(),
-                                buffer.clone(),
-                                cx.clone(),
-                            );
-                            async move {
-                                response
-                                    .await
-                                    .log_err()
-                                    .flatten()
-                                    .and_then(remove_empty_hover_blocks)
-                            }
-                        }),
-                )
-                .await
-                .into_iter()
-                .flatten()
-                .collect()
-            })
-        } _ => {
-            let all_actions_task = self.request_multiple_lsp_locally(
-                buffer,
-                Some(position),
-                GetHover { position },
-                cx,
-            );
-            cx.spawn(async move |_, _| {
-                all_actions_task
+        match self.upstream_client() {
+            Some((client, upstream_project_id)) => {
+                let request_task = client.request(proto::MultiLspQuery {
+                    buffer_id: buffer.read(cx).remote_id().into(),
+                    version: serialize_version(&buffer.read(cx).version()),
+                    project_id: upstream_project_id,
+                    strategy: Some(proto::multi_lsp_query::Strategy::All(
+                        proto::AllLanguageServers {},
+                    )),
+                    request: Some(proto::multi_lsp_query::Request::GetHover(
+                        GetHover { position }.to_proto(upstream_project_id, buffer.read(cx)),
+                    )),
+                });
+                let buffer = buffer.clone();
+                cx.spawn(async move |weak_project, cx| {
+                    let Some(project) = weak_project.upgrade() else {
+                        return Vec::new();
+                    };
+                    join_all(
+                        request_task
+                            .await
+                            .log_err()
+                            .map(|response| response.responses)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter_map(|lsp_response| match lsp_response.response? {
+                                proto::lsp_response::Response::GetHoverResponse(response) => {
+                                    Some(response)
+                                }
+                                unexpected => {
+                                    debug_panic!("Unexpected response: {unexpected:?}");
+                                    None
+                                }
+                            })
+                            .map(|hover_response| {
+                                let response = GetHover { position }.response_from_proto(
+                                    hover_response,
+                                    project.clone(),
+                                    buffer.clone(),
+                                    cx.clone(),
+                                );
+                                async move {
+                                    response
+                                        .await
+                                        .log_err()
+                                        .flatten()
+                                        .and_then(remove_empty_hover_blocks)
+                                }
+                            }),
+                    )
                     .await
                     .into_iter()
-                    .filter_map(|hover| remove_empty_hover_blocks(hover?))
-                    .collect::<Vec<Hover>>()
-            })
-        }}
+                    .flatten()
+                    .collect()
+                })
+            }
+            _ => {
+                let all_actions_task = self.request_multiple_lsp_locally(
+                    buffer,
+                    Some(position),
+                    GetHover { position },
+                    cx,
+                );
+                cx.spawn(async move |_, _| {
+                    all_actions_task
+                        .await
+                        .into_iter()
+                        .filter_map(|hover| remove_empty_hover_blocks(hover?))
+                        .collect::<Vec<Hover>>()
+                })
+            }
+        }
     }
 
     pub fn symbols(&self, query: &str, cx: &mut Context<Self>) -> Task<Result<Vec<Symbol>>> {
         let language_registry = self.languages.clone();
 
-        match self.upstream_client().as_ref() { Some((upstream_client, project_id)) => {
-            let request = upstream_client.request(proto::GetProjectSymbols {
-                project_id: *project_id,
-                query: query.to_string(),
-            });
-            cx.foreground_executor().spawn(async move {
-                let response = request.await?;
-                let mut symbols = Vec::new();
-                let core_symbols = response
-                    .symbols
-                    .into_iter()
-                    .filter_map(|symbol| Self::deserialize_symbol(symbol).log_err())
-                    .collect::<Vec<_>>();
-                populate_labels_for_symbols(core_symbols, &language_registry, None, &mut symbols)
+        match self.upstream_client().as_ref() {
+            Some((upstream_client, project_id)) => {
+                let request = upstream_client.request(proto::GetProjectSymbols {
+                    project_id: *project_id,
+                    query: query.to_string(),
+                });
+                cx.foreground_executor().spawn(async move {
+                    let response = request.await?;
+                    let mut symbols = Vec::new();
+                    let core_symbols = response
+                        .symbols
+                        .into_iter()
+                        .filter_map(|symbol| Self::deserialize_symbol(symbol).log_err())
+                        .collect::<Vec<_>>();
+                    populate_labels_for_symbols(
+                        core_symbols,
+                        &language_registry,
+                        None,
+                        &mut symbols,
+                    )
                     .await;
-                Ok(symbols)
-            })
-        } _ => if let Some(local) = self.as_local() {
-            struct WorkspaceSymbolsResult {
-                server_id: LanguageServerId,
-                lsp_adapter: Arc<CachedLspAdapter>,
-                worktree: WeakEntity<Worktree>,
-                worktree_abs_path: Arc<Path>,
-                lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
+                    Ok(symbols)
+                })
             }
-
-            let mut requests = Vec::new();
-            let mut requested_servers = BTreeSet::new();
-            'next_server: for ((worktree_id, _), server_ids) in local.language_server_ids.iter() {
-                let Some(worktree_handle) = self
-                    .worktree_store
-                    .read(cx)
-                    .worktree_for_id(*worktree_id, cx)
-                else {
-                    continue;
-                };
-                let worktree = worktree_handle.read(cx);
-                if !worktree.is_visible() {
-                    continue;
-                }
-
-                let mut servers_to_query = server_ids
-                    .difference(&requested_servers)
-                    .cloned()
-                    .collect::<BTreeSet<_>>();
-                for server_id in &servers_to_query {
-                    let (lsp_adapter, server) = match local.language_servers.get(server_id) {
-                        Some(LanguageServerState::Running {
-                            adapter, server, ..
-                        }) => (adapter.clone(), server),
-
-                        _ => continue 'next_server,
-                    };
-                    let supports_workspace_symbol_request =
-                        match server.capabilities().workspace_symbol_provider {
-                            Some(OneOf::Left(supported)) => supported,
-                            Some(OneOf::Right(_)) => true,
-                            None => false,
-                        };
-                    if !supports_workspace_symbol_request {
-                        continue 'next_server;
+            _ => {
+                if let Some(local) = self.as_local() {
+                    struct WorkspaceSymbolsResult {
+                        server_id: LanguageServerId,
+                        lsp_adapter: Arc<CachedLspAdapter>,
+                        worktree: WeakEntity<Worktree>,
+                        worktree_abs_path: Arc<Path>,
+                        lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
                     }
-                    let worktree_abs_path = worktree.abs_path().clone();
-                    let worktree_handle = worktree_handle.clone();
-                    let server_id = server.server_id();
-                    requests.push(
+
+                    let mut requests = Vec::new();
+                    let mut requested_servers = BTreeSet::new();
+                    'next_server: for ((worktree_id, _), server_ids) in
+                        local.language_server_ids.iter()
+                    {
+                        let Some(worktree_handle) = self
+                            .worktree_store
+                            .read(cx)
+                            .worktree_for_id(*worktree_id, cx)
+                        else {
+                            continue;
+                        };
+                        let worktree = worktree_handle.read(cx);
+                        if !worktree.is_visible() {
+                            continue;
+                        }
+
+                        let mut servers_to_query = server_ids
+                            .difference(&requested_servers)
+                            .cloned()
+                            .collect::<BTreeSet<_>>();
+                        for server_id in &servers_to_query {
+                            let (lsp_adapter, server) = match local.language_servers.get(server_id)
+                            {
+                                Some(LanguageServerState::Running {
+                                    adapter, server, ..
+                                }) => (adapter.clone(), server),
+
+                                _ => continue 'next_server,
+                            };
+                            let supports_workspace_symbol_request =
+                                match server.capabilities().workspace_symbol_provider {
+                                    Some(OneOf::Left(supported)) => supported,
+                                    Some(OneOf::Right(_)) => true,
+                                    None => false,
+                                };
+                            if !supports_workspace_symbol_request {
+                                continue 'next_server;
+                            }
+                            let worktree_abs_path = worktree.abs_path().clone();
+                            let worktree_handle = worktree_handle.clone();
+                            let server_id = server.server_id();
+                            requests.push(
                         server
                             .request::<lsp::request::WorkspaceSymbolRequest>(
                                 lsp::WorkspaceSymbolParams {
@@ -5841,73 +5941,84 @@ impl LspStore {
                                 }
                             }),
                     );
+                        }
+                        requested_servers.append(&mut servers_to_query);
+                    }
+
+                    cx.spawn(async move |this, cx| {
+                        let responses = futures::future::join_all(requests).await;
+                        let this = match this.upgrade() {
+                            Some(this) => this,
+                            None => return Ok(Vec::new()),
+                        };
+
+                        let mut symbols = Vec::new();
+                        for result in responses {
+                            let core_symbols = this.update(cx, |this, cx| {
+                                result
+                                    .lsp_symbols
+                                    .into_iter()
+                                    .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
+                                        let abs_path = symbol_location.uri.to_file_path().ok()?;
+                                        let source_worktree = result.worktree.upgrade()?;
+                                        let source_worktree_id = source_worktree.read(cx).id();
+
+                                        let path;
+                                        let worktree;
+                                        match this
+                                            .worktree_store
+                                            .read(cx)
+                                            .find_worktree(&abs_path, cx)
+                                        {
+                                            Some((tree, rel_path)) => {
+                                                worktree = tree;
+                                                path = rel_path;
+                                            }
+                                            _ => {
+                                                worktree = source_worktree.clone();
+                                                path = relativize_path(
+                                                    &result.worktree_abs_path,
+                                                    &abs_path,
+                                                );
+                                            }
+                                        }
+
+                                        let worktree_id = worktree.read(cx).id();
+                                        let project_path = ProjectPath {
+                                            worktree_id,
+                                            path: path.into(),
+                                        };
+                                        let signature = this.symbol_signature(&project_path);
+                                        Some(CoreSymbol {
+                                            source_language_server_id: result.server_id,
+                                            language_server_name: result.lsp_adapter.name.clone(),
+                                            source_worktree_id,
+                                            path: project_path,
+                                            kind: symbol_kind,
+                                            name: symbol_name,
+                                            range: range_from_lsp(symbol_location.range),
+                                            signature,
+                                        })
+                                    })
+                                    .collect()
+                            })?;
+
+                            populate_labels_for_symbols(
+                                core_symbols,
+                                &language_registry,
+                                Some(result.lsp_adapter),
+                                &mut symbols,
+                            )
+                            .await;
+                        }
+
+                        Ok(symbols)
+                    })
+                } else {
+                    Task::ready(Err(anyhow!("No upstream client or local language server")))
                 }
-                requested_servers.append(&mut servers_to_query);
             }
-
-            cx.spawn(async move |this, cx| {
-                let responses = futures::future::join_all(requests).await;
-                let this = match this.upgrade() {
-                    Some(this) => this,
-                    None => return Ok(Vec::new()),
-                };
-
-                let mut symbols = Vec::new();
-                for result in responses {
-                    let core_symbols = this.update(cx, |this, cx| {
-                        result
-                            .lsp_symbols
-                            .into_iter()
-                            .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
-                                let abs_path = symbol_location.uri.to_file_path().ok()?;
-                                let source_worktree = result.worktree.upgrade()?;
-                                let source_worktree_id = source_worktree.read(cx).id();
-
-                                let path;
-                                let worktree;
-                                match this.worktree_store.read(cx).find_worktree(&abs_path, cx)
-                                { Some((tree, rel_path)) => {
-                                    worktree = tree;
-                                    path = rel_path;
-                                } _ => {
-                                    worktree = source_worktree.clone();
-                                    path = relativize_path(&result.worktree_abs_path, &abs_path);
-                                }}
-
-                                let worktree_id = worktree.read(cx).id();
-                                let project_path = ProjectPath {
-                                    worktree_id,
-                                    path: path.into(),
-                                };
-                                let signature = this.symbol_signature(&project_path);
-                                Some(CoreSymbol {
-                                    source_language_server_id: result.server_id,
-                                    language_server_name: result.lsp_adapter.name.clone(),
-                                    source_worktree_id,
-                                    path: project_path,
-                                    kind: symbol_kind,
-                                    name: symbol_name,
-                                    range: range_from_lsp(symbol_location.range),
-                                    signature,
-                                })
-                            })
-                            .collect()
-                    })?;
-
-                    populate_labels_for_symbols(
-                        core_symbols,
-                        &language_registry,
-                        Some(result.lsp_adapter),
-                        &mut symbols,
-                    )
-                    .await;
-                }
-
-                Ok(symbols)
-            })
-        } else {
-            Task::ready(Err(anyhow!("No upstream client or local language server")))
-        }}
+        }
     }
 
     pub fn diagnostic_summary(&self, include_ignored: bool, cx: &App) -> DiagnosticSummary {
@@ -6175,11 +6286,10 @@ impl LspStore {
     }
 
     fn toolchain_store(&self, cx: &App) -> Arc<dyn LanguageToolchainStore> {
-        match self.toolchain_store.as_ref() { Some(toolchain_store) => {
-            toolchain_store.read(cx).as_language_toolchain_store()
-        } _ => {
-            Arc::new(EmptyToolchainStore)
-        }}
+        match self.toolchain_store.as_ref() {
+            Some(toolchain_store) => toolchain_store.read(cx).as_language_toolchain_store(),
+            _ => Arc::new(EmptyToolchainStore),
+        }
     }
     fn maintain_workspace_config(
         fs: Arc<dyn Fs>,
@@ -6493,61 +6603,67 @@ impl LspStore {
         symbol: &Symbol,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        match self.upstream_client() { Some((client, project_id)) => {
-            let request = client.request(proto::OpenBufferForSymbol {
-                project_id,
-                symbol: Some(Self::serialize_symbol(symbol)),
-            });
-            cx.spawn(async move |this, cx| {
-                let response = request.await?;
-                let buffer_id = BufferId::new(response.buffer_id)?;
-                this.update(cx, |this, cx| this.wait_for_remote_buffer(buffer_id, cx))?
-                    .await
-            })
-        } _ => if let Some(local) = self.as_local() {
-            let Some(language_server_id) = local
-                .language_server_ids
-                .get(&(
-                    symbol.source_worktree_id,
-                    symbol.language_server_name.clone(),
-                ))
-                .and_then(|ids| {
-                    ids.contains(&symbol.source_language_server_id)
-                        .then_some(symbol.source_language_server_id)
+        match self.upstream_client() {
+            Some((client, project_id)) => {
+                let request = client.request(proto::OpenBufferForSymbol {
+                    project_id,
+                    symbol: Some(Self::serialize_symbol(symbol)),
+                });
+                cx.spawn(async move |this, cx| {
+                    let response = request.await?;
+                    let buffer_id = BufferId::new(response.buffer_id)?;
+                    this.update(cx, |this, cx| this.wait_for_remote_buffer(buffer_id, cx))?
+                        .await
                 })
-            else {
-                return Task::ready(Err(anyhow!(
-                    "language server for worktree and language not found"
-                )));
-            };
+            }
+            _ => {
+                if let Some(local) = self.as_local() {
+                    let Some(language_server_id) = local
+                        .language_server_ids
+                        .get(&(
+                            symbol.source_worktree_id,
+                            symbol.language_server_name.clone(),
+                        ))
+                        .and_then(|ids| {
+                            ids.contains(&symbol.source_language_server_id)
+                                .then_some(symbol.source_language_server_id)
+                        })
+                    else {
+                        return Task::ready(Err(anyhow!(
+                            "language server for worktree and language not found"
+                        )));
+                    };
 
-            let worktree_abs_path = match self
-                .worktree_store
-                .read(cx)
-                .worktree_for_id(symbol.path.worktree_id, cx)
-                .map(|worktree| worktree.read(cx).abs_path())
-            { Some(worktree_abs_path) => {
-                worktree_abs_path
-            } _ => {
-                return Task::ready(Err(anyhow!("worktree not found for symbol")));
-            }};
+                    let worktree_abs_path = match self
+                        .worktree_store
+                        .read(cx)
+                        .worktree_for_id(symbol.path.worktree_id, cx)
+                        .map(|worktree| worktree.read(cx).abs_path())
+                    {
+                        Some(worktree_abs_path) => worktree_abs_path,
+                        _ => {
+                            return Task::ready(Err(anyhow!("worktree not found for symbol")));
+                        }
+                    };
 
-            let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
-            let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
-                uri
-            } else {
-                return Task::ready(Err(anyhow!("invalid symbol path")));
-            };
+                    let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
+                    let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
+                        uri
+                    } else {
+                        return Task::ready(Err(anyhow!("invalid symbol path")));
+                    };
 
-            self.open_local_buffer_via_lsp(
-                symbol_uri,
-                language_server_id,
-                symbol.language_server_name.clone(),
-                cx,
-            )
-        } else {
-            Task::ready(Err(anyhow!("no upstream client or local store")))
-        }}
+                    self.open_local_buffer_via_lsp(
+                        symbol_uri,
+                        language_server_id,
+                        symbol.language_server_name.clone(),
+                        cx,
+                    )
+                } else {
+                    Task::ready(Err(anyhow!("no upstream client or local store")))
+                }
+            }
+        }
     }
 
     pub fn open_local_buffer_via_lsp(
@@ -6586,41 +6702,44 @@ impl LspStore {
                     (Arc::<Path>::from(abs_path.as_path()), None)
                 };
             let (worktree, relative_path) = match lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.worktree_store.update(cx, |worktree_store, cx| {
-                        worktree_store.find_worktree(&worktree_root_target, cx)
-                    })
-                })? { Some(result) => {
-                let relative_path =
-                    known_relative_path.unwrap_or_else(|| Arc::<Path>::from(result.1));
-                (result.0, relative_path)
-            } _ => {
-                let worktree = lsp_store
-                    .update(cx, |lsp_store, cx| {
-                        lsp_store.worktree_store.update(cx, |worktree_store, cx| {
-                            worktree_store.create_worktree(&worktree_root_target, false, cx)
-                        })
-                    })?
-                    .await?;
-                if worktree.update(cx, |worktree, _| worktree.is_local())? {
-                    lsp_store
-                        .update(cx, |lsp_store, cx| {
-                            lsp_store.register_local_language_server(
-                                worktree.clone(),
-                                language_server_name,
-                                language_server_id,
-                                cx,
-                            )
-                        })
-                        .ok();
+                lsp_store.worktree_store.update(cx, |worktree_store, cx| {
+                    worktree_store.find_worktree(&worktree_root_target, cx)
+                })
+            })? {
+                Some(result) => {
+                    let relative_path =
+                        known_relative_path.unwrap_or_else(|| Arc::<Path>::from(result.1));
+                    (result.0, relative_path)
                 }
-                let worktree_root = worktree.update(cx, |worktree, _| worktree.abs_path())?;
-                let relative_path = if let Some(known_path) = known_relative_path {
-                    known_path
-                } else {
-                    abs_path.strip_prefix(worktree_root)?.into()
-                };
-                (worktree, relative_path)
-            }};
+                _ => {
+                    let worktree = lsp_store
+                        .update(cx, |lsp_store, cx| {
+                            lsp_store.worktree_store.update(cx, |worktree_store, cx| {
+                                worktree_store.create_worktree(&worktree_root_target, false, cx)
+                            })
+                        })?
+                        .await?;
+                    if worktree.update(cx, |worktree, _| worktree.is_local())? {
+                        lsp_store
+                            .update(cx, |lsp_store, cx| {
+                                lsp_store.register_local_language_server(
+                                    worktree.clone(),
+                                    language_server_name,
+                                    language_server_id,
+                                    cx,
+                                )
+                            })
+                            .ok();
+                    }
+                    let worktree_root = worktree.update(cx, |worktree, _| worktree.abs_path())?;
+                    let relative_path = if let Some(known_path) = known_relative_path {
+                        known_path
+                    } else {
+                        abs_path.strip_prefix(worktree_root)?.into()
+                    };
+                    (worktree, relative_path)
+                }
+            };
             let project_path = ProjectPath {
                 worktree_id: worktree.update(cx, |worktree, _| worktree.id())?,
                 path: relative_path,
@@ -7445,14 +7564,13 @@ impl LspStore {
 
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
         let local_lsp_store = self.as_local()?;
-        match local_lsp_store.language_servers.get(&id)
-        { Some(LanguageServerState::Running { server, .. }) => {
-            Some(server.clone())
-        } _ => { match local_lsp_store.supplementary_language_servers.get(&id) { Some((_, server)) => {
-            Some(Arc::clone(server))
-        } _ => {
-            None
-        }}}}
+        match local_lsp_store.language_servers.get(&id) {
+            Some(LanguageServerState::Running { server, .. }) => Some(server.clone()),
+            _ => match local_lsp_store.supplementary_language_servers.get(&id) {
+                Some((_, server)) => Some(Arc::clone(server)),
+                _ => None,
+            },
+        }
     }
 
     fn on_lsp_progress(
@@ -7472,11 +7590,12 @@ impl LspStore {
 
         let lsp::ProgressParamsValue::WorkDone(progress) = progress.value;
         let language_server_status =
-            match self.language_server_statuses.get_mut(&language_server_id) { Some(status) => {
-                status
-            } _ => {
-                return;
-            }};
+            match self.language_server_statuses.get_mut(&language_server_id) {
+                Some(status) => status,
+                _ => {
+                    return;
+                }
+            };
 
         if !language_server_status.progress_tokens.contains(&token) {
             return;
@@ -8035,13 +8154,12 @@ impl LspStore {
                 .map(|entry| entry.read(cx).abs_path().clone())
         });
 
-        match &self.as_local().map(|local| local.environment.clone()) { Some(environment) => {
-            environment.update(cx, |env, cx| {
+        match &self.as_local().map(|local| local.environment.clone()) {
+            Some(environment) => environment.update(cx, |env, cx| {
                 env.get_environment(worktree_id, worktree_abs_path, cx)
-            })
-        } _ => {
-            Task::ready(None).shared()
-        }}
+            }),
+            _ => Task::ready(None).shared(),
+        }
     }
 
     pub fn format(
@@ -8116,20 +8234,22 @@ impl LspStore {
 
                 result
             })
-        } else { match self.upstream_client() { Some((client, project_id)) => {
-            zlog::trace!(logger => "Formatting remotely");
-            let logger = zlog::scoped!(logger => "remote");
-            // Don't support formatting ranges via remote
-            match target {
-                LspFormatTarget::Buffers => {}
-                LspFormatTarget::Ranges(_) => {
-                    zlog::trace!(logger => "Ignoring unsupported remote range formatting request");
-                    return Task::ready(Ok(ProjectTransaction::default()));
-                }
-            }
+        } else {
+            match self.upstream_client() {
+                Some((client, project_id)) => {
+                    zlog::trace!(logger => "Formatting remotely");
+                    let logger = zlog::scoped!(logger => "remote");
+                    // Don't support formatting ranges via remote
+                    match target {
+                        LspFormatTarget::Buffers => {}
+                        LspFormatTarget::Ranges(_) => {
+                            zlog::trace!(logger => "Ignoring unsupported remote range formatting request");
+                            return Task::ready(Ok(ProjectTransaction::default()));
+                        }
+                    }
 
-            let buffer_store = self.buffer_store();
-            cx.spawn(async move |lsp_store, cx| {
+                    let buffer_store = self.buffer_store();
+                    cx.spawn(async move |lsp_store, cx| {
                 zlog::trace!(logger => "Sending remote format request");
                 let request_timer = zlog::time!(logger => "remote format request");
                 let result = client
@@ -8163,10 +8283,13 @@ impl LspStore {
                     })?
                     .await
             })
-        } _ => {
-            zlog::trace!(logger => "Not formatting");
-            Task::ready(Ok(ProjectTransaction::default()))
-        }}}
+                }
+                _ => {
+                    zlog::trace!(logger => "Not formatting");
+                    Task::ready(Ok(ProjectTransaction::default()))
+                }
+            }
+        }
     }
 
     async fn handle_format_buffers(
@@ -8368,53 +8491,56 @@ impl LspStore {
         buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
     ) {
-        match self.upstream_client() { Some((client, project_id)) => {
-            let request = client.request(proto::RestartLanguageServers {
-                project_id,
-                buffer_ids: buffers
-                    .into_iter()
-                    .map(|b| b.read(cx).remote_id().to_proto())
-                    .collect(),
-            });
-            cx.background_spawn(request).detach_and_log_err(cx);
-        } _ => {
-            let Some(local) = self.as_local_mut() else {
-                return;
-            };
-            let language_servers_to_stop = buffers
-                .iter()
-                .flat_map(|buffer| {
-                    buffer.update(cx, |buffer, cx| {
-                        local.language_server_ids_for_buffer(buffer, cx)
+        match self.upstream_client() {
+            Some((client, project_id)) => {
+                let request = client.request(proto::RestartLanguageServers {
+                    project_id,
+                    buffer_ids: buffers
+                        .into_iter()
+                        .map(|b| b.read(cx).remote_id().to_proto())
+                        .collect(),
+                });
+                cx.background_spawn(request).detach_and_log_err(cx);
+            }
+            _ => {
+                let Some(local) = self.as_local_mut() else {
+                    return;
+                };
+                let language_servers_to_stop = buffers
+                    .iter()
+                    .flat_map(|buffer| {
+                        buffer.update(cx, |buffer, cx| {
+                            local.language_server_ids_for_buffer(buffer, cx)
+                        })
                     })
-                })
-                .collect::<BTreeSet<_>>();
-            local.lsp_tree.update(cx, |this, _| {
-                this.remove_nodes(&language_servers_to_stop);
-            });
-            let tasks = language_servers_to_stop
-                .into_iter()
-                .map(|server| {
-                    let name = self
-                        .language_server_statuses
-                        .get(&server)
-                        .map(|state| state.name.as_str().into())
-                        .unwrap_or_else(|| LanguageServerName::from("Unknown"));
-                    self.stop_local_language_server(server, name, cx)
-                })
-                .collect::<Vec<_>>();
+                    .collect::<BTreeSet<_>>();
+                local.lsp_tree.update(cx, |this, _| {
+                    this.remove_nodes(&language_servers_to_stop);
+                });
+                let tasks = language_servers_to_stop
+                    .into_iter()
+                    .map(|server| {
+                        let name = self
+                            .language_server_statuses
+                            .get(&server)
+                            .map(|state| state.name.as_str().into())
+                            .unwrap_or_else(|| LanguageServerName::from("Unknown"));
+                        self.stop_local_language_server(server, name, cx)
+                    })
+                    .collect::<Vec<_>>();
 
-            cx.spawn(async move |this, cx| {
-                cx.background_spawn(futures::future::join_all(tasks)).await;
-                this.update(cx, |this, cx| {
-                    for buffer in buffers {
-                        this.register_buffer_with_language_servers(&buffer, true, cx);
-                    }
+                cx.spawn(async move |this, cx| {
+                    cx.background_spawn(futures::future::join_all(tasks)).await;
+                    this.update(cx, |this, cx| {
+                        for buffer in buffers {
+                            this.register_buffer_with_language_servers(&buffer, true, cx);
+                        }
+                    })
+                    .ok()
                 })
-                .ok()
-            })
-            .detach();
-        }}
+                .detach();
+            }
+        }
     }
 
     fn get_buffer<'a>(&self, abs_path: &Path, cx: &'a App) -> Option<&'a Buffer> {
@@ -8758,32 +8884,37 @@ impl LspStore {
         buffers: impl IntoIterator<Item = Entity<Buffer>>,
         cx: &mut Context<Self>,
     ) {
-        match self.upstream_client() { Some((client, project_id)) => {
-            let request = client.request(proto::CancelLanguageServerWork {
-                project_id,
-                work: Some(proto::cancel_language_server_work::Work::Buffers(
-                    proto::cancel_language_server_work::Buffers {
-                        buffer_ids: buffers
-                            .into_iter()
-                            .map(|b| b.read(cx).remote_id().to_proto())
-                            .collect(),
-                    },
-                )),
-            });
-            cx.background_spawn(request).detach_and_log_err(cx);
-        } _ => if let Some(local) = self.as_local() {
-            let servers = buffers
-                .into_iter()
-                .flat_map(|buffer| {
-                    buffer.update(cx, |buffer, cx| {
-                        local.language_server_ids_for_buffer(buffer, cx).into_iter()
-                    })
-                })
-                .collect::<HashSet<_>>();
-            for server_id in servers {
-                self.cancel_language_server_work(server_id, None, cx);
+        match self.upstream_client() {
+            Some((client, project_id)) => {
+                let request = client.request(proto::CancelLanguageServerWork {
+                    project_id,
+                    work: Some(proto::cancel_language_server_work::Work::Buffers(
+                        proto::cancel_language_server_work::Buffers {
+                            buffer_ids: buffers
+                                .into_iter()
+                                .map(|b| b.read(cx).remote_id().to_proto())
+                                .collect(),
+                        },
+                    )),
+                });
+                cx.background_spawn(request).detach_and_log_err(cx);
             }
-        }}
+            _ => {
+                if let Some(local) = self.as_local() {
+                    let servers = buffers
+                        .into_iter()
+                        .flat_map(|buffer| {
+                            buffer.update(cx, |buffer, cx| {
+                                local.language_server_ids_for_buffer(buffer, cx).into_iter()
+                            })
+                        })
+                        .collect::<HashSet<_>>();
+                    for server_id in servers {
+                        self.cancel_language_server_work(server_id, None, cx);
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn cancel_language_server_work(
@@ -8814,20 +8945,25 @@ impl LspStore {
                     }
                 }
             }
-        } else { match self.upstream_client() { Some((client, project_id)) => {
-            let request = client.request(proto::CancelLanguageServerWork {
-                project_id,
-                work: Some(
-                    proto::cancel_language_server_work::Work::LanguageServerWork(
-                        proto::cancel_language_server_work::LanguageServerWork {
-                            language_server_id: server_id.to_proto(),
-                            token: token_to_cancel,
-                        },
-                    ),
-                ),
-            });
-            cx.background_spawn(request).detach_and_log_err(cx);
-        } _ => {}}}
+        } else {
+            match self.upstream_client() {
+                Some((client, project_id)) => {
+                    let request = client.request(proto::CancelLanguageServerWork {
+                        project_id,
+                        work: Some(
+                            proto::cancel_language_server_work::Work::LanguageServerWork(
+                                proto::cancel_language_server_work::LanguageServerWork {
+                                    language_server_id: server_id.to_proto(),
+                                    token: token_to_cancel,
+                                },
+                            ),
+                        ),
+                    });
+                    cx.background_spawn(request).detach_and_log_err(cx);
+                }
+                _ => {}
+            }
+        }
     }
 
     fn register_supplementary_language_server(
@@ -9219,35 +9355,32 @@ async fn populate_labels_for_completions(
 ) {
     let lsp_completions = new_completions
         .iter()
-        .filter_map(|new_completion| {
-            match new_completion.source.lsp_completion(true) { Some(lsp_completion) => {
-                Some(lsp_completion.into_owned())
-            } _ => {
-                None
-            }}
-        })
+        .filter_map(
+            |new_completion| match new_completion.source.lsp_completion(true) {
+                Some(lsp_completion) => Some(lsp_completion.into_owned()),
+                _ => None,
+            },
+        )
         .collect::<Vec<_>>();
 
-    let mut labels = match language.as_ref().zip(lsp_adapter) { Some((language, lsp_adapter)) => {
-        lsp_adapter
+    let mut labels = match language.as_ref().zip(lsp_adapter) {
+        Some((language, lsp_adapter)) => lsp_adapter
             .labels_for_completions(&lsp_completions, language)
             .await
             .log_err()
-            .unwrap_or_default()
-    } _ => {
-        Vec::new()
-    }}
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
     .into_iter()
     .fuse();
 
     for completion in new_completions {
         match completion.source.lsp_completion(true) {
             Some(lsp_completion) => {
-                let documentation = match lsp_completion.documentation.clone() { Some(docs) => {
-                    Some(docs.into())
-                } _ => {
-                    None
-                }};
+                let documentation = match lsp_completion.documentation.clone() {
+                    Some(docs) => Some(docs.into()),
+                    _ => None,
+                };
 
                 let mut label = labels.next().flatten().unwrap_or_else(|| {
                     CodeLabel::fallback_for_completion(&lsp_completion, language.as_deref())
@@ -9469,11 +9602,10 @@ pub struct LanguageServerPromptRequest {
 
 impl LanguageServerPromptRequest {
     pub async fn respond(self, index: usize) -> Option<()> {
-        match self.actions.into_iter().nth(index) { Some(response) => {
-            self.response_channel.send(response).await.ok()
-        } _ => {
-            None
-        }}
+        match self.actions.into_iter().nth(index) {
+            Some(response) => self.response_channel.send(response).await.ok(),
+            _ => None,
+        }
     }
 }
 impl PartialEq for LanguageServerPromptRequest {

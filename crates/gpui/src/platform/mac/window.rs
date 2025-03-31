@@ -248,80 +248,82 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
     )
 }
 
-unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class { unsafe {
-    let mut decl = ClassDecl::new(name, superclass).unwrap();
-    decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
-    decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(&Object, Sel));
-    decl.add_method(
-        sel!(canBecomeMainWindow),
-        yes as extern "C" fn(&Object, Sel) -> BOOL,
-    );
-    decl.add_method(
-        sel!(canBecomeKeyWindow),
-        yes as extern "C" fn(&Object, Sel) -> BOOL,
-    );
-    decl.add_method(
-        sel!(windowDidResize:),
-        window_did_resize as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowDidChangeOcclusionState:),
-        window_did_change_occlusion_state as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowWillEnterFullScreen:),
-        window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowWillExitFullScreen:),
-        window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowDidMove:),
-        window_did_move as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowDidChangeScreen:),
-        window_did_change_screen as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowDidBecomeKey:),
-        window_did_change_key_status as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowDidResignKey:),
-        window_did_change_key_status as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowShouldClose:),
-        window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
-    );
+unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class {
+    unsafe {
+        let mut decl = ClassDecl::new(name, superclass).unwrap();
+        decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
+        decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(&Object, Sel));
+        decl.add_method(
+            sel!(canBecomeMainWindow),
+            yes as extern "C" fn(&Object, Sel) -> BOOL,
+        );
+        decl.add_method(
+            sel!(canBecomeKeyWindow),
+            yes as extern "C" fn(&Object, Sel) -> BOOL,
+        );
+        decl.add_method(
+            sel!(windowDidResize:),
+            window_did_resize as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidChangeOcclusionState:),
+            window_did_change_occlusion_state as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowWillEnterFullScreen:),
+            window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowWillExitFullScreen:),
+            window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidMove:),
+            window_did_move as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidChangeScreen:),
+            window_did_change_screen as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidBecomeKey:),
+            window_did_change_key_status as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidResignKey:),
+            window_did_change_key_status as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowShouldClose:),
+            window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
+        );
 
-    decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
+        decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
 
-    decl.add_method(
-        sel!(draggingEntered:),
-        dragging_entered as extern "C" fn(&Object, Sel, id) -> NSDragOperation,
-    );
-    decl.add_method(
-        sel!(draggingUpdated:),
-        dragging_updated as extern "C" fn(&Object, Sel, id) -> NSDragOperation,
-    );
-    decl.add_method(
-        sel!(draggingExited:),
-        dragging_exited as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(performDragOperation:),
-        perform_drag_operation as extern "C" fn(&Object, Sel, id) -> BOOL,
-    );
-    decl.add_method(
-        sel!(concludeDragOperation:),
-        conclude_drag_operation as extern "C" fn(&Object, Sel, id),
-    );
+        decl.add_method(
+            sel!(draggingEntered:),
+            dragging_entered as extern "C" fn(&Object, Sel, id) -> NSDragOperation,
+        );
+        decl.add_method(
+            sel!(draggingUpdated:),
+            dragging_updated as extern "C" fn(&Object, Sel, id) -> NSDragOperation,
+        );
+        decl.add_method(
+            sel!(draggingExited:),
+            dragging_exited as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(performDragOperation:),
+            perform_drag_operation as extern "C" fn(&Object, Sel, id) -> BOOL,
+        );
+        decl.add_method(
+            sel!(concludeDragOperation:),
+            conclude_drag_operation as extern "C" fn(&Object, Sel, id),
+        );
 
-    decl.register()
-}}
+        decl.register()
+    }
+}
 
 struct MacWindowState {
     handle: AnyWindowHandle,
@@ -1199,18 +1201,22 @@ fn get_scale_factor(native_window: id) -> f32 {
     }
 }
 
-unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> { unsafe {
-    let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
-    let rc1 = Arc::from_raw(raw as *mut Mutex<MacWindowState>);
-    let rc2 = rc1.clone();
-    mem::forget(rc1);
-    rc2
-}}
+unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> {
+    unsafe {
+        let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
+        let rc1 = Arc::from_raw(raw as *mut Mutex<MacWindowState>);
+        let rc2 = rc1.clone();
+        mem::forget(rc1);
+        rc2
+    }
+}
 
-unsafe fn drop_window_state(object: &Object) { unsafe {
-    let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
-    Arc::from_raw(raw as *mut Mutex<MacWindowState>);
-}}
+unsafe fn drop_window_state(object: &Object) {
+    unsafe {
+        let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
+        Arc::from_raw(raw as *mut Mutex<MacWindowState>);
+    }
+}
 
 extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
     YES
@@ -1280,11 +1286,10 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
     let run_callback = |event: PlatformInput| -> BOOL {
         let mut callback = window_state.as_ref().lock().event_callback.take();
-        let handled: BOOL = match callback.as_mut() { Some(callback) => {
-            !callback(event).propagate as BOOL
-        } _ => {
-            NO
-        }};
+        let handled: BOOL = match callback.as_mut() {
+            Some(callback) => !callback(event).propagate as BOOL,
+            _ => NO,
+        };
         window_state.as_ref().lock().event_callback = callback;
         handled
     };
@@ -1333,11 +1338,16 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     msg_send![input_context, handleEvent: native_event]
                 };
                 window_state.as_ref().lock().keystroke_for_do_command.take();
-                match window_state.as_ref().lock().do_command_handled.take() { Some(handled) => {
-                    return handled as BOOL;
-                } _ => if handled == YES {
-                    return YES;
-                }}
+                match window_state.as_ref().lock().do_command_handled.take() {
+                    Some(handled) => {
+                        return handled as BOOL;
+                    }
+                    _ => {
+                        if handled == YES {
+                            return YES;
+                        }
+                    }
+                }
 
                 let handled = run_callback(PlatformInput::KeyDown(key_down_event));
                 return handled;
@@ -1627,14 +1637,15 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    match lock.should_close_callback.take() { Some(mut callback) => {
-        drop(lock);
-        let should_close = callback();
-        window_state.lock().should_close_callback = Some(callback);
-        should_close as BOOL
-    } _ => {
-        YES
-    }}
+    match lock.should_close_callback.take() {
+        Some(mut callback) => {
+            drop(lock);
+            let should_close = callback();
+            window_state.lock().should_close_callback = Some(callback);
+            should_close as BOOL
+        }
+        _ => YES,
+    }
 }
 
 extern "C" fn close_window(this: &Object, _: Sel) {
@@ -2038,13 +2049,14 @@ async fn synthetic_drag(
 
 fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: PlatformInput) -> bool {
     let window_state = window_state_lock.lock().event_callback.take();
-    match window_state { Some(mut callback) => {
-        callback(e);
-        window_state_lock.lock().event_callback = Some(callback);
-        true
-    } _ => {
-        false
-    }}
+    match window_state {
+        Some(mut callback) => {
+            callback(e);
+            window_state_lock.lock().event_callback = Some(callback);
+            true
+        }
+        _ => false,
+    }
 }
 
 fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) -> Point<Pixels> {
@@ -2058,20 +2070,23 @@ where
 {
     let window_state = unsafe { get_window_state(window) };
     let mut lock = window_state.as_ref().lock();
-    match lock.input_handler.take() { Some(mut input_handler) => {
-        drop(lock);
-        let result = f(&mut input_handler);
-        window_state.lock().input_handler = Some(input_handler);
-        Some(result)
-    } _ => {
-        None
-    }}
+    match lock.input_handler.take() {
+        Some(mut input_handler) => {
+            drop(lock);
+            let result = f(&mut input_handler);
+            window_state.lock().input_handler = Some(input_handler);
+            Some(result)
+        }
+        _ => None,
+    }
 }
 
-unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID { unsafe {
-    let device_description = NSScreen::deviceDescription(screen);
-    let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
-    let screen_number = device_description.objectForKey_(screen_number_key);
-    let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
-    screen_number as CGDirectDisplayID
-}}
+unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
+    unsafe {
+        let device_description = NSScreen::deviceDescription(screen);
+        let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
+        let screen_number = device_description.objectForKey_(screen_number_key);
+        let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
+        screen_number as CGDirectDisplayID
+    }
+}

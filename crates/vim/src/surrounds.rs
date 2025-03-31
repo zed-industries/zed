@@ -153,61 +153,67 @@ impl Vim {
 
                 for selection in &display_selections {
                     let start = selection.start.to_offset(&display_map, Bias::Left);
-                    match pair_object.range(&display_map, selection.clone(), true) { Some(range) => {
-                        // If the current parenthesis object is single-line,
-                        // then we need to filter whether it is the current line or not
-                        if !pair_object.is_multiline() {
-                            let is_same_row = selection.start.row() == range.start.row()
-                                && selection.end.row() == range.end.row();
-                            if !is_same_row {
-                                anchors.push(start..start);
-                                continue;
+                    match pair_object.range(&display_map, selection.clone(), true) {
+                        Some(range) => {
+                            // If the current parenthesis object is single-line,
+                            // then we need to filter whether it is the current line or not
+                            if !pair_object.is_multiline() {
+                                let is_same_row = selection.start.row() == range.start.row()
+                                    && selection.end.row() == range.end.row();
+                                if !is_same_row {
+                                    anchors.push(start..start);
+                                    continue;
+                                }
                             }
-                        }
-                        // This is a bit cumbersome, and it is written to deal with some special cases, as shown below
-                        // hello«ˇ  "hello in a word"  »again.
-                        // Sometimes the expand_selection will not be matched at both ends, and there will be extra spaces
-                        // In order to be able to accurately match and replace in this case, some cumbersome methods are used
-                        let mut chars_and_offset = display_map
-                            .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
-                            .peekable();
-                        while let Some((ch, offset)) = chars_and_offset.next() {
-                            if ch.to_string() == pair.start {
-                                let start = offset;
-                                let mut end = start + 1;
-                                if surround {
-                                    if let Some((next_ch, _)) = chars_and_offset.peek() {
-                                        if next_ch.eq(&' ') {
-                                            end += 1;
+                            // This is a bit cumbersome, and it is written to deal with some special cases, as shown below
+                            // hello«ˇ  "hello in a word"  »again.
+                            // Sometimes the expand_selection will not be matched at both ends, and there will be extra spaces
+                            // In order to be able to accurately match and replace in this case, some cumbersome methods are used
+                            let mut chars_and_offset = display_map
+                                .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
+                                .peekable();
+                            while let Some((ch, offset)) = chars_and_offset.next() {
+                                if ch.to_string() == pair.start {
+                                    let start = offset;
+                                    let mut end = start + 1;
+                                    if surround {
+                                        if let Some((next_ch, _)) = chars_and_offset.peek() {
+                                            if next_ch.eq(&' ') {
+                                                end += 1;
+                                            }
                                         }
                                     }
+                                    edits.push((start..end, ""));
+                                    anchors.push(start..start);
+                                    break;
                                 }
-                                edits.push((start..end, ""));
-                                anchors.push(start..start);
-                                break;
                             }
-                        }
-                        let mut reverse_chars_and_offsets = display_map
-                            .reverse_buffer_chars_at(range.end.to_offset(&display_map, Bias::Left))
-                            .peekable();
-                        while let Some((ch, offset)) = reverse_chars_and_offsets.next() {
-                            if ch.to_string() == pair.end {
-                                let mut start = offset;
-                                let end = start + 1;
-                                if surround {
-                                    if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
-                                        if next_ch.eq(&' ') {
-                                            start -= 1;
+                            let mut reverse_chars_and_offsets = display_map
+                                .reverse_buffer_chars_at(
+                                    range.end.to_offset(&display_map, Bias::Left),
+                                )
+                                .peekable();
+                            while let Some((ch, offset)) = reverse_chars_and_offsets.next() {
+                                if ch.to_string() == pair.end {
+                                    let mut start = offset;
+                                    let end = start + 1;
+                                    if surround {
+                                        if let Some((next_ch, _)) = reverse_chars_and_offsets.peek()
+                                        {
+                                            if next_ch.eq(&' ') {
+                                                start -= 1;
+                                            }
                                         }
                                     }
+                                    edits.push((start..end, ""));
+                                    break;
                                 }
-                                edits.push((start..end, ""));
-                                break;
                             }
                         }
-                    } _ => {
-                        anchors.push(start..start);
-                    }}
+                        _ => {
+                            anchors.push(start..start);
+                        }
+                    }
                 }
 
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -250,62 +256,68 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        match target.range(&display_map, selection.clone(), true) { Some(range) => {
-                            if !target.is_multiline() {
-                                let is_same_row = selection.start.row() == range.start.row()
-                                    && selection.end.row() == range.end.row();
-                                if !is_same_row {
-                                    anchors.push(start..start);
-                                    continue;
-                                }
-                            }
-                            let mut chars_and_offset = display_map
-                                .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
-                                .peekable();
-                            while let Some((ch, offset)) = chars_and_offset.next() {
-                                if ch.to_string() == will_replace_pair.start {
-                                    let mut open_str = pair.start.clone();
-                                    let start = offset;
-                                    let mut end = start + 1;
-                                    if let Some((next_ch, _)) = chars_and_offset.peek() {
-                                        // If the next position is already a space or line break,
-                                        // we don't need to splice another space even under around
-                                        if surround && !next_ch.is_whitespace() {
-                                            open_str.push(' ');
-                                        } else if !surround && next_ch.to_string() == " " {
-                                            end += 1;
-                                        }
+                        match target.range(&display_map, selection.clone(), true) {
+                            Some(range) => {
+                                if !target.is_multiline() {
+                                    let is_same_row = selection.start.row() == range.start.row()
+                                        && selection.end.row() == range.end.row();
+                                    if !is_same_row {
+                                        anchors.push(start..start);
+                                        continue;
                                     }
-                                    edits.push((start..end, open_str));
-                                    anchors.push(start..start);
-                                    break;
                                 }
-                            }
+                                let mut chars_and_offset = display_map
+                                    .buffer_chars_at(
+                                        range.start.to_offset(&display_map, Bias::Left),
+                                    )
+                                    .peekable();
+                                while let Some((ch, offset)) = chars_and_offset.next() {
+                                    if ch.to_string() == will_replace_pair.start {
+                                        let mut open_str = pair.start.clone();
+                                        let start = offset;
+                                        let mut end = start + 1;
+                                        if let Some((next_ch, _)) = chars_and_offset.peek() {
+                                            // If the next position is already a space or line break,
+                                            // we don't need to splice another space even under around
+                                            if surround && !next_ch.is_whitespace() {
+                                                open_str.push(' ');
+                                            } else if !surround && next_ch.to_string() == " " {
+                                                end += 1;
+                                            }
+                                        }
+                                        edits.push((start..end, open_str));
+                                        anchors.push(start..start);
+                                        break;
+                                    }
+                                }
 
-                            let mut reverse_chars_and_offsets = display_map
-                                .reverse_buffer_chars_at(
-                                    range.end.to_offset(&display_map, Bias::Left),
-                                )
-                                .peekable();
-                            while let Some((ch, offset)) = reverse_chars_and_offsets.next() {
-                                if ch.to_string() == will_replace_pair.end {
-                                    let mut close_str = pair.end.clone();
-                                    let mut start = offset;
-                                    let end = start + 1;
-                                    if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
-                                        if surround && !next_ch.is_whitespace() {
-                                            close_str.insert(0, ' ')
-                                        } else if !surround && next_ch.to_string() == " " {
-                                            start -= 1;
+                                let mut reverse_chars_and_offsets = display_map
+                                    .reverse_buffer_chars_at(
+                                        range.end.to_offset(&display_map, Bias::Left),
+                                    )
+                                    .peekable();
+                                while let Some((ch, offset)) = reverse_chars_and_offsets.next() {
+                                    if ch.to_string() == will_replace_pair.end {
+                                        let mut close_str = pair.end.clone();
+                                        let mut start = offset;
+                                        let end = start + 1;
+                                        if let Some((next_ch, _)) = reverse_chars_and_offsets.peek()
+                                        {
+                                            if surround && !next_ch.is_whitespace() {
+                                                close_str.insert(0, ' ')
+                                            } else if !surround && next_ch.to_string() == " " {
+                                                start -= 1;
+                                            }
                                         }
+                                        edits.push((start..end, close_str));
+                                        break;
                                     }
-                                    edits.push((start..end, close_str));
-                                    break;
                                 }
                             }
-                        } _ => {
-                            anchors.push(start..start);
-                        }}
+                            _ => {
+                                anchors.push(start..start);
+                            }
+                        }
                     }
 
                     let stable_anchors = editor
@@ -351,32 +363,33 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        match object.range(&display_map, selection.clone(), true) { Some(range) => {
-                            // If the current parenthesis object is single-line,
-                            // then we need to filter whether it is the current line or not
-                            if object.is_multiline()
-                                || (!object.is_multiline()
-                                    && selection.start.row() == range.start.row()
-                                    && selection.end.row() == range.end.row())
-                            {
-                                valid = true;
-                                let chars_and_offset = display_map
-                                    .buffer_chars_at(
-                                        range.start.to_offset(&display_map, Bias::Left),
-                                    )
-                                    .peekable();
-                                for (ch, offset) in chars_and_offset {
-                                    if ch.to_string() == pair.start {
-                                        anchors.push(offset..offset);
-                                        break;
+                        match object.range(&display_map, selection.clone(), true) {
+                            Some(range) => {
+                                // If the current parenthesis object is single-line,
+                                // then we need to filter whether it is the current line or not
+                                if object.is_multiline()
+                                    || (!object.is_multiline()
+                                        && selection.start.row() == range.start.row()
+                                        && selection.end.row() == range.end.row())
+                                {
+                                    valid = true;
+                                    let chars_and_offset = display_map
+                                        .buffer_chars_at(
+                                            range.start.to_offset(&display_map, Bias::Left),
+                                        )
+                                        .peekable();
+                                    for (ch, offset) in chars_and_offset {
+                                        if ch.to_string() == pair.start {
+                                            anchors.push(offset..offset);
+                                            break;
+                                        }
                                     }
+                                } else {
+                                    anchors.push(start..start)
                                 }
-                            } else {
-                                anchors.push(start..start)
                             }
-                        } _ => {
-                            anchors.push(start..start)
-                        }}
+                            _ => anchors.push(start..start),
+                        }
                     }
                     editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         s.select_ranges(anchors);

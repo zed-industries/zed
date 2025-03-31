@@ -2840,24 +2840,27 @@ fn git_commit(msg: &'static str, repo: &git2::Repository) {
     let signature = Signature::now("test", "test@zed.dev").unwrap();
     let oid = repo.index().unwrap().write_tree().unwrap();
     let tree = repo.find_tree(oid).unwrap();
-    match repo.head() { Ok(head) => {
-        let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
+    match repo.head() {
+        Ok(head) => {
+            let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
 
-        let parent_commit = parent_obj.as_commit().unwrap();
+            let parent_commit = parent_obj.as_commit().unwrap();
 
-        repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            msg,
-            &tree,
-            &[parent_commit],
-        )
-        .expect("Failed to commit with parent");
-    } _ => {
-        repo.commit(Some("HEAD"), &signature, &signature, msg, &tree, &[])
-            .expect("Failed to commit");
-    }}
+            repo.commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                msg,
+                &tree,
+                &[parent_commit],
+            )
+            .expect("Failed to commit with parent");
+        }
+        _ => {
+            repo.commit(Some("HEAD"), &signature, &signature, msg, &tree, &[])
+                .expect("Failed to commit");
+        }
+    }
 }
 
 #[track_caller]

@@ -135,48 +135,52 @@ impl Database {
         match self
             .get_user_by_github_user_id_or_github_login(github_user_id, github_login, tx)
             .await?
-        { Some(existing_user) => {
-            let mut existing_user = existing_user.into_active_model();
-            existing_user.github_login = ActiveValue::set(github_login.into());
-            existing_user.github_user_created_at = ActiveValue::set(Some(github_user_created_at));
+        {
+            Some(existing_user) => {
+                let mut existing_user = existing_user.into_active_model();
+                existing_user.github_login = ActiveValue::set(github_login.into());
+                existing_user.github_user_created_at =
+                    ActiveValue::set(Some(github_user_created_at));
 
-            if let Some(github_email) = github_email {
-                existing_user.email_address = ActiveValue::set(Some(github_email.into()));
+                if let Some(github_email) = github_email {
+                    existing_user.email_address = ActiveValue::set(Some(github_email.into()));
+                }
+
+                if let Some(github_name) = github_name {
+                    existing_user.name = ActiveValue::set(Some(github_name.into()));
+                }
+
+                Ok(existing_user.update(tx).await?)
             }
-
-            if let Some(github_name) = github_name {
-                existing_user.name = ActiveValue::set(Some(github_name.into()));
-            }
-
-            Ok(existing_user.update(tx).await?)
-        } _ => {
-            let user = user::Entity::insert(user::ActiveModel {
-                email_address: ActiveValue::set(github_email.map(|email| email.into())),
-                name: ActiveValue::set(github_name.map(|name| name.into())),
-                github_login: ActiveValue::set(github_login.into()),
-                github_user_id: ActiveValue::set(github_user_id),
-                github_user_created_at: ActiveValue::set(Some(github_user_created_at)),
-                admin: ActiveValue::set(false),
-                invite_count: ActiveValue::set(0),
-                invite_code: ActiveValue::set(None),
-                metrics_id: ActiveValue::set(Uuid::new_v4()),
-                ..Default::default()
-            })
-            .exec_with_returning(tx)
-            .await?;
-            if let Some(channel_id) = initial_channel_id {
-                channel_member::Entity::insert(channel_member::ActiveModel {
-                    id: ActiveValue::NotSet,
-                    channel_id: ActiveValue::Set(channel_id),
-                    user_id: ActiveValue::Set(user.id),
-                    accepted: ActiveValue::Set(true),
-                    role: ActiveValue::Set(ChannelRole::Guest),
+            _ => {
+                let user = user::Entity::insert(user::ActiveModel {
+                    email_address: ActiveValue::set(github_email.map(|email| email.into())),
+                    name: ActiveValue::set(github_name.map(|name| name.into())),
+                    github_login: ActiveValue::set(github_login.into()),
+                    github_user_id: ActiveValue::set(github_user_id),
+                    github_user_created_at: ActiveValue::set(Some(github_user_created_at)),
+                    admin: ActiveValue::set(false),
+                    invite_count: ActiveValue::set(0),
+                    invite_code: ActiveValue::set(None),
+                    metrics_id: ActiveValue::set(Uuid::new_v4()),
+                    ..Default::default()
                 })
-                .exec(tx)
+                .exec_with_returning(tx)
                 .await?;
+                if let Some(channel_id) = initial_channel_id {
+                    channel_member::Entity::insert(channel_member::ActiveModel {
+                        id: ActiveValue::NotSet,
+                        channel_id: ActiveValue::Set(channel_id),
+                        user_id: ActiveValue::Set(user.id),
+                        accepted: ActiveValue::Set(true),
+                        role: ActiveValue::Set(ChannelRole::Guest),
+                    })
+                    .exec(tx)
+                    .await?;
+                }
+                Ok(user)
             }
-            Ok(user)
-        }}
+        }
     }
 
     /// Tries to retrieve a user, first by their GitHub user ID, and then by their GitHub login.

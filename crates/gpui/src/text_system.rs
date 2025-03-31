@@ -109,15 +109,16 @@ impl TextSystem {
             .read()
             .get(font)
             .map(clone_font_id_result);
-        match font_id { Some(font_id) => {
-            font_id
-        } _ => {
-            let font_id = self.platform_text_system.font_id(font);
-            self.font_ids_by_font
-                .write()
-                .insert(font.clone(), clone_font_id_result(&font_id));
-            font_id
-        }}
+        match font_id {
+            Some(font_id) => font_id,
+            _ => {
+                let font_id = self.platform_text_system.font_id(font);
+                self.font_ids_by_font
+                    .write()
+                    .insert(font.clone(), clone_font_id_result(&font_id));
+                font_id
+            }
+        }
     }
 
     /// Get the Font for the Font Id.
@@ -253,15 +254,16 @@ impl TextSystem {
     fn read_metrics<T>(&self, font_id: FontId, read: impl FnOnce(&FontMetrics) -> T) -> T {
         let lock = self.font_metrics.upgradable_read();
 
-        match lock.get(&font_id) { Some(metrics) => {
-            read(metrics)
-        } _ => {
-            let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let metrics = lock
-                .entry(font_id)
-                .or_insert_with(|| self.platform_text_system.font_metrics(font_id));
-            read(metrics)
-        }}
+        match lock.get(&font_id) {
+            Some(metrics) => read(metrics),
+            _ => {
+                let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+                let metrics = lock
+                    .entry(font_id)
+                    .or_insert_with(|| self.platform_text_system.font_metrics(font_id));
+                read(metrics)
+            }
+        }
     }
 
     /// Returns a handle to a line wrapper, for the given font and font size.
@@ -284,14 +286,15 @@ impl TextSystem {
     /// Get the rasterized size and location of a specific, rendered glyph.
     pub(crate) fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let raster_bounds = self.raster_bounds.upgradable_read();
-        match raster_bounds.get(params) { Some(bounds) => {
-            Ok(*bounds)
-        } _ => {
-            let mut raster_bounds = RwLockUpgradableReadGuard::upgrade(raster_bounds);
-            let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
-            raster_bounds.insert(params.clone(), bounds);
-            Ok(bounds)
-        }}
+        match raster_bounds.get(params) {
+            Some(bounds) => Ok(*bounds),
+            _ => {
+                let mut raster_bounds = RwLockUpgradableReadGuard::upgrade(raster_bounds);
+                let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
+                raster_bounds.insert(params.clone(), bounds);
+                Ok(bounds)
+            }
+        }
     }
 
     pub(crate) fn rasterize_glyph(

@@ -764,15 +764,20 @@ impl Vim {
             }
             self.switch_mode(Mode::Insert, false, window, cx)
         }
-        match keystroke_event.action.as_ref() { Some(action) => {
-            // Keystroke is handled by the vim system, so continue forward
-            if action.name().starts_with("vim::") {
-                return;
+        match keystroke_event.action.as_ref() {
+            Some(action) => {
+                // Keystroke is handled by the vim system, so continue forward
+                if action.name().starts_with("vim::") {
+                    return;
+                }
             }
-        } _ => if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
-        {
-            return;
-        }}
+            _ => {
+                if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
+                {
+                    return;
+                }
+            }
+        }
 
         if let Some(operator) = self.active_operator() {
             match operator {
@@ -1133,25 +1138,28 @@ impl Vim {
         self.sync_vim_settings(window, cx);
 
         if VimSettings::get_global(cx).toggle_relative_line_numbers {
-            match Vim::globals(cx).focused_vim() { Some(old_vim) => {
-                if old_vim.entity_id() != cx.entity().entity_id() {
-                    old_vim.update(cx, |vim, cx| {
-                        vim.update_editor(window, cx, |_, editor, _, cx| {
-                            editor.set_relative_line_number(None, cx)
+            match Vim::globals(cx).focused_vim() {
+                Some(old_vim) => {
+                    if old_vim.entity_id() != cx.entity().entity_id() {
+                        old_vim.update(cx, |vim, cx| {
+                            vim.update_editor(window, cx, |_, editor, _, cx| {
+                                editor.set_relative_line_number(None, cx)
+                            });
                         });
-                    });
 
+                        self.update_editor(window, cx, |vim, editor, _, cx| {
+                            let is_relative = vim.mode != Mode::Insert;
+                            editor.set_relative_line_number(Some(is_relative), cx)
+                        });
+                    }
+                }
+                _ => {
                     self.update_editor(window, cx, |vim, editor, _, cx| {
                         let is_relative = vim.mode != Mode::Insert;
                         editor.set_relative_line_number(Some(is_relative), cx)
                     });
                 }
-            } _ => {
-                self.update_editor(window, cx, |vim, editor, _, cx| {
-                    let is_relative = vim.mode != Mode::Insert;
-                    editor.set_relative_line_number(Some(is_relative), cx)
-                });
-            }}
+            }
         }
         Vim::globals(cx).focused_vim = Some(cx.entity().downgrade());
     }

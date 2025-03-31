@@ -25,18 +25,21 @@ impl Snippet {
         let final_tabstop = tabstops.remove(&0);
         let mut tabstops = tabstops.into_values().collect::<Vec<_>>();
 
-        match final_tabstop { Some(final_tabstop) => {
-            tabstops.push(final_tabstop);
-        } _ => {
-            let end_tabstop = TabStop {
-                ranges: [len..len].into_iter().collect(),
-                choices: None,
-            };
-
-            if !tabstops.last().map_or(false, |t| *t == end_tabstop) {
-                tabstops.push(end_tabstop);
+        match final_tabstop {
+            Some(final_tabstop) => {
+                tabstops.push(final_tabstop);
             }
-        }}
+            _ => {
+                let end_tabstop = TabStop {
+                    ranges: [len..len].into_iter().collect(),
+                    choices: None,
+                };
+
+                if !tabstops.last().map_or(false, |t| *t == end_tabstop) {
+                    tabstops.push(end_tabstop);
+                }
+            }
+        }
 
         Ok(Snippet { text, tabstops })
     }

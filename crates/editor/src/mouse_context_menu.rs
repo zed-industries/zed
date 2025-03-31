@@ -129,103 +129,112 @@ pub fn deploy_context_menu(
 
     let display_map = editor.selections.display_map(cx);
     let source_anchor = display_map.display_point_to_anchor(point, text::Bias::Right);
-    let context_menu = match editor.custom_context_menu.take() { Some(custom) => {
-        let menu = custom(editor, point, window, cx);
-        editor.custom_context_menu = Some(custom);
-        let Some(menu) = menu else {
-            return;
-        };
-        menu
-    } _ => {
-        // Don't show the context menu if there isn't a project associated with this editor
-        let Some(project) = editor.project.clone() else {
-            return;
-        };
-
-        let display_map = editor.selections.display_map(cx);
-        let buffer = &editor.snapshot(window, cx).buffer_snapshot;
-        let anchor = buffer.anchor_before(point.to_point(&display_map));
-        if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
-            // Move the cursor to the clicked location so that dispatched actions make sense
-            editor.change_selections(None, window, cx, |s| {
-                s.clear_disjoint();
-                s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
-            });
+    let context_menu = match editor.custom_context_menu.take() {
+        Some(custom) => {
+            let menu = custom(editor, point, window, cx);
+            editor.custom_context_menu = Some(custom);
+            let Some(menu) = menu else {
+                return;
+            };
+            menu
         }
+        _ => {
+            // Don't show the context menu if there isn't a project associated with this editor
+            let Some(project) = editor.project.clone() else {
+                return;
+            };
 
-        let focus = window.focused(cx);
-        let has_reveal_target = editor.target_file(cx).is_some();
-        let has_selections = editor
-            .selections
-            .all::<PointUtf16>(cx)
-            .into_iter()
-            .any(|s| !s.is_empty());
-        let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {
-            project
-                .read(cx)
-                .git_store()
-                .read(cx)
-                .repository_and_path_for_buffer_id(buffer_id, cx)
-                .is_some()
-        });
-
-        ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
-            let builder = menu
-                .on_blur_subscription(Subscription::new(|| {}))
-                .action("Go to Definition", Box::new(GoToDefinition))
-                .action("Go to Declaration", Box::new(GoToDeclaration))
-                .action("Go to Type Definition", Box::new(GoToTypeDefinition))
-                .action("Go to Implementation", Box::new(GoToImplementation))
-                .action("Find All References", Box::new(FindAllReferences))
-                .separator()
-                .action("Rename Symbol", Box::new(Rename))
-                .action("Format Buffer", Box::new(Format))
-                .when(has_selections, |cx| {
-                    cx.action("Format Selections", Box::new(FormatSelections))
-                })
-                .action(
-                    "Code Actions",
-                    Box::new(ToggleCodeActions {
-                        deployed_from_indicator: None,
-                    }),
-                )
-                .separator()
-                .action("Cut", Box::new(Cut))
-                .action("Copy", Box::new(Copy))
-                .action("Copy and trim", Box::new(CopyAndTrim))
-                .action("Paste", Box::new(Paste))
-                .separator()
-                .map(|builder| {
-                    let reveal_in_finder_label = if cfg!(target_os = "macos") {
-                        "Reveal in Finder"
-                    } else {
-                        "Reveal in File Manager"
-                    };
-                    const OPEN_IN_TERMINAL_LABEL: &str = "Open in Terminal";
-                    if has_reveal_target {
-                        builder
-                            .action(reveal_in_finder_label, Box::new(RevealInFileManager))
-                            .action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
-                    } else {
-                        builder
-                            .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
-                            .disabled_action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
-                    }
-                })
-                .map(|builder| {
-                    const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
-                    if has_git_repo {
-                        builder.action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
-                    } else {
-                        builder.disabled_action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
-                    }
+            let display_map = editor.selections.display_map(cx);
+            let buffer = &editor.snapshot(window, cx).buffer_snapshot;
+            let anchor = buffer.anchor_before(point.to_point(&display_map));
+            if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
+                // Move the cursor to the clicked location so that dispatched actions make sense
+                editor.change_selections(None, window, cx, |s| {
+                    s.clear_disjoint();
+                    s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
                 });
-            match focus {
-                Some(focus) => builder.context(focus),
-                None => builder,
             }
-        })
-    }};
+
+            let focus = window.focused(cx);
+            let has_reveal_target = editor.target_file(cx).is_some();
+            let has_selections = editor
+                .selections
+                .all::<PointUtf16>(cx)
+                .into_iter()
+                .any(|s| !s.is_empty());
+            let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {
+                project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .repository_and_path_for_buffer_id(buffer_id, cx)
+                    .is_some()
+            });
+
+            ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
+                let builder = menu
+                    .on_blur_subscription(Subscription::new(|| {}))
+                    .action("Go to Definition", Box::new(GoToDefinition))
+                    .action("Go to Declaration", Box::new(GoToDeclaration))
+                    .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+                    .action("Go to Implementation", Box::new(GoToImplementation))
+                    .action("Find All References", Box::new(FindAllReferences))
+                    .separator()
+                    .action("Rename Symbol", Box::new(Rename))
+                    .action("Format Buffer", Box::new(Format))
+                    .when(has_selections, |cx| {
+                        cx.action("Format Selections", Box::new(FormatSelections))
+                    })
+                    .action(
+                        "Code Actions",
+                        Box::new(ToggleCodeActions {
+                            deployed_from_indicator: None,
+                        }),
+                    )
+                    .separator()
+                    .action("Cut", Box::new(Cut))
+                    .action("Copy", Box::new(Copy))
+                    .action("Copy and trim", Box::new(CopyAndTrim))
+                    .action("Paste", Box::new(Paste))
+                    .separator()
+                    .map(|builder| {
+                        let reveal_in_finder_label = if cfg!(target_os = "macos") {
+                            "Reveal in Finder"
+                        } else {
+                            "Reveal in File Manager"
+                        };
+                        const OPEN_IN_TERMINAL_LABEL: &str = "Open in Terminal";
+                        if has_reveal_target {
+                            builder
+                                .action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                                .action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
+                        } else {
+                            builder
+                                .disabled_action(
+                                    reveal_in_finder_label,
+                                    Box::new(RevealInFileManager),
+                                )
+                                .disabled_action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
+                        }
+                    })
+                    .map(|builder| {
+                        const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
+                        if has_git_repo {
+                            builder.action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
+                        } else {
+                            builder.disabled_action(
+                                COPY_PERMALINK_LABEL,
+                                Box::new(CopyPermalinkToLine),
+                            )
+                        }
+                    });
+                match focus {
+                    Some(focus) => builder.context(focus),
+                    None => builder,
+                }
+            })
+        }
+    };
 
     editor.mouse_context_menu = match position {
         Some(position) => MouseContextMenu::pinned_to_editor(

@@ -214,7 +214,11 @@ impl CommitModal {
             )
     }
 
-    pub fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let (can_commit, tooltip, commit_label, co_authors, generate_commit_message, active_repo) =
             self.git_panel.update(cx, |git_panel, cx| {
                 let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
@@ -267,15 +271,13 @@ impl CommitModal {
             });
         let focus_handle = self.focus_handle(cx);
 
-        let close_kb_hint =
-            match ui::KeyBinding::for_action(&menu::Cancel, window, cx) { Some(close_kb) => {
-                Some(
-                    KeybindingHint::new(close_kb, cx.theme().colors().editor_background)
-                        .suffix("Cancel"),
-                )
-            } _ => {
-                None
-            }};
+        let close_kb_hint = match ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
+            Some(close_kb) => Some(
+                KeybindingHint::new(close_kb, cx.theme().colors().editor_background)
+                    .suffix("Cancel"),
+            ),
+            _ => None,
+        };
 
         let commit_button = panel_filled_button(commit_label)
             .tooltip({

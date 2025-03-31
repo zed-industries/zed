@@ -1247,14 +1247,17 @@ impl ExtensionStore {
                 )
                 .await;
 
-                match wasm_extension.log_err() { Some(wasm_extension) => {
-                    wasm_extensions.push((extension.manifest.clone(), wasm_extension));
-                } _ => {
-                    this.update(cx, |_, cx| {
-                        cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
-                    })
-                    .ok();
-                }}
+                match wasm_extension.log_err() {
+                    Some(wasm_extension) => {
+                        wasm_extensions.push((extension.manifest.clone(), wasm_extension));
+                    }
+                    _ => {
+                        this.update(cx, |_, cx| {
+                            cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
+                        })
+                        .ok();
+                    }
+                }
             }
 
             this.update(cx, |this, cx| {

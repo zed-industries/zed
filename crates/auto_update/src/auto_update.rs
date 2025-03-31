@@ -201,17 +201,20 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
         return;
     }
 
-    match AutoUpdater::get(cx) { Some(updater) => {
-        updater.update(cx, |updater, cx| updater.poll(cx));
-    } _ => {
-        drop(window.prompt(
-            gpui::PromptLevel::Info,
-            "Could not check for updates",
-            Some("Auto-updates disabled for non-bundled app."),
-            &["Ok"],
-            cx,
-        ));
-    }}
+    match AutoUpdater::get(cx) {
+        Some(updater) => {
+            updater.update(cx, |updater, cx| updater.poll(cx));
+        }
+        _ => {
+            drop(window.prompt(
+                gpui::PromptLevel::Info,
+                "Could not check for updates",
+                Some("Auto-updates disabled for non-bundled app."),
+                &["Ok"],
+                cx,
+            ));
+        }
+    }
 }
 
 pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut App) -> Option<()> {

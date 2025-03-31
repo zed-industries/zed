@@ -552,26 +552,27 @@ impl ContextMenu {
             } else {
                 false
             }
-        }) { Some(ix) => {
-            self.select_index(ix);
-            self.delayed = true;
-            cx.notify();
-            let action = dispatched.boxed_clone();
-            cx.spawn_in(window, async move |this, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(50))
-                    .await;
-                cx.update(|window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.cancel(&menu::Cancel, window, cx);
-                        window.dispatch_action(action, cx);
+        }) {
+            Some(ix) => {
+                self.select_index(ix);
+                self.delayed = true;
+                cx.notify();
+                let action = dispatched.boxed_clone();
+                cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(50))
+                        .await;
+                    cx.update(|window, cx| {
+                        this.update(cx, |this, cx| {
+                            this.cancel(&menu::Cancel, window, cx);
+                            window.dispatch_action(action, cx);
+                        })
                     })
                 })
-            })
-            .detach_and_log_err(cx);
-        } _ => {
-            cx.propagate()
-        }}
+                .detach_and_log_err(cx);
+            }
+            _ => cx.propagate(),
+        }
     }
 
     pub fn on_blur_subscription(mut self, new_subscription: Subscription) -> Self {

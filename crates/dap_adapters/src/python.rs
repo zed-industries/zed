@@ -94,18 +94,17 @@ impl DebugAdapter for PythonDebugAdapter {
             )
             .await;
 
-        let python_path = match toolchain { Some(toolchain) => {
-            Some(toolchain.path.to_string())
-        } _ => {
-            BINARY_NAMES
+        let python_path = match toolchain {
+            Some(toolchain) => Some(toolchain.path.to_string()),
+            _ => BINARY_NAMES
                 .iter()
                 .filter_map(|cmd| {
                     delegate
                         .which(OsStr::new(cmd))
                         .map(|path| path.to_string_lossy().to_string())
                 })
-                .find(|_| true)
-        }};
+                .find(|_| true),
+        };
 
         Ok(DebugAdapterBinary {
             command: python_path.ok_or(anyhow!("failed to find binary path for python"))?,

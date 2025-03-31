@@ -69,20 +69,21 @@ impl PlatformAtlas for MetalAtlas {
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>> {
         let mut lock = self.0.lock();
-        match lock.tiles_by_key.get(key) { Some(tile) => {
-            Ok(Some(tile.clone()))
-        } _ => {
-            let Some((size, bytes)) = build()? else {
-                return Ok(None);
-            };
-            let tile = lock
-                .allocate(size, key.texture_kind())
-                .ok_or_else(|| anyhow!("failed to allocate"))?;
-            let texture = lock.texture(tile.texture_id);
-            texture.upload(tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile.clone());
-            Ok(Some(tile))
-        }}
+        match lock.tiles_by_key.get(key) {
+            Some(tile) => Ok(Some(tile.clone())),
+            _ => {
+                let Some((size, bytes)) = build()? else {
+                    return Ok(None);
+                };
+                let tile = lock
+                    .allocate(size, key.texture_kind())
+                    .ok_or_else(|| anyhow!("failed to allocate"))?;
+                let texture = lock.texture(tile.texture_id);
+                texture.upload(tile.bounds, &bytes);
+                lock.tiles_by_key.insert(key.clone(), tile.clone());
+                Ok(Some(tile))
+            }
+        }
     }
 
     fn remove(&self, key: &AtlasKey) {

@@ -305,30 +305,33 @@ impl ProjectDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        match workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) { Some(existing) => {
-            let is_active = workspace
-                .active_item(cx)
-                .is_some_and(|item| item.item_id() == existing.item_id());
-            workspace.activate_item(&existing, true, !is_active, window, cx);
-        } _ => {
-            let workspace_handle = cx.entity().downgrade();
+        match workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
+            Some(existing) => {
+                let is_active = workspace
+                    .active_item(cx)
+                    .is_some_and(|item| item.item_id() == existing.item_id());
+                workspace.activate_item(&existing, true, !is_active, window, cx);
+            }
+            _ => {
+                let workspace_handle = cx.entity().downgrade();
 
-            let include_warnings = match cx.try_global::<IncludeWarnings>() {
-                Some(include_warnings) => include_warnings.0,
-                None => ProjectSettings::get_global(cx).diagnostics.include_warnings,
-            };
+                let include_warnings = match cx.try_global::<IncludeWarnings>() {
+                    Some(include_warnings) => include_warnings.0,
+                    None => ProjectSettings::get_global(cx).diagnostics.include_warnings,
+                };
 
-            let diagnostics = cx.new(|cx| {
-                ProjectDiagnosticsEditor::new(
-                    workspace.project().clone(),
-                    include_warnings,
-                    workspace_handle,
-                    window,
-                    cx,
-                )
-            });
-            workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, window, cx);
-        }}
+                let diagnostics = cx.new(|cx| {
+                    ProjectDiagnosticsEditor::new(
+                        workspace.project().clone(),
+                        include_warnings,
+                        workspace_handle,
+                        window,
+                        cx,
+                    )
+                });
+                workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, window, cx);
+            }
+        }
     }
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, window: &mut Window, cx: &mut Context<Self>) {
@@ -472,130 +475,144 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
 
-                match to_insert { Some((language_server_id, group)) => {
-                    let mut group_state = DiagnosticGroupState {
-                        language_server_id,
-                        primary_diagnostic: group.entries[group.primary_ix].clone(),
-                        primary_excerpt_ix: 0,
-                        excerpts: Default::default(),
-                        blocks: Default::default(),
-                        block_count: 0,
-                    };
-                    let mut pending_range: Option<(Range<Point>, Range<Point>, usize)> = None;
-                    let mut is_first_excerpt_for_group = true;
-                    for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
-                        let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
-                        let expanded_range = match &resolved_entry { Some(entry) => {
-                            Some(
-                                context_range_for_entry(
-                                    entry.range.clone(),
-                                    context,
-                                    snapshot.clone(),
-                                    (**cx).clone(),
-                                )
-                                .await,
-                            )
-                        } _ => {
-                            None
-                        }};
-                        if let Some((range, context_range, start_ix)) = &mut pending_range {
-                            if let Some(expanded_range) = expanded_range.clone() {
-                                // If the entries are overlapping or next to each-other, merge them into one excerpt.
-                                if context_range.end.row + 1 >= expanded_range.start.row {
-                                    context_range.end = context_range.end.max(expanded_range.end);
-                                    continue;
-                                }
-                            }
-
-                            let excerpt_id = excerpts.update(cx, |excerpts, cx| {
-                                excerpts
-                                    .insert_excerpts_after(
-                                        prev_excerpt_id,
-                                        buffer.clone(),
-                                        [ExcerptRange {
-                                            context: context_range.clone(),
-                                            primary: Some(range.clone()),
-                                        }],
-                                        cx,
+                match to_insert {
+                    Some((language_server_id, group)) => {
+                        let mut group_state = DiagnosticGroupState {
+                            language_server_id,
+                            primary_diagnostic: group.entries[group.primary_ix].clone(),
+                            primary_excerpt_ix: 0,
+                            excerpts: Default::default(),
+                            blocks: Default::default(),
+                            block_count: 0,
+                        };
+                        let mut pending_range: Option<(Range<Point>, Range<Point>, usize)> = None;
+                        let mut is_first_excerpt_for_group = true;
+                        for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate()
+                        {
+                            let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
+                            let expanded_range = match &resolved_entry {
+                                Some(entry) => Some(
+                                    context_range_for_entry(
+                                        entry.range.clone(),
+                                        context,
+                                        snapshot.clone(),
+                                        (**cx).clone(),
                                     )
-                                    .pop()
-                                    .unwrap()
-                            })?;
-
-                            prev_excerpt_id = excerpt_id;
-                            first_excerpt_id.get_or_insert(prev_excerpt_id);
-                            group_state.excerpts.push(excerpt_id);
-                            let header_position = (excerpt_id, language::Anchor::MIN);
-
-                            if is_first_excerpt_for_group {
-                                is_first_excerpt_for_group = false;
-                                let mut primary =
-                                    group.entries[group.primary_ix].diagnostic.clone();
-                                primary.message =
-                                    primary.message.split('\n').next().unwrap().to_string();
-                                group_state.block_count += 1;
-                                blocks_to_add.push(BlockProperties {
-                                    placement: BlockPlacement::Above(header_position),
-                                    height: 2,
-                                    style: BlockStyle::Sticky,
-                                    render: diagnostic_header_renderer(primary),
-                                    priority: 0,
-                                });
-                            }
-
-                            for entry in &group.entries[*start_ix..ix] {
-                                let mut diagnostic = entry.diagnostic.clone();
-                                if diagnostic.is_primary {
-                                    group_state.primary_excerpt_ix = group_state.excerpts.len() - 1;
-                                    diagnostic.message =
-                                        entry.diagnostic.message.split('\n').skip(1).collect();
+                                    .await,
+                                ),
+                                _ => None,
+                            };
+                            if let Some((range, context_range, start_ix)) = &mut pending_range {
+                                if let Some(expanded_range) = expanded_range.clone() {
+                                    // If the entries are overlapping or next to each-other, merge them into one excerpt.
+                                    if context_range.end.row + 1 >= expanded_range.start.row {
+                                        context_range.end =
+                                            context_range.end.max(expanded_range.end);
+                                        continue;
+                                    }
                                 }
 
-                                if !diagnostic.message.is_empty() {
+                                let excerpt_id = excerpts.update(cx, |excerpts, cx| {
+                                    excerpts
+                                        .insert_excerpts_after(
+                                            prev_excerpt_id,
+                                            buffer.clone(),
+                                            [ExcerptRange {
+                                                context: context_range.clone(),
+                                                primary: Some(range.clone()),
+                                            }],
+                                            cx,
+                                        )
+                                        .pop()
+                                        .unwrap()
+                                })?;
+
+                                prev_excerpt_id = excerpt_id;
+                                first_excerpt_id.get_or_insert(prev_excerpt_id);
+                                group_state.excerpts.push(excerpt_id);
+                                let header_position = (excerpt_id, language::Anchor::MIN);
+
+                                if is_first_excerpt_for_group {
+                                    is_first_excerpt_for_group = false;
+                                    let mut primary =
+                                        group.entries[group.primary_ix].diagnostic.clone();
+                                    primary.message =
+                                        primary.message.split('\n').next().unwrap().to_string();
                                     group_state.block_count += 1;
                                     blocks_to_add.push(BlockProperties {
-                                        placement: BlockPlacement::Below((
-                                            excerpt_id,
-                                            entry.range.start,
-                                        )),
-                                        height: diagnostic.message.matches('\n').count() as u32 + 1,
-                                        style: BlockStyle::Fixed,
-                                        render: diagnostic_block_renderer(diagnostic, None, true),
+                                        placement: BlockPlacement::Above(header_position),
+                                        height: 2,
+                                        style: BlockStyle::Sticky,
+                                        render: diagnostic_header_renderer(primary),
                                         priority: 0,
                                     });
                                 }
+
+                                for entry in &group.entries[*start_ix..ix] {
+                                    let mut diagnostic = entry.diagnostic.clone();
+                                    if diagnostic.is_primary {
+                                        group_state.primary_excerpt_ix =
+                                            group_state.excerpts.len() - 1;
+                                        diagnostic.message =
+                                            entry.diagnostic.message.split('\n').skip(1).collect();
+                                    }
+
+                                    if !diagnostic.message.is_empty() {
+                                        group_state.block_count += 1;
+                                        blocks_to_add.push(BlockProperties {
+                                            placement: BlockPlacement::Below((
+                                                excerpt_id,
+                                                entry.range.start,
+                                            )),
+                                            height: diagnostic.message.matches('\n').count() as u32
+                                                + 1,
+                                            style: BlockStyle::Fixed,
+                                            render: diagnostic_block_renderer(
+                                                diagnostic, None, true,
+                                            ),
+                                            priority: 0,
+                                        });
+                                    }
+                                }
+
+                                pending_range.take();
                             }
 
-                            pending_range.take();
+                            if let Some(entry) = resolved_entry.as_ref() {
+                                let range = entry.range.clone();
+                                pending_range = Some((range, expanded_range.unwrap(), ix));
+                            }
                         }
 
-                        if let Some(entry) = resolved_entry.as_ref() {
-                            let range = entry.range.clone();
-                            pending_range = Some((range, expanded_range.unwrap(), ix));
-                        }
+                        this.update(cx, |this, _| {
+                            new_group_ixs.push(this.path_states[path_ix].diagnostic_groups.len());
+                            this.path_states[path_ix]
+                                .diagnostic_groups
+                                .push(group_state);
+                        })?;
                     }
+                    _ => match to_remove {
+                        Some((_, group_state)) => {
+                            excerpts.update(cx, |excerpts, cx| {
+                                excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx)
+                            })?;
+                            blocks_to_remove.extend(group_state.blocks.iter().copied());
+                        }
+                        _ => match to_keep {
+                            Some((_, group_state)) => {
+                                prev_excerpt_id = *group_state.excerpts.last().unwrap();
+                                first_excerpt_id.get_or_insert(prev_excerpt_id);
 
-                    this.update(cx, |this, _| {
-                        new_group_ixs.push(this.path_states[path_ix].diagnostic_groups.len());
-                        this.path_states[path_ix]
-                            .diagnostic_groups
-                            .push(group_state);
-                    })?;
-                } _ => { match to_remove { Some((_, group_state)) => {
-                    excerpts.update(cx, |excerpts, cx| {
-                        excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx)
-                    })?;
-                    blocks_to_remove.extend(group_state.blocks.iter().copied());
-                } _ => { match to_keep { Some((_, group_state)) => {
-                    prev_excerpt_id = *group_state.excerpts.last().unwrap();
-                    first_excerpt_id.get_or_insert(prev_excerpt_id);
-
-                    this.update(cx, |this, _| {
-                        this.path_states[path_ix]
-                            .diagnostic_groups
-                            .push(group_state)
-                    })?;
-                } _ => {}}}}}}
+                                this.update(cx, |this, _| {
+                                    this.path_states[path_ix]
+                                        .diagnostic_groups
+                                        .push(group_state)
+                                })?;
+                            }
+                            _ => {}
+                        },
+                    },
+                }
             }
 
             let excerpts_snapshot = excerpts.update(cx, |excerpts, cx| excerpts.snapshot(cx))?;

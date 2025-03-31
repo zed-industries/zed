@@ -362,15 +362,16 @@ impl RateCompletionModal {
                         .size_full()
                         .bg(cx.theme().colors().editor_background)
                         .overflow_scroll()
-                        .child(match &self.active_completion { Some(active_completion) => {
-                            format!(
-                                "{}\n{}",
-                                active_completion.completion.input_events,
-                                active_completion.completion.input_excerpt
-                            )
-                        } _ => {
-                            "No active completion".to_string()
-                        }}),
+                        .child(match &self.active_completion {
+                            Some(active_completion) => {
+                                format!(
+                                    "{}\n{}",
+                                    active_completion.completion.input_events,
+                                    active_completion.completion.input_excerpt
+                                )
+                            }
+                            _ => "No active completion".to_string(),
+                        }),
                 )
                 .id("raw-input-view"),
         )

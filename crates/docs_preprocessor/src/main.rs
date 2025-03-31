@@ -21,11 +21,14 @@ fn main() -> Result<()> {
     let preprocessor =
         ZedDocsPreprocessor::new().context("Failed to create ZedDocsPreprocessor")?;
 
-    match matches.subcommand_matches("supports") { Some(sub_args) => {
-        handle_supports(&preprocessor, sub_args);
-    } _ => {
-        handle_preprocessing(&preprocessor)?;
-    }}
+    match matches.subcommand_matches("supports") {
+        Some(sub_args) => {
+            handle_supports(&preprocessor, sub_args);
+        }
+        _ => {
+            handle_preprocessing(&preprocessor)?;
+        }
+    }
 
     Ok(())
 }

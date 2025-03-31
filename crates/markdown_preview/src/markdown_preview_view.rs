@@ -150,99 +150,94 @@ impl MarkdownPreviewView {
                 0,
                 gpui::ListAlignment::Top,
                 px(1000.),
-                move |ix, window, cx| {
-                    match view.upgrade() { Some(view) => {
-                        view.update(cx, |this: &mut Self, cx| {
-                            let Some(contents) = &this.contents else {
-                                return div().into_any();
-                            };
+                move |ix, window, cx| match view.upgrade() {
+                    Some(view) => view.update(cx, |this: &mut Self, cx| {
+                        let Some(contents) = &this.contents else {
+                            return div().into_any();
+                        };
 
-                            let mut render_cx =
-                                RenderContext::new(Some(this.workspace.clone()), window, cx)
-                                    .with_checkbox_clicked_callback({
-                                        let view = view.clone();
-                                        move |checked, source_range, window, cx| {
-                                            view.update(cx, |view, cx| {
-                                                if let Some(editor) = view
-                                                    .active_editor
-                                                    .as_ref()
-                                                    .map(|s| s.editor.clone())
-                                                {
-                                                    editor.update(cx, |editor, cx| {
-                                                        let task_marker =
-                                                            if checked { "[x]" } else { "[ ]" };
-
-                                                        editor.edit(
-                                                            vec![(source_range, task_marker)],
-                                                            cx,
-                                                        );
-                                                    });
-                                                    view.parse_markdown_from_active_editor(
-                                                        false, window, cx,
-                                                    );
-                                                    cx.notify();
-                                                }
-                                            })
-                                        }
-                                    });
-                            let block = contents.children.get(ix).unwrap();
-                            let rendered_block = render_markdown_block(block, &mut render_cx);
-
-                            let should_apply_padding = Self::should_apply_padding_between(
-                                block,
-                                contents.children.get(ix + 1),
-                            );
-
-                            div()
-                                .id(ix)
-                                .when(should_apply_padding, |this| this.pb_3())
-                                .group("markdown-block")
-                                .on_click(cx.listener(
-                                    move |this, event: &ClickEvent, window, cx| {
-                                        if event.down.click_count == 2 {
-                                            if let Some(source_range) = this
-                                                .contents
+                        let mut render_cx =
+                            RenderContext::new(Some(this.workspace.clone()), window, cx)
+                                .with_checkbox_clicked_callback({
+                                    let view = view.clone();
+                                    move |checked, source_range, window, cx| {
+                                        view.update(cx, |view, cx| {
+                                            if let Some(editor) = view
+                                                .active_editor
                                                 .as_ref()
-                                                .and_then(|c| c.children.get(ix))
-                                                .and_then(|block| block.source_range())
+                                                .map(|s| s.editor.clone())
                                             {
-                                                this.move_cursor_to_block(
-                                                    window,
-                                                    cx,
-                                                    source_range.start..source_range.start,
-                                                );
-                                            }
-                                        }
-                                    },
-                                ))
-                                .map(move |container| {
-                                    let indicator = div()
-                                        .h_full()
-                                        .w(px(4.0))
-                                        .when(ix == this.selected_block, |this| {
-                                            this.bg(cx.theme().colors().border)
-                                        })
-                                        .group_hover("markdown-block", |s| {
-                                            if ix == this.selected_block {
-                                                s
-                                            } else {
-                                                s.bg(cx.theme().colors().border_variant)
-                                            }
-                                        })
-                                        .rounded_xs();
+                                                editor.update(cx, |editor, cx| {
+                                                    let task_marker =
+                                                        if checked { "[x]" } else { "[ ]" };
 
-                                    container.child(
-                                        div()
-                                            .relative()
-                                            .child(div().pl_4().child(rendered_block))
-                                            .child(indicator.absolute().left_0().top_0()),
-                                    )
-                                })
-                                .into_any()
-                        })
-                    } _ => {
-                        div().into_any()
-                    }}
+                                                    editor.edit(
+                                                        vec![(source_range, task_marker)],
+                                                        cx,
+                                                    );
+                                                });
+                                                view.parse_markdown_from_active_editor(
+                                                    false, window, cx,
+                                                );
+                                                cx.notify();
+                                            }
+                                        })
+                                    }
+                                });
+                        let block = contents.children.get(ix).unwrap();
+                        let rendered_block = render_markdown_block(block, &mut render_cx);
+
+                        let should_apply_padding = Self::should_apply_padding_between(
+                            block,
+                            contents.children.get(ix + 1),
+                        );
+
+                        div()
+                            .id(ix)
+                            .when(should_apply_padding, |this| this.pb_3())
+                            .group("markdown-block")
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                if event.down.click_count == 2 {
+                                    if let Some(source_range) = this
+                                        .contents
+                                        .as_ref()
+                                        .and_then(|c| c.children.get(ix))
+                                        .and_then(|block| block.source_range())
+                                    {
+                                        this.move_cursor_to_block(
+                                            window,
+                                            cx,
+                                            source_range.start..source_range.start,
+                                        );
+                                    }
+                                }
+                            }))
+                            .map(move |container| {
+                                let indicator = div()
+                                    .h_full()
+                                    .w(px(4.0))
+                                    .when(ix == this.selected_block, |this| {
+                                        this.bg(cx.theme().colors().border)
+                                    })
+                                    .group_hover("markdown-block", |s| {
+                                        if ix == this.selected_block {
+                                            s
+                                        } else {
+                                            s.bg(cx.theme().colors().border_variant)
+                                        }
+                                    })
+                                    .rounded_xs();
+
+                                container.child(
+                                    div()
+                                        .relative()
+                                        .child(div().pl_4().child(rendered_block))
+                                        .child(indicator.absolute().left_0().top_0()),
+                                )
+                            })
+                            .into_any()
+                    }),
+                    _ => div().into_any(),
                 },
             );
 
@@ -263,15 +258,18 @@ impl MarkdownPreviewView {
             this.set_editor(active_editor, window, cx);
 
             if mode == MarkdownPreviewMode::Follow {
-                match &workspace.upgrade() { Some(workspace) => {
-                    cx.observe_in(workspace, window, |this, workspace, window, cx| {
-                        let item = workspace.read(cx).active_item(cx);
-                        this.workspace_updated(item, window, cx);
-                    })
-                    .detach();
-                } _ => {
-                    log::error!("Failed to listen to workspace updates");
-                }}
+                match &workspace.upgrade() {
+                    Some(workspace) => {
+                        cx.observe_in(workspace, window, |this, workspace, window, cx| {
+                            let item = workspace.read(cx).active_item(cx);
+                            this.workspace_updated(item, window, cx);
+                        })
+                        .detach();
+                    }
+                    _ => {
+                        log::error!("Failed to listen to workspace updates");
+                    }
+                }
             }
 
             this
@@ -418,15 +416,13 @@ impl MarkdownPreviewView {
 
     /// The absolute path of the file that is currently being previewed.
     fn get_folder_for_active_editor(editor: &Editor, cx: &App) -> Option<PathBuf> {
-        match editor.file_at(0, cx) { Some(file) => {
-            match file.as_local() { Some(file) => {
-                file.abs_path(cx).parent().map(|p| p.to_path_buf())
-            } _ => {
-                None
-            }}
-        } _ => {
-            None
-        }}
+        match editor.file_at(0, cx) {
+            Some(file) => match file.as_local() {
+                Some(file) => file.abs_path(cx).parent().map(|p| p.to_path_buf()),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     fn get_block_index_under_cursor(&self, selection_range: Range<usize>) -> usize {

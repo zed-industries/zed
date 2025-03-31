@@ -153,11 +153,12 @@ impl EventStream {
             let e_ptr = event_flags as *mut u32;
             let i_ptr = event_ids as *mut u64;
             let state = (info as *mut State).as_mut().unwrap();
-            let callback = match state.callback.as_mut() { Some(callback) => {
-                callback
-            } _ => {
-                return;
-            }};
+            let callback = match state.callback.as_mut() {
+                Some(callback) => callback,
+                _ => {
+                    return;
+                }
+            };
 
             let paths = slice::from_raw_parts(event_paths, num);
             let flags = slice::from_raw_parts_mut(e_ptr, num);

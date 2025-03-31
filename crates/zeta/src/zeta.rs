@@ -1299,17 +1299,16 @@ impl ProviderDataCollection {
             Some((choice, license_detection_watcher))
         });
 
-        match choice_and_watcher { Some((choice, watcher)) => {
-            ProviderDataCollection {
+        match choice_and_watcher {
+            Some((choice, watcher)) => ProviderDataCollection {
                 choice: Some(choice),
                 license_detection_watcher: Some(watcher),
-            }
-        } _ => {
-            ProviderDataCollection {
+            },
+            _ => ProviderDataCollection {
                 choice: None,
                 license_detection_watcher: None,
-            }
-        }}
+            },
+        }
     }
 
     pub fn can_collect_data(&self, cx: &App) -> bool {
@@ -1512,20 +1511,23 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
                     this.pending_completions.clear();
                 }
 
-                match this.current_completion.as_ref() { Some(old_completion) => {
-                    let snapshot = buffer.read(cx).snapshot();
-                    if new_completion.should_replace_completion(&old_completion, &snapshot) {
+                match this.current_completion.as_ref() {
+                    Some(old_completion) => {
+                        let snapshot = buffer.read(cx).snapshot();
+                        if new_completion.should_replace_completion(&old_completion, &snapshot) {
+                            this.zeta.update(cx, |zeta, cx| {
+                                zeta.completion_shown(&new_completion.completion, cx);
+                            });
+                            this.current_completion = Some(new_completion);
+                        }
+                    }
+                    _ => {
                         this.zeta.update(cx, |zeta, cx| {
                             zeta.completion_shown(&new_completion.completion, cx);
                         });
                         this.current_completion = Some(new_completion);
                     }
-                } _ => {
-                    this.zeta.update(cx, |zeta, cx| {
-                        zeta.completion_shown(&new_completion.completion, cx);
-                    });
-                    this.current_completion = Some(new_completion);
-                }}
+                }
 
                 cx.notify();
             })

@@ -226,26 +226,22 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        let blocks = creases.into_iter().filter_map(|crease| {
-            match crease
-            { Crease::Block {
+        let blocks = creases.into_iter().filter_map(|crease| match crease {
+            Crease::Block {
                 range,
                 block_height,
                 render_block,
                 block_style,
                 block_priority,
                 ..
-            } => {
-                Some((
-                    range,
-                    render_block,
-                    block_height,
-                    block_style,
-                    block_priority,
-                ))
-            } _ => {
-                None
-            }}
+            } => Some((
+                range,
+                render_block,
+                block_height,
+                block_style,
+                block_priority,
+            )),
+            _ => None,
         });
         block_map.insert(
             blocks
@@ -954,11 +950,10 @@ impl DisplaySnapshot {
         for chunk in self.highlighted_chunks(range, false, editor_style) {
             line.push_str(chunk.text);
 
-            let text_style = match chunk.style { Some(style) => {
-                Cow::Owned(editor_style.text.clone().highlight(style))
-            } _ => {
-                Cow::Borrowed(&editor_style.text)
-            }};
+            let text_style = match chunk.style {
+                Some(style) => Cow::Owned(editor_style.text.clone().highlight(style)),
+                _ => Cow::Borrowed(&editor_style.text),
+            };
 
             runs.push(text_style.to_run(chunk.text.len()))
         }
@@ -1189,8 +1184,8 @@ impl DisplaySnapshot {
         match self
             .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
-        { Some(crease) => {
-            match crease {
+        {
+            Some(crease) => match crease {
                 Crease::Inline {
                     range,
                     placeholder,
@@ -1219,53 +1214,56 @@ impl DisplaySnapshot {
                     block_priority: *block_priority,
                     render_toggle: render_toggle.clone(),
                 }),
-            }
-        } _ => if self.starts_indent(MultiBufferRow(start.row))
-            && !self.is_line_folded(MultiBufferRow(start.row))
-        {
-            let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
-            let max_point = self.buffer_snapshot.max_point();
-            let mut end = None;
-
-            for row in (buffer_row.0 + 1)..=max_point.row {
-                let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
-                if !line_indent.is_line_blank()
-                    && line_indent.raw_len() <= start_line_indent.raw_len()
+            },
+            _ => {
+                if self.starts_indent(MultiBufferRow(start.row))
+                    && !self.is_line_folded(MultiBufferRow(start.row))
                 {
-                    let prev_row = row - 1;
-                    end = Some(Point::new(
-                        prev_row,
-                        self.buffer_snapshot.line_len(MultiBufferRow(prev_row)),
-                    ));
-                    break;
+                    let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
+                    let max_point = self.buffer_snapshot.max_point();
+                    let mut end = None;
+
+                    for row in (buffer_row.0 + 1)..=max_point.row {
+                        let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
+                        if !line_indent.is_line_blank()
+                            && line_indent.raw_len() <= start_line_indent.raw_len()
+                        {
+                            let prev_row = row - 1;
+                            end = Some(Point::new(
+                                prev_row,
+                                self.buffer_snapshot.line_len(MultiBufferRow(prev_row)),
+                            ));
+                            break;
+                        }
+                    }
+
+                    let mut row_before_line_breaks = end.unwrap_or(max_point);
+                    while row_before_line_breaks.row > start.row
+                        && self
+                            .buffer_snapshot
+                            .is_line_blank(MultiBufferRow(row_before_line_breaks.row))
+                    {
+                        row_before_line_breaks.row -= 1;
+                    }
+
+                    row_before_line_breaks = Point::new(
+                        row_before_line_breaks.row,
+                        self.buffer_snapshot
+                            .line_len(MultiBufferRow(row_before_line_breaks.row)),
+                    );
+
+                    Some(Crease::Inline {
+                        range: start..row_before_line_breaks,
+                        placeholder: self.fold_placeholder.clone(),
+                        render_toggle: None,
+                        render_trailer: None,
+                        metadata: None,
+                    })
+                } else {
+                    None
                 }
             }
-
-            let mut row_before_line_breaks = end.unwrap_or(max_point);
-            while row_before_line_breaks.row > start.row
-                && self
-                    .buffer_snapshot
-                    .is_line_blank(MultiBufferRow(row_before_line_breaks.row))
-            {
-                row_before_line_breaks.row -= 1;
-            }
-
-            row_before_line_breaks = Point::new(
-                row_before_line_breaks.row,
-                self.buffer_snapshot
-                    .line_len(MultiBufferRow(row_before_line_breaks.row)),
-            );
-
-            Some(Crease::Inline {
-                range: start..row_before_line_breaks,
-                placeholder: self.fold_placeholder.clone(),
-                render_toggle: None,
-                render_trailer: None,
-                metadata: None,
-            })
-        } else {
-            None
-        }}
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]

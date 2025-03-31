@@ -295,7 +295,11 @@ impl DataTable {
             .height
     }
 
-    fn render_scrollbar(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_scrollbar(
+        &mut self,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let scroll_height = self.scroll_height();
         let table_bounds = self.table_bounds();
         let table_height = table_bounds.size.height;

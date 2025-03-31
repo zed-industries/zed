@@ -94,12 +94,17 @@ impl HeadlessExtensionStore {
             }
 
             for extension in to_load {
-                match Self::load_extension(this.clone(), extension.clone(), cx).await { Err(e) => {
-                    log::info!("failed to load extension: {}, {:?}", extension.id, e);
-                    missing.push(extension)
-                } _ => if extension.dev {
-                    missing.push(extension)
-                }}
+                match Self::load_extension(this.clone(), extension.clone(), cx).await {
+                    Err(e) => {
+                        log::info!("failed to load extension: {}, {:?}", extension.id, e);
+                        missing.push(extension)
+                    }
+                    _ => {
+                        if extension.dev {
+                            missing.push(extension)
+                        }
+                    }
+                }
             }
 
             Ok(missing)

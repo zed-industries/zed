@@ -115,11 +115,14 @@ impl<'a> MarkdownParser<'a> {
 
     async fn parse_document(mut self) -> Self {
         while !self.eof() {
-            match self.parse_block().await { Some(block) => {
-                self.parsed.extend(block);
-            } _ => {
-                self.cursor += 1;
-            }}
+            match self.parse_block().await {
+                Some(block) => {
+                    self.parsed.extend(block);
+                }
+                _ => {
+                    self.cursor += 1;
+                }
+            }
         }
         self
     }
@@ -722,16 +725,17 @@ impl<'a> MarkdownParser<'a> {
         code = code.strip_suffix('\n').unwrap_or(&code).to_string();
 
         let highlights = if let Some(language) = &language {
-            match &self.language_registry { Some(registry) => {
-                let rope: language::Rope = code.as_str().into();
-                registry
-                    .language_for_name_or_extension(language)
-                    .await
-                    .map(|l| l.highlight_text(&rope, 0..code.len()))
-                    .ok()
-            } _ => {
-                None
-            }}
+            match &self.language_registry {
+                Some(registry) => {
+                    let rope: language::Rope = code.as_str().into();
+                    registry
+                        .language_for_name_or_extension(language)
+                        .await
+                        .map(|l| l.highlight_text(&rope, 0..code.len()))
+                        .ok()
+                }
+                _ => None,
+            }
         } else {
             None
         };

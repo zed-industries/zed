@@ -1351,12 +1351,15 @@ impl BlockSnapshot {
                 {
                     break;
                 }
-                match &transform.block { Some(block) => {
-                    cursor.next(&());
-                    return Some((start_row, block));
-                } _ => {
-                    cursor.next(&());
-                }}
+                match &transform.block {
+                    Some(block) => {
+                        cursor.next(&());
+                        return Some((start_row, block));
+                    }
+                    _ => {
+                        cursor.next(&());
+                    }
+                }
             }
             None
         })
@@ -1405,13 +1408,18 @@ impl BlockSnapshot {
         cursor.seek(&wrap_row, Bias::Left, &());
 
         while let Some(transform) = cursor.item() {
-            match transform.block.as_ref() { Some(block) => {
-                if block.id() == block_id {
-                    return Some(block.clone());
+            match transform.block.as_ref() {
+                Some(block) => {
+                    if block.id() == block_id {
+                        return Some(block.clone());
+                    }
                 }
-            } _ => if *cursor.start() > wrap_row {
-                break;
-            }}
+                _ => {
+                    if *cursor.start() > wrap_row {
+                        break;
+                    }
+                }
+            }
 
             cursor.next(&());
         }
@@ -1482,19 +1490,24 @@ impl BlockSnapshot {
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(row.0), Bias::Right, &());
-        match cursor.item() { Some(transform) => {
-            let (output_start, input_start) = cursor.start();
-            let overshoot = row.0 - output_start.0;
-            if transform.block.is_some() {
-                0
-            } else {
-                self.wrap_snapshot.line_len(input_start.0 + overshoot)
+        match cursor.item() {
+            Some(transform) => {
+                let (output_start, input_start) = cursor.start();
+                let overshoot = row.0 - output_start.0;
+                if transform.block.is_some() {
+                    0
+                } else {
+                    self.wrap_snapshot.line_len(input_start.0 + overshoot)
+                }
             }
-        } _ => if row.0 == 0 {
-            0
-        } else {
-            panic!("row out of range");
-        }}
+            _ => {
+                if row.0 == 0 {
+                    0
+                } else {
+                    panic!("row out of range");
+                }
+            }
+        }
     }
 
     pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
@@ -1536,79 +1549,85 @@ impl BlockSnapshot {
         let mut reversed = false;
 
         loop {
-            match cursor.item() { Some(transform) => {
-                let (output_start_row, input_start_row) = cursor.start();
-                let (output_end_row, input_end_row) = cursor.end(&());
-                let output_start = Point::new(output_start_row.0, 0);
-                let input_start = Point::new(input_start_row.0, 0);
-                let input_end = Point::new(input_end_row.0, 0);
+            match cursor.item() {
+                Some(transform) => {
+                    let (output_start_row, input_start_row) = cursor.start();
+                    let (output_end_row, input_end_row) = cursor.end(&());
+                    let output_start = Point::new(output_start_row.0, 0);
+                    let input_start = Point::new(input_start_row.0, 0);
+                    let input_end = Point::new(input_end_row.0, 0);
 
-                match transform.block.as_ref() {
-                    Some(block) => {
-                        if block.is_replacement() {
-                            if ((bias == Bias::Left || search_left) && output_start <= point.0)
-                                || (!search_left && output_start >= point.0)
-                            {
-                                return BlockPoint(output_start);
+                    match transform.block.as_ref() {
+                        Some(block) => {
+                            if block.is_replacement() {
+                                if ((bias == Bias::Left || search_left) && output_start <= point.0)
+                                    || (!search_left && output_start >= point.0)
+                                {
+                                    return BlockPoint(output_start);
+                                }
+                            }
+                        }
+                        None => {
+                            let input_point = if point.row >= output_end_row.0 {
+                                let line_len = self.wrap_snapshot.line_len(input_end_row.0 - 1);
+                                self.wrap_snapshot
+                                    .clip_point(WrapPoint::new(input_end_row.0 - 1, line_len), bias)
+                            } else {
+                                let output_overshoot = point.0.saturating_sub(output_start);
+                                self.wrap_snapshot
+                                    .clip_point(WrapPoint(input_start + output_overshoot), bias)
+                            };
+
+                            if (input_start..input_end).contains(&input_point.0) {
+                                let input_overshoot = input_point.0.saturating_sub(input_start);
+                                return BlockPoint(output_start + input_overshoot);
                             }
                         }
                     }
-                    None => {
-                        let input_point = if point.row >= output_end_row.0 {
-                            let line_len = self.wrap_snapshot.line_len(input_end_row.0 - 1);
-                            self.wrap_snapshot
-                                .clip_point(WrapPoint::new(input_end_row.0 - 1, line_len), bias)
-                        } else {
-                            let output_overshoot = point.0.saturating_sub(output_start);
-                            self.wrap_snapshot
-                                .clip_point(WrapPoint(input_start + output_overshoot), bias)
-                        };
 
-                        if (input_start..input_end).contains(&input_point.0) {
-                            let input_overshoot = input_point.0.saturating_sub(input_start);
-                            return BlockPoint(output_start + input_overshoot);
-                        }
+                    if search_left {
+                        cursor.prev(&());
+                    } else {
+                        cursor.next(&());
                     }
                 }
-
-                if search_left {
-                    cursor.prev(&());
-                } else {
-                    cursor.next(&());
+                _ => {
+                    if reversed {
+                        return self.max_point();
+                    } else {
+                        reversed = true;
+                        search_left = !search_left;
+                        cursor.seek(&BlockRow(point.row), Bias::Right, &());
+                    }
                 }
-            } _ => if reversed {
-                return self.max_point();
-            } else {
-                reversed = true;
-                search_left = !search_left;
-                cursor.seek(&BlockRow(point.row), Bias::Right, &());
-            }}
+            }
         }
     }
 
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
-        match cursor.item() { Some(transform) => {
-            if transform.block.is_some() {
-                BlockPoint::new(cursor.start().1 .0, 0)
-            } else {
-                let (input_start_row, output_start_row) = cursor.start();
-                let input_start = Point::new(input_start_row.0, 0);
-                let output_start = Point::new(output_start_row.0, 0);
-                let input_overshoot = wrap_point.0 - input_start;
-                BlockPoint(output_start + input_overshoot)
+        match cursor.item() {
+            Some(transform) => {
+                if transform.block.is_some() {
+                    BlockPoint::new(cursor.start().1 .0, 0)
+                } else {
+                    let (input_start_row, output_start_row) = cursor.start();
+                    let input_start = Point::new(input_start_row.0, 0);
+                    let output_start = Point::new(output_start_row.0, 0);
+                    let input_overshoot = wrap_point.0 - input_start;
+                    BlockPoint(output_start + input_overshoot)
+                }
             }
-        } _ => {
-            self.max_point()
-        }}
+            _ => self.max_point(),
+        }
     }
 
     pub fn to_wrap_point(&self, block_point: BlockPoint, bias: Bias) -> WrapPoint {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(block_point.row), Bias::Right, &());
-        match cursor.item() { Some(transform) => {
-            match transform.block.as_ref() {
+        match cursor.item() {
+            Some(transform) => match transform.block.as_ref() {
                 Some(block) => {
                     if block.place_below() {
                         let wrap_row = cursor.start().1 .0 - 1;
@@ -1627,10 +1646,9 @@ impl BlockSnapshot {
                     let wrap_row = cursor.start().1 .0 + overshoot;
                     WrapPoint::new(wrap_row, block_point.column)
                 }
-            }
-        } _ => {
-            self.wrap_snapshot.max_point()
-        }}
+            },
+            _ => self.wrap_snapshot.max_point(),
+        }
     }
 }
 
@@ -1702,21 +1720,24 @@ impl<'a> Iterator for BlockChunks<'a> {
         }
 
         if self.input_chunk.text.is_empty() {
-            match self.input_chunks.next() { Some(input_chunk) => {
-                self.input_chunk = input_chunk;
-            } _ => {
-                if self.output_row < self.max_output_row {
-                    self.output_row += 1;
-                    self.advance();
-                    if self.transforms.item().is_some() {
-                        return Some(Chunk {
-                            text: "\n",
-                            ..Default::default()
-                        });
-                    }
+            match self.input_chunks.next() {
+                Some(input_chunk) => {
+                    self.input_chunk = input_chunk;
                 }
-                return None;
-            }}
+                _ => {
+                    if self.output_row < self.max_output_row {
+                        self.output_row += 1;
+                        self.advance();
+                        if self.transforms.item().is_some() {
+                            return Some(Chunk {
+                                text: "\n",
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    return None;
+                }
+            }
         }
 
         let transform_end = self.transforms.end(&()).0 .0;
@@ -1783,19 +1804,20 @@ impl Iterator for BlockRows<'_> {
         }
 
         let transform = self.transforms.item()?;
-        match transform.block.as_ref() { Some(block) => {
-            if block.is_replacement() && self.transforms.start().0 == self.output_row {
-                if matches!(block, Block::FoldedBuffer { .. }) {
-                    Some(RowInfo::default())
+        match transform.block.as_ref() {
+            Some(block) => {
+                if block.is_replacement() && self.transforms.start().0 == self.output_row {
+                    if matches!(block, Block::FoldedBuffer { .. }) {
+                        Some(RowInfo::default())
+                    } else {
+                        Some(self.input_rows.next().unwrap())
+                    }
                 } else {
-                    Some(self.input_rows.next().unwrap())
+                    Some(RowInfo::default())
                 }
-            } else {
-                Some(RowInfo::default())
             }
-        } _ => {
-            Some(self.input_rows.next().unwrap())
-        }}
+            _ => Some(self.input_rows.next().unwrap()),
+        }
     }
 }
 

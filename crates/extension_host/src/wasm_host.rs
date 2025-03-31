@@ -269,11 +269,10 @@ impl extension::Extension for WasmExtension {
     ) -> Result<SlashCommandOutput> {
         self.call(|extension, store| {
             async move {
-                let resource = match delegate { Some(delegate) => {
-                    Some(store.data_mut().table().push(delegate)?)
-                } _ => {
-                    None
-                }};
+                let resource = match delegate {
+                    Some(delegate) => Some(store.data_mut().table().push(delegate)?),
+                    _ => None,
+                };
 
                 let output = extension
                     .call_run_slash_command(store, &command.into(), &arguments, resource)

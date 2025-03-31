@@ -519,9 +519,14 @@ impl<T: Item> SumTree<T> {
                 for tree in other.0.child_trees() {
                     self.append(tree.clone(), cx);
                 }
-            } else { match self.push_tree_recursive(other, cx) { Some(split_tree) => {
-                *self = Self::from_child_trees(self.clone(), split_tree, cx);
-            } _ => {}}}
+            } else {
+                match self.push_tree_recursive(other, cx) {
+                    Some(split_tree) => {
+                        *self = Self::from_child_trees(self.clone(), split_tree, cx);
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 

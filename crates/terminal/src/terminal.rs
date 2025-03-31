@@ -956,76 +956,120 @@ impl Terminal {
                     let url_match = min_index..=max_index;
 
                     Some((url, true, url_match))
-                } else { match regex_match_at(term, point, &mut self.url_regex) { Some(url_match) => {
-                    let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-                    Some((url, true, url_match))
-                } _ => { match regex_match_at(term, point, &mut self.python_file_line_regex)
-                { Some(python_match) => {
-                    let matching_line =
-                        term.bounds_to_string(*python_match.start(), *python_match.end());
-                    python_extract_path_and_line(&matching_line).map(|(file_path, line_number)| {
-                        (format!("{file_path}:{line_number}"), false, python_match)
-                    })
-                } _ => { match regex_match_at(term, point, &mut self.word_regex) { Some(word_match) => {
-                    let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
-
-                    let (sanitized_match, sanitized_word) = 'sanitize: {
-                        let mut word_match = word_match;
-                        let mut file_path = file_path;
-
-                        if is_path_surrounded_by_common_symbols(&file_path) {
-                            word_match = Match::new(
-                                word_match.start().add(term, Boundary::Grid, 1),
-                                word_match.end().sub(term, Boundary::Grid, 1),
-                            );
-                            file_path = file_path[1..file_path.len() - 1].to_owned();
+                } else {
+                    match regex_match_at(term, point, &mut self.url_regex) {
+                        Some(url_match) => {
+                            let url = term.bounds_to_string(*url_match.start(), *url_match.end());
+                            Some((url, true, url_match))
                         }
+                        _ => {
+                            match regex_match_at(term, point, &mut self.python_file_line_regex) {
+                                Some(python_match) => {
+                                    let matching_line = term.bounds_to_string(
+                                        *python_match.start(),
+                                        *python_match.end(),
+                                    );
+                                    python_extract_path_and_line(&matching_line).map(
+                                        |(file_path, line_number)| {
+                                            (
+                                                format!("{file_path}:{line_number}"),
+                                                false,
+                                                python_match,
+                                            )
+                                        },
+                                    )
+                                }
+                                _ => {
+                                    match regex_match_at(term, point, &mut self.word_regex) {
+                                        Some(word_match) => {
+                                            let file_path = term.bounds_to_string(
+                                                *word_match.start(),
+                                                *word_match.end(),
+                                            );
 
-                        while file_path.ends_with(':') {
-                            file_path.pop();
-                            word_match = Match::new(
-                                *word_match.start(),
-                                word_match.end().sub(term, Boundary::Grid, 1),
-                            );
-                        }
-                        let mut colon_count = 0;
-                        for c in file_path.chars() {
-                            if c == ':' {
-                                colon_count += 1;
+                                            let (sanitized_match, sanitized_word) = 'sanitize: {
+                                                let mut word_match = word_match;
+                                                let mut file_path = file_path;
+
+                                                if is_path_surrounded_by_common_symbols(&file_path)
+                                                {
+                                                    word_match = Match::new(
+                                                        word_match.start().add(
+                                                            term,
+                                                            Boundary::Grid,
+                                                            1,
+                                                        ),
+                                                        word_match.end().sub(
+                                                            term,
+                                                            Boundary::Grid,
+                                                            1,
+                                                        ),
+                                                    );
+                                                    file_path = file_path[1..file_path.len() - 1]
+                                                        .to_owned();
+                                                }
+
+                                                while file_path.ends_with(':') {
+                                                    file_path.pop();
+                                                    word_match = Match::new(
+                                                        *word_match.start(),
+                                                        word_match.end().sub(
+                                                            term,
+                                                            Boundary::Grid,
+                                                            1,
+                                                        ),
+                                                    );
+                                                }
+                                                let mut colon_count = 0;
+                                                for c in file_path.chars() {
+                                                    if c == ':' {
+                                                        colon_count += 1;
+                                                    }
+                                                }
+                                                // strip trailing comment after colon in case of
+                                                // file/at/path.rs:row:column:description or error message
+                                                // so that the file path is `file/at/path.rs:row:column`
+                                                if colon_count > 2 {
+                                                    let last_index = file_path.rfind(':').unwrap();
+                                                    let prev_is_digit = last_index > 0
+                                                        && file_path
+                                                            .chars()
+                                                            .nth(last_index - 1)
+                                                            .map_or(false, |c| c.is_ascii_digit());
+                                                    let next_is_digit = last_index
+                                                        < file_path.len() - 1
+                                                        && file_path
+                                                            .chars()
+                                                            .nth(last_index + 1)
+                                                            .map_or(true, |c| c.is_ascii_digit());
+                                                    if prev_is_digit && !next_is_digit {
+                                                        let stripped_len =
+                                                            file_path.len() - last_index;
+                                                        word_match = Match::new(
+                                                            *word_match.start(),
+                                                            word_match.end().sub(
+                                                                term,
+                                                                Boundary::Grid,
+                                                                stripped_len,
+                                                            ),
+                                                        );
+                                                        file_path =
+                                                            file_path[0..last_index].to_owned();
+                                                    }
+                                                }
+
+                                                break 'sanitize (word_match, file_path);
+                                            };
+
+                                            Some((sanitized_word, false, sanitized_match))
+                                        }
+                                        _ => None,
+                                    }
+                                }
                             }
                         }
-                        // strip trailing comment after colon in case of
-                        // file/at/path.rs:row:column:description or error message
-                        // so that the file path is `file/at/path.rs:row:column`
-                        if colon_count > 2 {
-                            let last_index = file_path.rfind(':').unwrap();
-                            let prev_is_digit = last_index > 0
-                                && file_path
-                                    .chars()
-                                    .nth(last_index - 1)
-                                    .map_or(false, |c| c.is_ascii_digit());
-                            let next_is_digit = last_index < file_path.len() - 1
-                                && file_path
-                                    .chars()
-                                    .nth(last_index + 1)
-                                    .map_or(true, |c| c.is_ascii_digit());
-                            if prev_is_digit && !next_is_digit {
-                                let stripped_len = file_path.len() - last_index;
-                                word_match = Match::new(
-                                    *word_match.start(),
-                                    word_match.end().sub(term, Boundary::Grid, stripped_len),
-                                );
-                                file_path = file_path[0..last_index].to_owned();
-                            }
-                        }
-
-                        break 'sanitize (word_match, file_path);
-                    };
-
-                    Some((sanitized_word, false, sanitized_match))
-                } _ => {
-                    None
-                }}}}}}};
+                    }
+                };
 
                 match found_word {
                     Some((maybe_url_or_path, is_url, url_match)) => {

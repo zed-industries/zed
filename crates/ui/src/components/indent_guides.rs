@@ -159,15 +159,16 @@ mod uniform_list {
                 visible_range.start,
                 includes_trailing_indent,
             );
-            let mut indent_guides = match self.render_fn { Some(ref custom_render) => {
-                let params = RenderIndentGuideParams {
-                    indent_guides,
-                    indent_size: self.indent_size,
-                    item_height,
-                };
-                custom_render(params, window, cx)
-            } _ => {
-                indent_guides
+            let mut indent_guides = match self.render_fn {
+                Some(ref custom_render) => {
+                    let params = RenderIndentGuideParams {
+                        indent_guides,
+                        indent_size: self.indent_size,
+                        item_height,
+                    };
+                    custom_render(params, window, cx)
+                }
+                _ => indent_guides
                     .into_iter()
                     .map(|layout| RenderedIndentGuide {
                         bounds: Bounds::new(
@@ -181,8 +182,8 @@ mod uniform_list {
                         is_active: false,
                         hitbox: None,
                     })
-                    .collect()
-            }};
+                    .collect(),
+            };
             for guide in &mut indent_guides {
                 guide.bounds.origin += bounds.origin;
                 if let Some(hitbox) = guide.hitbox.as_mut() {
@@ -239,21 +240,23 @@ mod uniform_list {
             window: &mut Window,
             _cx: &mut App,
         ) -> Self::PrepaintState {
-            match self.on_hovered_indent_guide_click.clone()
-            { Some(on_hovered_indent_guide_click) => {
-                let hitboxes = self
-                    .indent_guides
-                    .as_ref()
-                    .iter()
-                    .map(|guide| window.insert_hitbox(guide.hitbox.unwrap_or(guide.bounds), false))
-                    .collect();
-                Self::PrepaintState::Interactive {
-                    hitboxes: Rc::new(hitboxes),
-                    on_hovered_indent_guide_click,
+            match self.on_hovered_indent_guide_click.clone() {
+                Some(on_hovered_indent_guide_click) => {
+                    let hitboxes = self
+                        .indent_guides
+                        .as_ref()
+                        .iter()
+                        .map(|guide| {
+                            window.insert_hitbox(guide.hitbox.unwrap_or(guide.bounds), false)
+                        })
+                        .collect();
+                    Self::PrepaintState::Interactive {
+                        hitboxes: Rc::new(hitboxes),
+                        on_hovered_indent_guide_click,
+                    }
                 }
-            } _ => {
-                Self::PrepaintState::Static
-            }}
+                _ => Self::PrepaintState::Static,
+            }
         }
 
         fn paint(

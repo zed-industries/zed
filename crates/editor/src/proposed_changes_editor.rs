@@ -177,27 +177,30 @@ impl ProposedChangesEditor {
                 .buffer_entries
                 .iter()
                 .position(|entry| entry.base == location.buffer)
-            { Some(ix) => {
-                let entry = self.buffer_entries.remove(ix);
-                branch_buffer = entry.branch.clone();
-                buffer_entries.push(entry);
-            } _ => {
-                branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-                new_diffs.push(cx.new(|cx| {
-                    let mut diff = BufferDiff::new(&branch_buffer.read(cx).snapshot(), cx);
-                    let _ = diff.set_base_text(
-                        location.buffer.clone(),
-                        branch_buffer.read(cx).text_snapshot(),
-                        cx,
-                    );
-                    diff
-                }));
-                buffer_entries.push(BufferEntry {
-                    branch: branch_buffer.clone(),
-                    base: location.buffer.clone(),
-                    _subscription: cx.subscribe(&branch_buffer, Self::on_buffer_event),
-                });
-            }}
+            {
+                Some(ix) => {
+                    let entry = self.buffer_entries.remove(ix);
+                    branch_buffer = entry.branch.clone();
+                    buffer_entries.push(entry);
+                }
+                _ => {
+                    branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
+                    new_diffs.push(cx.new(|cx| {
+                        let mut diff = BufferDiff::new(&branch_buffer.read(cx).snapshot(), cx);
+                        let _ = diff.set_base_text(
+                            location.buffer.clone(),
+                            branch_buffer.read(cx).text_snapshot(),
+                            cx,
+                        );
+                        diff
+                    }));
+                    buffer_entries.push(BufferEntry {
+                        branch: branch_buffer.clone(),
+                        base: location.buffer.clone(),
+                        _subscription: cx.subscribe(&branch_buffer, Self::on_buffer_event),
+                    });
+                }
+            }
 
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.push_excerpts(
@@ -467,11 +470,10 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
-        match self.to_base(&buffer, &[], cx) { Some(buffer) => {
-            self.0.supports_inlay_hints(&buffer, cx)
-        } _ => {
-            false
-        }}
+        match self.to_base(&buffer, &[], cx) {
+            Some(buffer) => self.0.supports_inlay_hints(&buffer, cx),
+            _ => false,
+        }
     }
 
     fn document_highlights(

@@ -285,23 +285,26 @@ fn collect_files(
                 if entry.is_dir() {
                     // Auto-fold directories that contain no files
                     let mut child_entries = snapshot.child_entries(&entry.path);
-                    match child_entries.next() { Some(child) => {
-                        if child_entries.next().is_none() && child.kind.is_dir() {
-                            if is_top_level_directory {
-                                is_top_level_directory = false;
-                                folded_directory_names_stack.push(
-                                    path_including_worktree_name.to_string_lossy().to_string(),
-                                );
-                            } else {
-                                folded_directory_names_stack.push(filename.to_string());
+                    match child_entries.next() {
+                        Some(child) => {
+                            if child_entries.next().is_none() && child.kind.is_dir() {
+                                if is_top_level_directory {
+                                    is_top_level_directory = false;
+                                    folded_directory_names_stack.push(
+                                        path_including_worktree_name.to_string_lossy().to_string(),
+                                    );
+                                } else {
+                                    folded_directory_names_stack.push(filename.to_string());
+                                }
+                                continue;
                             }
+                        }
+                        _ => {
+                            // Skip empty directories
+                            folded_directory_names_stack.clear();
                             continue;
                         }
-                    } _ => {
-                        // Skip empty directories
-                        folded_directory_names_stack.clear();
-                        continue;
-                    }}
+                    }
                     let prefix_paths = folded_directory_names_stack.drain(..).as_slice().join("/");
                     if prefix_paths.is_empty() {
                         let label = if is_top_level_directory {

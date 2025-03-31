@@ -175,27 +175,27 @@ impl TestServer {
 
         let clock = Arc::new(FakeSystemClock::new());
         let http = FakeHttpClient::with_404_response();
-        let user_id = match self.app_state.db.get_user_by_github_login(name).await
-        { Ok(Some(user)) => {
-            user.id
-        } _ => {
-            let github_user_id = self.next_github_user_id;
-            self.next_github_user_id += 1;
-            self.app_state
-                .db
-                .create_user(
-                    &format!("{name}@example.com"),
-                    None,
-                    false,
-                    NewUserParams {
-                        github_login: name.into(),
-                        github_user_id,
-                    },
-                )
-                .await
-                .expect("creating user failed")
-                .user_id
-        }};
+        let user_id = match self.app_state.db.get_user_by_github_login(name).await {
+            Ok(Some(user)) => user.id,
+            _ => {
+                let github_user_id = self.next_github_user_id;
+                self.next_github_user_id += 1;
+                self.app_state
+                    .db
+                    .create_user(
+                        &format!("{name}@example.com"),
+                        None,
+                        false,
+                        NewUserParams {
+                            github_login: name.into(),
+                            github_user_id,
+                        },
+                    )
+                    .await
+                    .expect("creating user failed")
+                    .user_id
+            }
+        };
         let client_name = name.to_string();
         let mut client = cx.update(|cx| Client::new(clock, http.clone(), cx));
         let server = self.server.clone();

@@ -340,19 +340,21 @@ impl GitStore {
                         cx.background_spawn(async move {
                             while let Some(update) = updates_rx.next().await {
                                 match update {
-                                    DownstreamUpdate::UpdateRepository(snapshot) => {
-                                        match snapshots.get_mut(&snapshot.work_directory_id)
-                                        { Some(old_snapshot) => {
+                                    DownstreamUpdate::UpdateRepository(snapshot) => match snapshots
+                                        .get_mut(&snapshot.work_directory_id)
+                                    {
+                                        Some(old_snapshot) => {
                                             let update =
                                                 snapshot.build_update(old_snapshot, project_id);
                                             *old_snapshot = snapshot;
                                             client.send(update)?;
-                                        } _ => {
+                                        }
+                                        _ => {
                                             let update = snapshot.initial_update(project_id);
                                             client.send(update)?;
                                             snapshots.insert(snapshot.work_directory_id, snapshot);
-                                        }}
-                                    }
+                                        }
+                                    },
                                     DownstreamUpdate::RemoveRepository(id) => {
                                         client.send(proto::RemoveRepository {
                                             project_id,
@@ -365,15 +367,15 @@ impl GitStore {
                         })
                         .await
                         .ok();
-                        this.update(cx, |this, _| {
-                            match &mut this.state
-                            { GitStoreState::Local {
+                        this.update(cx, |this, _| match &mut this.state {
+                            GitStoreState::Local {
                                 downstream_client, ..
                             } => {
                                 downstream_client.take();
-                            } _ => {
+                            }
+                            _ => {
                                 unreachable!("unshared called on remote store");
-                            }}
+                            }
                         })
                     }),
                 });
@@ -561,13 +563,15 @@ impl GitStore {
                 match kind {
                     DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
                     DiffKind::Uncommitted => {
-                        let unstaged_diff = match diff_state.unstaged_diff() { Some(diff) => {
-                            diff
-                        } _ => {
-                            let unstaged_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
-                            diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
-                            unstaged_diff
-                        }};
+                        let unstaged_diff = match diff_state.unstaged_diff() {
+                            Some(diff) => diff,
+                            _ => {
+                                let unstaged_diff =
+                                    cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                                diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
+                                unstaged_diff
+                            }
+                        };
 
                         diff.update(cx, |diff, _| diff.set_secondary_diff(unstaged_diff));
                         diff_state.uncommitted_diff = Some(diff.downgrade())
@@ -1090,9 +1094,14 @@ impl GitStore {
             if !self.repositories.contains_key(id) {
                 self.active_repo_id = None;
             }
-        } else { match self.repositories.keys().next() { Some(&first_id) => {
-            self.active_repo_id = Some(first_id);
-        } _ => {}}}
+        } else {
+            match self.repositories.keys().next() {
+                Some(&first_id) => {
+                    self.active_repo_id = Some(first_id);
+                }
+                _ => {}
+            }
+        }
     }
 
     fn on_buffer_store_event(
@@ -1438,21 +1447,27 @@ impl GitStore {
                     jobs.push_back(next_job);
                 }
 
-                match jobs.pop_front() { Some(job) => {
-                    if let Some(current_key) = &job.key {
-                        if jobs
-                            .iter()
-                            .any(|other_job| other_job.key.as_ref() == Some(current_key))
-                        {
-                            continue;
+                match jobs.pop_front() {
+                    Some(job) => {
+                        if let Some(current_key) = &job.key {
+                            if jobs
+                                .iter()
+                                .any(|other_job| other_job.key.as_ref() == Some(current_key))
+                            {
+                                continue;
+                            }
                         }
+                        (job.job)(cx).await;
                     }
-                    (job.job)(cx).await;
-                } _ => { match job_rx.next().await { Some(job) => {
-                    jobs.push_back(job);
-                } _ => {
-                    break;
-                }}}}
+                    _ => match job_rx.next().await {
+                        Some(job) => {
+                            jobs.push_back(job);
+                        }
+                        _ => {
+                            break;
+                        }
+                    },
+                }
             }
         })
         .detach();
@@ -2385,13 +2400,14 @@ impl BufferDiffState {
             }
 
             let unstaged_changed_range = match unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
-            { Some((unstaged_diff, new_unstaged_diff)) => {
-                unstaged_diff.update(cx, |diff, cx| {
-                    diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
-                })?
-            } _ => {
-                None
-            }};
+            {
+                Some((unstaged_diff, new_unstaged_diff)) => {
+                    unstaged_diff.update(cx, |diff, cx| {
+                        diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
+                    })?
+                }
+                _ => None,
+            };
 
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
@@ -2462,12 +2478,12 @@ impl GitStoreState {
     ) -> Task<Result<Option<String>>> {
         match self {
             GitStoreState::Local { .. } => {
-                match buffer_store.read(cx).worktree_for_buffer(buffer, cx)
-                { Some((worktree, path)) => {
-                    worktree.read(cx).load_staged_file(path.as_ref(), cx)
-                } _ => {
-                    return Task::ready(Err(anyhow!("no such worktree")));
-                }}
+                match buffer_store.read(cx).worktree_for_buffer(buffer, cx) {
+                    Some((worktree, path)) => worktree.read(cx).load_staged_file(path.as_ref(), cx),
+                    _ => {
+                        return Task::ready(Err(anyhow!("no such worktree")));
+                    }
+                }
             }
             GitStoreState::Ssh {
                 upstream_client,
@@ -2502,27 +2518,27 @@ impl GitStoreState {
     ) -> Task<Result<DiffBasesChange>> {
         match self {
             GitStoreState::Local { .. } => {
-                match buffer_store.read(cx).worktree_for_buffer(buffer, cx)
-                { Some((worktree, path)) => {
-                    let worktree = worktree.read(cx);
-                    let committed_text = worktree.load_committed_file(&path, cx);
-                    let staged_text = worktree.load_staged_file(&path, cx);
-                    cx.background_spawn(async move {
-                        let committed_text = committed_text.await?;
-                        let staged_text = staged_text.await?;
-                        let diff_bases_change = if committed_text == staged_text {
-                            DiffBasesChange::SetBoth(committed_text)
-                        } else {
-                            DiffBasesChange::SetEach {
-                                index: staged_text,
-                                head: committed_text,
-                            }
-                        };
-                        Ok(diff_bases_change)
-                    })
-                } _ => {
-                    Task::ready(Err(anyhow!("no such worktree")))
-                }}
+                match buffer_store.read(cx).worktree_for_buffer(buffer, cx) {
+                    Some((worktree, path)) => {
+                        let worktree = worktree.read(cx);
+                        let committed_text = worktree.load_committed_file(&path, cx);
+                        let staged_text = worktree.load_staged_file(&path, cx);
+                        cx.background_spawn(async move {
+                            let committed_text = committed_text.await?;
+                            let staged_text = staged_text.await?;
+                            let diff_bases_change = if committed_text == staged_text {
+                                DiffBasesChange::SetBoth(committed_text)
+                            } else {
+                                DiffBasesChange::SetEach {
+                                    index: staged_text,
+                                    head: committed_text,
+                                }
+                            };
+                            Ok(diff_bases_change)
+                        })
+                    }
+                    _ => Task::ready(Err(anyhow!("no such worktree"))),
+                }
             }
             GitStoreState::Ssh {
                 upstream_client,
@@ -2703,40 +2719,40 @@ impl Repository {
             return Task::ready(Ok(buffer));
         }
 
-        match self.state.clone()
-        { RepositoryState::Remote {
-            project_id,
-            client,
-            work_directory_id,
-        } => {
-            let client = client.clone();
-            cx.spawn(async move |repository, cx| {
-                let request = client.request(proto::OpenCommitMessageBuffer {
-                    project_id: project_id.0,
-                    work_directory_id: work_directory_id.to_proto(),
-                });
-                let response = request.await.context("requesting to open commit buffer")?;
-                let buffer_id = BufferId::new(response.buffer_id)?;
-                let buffer = buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.wait_for_remote_buffer(buffer_id, cx)
-                    })?
-                    .await?;
-                if let Some(language_registry) = languages {
-                    let git_commit_language =
-                        language_registry.language_for_name("Git Commit").await?;
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.set_language(Some(git_commit_language), cx);
+        match self.state.clone() {
+            RepositoryState::Remote {
+                project_id,
+                client,
+                work_directory_id,
+            } => {
+                let client = client.clone();
+                cx.spawn(async move |repository, cx| {
+                    let request = client.request(proto::OpenCommitMessageBuffer {
+                        project_id: project_id.0,
+                        work_directory_id: work_directory_id.to_proto(),
+                    });
+                    let response = request.await.context("requesting to open commit buffer")?;
+                    let buffer_id = BufferId::new(response.buffer_id)?;
+                    let buffer = buffer_store
+                        .update(cx, |buffer_store, cx| {
+                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                        })?
+                        .await?;
+                    if let Some(language_registry) = languages {
+                        let git_commit_language =
+                            language_registry.language_for_name("Git Commit").await?;
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_language(Some(git_commit_language), cx);
+                        })?;
+                    }
+                    repository.update(cx, |repository, _| {
+                        repository.commit_message_buffer = Some(buffer.clone());
                     })?;
-                }
-                repository.update(cx, |repository, _| {
-                    repository.commit_message_buffer = Some(buffer.clone());
-                })?;
-                Ok(buffer)
-            })
-        } _ => {
-            self.open_local_commit_buffer(languages, buffer_store, cx)
-        }}
+                    Ok(buffer)
+                })
+            }
+            _ => self.open_local_commit_buffer(languages, buffer_store, cx),
+        }
     }
 
     fn open_local_commit_buffer(

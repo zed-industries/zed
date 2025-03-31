@@ -68,12 +68,12 @@ impl Tool for DiagnosticsTool {
             .and_then(|input| match input.path {
                 Some(path) if !path.is_empty() => Some(MarkdownString::inline_code(&path)),
                 _ => None,
-            })
-        { Some(path) => {
-            format!("Check diagnostics for {path}")
-        } _ => {
-            "Check project diagnostics".to_string()
-        }}
+            }) {
+            Some(path) => {
+                format!("Check diagnostics for {path}")
+            }
+            _ => "Check project diagnostics".to_string(),
+        }
     }
 
     fn run(

@@ -1299,32 +1299,36 @@ impl ProjectPanel {
                 .read(cx)
                 .worktree_for_id(worktree_id, cx)
                 .zip(self.expanded_dir_ids.get_mut(&worktree_id))
-            { Some((worktree, expanded_dir_ids)) => {
-                let worktree = worktree.read(cx);
-                if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
-                    loop {
-                        if entry.is_dir() {
-                            if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                                expanded_dir_ids.insert(ix, entry.id);
-                            }
-                            directory_id = entry.id;
-                            break;
-                        } else {
-                            if let Some(parent_path) = entry.path.parent() {
-                                if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
-                                    entry = parent_entry;
-                                    continue;
+            {
+                Some((worktree, expanded_dir_ids)) => {
+                    let worktree = worktree.read(cx);
+                    if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
+                        loop {
+                            if entry.is_dir() {
+                                if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                                    expanded_dir_ids.insert(ix, entry.id);
                                 }
+                                directory_id = entry.id;
+                                break;
+                            } else {
+                                if let Some(parent_path) = entry.path.parent() {
+                                    if let Some(parent_entry) = worktree.entry_for_path(parent_path)
+                                    {
+                                        entry = parent_entry;
+                                        continue;
+                                    }
+                                }
+                                return;
                             }
-                            return;
                         }
-                    }
-                } else {
+                    } else {
+                        return;
+                    };
+                }
+                _ => {
                     return;
-                };
-            } _ => {
-                return;
-            }};
+                }
+            };
             self.marked_entries.clear();
             self.edit_state = Some(EditState {
                 worktree_id,
@@ -1659,16 +1663,19 @@ impl ProjectPanel {
             let mut path = &*entry.path;
             loop {
                 let mut child_entries_iter = snapshot.child_entries(path);
-                match child_entries_iter.next() { Some(child) => {
-                    if child_entries_iter.next().is_none() && child.is_dir() {
-                        self.unfolded_dir_ids.remove(&child.id);
-                        path = &*child.path;
-                    } else {
+                match child_entries_iter.next() {
+                    Some(child) => {
+                        if child_entries_iter.next().is_none() && child.is_dir() {
+                            self.unfolded_dir_ids.remove(&child.id);
+                            path = &*child.path;
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => {
                         break;
                     }
-                } _ => {
-                    break;
-                }}
+                }
             }
 
             self.update_visible_entries(None, cx);
@@ -1922,21 +1929,24 @@ impl ProjectPanel {
     }
 
     fn select_parent(&mut self, _: &SelectParent, window: &mut Window, cx: &mut Context<Self>) {
-        match self.selected_sub_entry(cx) { Some((worktree, entry)) => {
-            if let Some(parent) = entry.path.parent() {
-                let worktree = worktree.read(cx);
-                if let Some(parent_entry) = worktree.entry_for_path(parent) {
-                    self.selection = Some(SelectedEntry {
-                        worktree_id: worktree.id(),
-                        entry_id: parent_entry.id,
-                    });
-                    self.autoscroll(cx);
-                    cx.notify();
+        match self.selected_sub_entry(cx) {
+            Some((worktree, entry)) => {
+                if let Some(parent) = entry.path.parent() {
+                    let worktree = worktree.read(cx);
+                    if let Some(parent_entry) = worktree.entry_for_path(parent) {
+                        self.selection = Some(SelectedEntry {
+                            worktree_id: worktree.id(),
+                            entry_id: parent_entry.id,
+                        });
+                        self.autoscroll(cx);
+                        cx.notify();
+                    }
                 }
             }
-        } _ => {
-            self.select_first(&SelectFirst {}, window, cx);
-        }}
+            _ => {
+                self.select_first(&SelectFirst {}, window, cx);
+            }
+        }
     }
 
     fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
@@ -2628,11 +2638,10 @@ impl ProjectPanel {
                 hash_map::Entry::Vacant(e) => {
                     // The first time a worktree's root entry becomes available,
                     // mark that root entry as expanded.
-                    match worktree_snapshot.root_entry() { Some(entry) => {
-                        e.insert(vec![entry.id]).as_slice()
-                    } _ => {
-                        &[]
-                    }}
+                    match worktree_snapshot.root_entry() {
+                        Some(entry) => e.insert(vec![entry.id]).as_slice(),
+                        _ => &[],
+                    }
                 }
             };
 
@@ -4506,11 +4515,12 @@ impl Render for ProjectPanel {
                                     let project = this.project.read(cx);
 
                                     let worktree_id = match project.worktree_for_entry(entry_id, cx)
-                                    { Some(worktree) => {
-                                        worktree.read(cx).id()
-                                    } _ => {
-                                        return;
-                                    }};
+                                    {
+                                        Some(worktree) => worktree.read(cx).id(),
+                                        _ => {
+                                            return;
+                                        }
+                                    };
 
                                     this.selection = Some(SelectedEntry {
                                         worktree_id,

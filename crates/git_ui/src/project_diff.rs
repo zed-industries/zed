@@ -97,22 +97,25 @@ impl ProjectDiff {
                 "Action"
             }
         );
-        let project_diff = match workspace.item_of_type::<Self>(cx) { Some(existing) => {
-            workspace.activate_item(&existing, true, true, window, cx);
-            existing
-        } _ => {
-            let workspace_handle = cx.entity();
-            let project_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
-            workspace.add_item_to_active_pane(
-                Box::new(project_diff.clone()),
-                None,
-                true,
-                window,
-                cx,
-            );
-            project_diff
-        }};
+        let project_diff = match workspace.item_of_type::<Self>(cx) {
+            Some(existing) => {
+                workspace.activate_item(&existing, true, true, window, cx);
+                existing
+            }
+            _ => {
+                let workspace_handle = cx.entity();
+                let project_diff = cx
+                    .new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
+                workspace.add_item_to_active_pane(
+                    Box::new(project_diff.clone()),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+                project_diff
+            }
+        };
         if let Some(entry) = entry {
             project_diff.update(cx, |project_diff, cx| {
                 project_diff.move_to_entry(entry, window, cx);
@@ -223,15 +226,18 @@ impl ProjectDiff {
     }
 
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
-        match self.multibuffer.read(cx).location_for_path(&path_key, cx) { Some(position) => {
-            self.editor.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
-                    s.select_ranges([position..position]);
-                })
-            });
-        } _ => {
-            self.pending_scroll = Some(path_key);
-        }}
+        match self.multibuffer.read(cx).location_for_path(&path_key, cx) {
+            Some(position) => {
+                self.editor.update(cx, |editor, cx| {
+                    editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
+                        s.select_ranges([position..position]);
+                    })
+                });
+            }
+            _ => {
+                self.pending_scroll = Some(path_key);
+            }
+        }
     }
 
     fn button_states(&self, cx: &App) -> ButtonStates {
@@ -246,15 +252,18 @@ impl ProjectDiff {
             .collect::<Vec<_>>();
         if !ranges.iter().any(|range| range.start != range.end) {
             selection = false;
-            match self.editor.read(cx).active_excerpt(cx) { Some((excerpt_id, buffer, range)) => {
-                ranges = vec![multi_buffer::Anchor::range_in_buffer(
-                    excerpt_id,
-                    buffer.read(cx).remote_id(),
-                    range,
-                )];
-            } _ => {
-                ranges = Vec::default();
-            }}
+            match self.editor.read(cx).active_excerpt(cx) {
+                Some((excerpt_id, buffer, range)) => {
+                    ranges = vec![multi_buffer::Anchor::range_in_buffer(
+                        excerpt_id,
+                        buffer.read(cx).remote_id(),
+                        range,
+                    )];
+                }
+                _ => {
+                    ranges = Vec::default();
+                }
+            }
         }
         let mut has_staged_hunks = false;
         let mut has_unstaged_hunks = false;
@@ -682,11 +691,10 @@ impl Render for ProjectDiff {
                     .workspace
                     .upgrade()
                     .and_then(|workspace| workspace.read(cx).panel::<GitPanel>(cx))
-                { Some(panel) => {
-                    panel.update(cx, |panel, cx| panel.render_remote_button(cx))
-                } _ => {
-                    None
-                }};
+                {
+                    Some(panel) => panel.update(cx, |panel, cx| panel.render_remote_button(cx)),
+                    _ => None,
+                };
                 let keybinding_focus_handle = self.focus_handle(cx).clone();
                 el.child(
                     v_flex()
@@ -1058,11 +1066,10 @@ impl RenderOnce for ProjectDiffEmptyState {
 
         let not_ahead_or_behind = status_against_remote(0, 0);
         let ahead_of_remote = status_against_remote(1, 0);
-        let branch_not_on_remote = match self.current_branch.as_ref() { Some(branch) => {
-            branch.upstream.is_none()
-        } _ => {
-            false
-        }};
+        let branch_not_on_remote = match self.current_branch.as_ref() {
+            Some(branch) => branch.upstream.is_none(),
+            _ => false,
+        };
 
         let has_branch_container = |branch: &Branch| {
             h_flex()

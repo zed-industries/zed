@@ -81,44 +81,51 @@ fn try_test(args: Vec<NestedMeta>, function: TokenStream) -> Result<TokenStream,
         let mut inner_fn_args = proc_macro2::TokenStream::new();
         for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
             if let FnArg::Typed(arg) = arg {
-                match &*arg.ty { Type::Path(ty) => {
-                    let last_segment = ty.path.segments.last();
-                    match last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        Some("StdRng") => {
-                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
-                            continue;
+                match &*arg.ty {
+                    Type::Path(ty) => {
+                        let last_segment = ty.path.segments.last();
+                        match last_segment.map(|s| s.ident.to_string()).as_deref() {
+                            Some("StdRng") => {
+                                inner_fn_args
+                                    .extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
+                                continue;
+                            }
+                            Some("BackgroundExecutor") => {
+                                inner_fn_args.extend(quote!(gpui::BackgroundExecutor::new(
+                                    std::sync::Arc::new(dispatcher.clone()),
+                                ),));
+                                continue;
+                            }
+                            _ => {}
                         }
-                        Some("BackgroundExecutor") => {
-                            inner_fn_args.extend(quote!(gpui::BackgroundExecutor::new(
-                                std::sync::Arc::new(dispatcher.clone()),
-                            ),));
-                            continue;
+                    }
+                    _ => match &*arg.ty {
+                        Type::Reference(ty) => {
+                            if let Type::Path(ty) = &*ty.elem {
+                                let last_segment = ty.path.segments.last();
+                                if let Some("TestAppContext") =
+                                    last_segment.map(|s| s.ident.to_string()).as_deref()
+                                {
+                                    let cx_varname = format_ident!("cx_{}", ix);
+                                    cx_vars.extend(quote!(
+                                        let mut #cx_varname = gpui::TestAppContext::new(
+                                            dispatcher.clone(),
+                                            Some(stringify!(#outer_fn_name)),
+                                        );
+                                    ));
+                                    cx_teardowns.extend(quote!(
+                                        dispatcher.run_until_parked();
+                                        #cx_varname.quit();
+                                        dispatcher.run_until_parked();
+                                    ));
+                                    inner_fn_args.extend(quote!(&mut #cx_varname,));
+                                    continue;
+                                }
+                            }
                         }
                         _ => {}
-                    }
-                } _ => { match &*arg.ty { Type::Reference(ty) => {
-                    if let Type::Path(ty) = &*ty.elem {
-                        let last_segment = ty.path.segments.last();
-                        if let Some("TestAppContext") =
-                            last_segment.map(|s| s.ident.to_string()).as_deref()
-                        {
-                            let cx_varname = format_ident!("cx_{}", ix);
-                            cx_vars.extend(quote!(
-                                let mut #cx_varname = gpui::TestAppContext::new(
-                                    dispatcher.clone(),
-                                    Some(stringify!(#outer_fn_name)),
-                                );
-                            ));
-                            cx_teardowns.extend(quote!(
-                                dispatcher.run_until_parked();
-                                #cx_varname.quit();
-                                dispatcher.run_until_parked();
-                            ));
-                            inner_fn_args.extend(quote!(&mut #cx_varname,));
-                            continue;
-                        }
-                    }
-                } _ => {}}}}
+                    },
+                }
             }
 
             return Err(error_with_message("invalid function signature", arg));
@@ -151,56 +158,63 @@ fn try_test(args: Vec<NestedMeta>, function: TokenStream) -> Result<TokenStream,
         let mut inner_fn_args = proc_macro2::TokenStream::new();
         for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
             if let FnArg::Typed(arg) = arg {
-                match &*arg.ty { Type::Path(ty) => {
-                    let last_segment = ty.path.segments.last();
-
-                    if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
-                        continue;
-                    }
-                } _ => { match &*arg.ty { Type::Reference(ty) => {
-                    if let Type::Path(ty) = &*ty.elem {
+                match &*arg.ty {
+                    Type::Path(ty) => {
                         let last_segment = ty.path.segments.last();
-                        match last_segment.map(|s| s.ident.to_string()).as_deref() {
-                            Some("App") => {
-                                let cx_varname = format_ident!("cx_{}", ix);
-                                let cx_varname_lock = format_ident!("cx_{}_lock", ix);
-                                cx_vars.extend(quote!(
-                                    let mut #cx_varname = gpui::TestAppContext::new(
-                                       dispatcher.clone(),
-                                       Some(stringify!(#outer_fn_name))
-                                    );
-                                    let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
-                                ));
-                                inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
-                                cx_teardowns.extend(quote!(
-                                    drop(#cx_varname_lock);
-                                    dispatcher.run_until_parked();
-                                    #cx_varname.update(|cx| { cx.quit() });
-                                    dispatcher.run_until_parked();
-                                ));
-                                continue;
-                            }
-                            Some("TestAppContext") => {
-                                let cx_varname = format_ident!("cx_{}", ix);
-                                cx_vars.extend(quote!(
-                                    let mut #cx_varname = gpui::TestAppContext::new(
-                                        dispatcher.clone(),
-                                        Some(stringify!(#outer_fn_name))
-                                    );
-                                ));
-                                cx_teardowns.extend(quote!(
-                                    dispatcher.run_until_parked();
-                                    #cx_varname.quit();
-                                    dispatcher.run_until_parked();
-                                ));
-                                inner_fn_args.extend(quote!(&mut #cx_varname,));
-                                continue;
-                            }
-                            _ => {}
+
+                        if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref()
+                        {
+                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
+                            continue;
                         }
                     }
-                } _ => {}}}}
+                    _ => match &*arg.ty {
+                        Type::Reference(ty) => {
+                            if let Type::Path(ty) = &*ty.elem {
+                                let last_segment = ty.path.segments.last();
+                                match last_segment.map(|s| s.ident.to_string()).as_deref() {
+                                    Some("App") => {
+                                        let cx_varname = format_ident!("cx_{}", ix);
+                                        let cx_varname_lock = format_ident!("cx_{}_lock", ix);
+                                        cx_vars.extend(quote!(
+                                            let mut #cx_varname = gpui::TestAppContext::new(
+                                               dispatcher.clone(),
+                                               Some(stringify!(#outer_fn_name))
+                                            );
+                                            let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
+                                        ));
+                                        inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
+                                        cx_teardowns.extend(quote!(
+                                            drop(#cx_varname_lock);
+                                            dispatcher.run_until_parked();
+                                            #cx_varname.update(|cx| { cx.quit() });
+                                            dispatcher.run_until_parked();
+                                        ));
+                                        continue;
+                                    }
+                                    Some("TestAppContext") => {
+                                        let cx_varname = format_ident!("cx_{}", ix);
+                                        cx_vars.extend(quote!(
+                                            let mut #cx_varname = gpui::TestAppContext::new(
+                                                dispatcher.clone(),
+                                                Some(stringify!(#outer_fn_name))
+                                            );
+                                        ));
+                                        cx_teardowns.extend(quote!(
+                                            dispatcher.run_until_parked();
+                                            #cx_varname.quit();
+                                            dispatcher.run_until_parked();
+                                        ));
+                                        inner_fn_args.extend(quote!(&mut #cx_varname,));
+                                        continue;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                }
             }
 
             return Err(error_with_message("invalid function signature", arg));

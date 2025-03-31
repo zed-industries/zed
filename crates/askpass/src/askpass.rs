@@ -94,18 +94,21 @@ impl AskPassSession {
                     .await
                     .context("failed to get askpass password")
                     .log_err()
-                { Some(password) => {
-                    stream.write_all(password.as_bytes()).await.log_err();
-                } _ => {
-                    if let Some(kill_tx) = kill_tx.take() {
-                        kill_tx.send(()).log_err();
+                {
+                    Some(password) => {
+                        stream.write_all(password.as_bytes()).await.log_err();
                     }
-                    // note: we expect the caller to drop this task when it's done.
-                    // We need to keep the stream open until the caller is done to avoid
-                    // spurious errors from ssh.
-                    std::future::pending::<()>().await;
-                    drop(stream);
-                }}
+                    _ => {
+                        if let Some(kill_tx) = kill_tx.take() {
+                            kill_tx.send(()).log_err();
+                        }
+                        // note: we expect the caller to drop this task when it's done.
+                        // We need to keep the stream open until the caller is done to avoid
+                        // spurious errors from ssh.
+                        std::future::pending::<()>().await;
+                        drop(stream);
+                    }
+                }
             }
             drop(temp_dir)
         });

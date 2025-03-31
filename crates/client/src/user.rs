@@ -171,12 +171,14 @@ impl UserStore {
             _maintain_contacts: cx.spawn(async move |this, cx| {
                 let _subscriptions = rpc_subscriptions;
                 while let Some(message) = update_contacts_rx.next().await {
-                    match this.update(cx, |this, cx| this.update_contacts(message, cx))
-                    { Ok(task) => {
-                        task.log_err().await;
-                    } _ => {
-                        break;
-                    }}
+                    match this.update(cx, |this, cx| this.update_contacts(message, cx)) {
+                        Ok(task) => {
+                            task.log_err().await;
+                        }
+                        _ => {
+                            break;
+                        }
+                    }
                 }
             }),
             _maintain_current_user: cx.spawn(async move |this, cx| {
@@ -191,12 +193,14 @@ impl UserStore {
                     match status {
                         Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
-                                let fetch_user = match this.update(cx, |this, cx| this.get_user(user_id, cx).log_err())
-                                { Ok(fetch_user) => {
-                                    fetch_user
-                                } _ => {
-                                    break;
-                                }};
+                                let fetch_user = match this
+                                    .update(cx, |this, cx| this.get_user(user_id, cx).log_err())
+                                {
+                                    Ok(fetch_user) => fetch_user,
+                                    _ => {
+                                        break;
+                                    }
+                                };
                                 let fetch_private_user_info =
                                     client.request(proto::GetPrivateUserInfo {}).log_err();
                                 let (user, info) =
@@ -702,8 +706,8 @@ impl UserStore {
         };
 
         let client = self.client.clone();
-        cx.spawn(async move |this, cx| {
-            match client.upgrade() { Some(client) => {
+        cx.spawn(async move |this, cx| match client.upgrade() {
+            Some(client) => {
                 let response = client
                     .request(proto::AcceptTermsOfService {})
                     .await
@@ -713,9 +717,8 @@ impl UserStore {
                     this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
                     cx.emit(Event::PrivateUserInfoUpdated);
                 })
-            } _ => {
-                Err(anyhow!("client not found"))
-            }}
+            }
+            _ => Err(anyhow!("client not found")),
         })
     }
 
@@ -731,15 +734,14 @@ impl UserStore {
         cx: &Context<Self>,
     ) -> Task<Result<Vec<Arc<User>>>> {
         let client = self.client.clone();
-        cx.spawn(async move |this, cx| {
-            match client.upgrade() { Some(rpc) => {
+        cx.spawn(async move |this, cx| match client.upgrade() {
+            Some(rpc) => {
                 let response = rpc.request(request).await.context("error loading users")?;
                 let users = response.users;
 
                 this.update(cx, |this, _| this.insert(users))
-            } _ => {
-                Ok(Vec::new())
-            }}
+            }
+            _ => Ok(Vec::new()),
         })
     }
 

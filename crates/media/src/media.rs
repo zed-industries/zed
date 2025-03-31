@@ -256,21 +256,23 @@ pub mod core_video {
         /// # Safety
         ///
         /// metal_device must be valid according to CVMetalTextureCacheCreate
-        pub unsafe fn new(metal_device: *mut MTLDevice) -> Result<Self> { unsafe {
-            let mut this = ptr::null();
-            let result = CVMetalTextureCacheCreate(
-                kCFAllocatorDefault,
-                ptr::null(),
-                metal_device,
-                ptr::null(),
-                &mut this,
-            );
-            if result == kCVReturnSuccess {
-                Ok(CVMetalTextureCache::wrap_under_create_rule(this))
-            } else {
-                Err(anyhow!("could not create texture cache, code: {}", result))
+        pub unsafe fn new(metal_device: *mut MTLDevice) -> Result<Self> {
+            unsafe {
+                let mut this = ptr::null();
+                let result = CVMetalTextureCacheCreate(
+                    kCFAllocatorDefault,
+                    ptr::null(),
+                    metal_device,
+                    ptr::null(),
+                    &mut this,
+                );
+                if result == kCVReturnSuccess {
+                    Ok(CVMetalTextureCache::wrap_under_create_rule(this))
+                } else {
+                    Err(anyhow!("could not create texture cache, code: {}", result))
+                }
             }
-        }}
+        }
 
         /// # Safety
         ///
@@ -283,25 +285,27 @@ pub mod core_video {
             width: usize,
             height: usize,
             plane_index: usize,
-        ) -> Result<CVMetalTexture> { unsafe {
-            let mut this = ptr::null();
-            let result = CVMetalTextureCacheCreateTextureFromImage(
-                kCFAllocatorDefault,
-                self.as_concrete_TypeRef(),
-                source,
-                texture_attributes,
-                pixel_format,
-                width,
-                height,
-                plane_index,
-                &mut this,
-            );
-            if result == kCVReturnSuccess {
-                Ok(CVMetalTexture::wrap_under_create_rule(this))
-            } else {
-                Err(anyhow!("could not create texture, code: {}", result))
+        ) -> Result<CVMetalTexture> {
+            unsafe {
+                let mut this = ptr::null();
+                let result = CVMetalTextureCacheCreateTextureFromImage(
+                    kCFAllocatorDefault,
+                    self.as_concrete_TypeRef(),
+                    source,
+                    texture_attributes,
+                    pixel_format,
+                    width,
+                    height,
+                    plane_index,
+                    &mut this,
+                );
+                if result == kCVReturnSuccess {
+                    Ok(CVMetalTexture::wrap_under_create_rule(this))
+                } else {
+                    Err(anyhow!("could not create texture, code: {}", result))
+                }
             }
-        }}
+        }
     }
 
     #[link(name = "CoreVideo", kind = "framework")]

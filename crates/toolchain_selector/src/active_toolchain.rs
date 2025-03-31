@@ -115,36 +115,37 @@ impl ActiveToolchain {
                 })
                 .ok()?
                 .await;
-            match selected_toolchain { Some(toolchain) => {
-                Some(toolchain)
-            } _ => {
-                let project = workspace
-                    .update(cx, |this, _| this.project().clone())
-                    .ok()?;
-                let toolchains = cx
-                    .update(|_, cx| {
-                        project
-                            .read(cx)
-                            .available_toolchains(worktree_id, language_name, cx)
-                    })
-                    .ok()?
-                    .await?;
-                if let Some(toolchain) = toolchains.toolchains.first() {
-                    // Since we don't have a selected toolchain, pick one for user here.
-                    workspace::WORKSPACE_DB
-                        .set_toolchain(workspace_id, worktree_id, toolchain.clone())
-                        .await
+            match selected_toolchain {
+                Some(toolchain) => Some(toolchain),
+                _ => {
+                    let project = workspace
+                        .update(cx, |this, _| this.project().clone())
                         .ok()?;
-                    project
-                        .update(cx, |this, cx| {
-                            this.activate_toolchain(worktree_id, toolchain.clone(), cx)
+                    let toolchains = cx
+                        .update(|_, cx| {
+                            project
+                                .read(cx)
+                                .available_toolchains(worktree_id, language_name, cx)
                         })
                         .ok()?
-                        .await;
-                }
+                        .await?;
+                    if let Some(toolchain) = toolchains.toolchains.first() {
+                        // Since we don't have a selected toolchain, pick one for user here.
+                        workspace::WORKSPACE_DB
+                            .set_toolchain(workspace_id, worktree_id, toolchain.clone())
+                            .await
+                            .ok()?;
+                        project
+                            .update(cx, |this, cx| {
+                                this.activate_toolchain(worktree_id, toolchain.clone(), cx)
+                            })
+                            .ok()?
+                            .await;
+                    }
 
-                toolchains.toolchains.first().cloned()
-            }}
+                    toolchains.toolchains.first().cloned()
+                }
+            }
         })
     }
 }

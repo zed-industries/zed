@@ -102,14 +102,11 @@ impl ChatPanel {
                 0,
                 gpui::ListAlignment::Bottom,
                 px(1000.),
-                move |ix, window, cx| {
-                    match entity.upgrade() { Some(entity) => {
-                        entity.update(cx, |this: &mut Self, cx| {
-                            this.render_message(ix, window, cx).into_any_element()
-                        })
-                    } _ => {
-                        div().into_any()
-                    }}
+                move |ix, window, cx| match entity.upgrade() {
+                    Some(entity) => entity.update(cx, |this: &mut Self, cx| {
+                        this.render_message(ix, window, cx).into_any_element()
+                    }),
+                    _ => div().into_any(),
                 },
             );
 
@@ -205,11 +202,10 @@ impl ChatPanel {
                 .await
                 .log_err()
                 .flatten()
-            { Some(panel) => {
-                Some(serde_json::from_str::<SerializedChatPanel>(&panel)?)
-            } _ => {
-                None
-            }};
+            {
+                Some(panel) => Some(serde_json::from_str::<SerializedChatPanel>(&panel)?),
+                _ => None,
+            };
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let panel = Self::new(workspace, window, cx);
@@ -812,23 +808,31 @@ impl ChatPanel {
                 .message_editor
                 .update(cx, |editor, cx| editor.take_message(window, cx));
 
-            match self.message_editor.read(cx).edit_message_id() { Some(id) => {
-                self.message_editor.update(cx, |editor, _| {
-                    editor.clear_edit_message_id();
-                });
+            match self.message_editor.read(cx).edit_message_id() {
+                Some(id) => {
+                    self.message_editor.update(cx, |editor, _| {
+                        editor.clear_edit_message_id();
+                    });
 
-                if let Some(task) = chat
-                    .update(cx, |chat, cx| chat.update_message(id, message, cx))
-                    .log_err()
-                {
-                    task.detach();
+                    if let Some(task) = chat
+                        .update(cx, |chat, cx| chat.update_message(id, message, cx))
+                        .log_err()
+                    {
+                        task.detach();
+                    }
                 }
-            } _ => { match chat
-                .update(cx, |chat, cx| chat.send_message(message, cx))
-                .log_err()
-            { Some(task) => {
-                task.detach();
-            } _ => {}}}}
+                _ => {
+                    match chat
+                        .update(cx, |chat, cx| chat.send_message(message, cx))
+                        .log_err()
+                    {
+                        Some(task) => {
+                            task.detach();
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
     }
 

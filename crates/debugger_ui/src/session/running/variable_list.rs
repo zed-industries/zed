@@ -811,10 +811,12 @@ impl VariableList {
                                     .edited_path
                                     .as_ref()
                                     .filter(|(path, _)| path == &variable.path)
-                                { Some((_, editor)) => {
-                                    this.child(div().size_full().px_2().child(editor.clone()))
-                                } _ => {
-                                    this.text_color(cx.theme().colors().text_muted)
+                                {
+                                    Some((_, editor)) => {
+                                        this.child(div().size_full().px_2().child(editor.clone()))
+                                    }
+                                    _ => this
+                                        .text_color(cx.theme().colors().text_muted)
                                         .when(
                                             !self.disabled
                                                 && self
@@ -853,8 +855,8 @@ impl VariableList {
                                                 .when_some(variable_color, |this, color| {
                                                     this.color(Color::from(color))
                                                 }),
-                                        )
-                                }}
+                                        ),
+                                }
                             }))
                         }),
                 ),

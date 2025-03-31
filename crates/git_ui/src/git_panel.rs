@@ -1511,18 +1511,19 @@ impl GitPanel {
 
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = maybe!(async {
-                match confirmation.await { Ok(true) => {
-                    let prior_head = prior_head.await?;
+                match confirmation.await {
+                    Ok(true) => {
+                        let prior_head = prior_head.await?;
 
-                    repo.update(cx, |repo, cx| {
-                        repo.reset("HEAD^".to_string(), ResetMode::Soft, cx)
-                    })?
-                    .await??;
+                        repo.update(cx, |repo, cx| {
+                            repo.reset("HEAD^".to_string(), ResetMode::Soft, cx)
+                        })?
+                        .await??;
 
-                    Ok(Some(prior_head))
-                } _ => {
-                    Ok(None)
-                }}
+                        Ok(Some(prior_head))
+                    }
+                    _ => Ok(None),
+                }
             })
             .await;
 
@@ -3977,11 +3978,10 @@ impl GitPanelMessageTooltip {
 
 impl Render for GitPanelMessageTooltip {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        match &self.commit_tooltip { Some(commit_tooltip) => {
-            commit_tooltip.clone().into_any_element()
-        } _ => {
-            gpui::Empty.into_any_element()
-        }}
+        match &self.commit_tooltip {
+            Some(commit_tooltip) => commit_tooltip.clone().into_any_element(),
+            _ => gpui::Empty.into_any_element(),
+        }
     }
 }
 
@@ -4158,11 +4158,12 @@ impl RenderOnce for PanelRepoFooter {
                     })
                     .child(branch_selector),
             )
-            .children(match self.git_panel { Some(git_panel) => {
-                git_panel.update(cx, |git_panel, cx| git_panel.render_remote_button(cx))
-            } _ => {
-                None
-            }})
+            .children(match self.git_panel {
+                Some(git_panel) => {
+                    git_panel.update(cx, |git_panel, cx| git_panel.render_remote_button(cx))
+                }
+                _ => None,
+            })
     }
 }
 

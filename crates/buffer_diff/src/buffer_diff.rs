@@ -608,56 +608,59 @@ fn compute_hunks(
 ) -> SumTree<InternalDiffHunk> {
     let mut tree = SumTree::new(&buffer);
 
-    match diff_base { Some((diff_base, diff_base_rope)) => {
-        let buffer_text = buffer.as_rope().to_string();
+    match diff_base {
+        Some((diff_base, diff_base_rope)) => {
+            let buffer_text = buffer.as_rope().to_string();
 
-        let mut options = GitOptions::default();
-        options.context_lines(0);
-        let patch = GitPatch::from_buffers(
-            diff_base.as_bytes(),
-            None,
-            buffer_text.as_bytes(),
-            None,
-            Some(&mut options),
-        )
-        .log_err();
+            let mut options = GitOptions::default();
+            options.context_lines(0);
+            let patch = GitPatch::from_buffers(
+                diff_base.as_bytes(),
+                None,
+                buffer_text.as_bytes(),
+                None,
+                Some(&mut options),
+            )
+            .log_err();
 
-        // A common case in Zed is that the empty buffer is represented as just a newline,
-        // but if we just compute a naive diff you get a "preserved" line in the middle,
-        // which is a bit odd.
-        if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
+            // A common case in Zed is that the empty buffer is represented as just a newline,
+            // but if we just compute a naive diff you get a "preserved" line in the middle,
+            // which is a bit odd.
+            if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
+                tree.push(
+                    InternalDiffHunk {
+                        buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
+                        diff_base_byte_range: 0..diff_base.len() - 1,
+                    },
+                    &buffer,
+                );
+                return tree;
+            }
+
+            if let Some(patch) = patch {
+                let mut divergence = 0;
+                for hunk_index in 0..patch.num_hunks() {
+                    let hunk = process_patch_hunk(
+                        &patch,
+                        hunk_index,
+                        &diff_base_rope,
+                        &buffer,
+                        &mut divergence,
+                    );
+                    tree.push(hunk, &buffer);
+                }
+            }
+        }
+        _ => {
             tree.push(
                 InternalDiffHunk {
-                    buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
-                    diff_base_byte_range: 0..diff_base.len() - 1,
+                    buffer_range: Anchor::MIN..Anchor::MAX,
+                    diff_base_byte_range: 0..0,
                 },
                 &buffer,
             );
-            return tree;
         }
-
-        if let Some(patch) = patch {
-            let mut divergence = 0;
-            for hunk_index in 0..patch.num_hunks() {
-                let hunk = process_patch_hunk(
-                    &patch,
-                    hunk_index,
-                    &diff_base_rope,
-                    &buffer,
-                    &mut divergence,
-                );
-                tree.push(hunk, &buffer);
-            }
-        }
-    } _ => {
-        tree.push(
-            InternalDiffHunk {
-                buffer_range: Anchor::MIN..Anchor::MAX,
-                diff_base_byte_range: 0..0,
-            },
-            &buffer,
-        );
-    }}
+    }
 
     tree
 }

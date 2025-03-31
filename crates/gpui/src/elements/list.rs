@@ -574,27 +574,30 @@ impl StateInner {
         if rendered_height - scroll_top.offset_in_item < available_height {
             while rendered_height < available_height {
                 cursor.prev(&());
-                match cursor.item() { Some(item) => {
-                    let item_index = cursor.start().0;
-                    let mut element = (self.render_item)(item_index, window, cx);
-                    let element_size = element.layout_as_root(available_item_space, window, cx);
-                    let focus_handle = item.focus_handle();
-                    rendered_height += element_size.height;
-                    measured_items.push_front(ListItem::Measured {
-                        size: element_size,
-                        focus_handle,
-                    });
-                    item_layouts.push_front(ItemLayout {
-                        index: item_index,
-                        element,
-                        size: element_size,
-                    });
-                    if item.contains_focused(window, cx) {
-                        rendered_focused_item = true;
+                match cursor.item() {
+                    Some(item) => {
+                        let item_index = cursor.start().0;
+                        let mut element = (self.render_item)(item_index, window, cx);
+                        let element_size = element.layout_as_root(available_item_space, window, cx);
+                        let focus_handle = item.focus_handle();
+                        rendered_height += element_size.height;
+                        measured_items.push_front(ListItem::Measured {
+                            size: element_size,
+                            focus_handle,
+                        });
+                        item_layouts.push_front(ItemLayout {
+                            index: item_index,
+                            element,
+                            size: element_size,
+                        });
+                        if item.contains_focused(window, cx) {
+                            rendered_focused_item = true;
+                        }
                     }
-                } _ => {
-                    break;
-                }}
+                    _ => {
+                        break;
+                    }
+                }
             }
 
             scroll_top = ListOffset {
@@ -621,22 +624,25 @@ impl StateInner {
         let mut leading_overdraw = scroll_top.offset_in_item;
         while leading_overdraw < self.overdraw {
             cursor.prev(&());
-            match cursor.item() { Some(item) => {
-                let size = if let ListItem::Measured { size, .. } = item {
-                    *size
-                } else {
-                    let mut element = (self.render_item)(cursor.start().0, window, cx);
-                    element.layout_as_root(available_item_space, window, cx)
-                };
+            match cursor.item() {
+                Some(item) => {
+                    let size = if let ListItem::Measured { size, .. } = item {
+                        *size
+                    } else {
+                        let mut element = (self.render_item)(cursor.start().0, window, cx);
+                        element.layout_as_root(available_item_space, window, cx)
+                    };
 
-                leading_overdraw += size.height;
-                measured_items.push_front(ListItem::Measured {
-                    size,
-                    focus_handle: item.focus_handle(),
-                });
-            } _ => {
-                break;
-            }}
+                    leading_overdraw += size.height;
+                    measured_items.push_front(ListItem::Measured {
+                        size,
+                        focus_handle: item.focus_handle(),
+                    });
+                }
+                _ => {
+                    break;
+                }
+            }
         }
 
         let measured_range = cursor.start().0..(cursor.start().0 + measured_items.len());

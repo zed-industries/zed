@@ -36,7 +36,10 @@ impl RateLimiter {
         }
     }
 
-    pub fn run<'a, Fut, T>(&self, future: Fut) -> impl 'a + Future<Output = Result<T>> + use<'a, Fut, T>
+    pub fn run<'a, Fut, T>(
+        &self,
+        future: Fut,
+    ) -> impl 'a + Future<Output = Result<T>> + use<'a, Fut, T>
     where
         Fut: 'a + Future<Output = Result<T>>,
     {

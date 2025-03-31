@@ -809,34 +809,40 @@ impl InlaySnapshot {
             match cursor.item() {
                 Some(Transform::Isomorphic(transform)) => {
                     if cursor.start().0 == point {
-                        match cursor.prev_item() { Some(Transform::Inlay(inlay)) => {
-                            if inlay.position.bias() == Bias::Left {
-                                return point;
-                            } else if bias == Bias::Left {
-                                cursor.prev(&());
-                            } else if transform.first_line_chars == 0 {
-                                point.0 += Point::new(1, 0);
-                            } else {
-                                point.0 += Point::new(0, 1);
+                        match cursor.prev_item() {
+                            Some(Transform::Inlay(inlay)) => {
+                                if inlay.position.bias() == Bias::Left {
+                                    return point;
+                                } else if bias == Bias::Left {
+                                    cursor.prev(&());
+                                } else if transform.first_line_chars == 0 {
+                                    point.0 += Point::new(1, 0);
+                                } else {
+                                    point.0 += Point::new(0, 1);
+                                }
                             }
-                        } _ => {
-                            return point;
-                        }}
+                            _ => {
+                                return point;
+                            }
+                        }
                     } else if cursor.end(&()).0 == point {
-                        match cursor.next_item() { Some(Transform::Inlay(inlay)) => {
-                            if inlay.position.bias() == Bias::Right {
-                                return point;
-                            } else if bias == Bias::Right {
-                                cursor.next(&());
-                            } else if point.0.column == 0 {
-                                point.0.row -= 1;
-                                point.0.column = self.line_len(point.0.row);
-                            } else {
-                                point.0.column -= 1;
+                        match cursor.next_item() {
+                            Some(Transform::Inlay(inlay)) => {
+                                if inlay.position.bias() == Bias::Right {
+                                    return point;
+                                } else if bias == Bias::Right {
+                                    cursor.next(&());
+                                } else if point.0.column == 0 {
+                                    point.0.row -= 1;
+                                    point.0.column = self.line_len(point.0.row);
+                                } else {
+                                    point.0.column -= 1;
+                                }
                             }
-                        } _ => {
-                            return point;
-                        }}
+                            _ => {
+                                return point;
+                            }
+                        }
                     } else {
                         let overshoot = point.0 - cursor.start().0 .0;
                         let buffer_point = cursor.start().1 + overshoot;
@@ -1709,20 +1715,23 @@ mod tests {
                     buffer_point
                 );
 
-                match buffer_chars.next() { Some(ch) => {
-                    if ch == '\n' {
-                        buffer_point += Point::new(1, 0);
-                    } else {
-                        buffer_point += Point::new(0, ch.len_utf8() as u32);
-                    }
+                match buffer_chars.next() {
+                    Some(ch) => {
+                        if ch == '\n' {
+                            buffer_point += Point::new(1, 0);
+                        } else {
+                            buffer_point += Point::new(0, ch.len_utf8() as u32);
+                        }
 
-                    // Ensure that moving forward in the buffer always moves the inlay point forward as well.
-                    let new_inlay_point = inlay_snapshot.to_inlay_point(buffer_point);
-                    assert!(new_inlay_point > inlay_point);
-                    inlay_point = new_inlay_point;
-                } _ => {
-                    break;
-                }}
+                        // Ensure that moving forward in the buffer always moves the inlay point forward as well.
+                        let new_inlay_point = inlay_snapshot.to_inlay_point(buffer_point);
+                        assert!(new_inlay_point > inlay_point);
+                        inlay_point = new_inlay_point;
+                    }
+                    _ => {
+                        break;
+                    }
+                }
             }
 
             let mut inlay_point = InlayPoint::default();

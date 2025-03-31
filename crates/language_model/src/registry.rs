@@ -163,21 +163,27 @@ impl LanguageModelRegistry {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) {
-        match model { Some(model) => {
-            let provider_id = model.provider_id();
-            match self.providers.get(&provider_id).cloned() { Some(provider) => {
-                self.active_model = Some(ActiveModel {
-                    provider,
-                    model: Some(model),
-                });
+        match model {
+            Some(model) => {
+                let provider_id = model.provider_id();
+                match self.providers.get(&provider_id).cloned() {
+                    Some(provider) => {
+                        self.active_model = Some(ActiveModel {
+                            provider,
+                            model: Some(model),
+                        });
+                        cx.emit(Event::ActiveModelChanged);
+                    }
+                    _ => {
+                        log::warn!("Active model's provider not found in registry");
+                    }
+                }
+            }
+            _ => {
+                self.active_model = None;
                 cx.emit(Event::ActiveModelChanged);
-            } _ => {
-                log::warn!("Active model's provider not found in registry");
-            }}
-        } _ => {
-            self.active_model = None;
-            cx.emit(Event::ActiveModelChanged);
-        }}
+            }
+        }
     }
 
     pub fn set_editor_model(
@@ -185,21 +191,27 @@ impl LanguageModelRegistry {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) {
-        match model { Some(model) => {
-            let provider_id = model.provider_id();
-            match self.providers.get(&provider_id).cloned() { Some(provider) => {
-                self.editor_model = Some(ActiveModel {
-                    provider,
-                    model: Some(model),
-                });
+        match model {
+            Some(model) => {
+                let provider_id = model.provider_id();
+                match self.providers.get(&provider_id).cloned() {
+                    Some(provider) => {
+                        self.editor_model = Some(ActiveModel {
+                            provider,
+                            model: Some(model),
+                        });
+                        cx.emit(Event::EditorModelChanged);
+                    }
+                    _ => {
+                        log::warn!("Active model's provider not found in registry");
+                    }
+                }
+            }
+            _ => {
+                self.editor_model = None;
                 cx.emit(Event::EditorModelChanged);
-            } _ => {
-                log::warn!("Active model's provider not found in registry");
-            }}
-        } _ => {
-            self.editor_model = None;
-            cx.emit(Event::EditorModelChanged);
-        }}
+            }
+        }
     }
 
     pub fn active_provider(&self) -> Option<Arc<dyn LanguageModelProvider>> {

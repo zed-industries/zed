@@ -472,21 +472,19 @@ pub fn show_link_definition(
         _ => GotoDefinitionKind::Type,
     };
 
-    let (mut hovered_link_state, is_cached) =
-        match editor.hovered_link_state.take() { Some(existing) => {
-            (existing, true)
-        } _ => {
-            (
-                HoveredLinkState {
-                    last_trigger_point: trigger_point.clone(),
-                    symbol_range: None,
-                    preferred_kind,
-                    links: vec![],
-                    task: None,
-                },
-                false,
-            )
-        }};
+    let (mut hovered_link_state, is_cached) = match editor.hovered_link_state.take() {
+        Some(existing) => (existing, true),
+        _ => (
+            HoveredLinkState {
+                last_trigger_point: trigger_point.clone(),
+                symbol_range: None,
+                preferred_kind,
+                links: vec![],
+                task: None,
+            },
+            false,
+        ),
+    };
 
     if editor.pending_rename.is_some() {
         return;
@@ -537,9 +535,9 @@ pub fn show_link_definition(
     hovered_link_state.task = Some(cx.spawn_in(window, async move |this, cx| {
         async move {
             let result = match &trigger_point {
-                TriggerPoint::Text(_) => {
-                    match find_url(&buffer, buffer_position, cx.clone()) { Some((url_range, url)) => {
-                        this.update(cx, |_, _| {
+                TriggerPoint::Text(_) => match find_url(&buffer, buffer_position, cx.clone()) {
+                    Some((url_range, url)) => this
+                        .update(cx, |_, _| {
                             let range = maybe!({
                                 let start =
                                     snapshot.anchor_in_excerpt(excerpt_id, url_range.start)?;
@@ -548,45 +546,58 @@ pub fn show_link_definition(
                             });
                             (range, vec![HoverLink::Url(url)])
                         })
-                        .ok()
-                    } _ => { match find_file(&buffer, project.clone(), buffer_position, cx).await
-                    { Some((filename_range, filename)) => {
-                        let range = maybe!({
-                            let start =
-                                snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
-                            let end = snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
-                            Some(RangeInEditor::Text(start..end))
-                        });
+                        .ok(),
+                    _ => match find_file(&buffer, project.clone(), buffer_position, cx).await {
+                        Some((filename_range, filename)) => {
+                            let range = maybe!({
+                                let start =
+                                    snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
+                                let end =
+                                    snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
+                                Some(RangeInEditor::Text(start..end))
+                            });
 
-                        Some((range, vec![HoverLink::File(filename)]))
-                    } _ => { match provider { Some(provider) => {
-                        let task = cx.update(|_, cx| {
-                            provider.definitions(&buffer, buffer_position, preferred_kind, cx)
-                        })?;
-                        match task { Some(task) => {
-                            task.await.ok().map(|definition_result| {
-                                (
-                                    definition_result.iter().find_map(|link| {
-                                        link.origin.as_ref().and_then(|origin| {
-                                            let start = snapshot.anchor_in_excerpt(
-                                                excerpt_id,
-                                                origin.range.start,
-                                            )?;
-                                            let end = snapshot
-                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
-                                            Some(RangeInEditor::Text(start..end))
-                                        })
+                            Some((range, vec![HoverLink::File(filename)]))
+                        }
+                        _ => match provider {
+                            Some(provider) => {
+                                let task = cx.update(|_, cx| {
+                                    provider.definitions(
+                                        &buffer,
+                                        buffer_position,
+                                        preferred_kind,
+                                        cx,
+                                    )
+                                })?;
+                                match task {
+                                    Some(task) => task.await.ok().map(|definition_result| {
+                                        (
+                                            definition_result.iter().find_map(|link| {
+                                                link.origin.as_ref().and_then(|origin| {
+                                                    let start = snapshot.anchor_in_excerpt(
+                                                        excerpt_id,
+                                                        origin.range.start,
+                                                    )?;
+                                                    let end = snapshot.anchor_in_excerpt(
+                                                        excerpt_id,
+                                                        origin.range.end,
+                                                    )?;
+                                                    Some(RangeInEditor::Text(start..end))
+                                                })
+                                            }),
+                                            definition_result
+                                                .into_iter()
+                                                .map(HoverLink::Text)
+                                                .collect(),
+                                        )
                                     }),
-                                    definition_result.into_iter().map(HoverLink::Text).collect(),
-                                )
-                            })
-                        } _ => {
-                            None
-                        }}
-                    } _ => {
-                        None
-                    }}}}}}
-                }
+                                    _ => None,
+                                }
+                            }
+                            _ => None,
+                        },
+                    },
+                },
                 TriggerPoint::InlayHint(highlight, lsp_location, server_id) => Some((
                     Some(RangeInEditor::Inlay(highlight.clone())),
                     vec![HoverLink::InlayHint(lsp_location.clone(), *server_id)],
@@ -605,47 +616,58 @@ pub fn show_link_definition(
                     .as_ref()
                     .and_then(|(symbol_range, _)| symbol_range.clone());
 
-                match result { Some((symbol_range, definitions)) => {
-                    hovered_link_state.links = definitions;
+                match result {
+                    Some((symbol_range, definitions)) => {
+                        hovered_link_state.links = definitions;
 
-                    let underline_hovered_link = !hovered_link_state.links.is_empty()
-                        || hovered_link_state.symbol_range.is_some();
+                        let underline_hovered_link = !hovered_link_state.links.is_empty()
+                            || hovered_link_state.symbol_range.is_some();
 
-                    if underline_hovered_link {
-                        let style = gpui::HighlightStyle {
-                            underline: Some(gpui::UnderlineStyle {
-                                thickness: px(1.),
+                        if underline_hovered_link {
+                            let style = gpui::HighlightStyle {
+                                underline: Some(gpui::UnderlineStyle {
+                                    thickness: px(1.),
+                                    ..Default::default()
+                                }),
+                                color: Some(cx.theme().colors().link_text_hover),
                                 ..Default::default()
-                            }),
-                            color: Some(cx.theme().colors().link_text_hover),
-                            ..Default::default()
-                        };
-                        let highlight_range =
-                            symbol_range.unwrap_or_else(|| match &trigger_point {
-                                TriggerPoint::Text(trigger_anchor) => {
-                                    // If no symbol range returned from language server, use the surrounding word.
-                                    let (offset_range, _) =
-                                        snapshot.surrounding_word(*trigger_anchor, false);
-                                    RangeInEditor::Text(
-                                        snapshot.anchor_before(offset_range.start)
-                                            ..snapshot.anchor_after(offset_range.end),
-                                    )
-                                }
-                                TriggerPoint::InlayHint(highlight, _, _) => {
-                                    RangeInEditor::Inlay(highlight.clone())
-                                }
-                            });
+                            };
+                            let highlight_range =
+                                symbol_range.unwrap_or_else(|| match &trigger_point {
+                                    TriggerPoint::Text(trigger_anchor) => {
+                                        // If no symbol range returned from language server, use the surrounding word.
+                                        let (offset_range, _) =
+                                            snapshot.surrounding_word(*trigger_anchor, false);
+                                        RangeInEditor::Text(
+                                            snapshot.anchor_before(offset_range.start)
+                                                ..snapshot.anchor_after(offset_range.end),
+                                        )
+                                    }
+                                    TriggerPoint::InlayHint(highlight, _, _) => {
+                                        RangeInEditor::Inlay(highlight.clone())
+                                    }
+                                });
 
-                        match highlight_range {
-                            RangeInEditor::Text(text_range) => editor
-                                .highlight_text::<HoveredLinkState>(vec![text_range], style, cx),
-                            RangeInEditor::Inlay(highlight) => editor
-                                .highlight_inlays::<HoveredLinkState>(vec![highlight], style, cx),
+                            match highlight_range {
+                                RangeInEditor::Text(text_range) => editor
+                                    .highlight_text::<HoveredLinkState>(
+                                        vec![text_range],
+                                        style,
+                                        cx,
+                                    ),
+                                RangeInEditor::Inlay(highlight) => editor
+                                    .highlight_inlays::<HoveredLinkState>(
+                                        vec![highlight],
+                                        style,
+                                        cx,
+                                    ),
+                            }
                         }
                     }
-                } _ => {
-                    editor.hide_hovered_link(cx);
-                }}
+                    _ => {
+                        editor.hide_hovered_link(cx);
+                    }
+                }
             })?;
 
             Ok::<_, anyhow::Error>(())

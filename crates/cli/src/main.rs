@@ -228,14 +228,17 @@ fn main() -> Result<()> {
             paths.push(file.path().to_string_lossy().to_string());
             let (file, _) = file.keep()?;
             stdin_tmp_file = Some(file);
-        } else { match anonymous_fd(path) { Some(file) => {
-            let tmp_file = NamedTempFile::new()?;
-            paths.push(tmp_file.path().to_string_lossy().to_string());
-            let (tmp_file, _) = tmp_file.keep()?;
-            anonymous_fd_tmp_files.push((file, tmp_file));
-        } _ => {
-            paths.push(parse_path_with_position(path)?)
-        }}}
+        } else {
+            match anonymous_fd(path) {
+                Some(file) => {
+                    let tmp_file = NamedTempFile::new()?;
+                    paths.push(tmp_file.path().to_string_lossy().to_string());
+                    let (tmp_file, _) = tmp_file.keep()?;
+                    anonymous_fd_tmp_files.push((file, tmp_file));
+                }
+                _ => paths.push(parse_path_with_position(path)?),
+            }
+        }
     }
 
     if let Some(_) = args.dev_server_token {

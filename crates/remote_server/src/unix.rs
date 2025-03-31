@@ -760,8 +760,8 @@ fn initialize_settings(
 
     handle_settings_file_changes(user_settings_file_rx, cx, {
         let session = session.clone();
-        move |err, _cx| {
-            match err { Some(e) => {
+        move |err, _cx| match err {
+            Some(e) => {
                 log::info!("Server settings failed to change: {}", e);
 
                 session
@@ -775,14 +775,15 @@ fn initialize_settings(
                         ),
                     })
                     .log_err();
-            } _ => {
+            }
+            _ => {
                 session
                     .send(proto::HideToast {
                         project_id: SSH_PROJECT_ID,
                         notification_id: "server-settings-failed".to_string(),
                     })
                     .log_err();
-            }}
+            }
         }
     });
 
@@ -877,30 +878,32 @@ fn daemonize() -> Result<ControlFlow<()>> {
     Ok(ControlFlow::Continue(()))
 }
 
-unsafe fn redirect_standard_streams() -> Result<()> { unsafe {
-    let devnull_fd = libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR);
-    anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
+unsafe fn redirect_standard_streams() -> Result<()> {
+    unsafe {
+        let devnull_fd = libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR);
+        anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
 
-    let process_stdio = |name, fd| {
-        let reopened_fd = libc::dup2(devnull_fd, fd);
+        let process_stdio = |name, fd| {
+            let reopened_fd = libc::dup2(devnull_fd, fd);
+            anyhow::ensure!(
+                reopened_fd != -1,
+                format!("failed to redirect {} to /dev/null", name)
+            );
+            Ok(())
+        };
+
+        process_stdio("stdin", libc::STDIN_FILENO)?;
+        process_stdio("stdout", libc::STDOUT_FILENO)?;
+        process_stdio("stderr", libc::STDERR_FILENO)?;
+
         anyhow::ensure!(
-            reopened_fd != -1,
-            format!("failed to redirect {} to /dev/null", name)
+            libc::close(devnull_fd) != -1,
+            "failed to close /dev/null fd after redirecting"
         );
+
         Ok(())
-    };
-
-    process_stdio("stdin", libc::STDIN_FILENO)?;
-    process_stdio("stdout", libc::STDOUT_FILENO)?;
-    process_stdio("stderr", libc::STDERR_FILENO)?;
-
-    anyhow::ensure!(
-        libc::close(devnull_fd) != -1,
-        "failed to close /dev/null fd after redirecting"
-    );
-
-    Ok(())
-}}
+    }
+}
 
 fn cleanup_old_binaries() -> Result<()> {
     let server_dir = paths::remote_server_dir_relative();

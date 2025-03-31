@@ -130,75 +130,77 @@ impl StripeBilling {
         }
 
         let mut state = self.state.write().await;
-        let meter = match state.meters_by_event_name.get(meter_event_name) { Some(meter) => {
-            meter.clone()
-        } _ => {
-            let meter = StripeMeter::create(
-                &self.client,
-                StripeCreateMeterParams {
-                    default_aggregation: DefaultAggregation { formula: "sum" },
-                    display_name: price_description.to_string(),
-                    event_name: meter_event_name,
-                },
-            )
-            .await?;
-            state
-                .meters_by_event_name
-                .insert(meter_event_name.to_string(), meter.clone());
-            meter
-        }};
+        let meter = match state.meters_by_event_name.get(meter_event_name) {
+            Some(meter) => meter.clone(),
+            _ => {
+                let meter = StripeMeter::create(
+                    &self.client,
+                    StripeCreateMeterParams {
+                        default_aggregation: DefaultAggregation { formula: "sum" },
+                        display_name: price_description.to_string(),
+                        event_name: meter_event_name,
+                    },
+                )
+                .await?;
+                state
+                    .meters_by_event_name
+                    .insert(meter_event_name.to_string(), meter.clone());
+                meter
+            }
+        };
 
-        let price_id = match state.price_ids_by_meter_id.get(&meter.id) { Some(price_id) => {
-            price_id.clone()
-        } _ => {
-            let price = stripe::Price::create(
-                &self.client,
-                stripe::CreatePrice {
-                    active: Some(true),
-                    billing_scheme: Some(stripe::PriceBillingScheme::PerUnit),
-                    currency: stripe::Currency::USD,
-                    currency_options: None,
-                    custom_unit_amount: None,
-                    expand: &[],
-                    lookup_key: None,
-                    metadata: None,
-                    nickname: None,
-                    product: None,
-                    product_data: Some(stripe::CreatePriceProductData {
-                        id: None,
+        let price_id = match state.price_ids_by_meter_id.get(&meter.id) {
+            Some(price_id) => price_id.clone(),
+            _ => {
+                let price = stripe::Price::create(
+                    &self.client,
+                    stripe::CreatePrice {
                         active: Some(true),
+                        billing_scheme: Some(stripe::PriceBillingScheme::PerUnit),
+                        currency: stripe::Currency::USD,
+                        currency_options: None,
+                        custom_unit_amount: None,
+                        expand: &[],
+                        lookup_key: None,
                         metadata: None,
-                        name: price_description.to_string(),
-                        statement_descriptor: None,
-                        tax_code: None,
-                        unit_label: None,
-                    }),
-                    recurring: Some(stripe::CreatePriceRecurring {
-                        aggregate_usage: None,
-                        interval: stripe::CreatePriceRecurringInterval::Month,
-                        interval_count: None,
-                        trial_period_days: None,
-                        usage_type: Some(stripe::CreatePriceRecurringUsageType::Metered),
-                        meter: Some(meter.id.clone()),
-                    }),
-                    tax_behavior: None,
-                    tiers: None,
-                    tiers_mode: None,
-                    transfer_lookup_key: None,
-                    transform_quantity: None,
-                    unit_amount: None,
-                    unit_amount_decimal: Some(&format!(
-                        "{:.12}",
-                        price_per_million_tokens.0 as f64 / 1_000_000f64
-                    )),
-                },
-            )
-            .await?;
-            state
-                .price_ids_by_meter_id
-                .insert(meter.id, price.id.clone());
-            price.id
-        }};
+                        nickname: None,
+                        product: None,
+                        product_data: Some(stripe::CreatePriceProductData {
+                            id: None,
+                            active: Some(true),
+                            metadata: None,
+                            name: price_description.to_string(),
+                            statement_descriptor: None,
+                            tax_code: None,
+                            unit_label: None,
+                        }),
+                        recurring: Some(stripe::CreatePriceRecurring {
+                            aggregate_usage: None,
+                            interval: stripe::CreatePriceRecurringInterval::Month,
+                            interval_count: None,
+                            trial_period_days: None,
+                            usage_type: Some(stripe::CreatePriceRecurringUsageType::Metered),
+                            meter: Some(meter.id.clone()),
+                        }),
+                        tax_behavior: None,
+                        tiers: None,
+                        tiers_mode: None,
+                        transfer_lookup_key: None,
+                        transform_quantity: None,
+                        unit_amount: None,
+                        unit_amount_decimal: Some(&format!(
+                            "{:.12}",
+                            price_per_million_tokens.0 as f64 / 1_000_000f64
+                        )),
+                    },
+                )
+                .await?;
+                state
+                    .price_ids_by_meter_id
+                    .insert(meter.id, price.id.clone());
+                price.id
+            }
+        };
 
         Ok(StripeBillingPrice {
             id: price_id,

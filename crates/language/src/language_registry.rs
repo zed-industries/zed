@@ -389,12 +389,13 @@ impl LanguageRegistry {
             .find(|cached_adapter| cached_adapter.name == server_name)
             .cloned();
 
-        match registered { Some(found) => {
-            found
-        } _ => {
-            let adapter = build_adapter();
-            self.register_lsp_adapter(language_name, adapter)
-        }}
+        match registered {
+            Some(found) => found,
+            _ => {
+                let adapter = build_adapter();
+                self.register_lsp_adapter(language_name, adapter)
+            }
+        }
     }
 
     /// Register a fake language server and adapter
@@ -661,11 +662,10 @@ impl LanguageRegistry {
 
         let this = self.clone();
         async move {
-            match available_language { Some(language) => {
-                this.load_language(&language).await?
-            } _ => {
-                Err(anyhow!(LanguageNotFound))
-            }}
+            match available_language {
+                Some(language) => this.load_language(&language).await?,
+                _ => Err(anyhow!(LanguageNotFound)),
+            }
         }
     }
 
@@ -770,18 +770,19 @@ impl LanguageRegistry {
                     .spawn(async move {
                         let language = async {
                             let loaded_language = (language_load)()?;
-                            match loaded_language.config.grammar.clone() { Some(grammar) => {
-                                let grammar = Some(this.get_or_load_grammar(grammar).await?);
+                            match loaded_language.config.grammar.clone() {
+                                Some(grammar) => {
+                                    let grammar = Some(this.get_or_load_grammar(grammar).await?);
 
-                                Language::new_with_id(id, loaded_language.config, grammar)
+                                    Language::new_with_id(id, loaded_language.config, grammar)
+                                        .with_context_provider(loaded_language.context_provider)
+                                        .with_toolchain_lister(loaded_language.toolchain_provider)
+                                        .with_queries(loaded_language.queries)
+                                }
+                                _ => Ok(Language::new_with_id(id, loaded_language.config, None)
                                     .with_context_provider(loaded_language.context_provider)
-                                    .with_toolchain_lister(loaded_language.toolchain_provider)
-                                    .with_queries(loaded_language.queries)
-                            } _ => {
-                                Ok(Language::new_with_id(id, loaded_language.config, None)
-                                    .with_context_provider(loaded_language.context_provider)
-                                    .with_toolchain_lister(loaded_language.toolchain_provider))
-                            }}
+                                    .with_toolchain_lister(loaded_language.toolchain_provider)),
+                            }
                         }
                         .await;
 
@@ -844,8 +845,8 @@ impl LanguageRegistry {
         let (tx, rx) = oneshot::channel();
         let mut state = self.state.write();
 
-        match state.grammars.get_mut(name.as_ref()) { Some(grammar) => {
-            match grammar {
+        match state.grammars.get_mut(name.as_ref()) {
+            Some(grammar) => match grammar {
                 AvailableGrammar::LoadFailed(error) => {
                     tx.send(Err(error.clone())).ok();
                 }
@@ -890,11 +891,12 @@ impl LanguageRegistry {
                         })
                         .detach();
                 }
+            },
+            _ => {
+                tx.send(Err(Arc::new(anyhow!("no such grammar {}", name))))
+                    .ok();
             }
-        } _ => {
-            tx.send(Err(Arc::new(anyhow!("no such grammar {}", name))))
-                .ok();
-        }}
+        }
 
         async move { rx.await?.map_err(|e| anyhow!(e)) }
     }

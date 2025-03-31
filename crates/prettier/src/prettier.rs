@@ -90,16 +90,19 @@ impl Prettier {
             if installed_prettiers.contains(&path_to_check) {
                 log::debug!("Found prettier path {path_to_check:?} in installed prettiers");
                 return Ok(ControlFlow::Continue(Some(path_to_check)));
-            } else { match read_package_json(fs, &path_to_check).await?
-            { Some(package_json_contents) => {
-                if has_prettier_in_node_modules(fs, &path_to_check).await? {
-                    log::debug!("Found prettier path {path_to_check:?} in the node_modules");
-                    return Ok(ControlFlow::Continue(Some(path_to_check)));
-                } else {
-                    match &closest_package_json_path {
-                        None => closest_package_json_path = Some(path_to_check.clone()),
-                        Some(closest_package_json_path) => {
-                            match package_json_contents.get("workspaces") {
+            } else {
+                match read_package_json(fs, &path_to_check).await? {
+                    Some(package_json_contents) => {
+                        if has_prettier_in_node_modules(fs, &path_to_check).await? {
+                            log::debug!(
+                                "Found prettier path {path_to_check:?} in the node_modules"
+                            );
+                            return Ok(ControlFlow::Continue(Some(path_to_check)));
+                        } else {
+                            match &closest_package_json_path {
+                                None => closest_package_json_path = Some(path_to_check.clone()),
+                                Some(closest_package_json_path) => {
+                                    match package_json_contents.get("workspaces") {
                                 Some(serde_json::Value::Array(workspaces)) => {
                                     let subproject_path = closest_package_json_path.strip_prefix(&path_to_check).expect("traversing path parents, should be able to strip prefix");
                                     if workspaces.iter().filter_map(|value| {
@@ -122,10 +125,13 @@ impl Prettier {
                                 Some(unknown) => log::error!("Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."),
                                 None => log::warn!("Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"),
                             }
+                                }
+                            }
                         }
                     }
+                    _ => {}
                 }
-            } _ => {}}}
+            }
 
             if !path_to_check.pop() {
                 log::debug!("Found no prettier in ancestors of {locate_from:?}");
@@ -164,62 +170,72 @@ impl Prettier {
             if prettier_ignores.contains(&path_to_check) {
                 log::debug!("Found prettier ignore at {path_to_check:?}");
                 return Ok(ControlFlow::Continue(Some(path_to_check)));
-            } else { match read_package_json(fs, &path_to_check).await?
-            { Some(package_json_contents) => {
-                let ignore_path = path_to_check.join(".prettierignore");
-                if let Some(metadata) = fs
-                    .metadata(&ignore_path)
-                    .await
-                    .with_context(|| format!("fetching metadata for {ignore_path:?}"))?
-                {
-                    if !metadata.is_dir && !metadata.is_symlink {
-                        log::info!("Found prettier ignore at {ignore_path:?}");
-                        return Ok(ControlFlow::Continue(Some(path_to_check)));
-                    }
-                }
-                match &closest_package_json_path {
-                    None => closest_package_json_path = Some(path_to_check.clone()),
-                    Some(closest_package_json_path) => {
-                        if let Some(serde_json::Value::Array(workspaces)) =
-                            package_json_contents.get("workspaces")
+            } else {
+                match read_package_json(fs, &path_to_check).await? {
+                    Some(package_json_contents) => {
+                        let ignore_path = path_to_check.join(".prettierignore");
+                        if let Some(metadata) = fs
+                            .metadata(&ignore_path)
+                            .await
+                            .with_context(|| format!("fetching metadata for {ignore_path:?}"))?
                         {
-                            let subproject_path = closest_package_json_path
+                            if !metadata.is_dir && !metadata.is_symlink {
+                                log::info!("Found prettier ignore at {ignore_path:?}");
+                                return Ok(ControlFlow::Continue(Some(path_to_check)));
+                            }
+                        }
+                        match &closest_package_json_path {
+                            None => closest_package_json_path = Some(path_to_check.clone()),
+                            Some(closest_package_json_path) => {
+                                if let Some(serde_json::Value::Array(workspaces)) =
+                                    package_json_contents.get("workspaces")
+                                {
+                                    let subproject_path = closest_package_json_path
                                 .strip_prefix(&path_to_check)
                                 .expect("traversing path parents, should be able to strip prefix");
 
-                            if workspaces
-                                .iter()
-                                .filter_map(|value| {
-                                    if let serde_json::Value::String(s) = value {
-                                        Some(s.clone())
-                                    } else {
-                                        log::warn!(
+                                    if workspaces
+                                        .iter()
+                                        .filter_map(|value| {
+                                            if let serde_json::Value::String(s) = value {
+                                                Some(s.clone())
+                                            } else {
+                                                log::warn!(
                                             "Skipping non-string 'workspaces' value: {value:?}"
                                         );
-                                        None
-                                    }
-                                })
-                                .any(|workspace_definition| {
-                                    workspace_definition == subproject_path.to_string_lossy()
-                                        || PathMatcher::new(&[workspace_definition])
-                                            .ok()
-                                            .map_or(false, |path_matcher| {
-                                                path_matcher.is_match(subproject_path)
-                                            })
-                                })
-                            {
-                                let workspace_ignore = path_to_check.join(".prettierignore");
-                                if let Some(metadata) = fs.metadata(&workspace_ignore).await? {
-                                    if !metadata.is_dir {
-                                        log::info!("Found prettier ignore at workspace root {workspace_ignore:?}");
-                                        return Ok(ControlFlow::Continue(Some(path_to_check)));
+                                                None
+                                            }
+                                        })
+                                        .any(|workspace_definition| {
+                                            workspace_definition
+                                                == subproject_path.to_string_lossy()
+                                                || PathMatcher::new(&[workspace_definition])
+                                                    .ok()
+                                                    .map_or(false, |path_matcher| {
+                                                        path_matcher.is_match(subproject_path)
+                                                    })
+                                        })
+                                    {
+                                        let workspace_ignore =
+                                            path_to_check.join(".prettierignore");
+                                        if let Some(metadata) =
+                                            fs.metadata(&workspace_ignore).await?
+                                        {
+                                            if !metadata.is_dir {
+                                                log::info!("Found prettier ignore at workspace root {workspace_ignore:?}");
+                                                return Ok(ControlFlow::Continue(Some(
+                                                    path_to_check,
+                                                )));
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    _ => {}
                 }
-            } _ => {}}}
+            }
 
             if !path_to_check.pop() {
                 log::debug!("Found no prettier ignore in ancestors of {locate_from:?}");

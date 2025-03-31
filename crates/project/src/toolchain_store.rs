@@ -173,8 +173,8 @@ impl ToolchainStore {
             })?
             .await;
         let has_values = toolchains.is_some();
-        let groups = match &toolchains { Some(toolchains) => {
-            toolchains
+        let groups = match &toolchains {
+            Some(toolchains) => toolchains
                 .groups
                 .iter()
                 .filter_map(|group| {
@@ -183,12 +183,13 @@ impl ToolchainStore {
                         name: String::from(group.1.as_ref()),
                     })
                 })
-                .collect()
-        } _ => {
-            vec![]
-        }};
-        let toolchains = match toolchains { Some(toolchains) => {
-            toolchains
+                .collect(),
+            _ => {
+                vec![]
+            }
+        };
+        let toolchains = match toolchains {
+            Some(toolchains) => toolchains
                 .toolchains
                 .into_iter()
                 .map(|toolchain| {
@@ -199,10 +200,11 @@ impl ToolchainStore {
                         raw_json: toolchain.as_json.to_string(),
                     }
                 })
-                .collect::<Vec<_>>()
-        } _ => {
-            vec![]
-        }};
+                .collect::<Vec<_>>(),
+            _ => {
+                vec![]
+            }
+        };
 
         Ok(proto::ListToolchainsResponse {
             has_values,

@@ -52,24 +52,25 @@ impl RenderOnce for NumericStepper {
         h_flex()
             .id(self.id)
             .gap_1()
-            .map(|element| {
-                match self.on_reset { Some(on_reset) => {
-                    element.child(
-                        IconButton::new("reset", IconName::RotateCcw)
-                            .shape(shape)
-                            .icon_size(icon_size)
-                            .on_click(on_reset),
-                    )
-                } _ => if self.reserve_space_for_reset {
-                    element.child(
-                        h_flex()
-                            .size(icon_size.square(window, cx))
-                            .flex_none()
-                            .into_any_element(),
-                    )
-                } else {
-                    element
-                }}
+            .map(|element| match self.on_reset {
+                Some(on_reset) => element.child(
+                    IconButton::new("reset", IconName::RotateCcw)
+                        .shape(shape)
+                        .icon_size(icon_size)
+                        .on_click(on_reset),
+                ),
+                _ => {
+                    if self.reserve_space_for_reset {
+                        element.child(
+                            h_flex()
+                                .size(icon_size.square(window, cx))
+                                .flex_none()
+                                .into_any_element(),
+                        )
+                    } else {
+                        element
+                    }
+                }
             })
             .child(
                 h_flex()

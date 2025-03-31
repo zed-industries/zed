@@ -285,11 +285,14 @@ impl super::LspAdapter for CLspAdapter {
                 }
             }
         });
-        match original.capabilities.experimental { Some(ref mut original_experimental) => {
-            merge_json_value_into(experimental, original_experimental);
-        } _ => {
-            original.capabilities.experimental = Some(experimental);
-        }}
+        match original.capabilities.experimental {
+            Some(ref mut original_experimental) => {
+                merge_json_value_into(experimental, original_experimental);
+            }
+            _ => {
+                original.capabilities.experimental = Some(experimental);
+            }
+        }
         Ok(original)
     }
 

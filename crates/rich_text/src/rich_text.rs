@@ -201,100 +201,105 @@ pub fn render_markdown_mut(
         let prev_len = text.len();
         match event {
             Event::Text(t) => {
-                match &current_language { Some(language) => {
-                    render_code(text, highlights, t.as_ref(), language);
-                } _ => {
-                    while let Some(mention) = mentions.first() {
-                        if !source_range.contains_inclusive(&mention.range) {
-                            break;
-                        }
-                        mentions = &mentions[1..];
-                        let range = (prev_len + mention.range.start - source_range.start)
-                            ..(prev_len + mention.range.end - source_range.start);
-                        highlights.push((
-                            range.clone(),
-                            if mention.is_self_mention {
-                                Highlight::SelfMention
-                            } else {
-                                Highlight::Mention
-                            },
-                        ));
+                match &current_language {
+                    Some(language) => {
+                        render_code(text, highlights, t.as_ref(), language);
                     }
-
-                    text.push_str(t.as_ref());
-                    let mut style = HighlightStyle::default();
-                    if bold_depth > 0 {
-                        style.font_weight = Some(FontWeight::BOLD);
-                    }
-                    if italic_depth > 0 {
-                        style.font_style = Some(FontStyle::Italic);
-                    }
-                    if strikethrough_depth > 0 {
-                        style.strikethrough = Some(StrikethroughStyle {
-                            thickness: 1.0.into(),
-                            ..Default::default()
-                        });
-                    }
-                    let last_run_len = if let Some(link_url) = link_url.clone() {
-                        link_ranges.push(prev_len..text.len());
-                        link_urls.push(link_url);
-                        style.underline = Some(UnderlineStyle {
-                            thickness: 1.0.into(),
-                            ..Default::default()
-                        });
-                        prev_len
-                    } else {
-                        // Manually scan for links
-                        let mut finder = linkify::LinkFinder::new();
-                        finder.kinds(&[linkify::LinkKind::Url]);
-                        let mut last_link_len = prev_len;
-                        for link in finder.links(&t) {
-                            let start = link.start();
-                            let end = link.end();
-                            let range = (prev_len + start)..(prev_len + end);
-                            link_ranges.push(range.clone());
-                            link_urls.push(link.as_str().to_string());
-
-                            // If there is a style before we match a link, we have to add this to the highlighted ranges
-                            if style != HighlightStyle::default() && last_link_len < link.start() {
-                                highlights.push((
-                                    last_link_len..link.start(),
-                                    Highlight::Highlight(style),
-                                ));
+                    _ => {
+                        while let Some(mention) = mentions.first() {
+                            if !source_range.contains_inclusive(&mention.range) {
+                                break;
                             }
-
+                            mentions = &mentions[1..];
+                            let range = (prev_len + mention.range.start - source_range.start)
+                                ..(prev_len + mention.range.end - source_range.start);
                             highlights.push((
-                                range,
-                                Highlight::Highlight(HighlightStyle {
-                                    underline: Some(UnderlineStyle {
-                                        thickness: 1.0.into(),
-                                        ..Default::default()
-                                    }),
-                                    ..style
-                                }),
+                                range.clone(),
+                                if mention.is_self_mention {
+                                    Highlight::SelfMention
+                                } else {
+                                    Highlight::Mention
+                                },
                             ));
-
-                            last_link_len = end;
                         }
-                        last_link_len
-                    };
 
-                    if style != HighlightStyle::default() && last_run_len < text.len() {
-                        let mut new_highlight = true;
-                        if let Some((last_range, last_style)) = highlights.last_mut() {
-                            if last_range.end == last_run_len
-                                && last_style == &Highlight::Highlight(style)
-                            {
-                                last_range.end = text.len();
-                                new_highlight = false;
+                        text.push_str(t.as_ref());
+                        let mut style = HighlightStyle::default();
+                        if bold_depth > 0 {
+                            style.font_weight = Some(FontWeight::BOLD);
+                        }
+                        if italic_depth > 0 {
+                            style.font_style = Some(FontStyle::Italic);
+                        }
+                        if strikethrough_depth > 0 {
+                            style.strikethrough = Some(StrikethroughStyle {
+                                thickness: 1.0.into(),
+                                ..Default::default()
+                            });
+                        }
+                        let last_run_len = if let Some(link_url) = link_url.clone() {
+                            link_ranges.push(prev_len..text.len());
+                            link_urls.push(link_url);
+                            style.underline = Some(UnderlineStyle {
+                                thickness: 1.0.into(),
+                                ..Default::default()
+                            });
+                            prev_len
+                        } else {
+                            // Manually scan for links
+                            let mut finder = linkify::LinkFinder::new();
+                            finder.kinds(&[linkify::LinkKind::Url]);
+                            let mut last_link_len = prev_len;
+                            for link in finder.links(&t) {
+                                let start = link.start();
+                                let end = link.end();
+                                let range = (prev_len + start)..(prev_len + end);
+                                link_ranges.push(range.clone());
+                                link_urls.push(link.as_str().to_string());
+
+                                // If there is a style before we match a link, we have to add this to the highlighted ranges
+                                if style != HighlightStyle::default()
+                                    && last_link_len < link.start()
+                                {
+                                    highlights.push((
+                                        last_link_len..link.start(),
+                                        Highlight::Highlight(style),
+                                    ));
+                                }
+
+                                highlights.push((
+                                    range,
+                                    Highlight::Highlight(HighlightStyle {
+                                        underline: Some(UnderlineStyle {
+                                            thickness: 1.0.into(),
+                                            ..Default::default()
+                                        }),
+                                        ..style
+                                    }),
+                                ));
+
+                                last_link_len = end;
+                            }
+                            last_link_len
+                        };
+
+                        if style != HighlightStyle::default() && last_run_len < text.len() {
+                            let mut new_highlight = true;
+                            if let Some((last_range, last_style)) = highlights.last_mut() {
+                                if last_range.end == last_run_len
+                                    && last_style == &Highlight::Highlight(style)
+                                {
+                                    last_range.end = text.len();
+                                    new_highlight = false;
+                                }
+                            }
+                            if new_highlight {
+                                highlights
+                                    .push((last_run_len..text.len(), Highlight::Highlight(style)));
                             }
                         }
-                        if new_highlight {
-                            highlights
-                                .push((last_run_len..text.len(), Highlight::Highlight(style)));
-                        }
                     }
-                }}
+                }
             }
             Event::Code(t) => {
                 text.push_str(t.as_ref());

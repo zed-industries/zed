@@ -623,20 +623,23 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     match adapter
         .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
         .await
-    { Some(binary) => {
-        log::info!("language server {:?} is already installed", name.0);
-        delegate.update_status(name.clone(), BinaryStatus::None);
-        Ok(binary)
-    } _ => {
-        log::info!("downloading language server {:?}", name.0);
-        delegate.update_status(adapter.name(), BinaryStatus::Downloading);
-        let binary = adapter
-            .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
-            .await;
+    {
+        Some(binary) => {
+            log::info!("language server {:?} is already installed", name.0);
+            delegate.update_status(name.clone(), BinaryStatus::None);
+            Ok(binary)
+        }
+        _ => {
+            log::info!("downloading language server {:?}", name.0);
+            delegate.update_status(adapter.name(), BinaryStatus::Downloading);
+            let binary = adapter
+                .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+                .await;
 
-        delegate.update_status(name.clone(), BinaryStatus::None);
-        binary
-    }}
+            delegate.update_status(name.clone(), BinaryStatus::None);
+            binary
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

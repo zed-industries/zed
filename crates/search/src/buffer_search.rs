@@ -1221,10 +1221,9 @@ impl BufferSearchBar {
                 cx.notify();
             } else {
                 let query: Arc<_> = match self.active_search.take().filter(|_| reuse_existing_query)
-                { Some(search) => {
-                    search
-                } _ => {
-                    if self.search_options.contains(SearchOptions::REGEX) {
+                {
+                    Some(search) => search,
+                    _ => if self.search_options.contains(SearchOptions::REGEX) {
                         match SearchQuery::regex(
                             query,
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
@@ -1261,8 +1260,8 @@ impl BufferSearchBar {
                             }
                         }
                     }
-                    .into()
-                }};
+                    .into(),
+                };
 
                 self.active_search = Some(query.clone());
                 let query_text = query.as_str().to_string();
@@ -1334,11 +1333,14 @@ impl BufferSearchBar {
         // Search -> Replace -> Editor
         let focus_handle = if self.replace_enabled && self.query_editor_focused {
             self.replacement_editor.focus_handle(cx)
-        } else { match self.active_searchable_item.as_ref() { Some(item) => {
-            item.item_focus_handle(cx)
-        } _ => {
-            return;
-        }}};
+        } else {
+            match self.active_searchable_item.as_ref() {
+                Some(item) => item.item_focus_handle(cx),
+                _ => {
+                    return;
+                }
+            }
+        };
         self.focus(&focus_handle, window, cx);
         cx.stop_propagation();
     }

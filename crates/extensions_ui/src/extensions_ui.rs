@@ -72,25 +72,28 @@ pub fn init(cx: &mut App) {
                         .items()
                         .find_map(|item| item.downcast::<ExtensionsPage>());
 
-                    match existing { Some(existing) => {
-                        if provides_filter.is_some() {
-                            existing.update(cx, |extensions_page, cx| {
-                                extensions_page.change_provides_filter(provides_filter, cx);
-                            });
-                        }
+                    match existing {
+                        Some(existing) => {
+                            if provides_filter.is_some() {
+                                existing.update(cx, |extensions_page, cx| {
+                                    extensions_page.change_provides_filter(provides_filter, cx);
+                                });
+                            }
 
-                        workspace.activate_item(&existing, true, true, window, cx);
-                    } _ => {
-                        let extensions_page =
-                            ExtensionsPage::new(workspace, provides_filter, window, cx);
-                        workspace.add_item_to_active_pane(
-                            Box::new(extensions_page),
-                            None,
-                            true,
-                            window,
-                            cx,
-                        )
-                    }}
+                            workspace.activate_item(&existing, true, true, window, cx);
+                        }
+                        _ => {
+                            let extensions_page =
+                                ExtensionsPage::new(workspace, provides_filter, window, cx);
+                            workspace.add_item_to_active_pane(
+                                Box::new(extensions_page),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            )
+                        }
+                    }
                 },
             )
             .register_action(move |workspace, _: &InstallDevExtension, window, cx| {

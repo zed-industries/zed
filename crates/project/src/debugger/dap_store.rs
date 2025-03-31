@@ -209,11 +209,10 @@ impl DapStore {
     }
 
     pub fn remote_event_queue(&mut self) -> Option<VecDeque<DapStoreEvent>> {
-        match &mut self.mode { DapStoreMode::Remote(remote) => {
-            remote.event_queue.take()
-        } _ => {
-            None
-        }}
+        match &mut self.mode {
+            DapStoreMode::Remote(remote) => remote.event_queue.take(),
+            _ => None,
+        }
     }
 
     pub fn as_local(&self) -> Option<&LocalDapStore> {
@@ -252,21 +251,24 @@ impl DapStore {
         ignore: Option<bool>,
         cx: &mut Context<Self>,
     ) {
-        match &self.mode { DapStoreMode::Remote(remote) => {
-            self.sessions.insert(
-                session_id,
-                cx.new(|_| {
-                    debugger::session::Session::remote(
-                        session_id,
-                        remote.upstream_client.clone(),
-                        remote.upstream_project_id,
-                        ignore.unwrap_or(false),
-                    )
-                }),
-            );
-        } _ => {
-            debug_assert!(false);
-        }}
+        match &self.mode {
+            DapStoreMode::Remote(remote) => {
+                self.sessions.insert(
+                    session_id,
+                    cx.new(|_| {
+                        debugger::session::Session::remote(
+                            session_id,
+                            remote.upstream_client.clone(),
+                            remote.upstream_project_id,
+                            ignore.unwrap_or(false),
+                        )
+                    }),
+                );
+            }
+            _ => {
+                debug_assert!(false);
+            }
+        }
     }
 
     pub fn session_by_id(
@@ -305,14 +307,11 @@ impl DapStore {
     ) -> Result<()> {
         let session_id = SessionId::from_proto(envelope.payload.session_id);
 
-        this.update(&mut cx, |this, cx| {
-            match this.session_by_id(&session_id) { Some(session) => {
-                session.update(cx, |session, cx| {
-                    session.set_ignore_breakpoints(envelope.payload.ignore, cx)
-                })
-            } _ => {
-                Task::ready(())
-            }}
+        this.update(&mut cx, |this, cx| match this.session_by_id(&session_id) {
+            Some(session) => session.update(cx, |session, cx| {
+                session.set_ignore_breakpoints(envelope.payload.ignore, cx)
+            }),
+            _ => Task::ready(()),
         })?
         .await;
 
@@ -759,21 +758,22 @@ impl DapStore {
             .read(cx)
             .parent_id()
             .and_then(|session_id| self.session_by_id(session_id))
-        { Some(parent_session) => {
-            let shutdown_id = parent_session.update(cx, |parent_session, _| {
-                parent_session.remove_child_session_id(session_id);
+        {
+            Some(parent_session) => {
+                let shutdown_id = parent_session.update(cx, |parent_session, _| {
+                    parent_session.remove_child_session_id(session_id);
 
-                if parent_session.child_session_ids().len() == 0 {
-                    Some(parent_session.session_id())
-                } else {
-                    None
-                }
-            });
+                    if parent_session.child_session_ids().len() == 0 {
+                        Some(parent_session.session_id())
+                    } else {
+                        None
+                    }
+                });
 
-            shutdown_id.map(|session_id| self.shutdown_session(session_id, cx))
-        } _ => {
-            None
-        }};
+                shutdown_id.map(|session_id| self.shutdown_session(session_id, cx))
+            }
+            _ => None,
+        };
 
         let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 

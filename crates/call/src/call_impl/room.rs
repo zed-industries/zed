@@ -96,11 +96,12 @@ impl Room {
     }
 
     pub fn is_connected(&self, _: &App) -> bool {
-        match self.live_kit.as_ref() { Some(live_kit) => {
-            live_kit.room.connection_state() == livekit::ConnectionState::Connected
-        } _ => {
-            false
-        }}
+        match self.live_kit.as_ref() {
+            Some(live_kit) => {
+                live_kit.room.connection_state() == livekit::ConnectionState::Connected
+            }
+            _ => false,
+        }
     }
 
     fn new(
@@ -181,16 +182,17 @@ impl Room {
                 room
             })?;
 
-            let initial_project_id = match initial_project { Some(initial_project) => {
-                let initial_project_id = room
-                    .update(cx, |room, cx| {
-                        room.share_project(initial_project.clone(), cx)
-                    })?
-                    .await?;
-                Some(initial_project_id)
-            } _ => {
-                None
-            }};
+            let initial_project_id = match initial_project {
+                Some(initial_project) => {
+                    let initial_project_id = room
+                        .update(cx, |room, cx| {
+                            room.share_project(initial_project.clone(), cx)
+                        })?
+                        .await?;
+                    Some(initial_project_id)
+                }
+                _ => None,
+            };
 
             let did_join = room
                 .update(cx, |room, cx| {
@@ -728,14 +730,14 @@ impl Room {
                             }
                         }
 
-                        this.joined_projects.retain(|project| {
-                            match project.upgrade() { Some(project) => {
-                                project.update(cx, |project, cx| project.set_role(role, cx));
-                                true
-                            } _ => {
-                                false
-                            }}
-                        });
+                        this.joined_projects
+                            .retain(|project| match project.upgrade() {
+                                Some(project) => {
+                                    project.update(cx, |project, cx| project.set_role(role, cx));
+                                    true
+                                }
+                                _ => false,
+                            });
                     }
                 } else {
                     this.local_participant.projects.clear();
@@ -778,20 +780,18 @@ impl Room {
                         }
 
                         for unshared_project_id in old_projects.difference(&new_projects) {
-                            this.joined_projects.retain(|project| {
-                                match project.upgrade() { Some(project) => {
-                                    project.update(cx, |project, cx| {
+                            this.joined_projects
+                                .retain(|project| match project.upgrade() {
+                                    Some(project) => project.update(cx, |project, cx| {
                                         if project.remote_id() == Some(*unshared_project_id) {
                                             project.disconnected_from_host(cx);
                                             false
                                         } else {
                                             true
                                         }
-                                    })
-                                } _ => {
-                                    false
-                                }}
-                            });
+                                    }),
+                                    _ => false,
+                                });
                             cx.emit(Event::RemoteProjectUnshared {
                                 project_id: *unshared_project_id,
                             });
@@ -800,60 +800,62 @@ impl Room {
                         let role = participant.role();
                         let location = ParticipantLocation::from_proto(participant.location)
                             .unwrap_or(ParticipantLocation::External);
-                        match this.remote_participants.get_mut(&participant.user_id)
-                        { Some(remote_participant) => {
-                            remote_participant.peer_id = peer_id;
-                            remote_participant.projects = participant.projects;
-                            remote_participant.participant_index = participant_index;
-                            if location != remote_participant.location
-                                || role != remote_participant.role
-                            {
-                                remote_participant.location = location;
-                                remote_participant.role = role;
-                                cx.emit(Event::ParticipantLocationChanged {
-                                    participant_id: peer_id,
-                                });
-                            }
-                        } _ => {
-                            this.remote_participants.insert(
-                                participant.user_id,
-                                RemoteParticipant {
-                                    user: user.clone(),
-                                    participant_index,
-                                    peer_id,
-                                    projects: participant.projects,
-                                    location,
-                                    role,
-                                    muted: true,
-                                    speaking: false,
-                                    video_tracks: Default::default(),
-                                    audio_tracks: Default::default(),
-                                },
-                            );
-
-                            Audio::play_sound(Sound::Joined, cx);
-                            if let Some(livekit_participants) = &livekit_participants {
-                                if let Some(livekit_participant) = livekit_participants
-                                    .get(&ParticipantIdentity(user.id.to_string()))
+                        match this.remote_participants.get_mut(&participant.user_id) {
+                            Some(remote_participant) => {
+                                remote_participant.peer_id = peer_id;
+                                remote_participant.projects = participant.projects;
+                                remote_participant.participant_index = participant_index;
+                                if location != remote_participant.location
+                                    || role != remote_participant.role
                                 {
-                                    for publication in
-                                        livekit_participant.track_publications().into_values()
+                                    remote_participant.location = location;
+                                    remote_participant.role = role;
+                                    cx.emit(Event::ParticipantLocationChanged {
+                                        participant_id: peer_id,
+                                    });
+                                }
+                            }
+                            _ => {
+                                this.remote_participants.insert(
+                                    participant.user_id,
+                                    RemoteParticipant {
+                                        user: user.clone(),
+                                        participant_index,
+                                        peer_id,
+                                        projects: participant.projects,
+                                        location,
+                                        role,
+                                        muted: true,
+                                        speaking: false,
+                                        video_tracks: Default::default(),
+                                        audio_tracks: Default::default(),
+                                    },
+                                );
+
+                                Audio::play_sound(Sound::Joined, cx);
+                                if let Some(livekit_participants) = &livekit_participants {
+                                    if let Some(livekit_participant) = livekit_participants
+                                        .get(&ParticipantIdentity(user.id.to_string()))
                                     {
-                                        if let Some(track) = publication.track() {
-                                            this.livekit_room_updated(
-                                                RoomEvent::TrackSubscribed {
-                                                    track,
-                                                    publication,
-                                                    participant: livekit_participant.clone(),
-                                                },
-                                                cx,
-                                            )
-                                            .warn_on_err();
+                                        for publication in
+                                            livekit_participant.track_publications().into_values()
+                                        {
+                                            if let Some(track) = publication.track() {
+                                                this.livekit_room_updated(
+                                                    RoomEvent::TrackSubscribed {
+                                                        track,
+                                                        publication,
+                                                        participant: livekit_participant.clone(),
+                                                    },
+                                                    cx,
+                                                )
+                                                .warn_on_err();
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }}
+                        }
                     }
 
                     this.remote_participants.retain(|user_id, participant| {
@@ -1140,13 +1142,11 @@ impl Room {
                 Project::in_room(id, client, user_store, language_registry, fs, cx.clone()).await?;
 
             this.update(cx, |this, cx| {
-                this.joined_projects.retain(|project| {
-                    match project.upgrade() { Some(project) => {
-                        !project.read(cx).is_disconnected(cx)
-                    } _ => {
-                        false
-                    }}
-                });
+                this.joined_projects
+                    .retain(|project| match project.upgrade() {
+                        Some(project) => !project.read(cx).is_disconnected(cx),
+                        _ => false,
+                    });
                 this.joined_projects.insert(project.downgrade());
             })?;
             Ok(project)
@@ -1308,14 +1308,17 @@ impl Room {
             return Task::ready(Err(anyhow!("room is offline")));
         }
 
-        let (room, publish_id) = match self.live_kit.as_mut() { Some(live_kit) => {
-            let publish_id = post_inc(&mut live_kit.next_publish_id);
-            live_kit.microphone_track = LocalTrack::Pending { publish_id };
-            cx.notify();
-            (live_kit.room.clone(), publish_id)
-        } _ => {
-            return Task::ready(Err(anyhow!("live-kit was not initialized")));
-        }};
+        let (room, publish_id) = match self.live_kit.as_mut() {
+            Some(live_kit) => {
+                let publish_id = post_inc(&mut live_kit.next_publish_id);
+                live_kit.microphone_track = LocalTrack::Pending { publish_id };
+                cx.notify();
+                (live_kit.room.clone(), publish_id)
+            }
+            _ => {
+                return Task::ready(Err(anyhow!("live-kit was not initialized")));
+            }
+        };
 
         cx.spawn(async move |this, cx| {
             let publication = room.publish_local_microphone_track(cx).await;
@@ -1325,14 +1328,12 @@ impl Room {
                     .as_mut()
                     .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
 
-                let canceled = match &live_kit.microphone_track
-                { LocalTrack::Pending {
-                    publish_id: cur_publish_id,
-                } => {
-                    *cur_publish_id != publish_id
-                } _ => {
-                    true
-                }};
+                let canceled = match &live_kit.microphone_track {
+                    LocalTrack::Pending {
+                        publish_id: cur_publish_id,
+                    } => *cur_publish_id != publish_id,
+                    _ => true,
+                };
 
                 match publication {
                     Ok((publication, stream)) => {
@@ -1375,14 +1376,17 @@ impl Room {
             return Task::ready(Err(anyhow!("screen was already shared")));
         }
 
-        let (participant, publish_id) = match self.live_kit.as_mut() { Some(live_kit) => {
-            let publish_id = post_inc(&mut live_kit.next_publish_id);
-            live_kit.screen_track = LocalTrack::Pending { publish_id };
-            cx.notify();
-            (live_kit.room.local_participant(), publish_id)
-        } _ => {
-            return Task::ready(Err(anyhow!("live-kit was not initialized")));
-        }};
+        let (participant, publish_id) = match self.live_kit.as_mut() {
+            Some(live_kit) => {
+                let publish_id = post_inc(&mut live_kit.next_publish_id);
+                live_kit.screen_track = LocalTrack::Pending { publish_id };
+                cx.notify();
+                (live_kit.room.local_participant(), publish_id)
+            }
+            _ => {
+                return Task::ready(Err(anyhow!("live-kit was not initialized")));
+            }
+        };
 
         let sources = cx.screen_capture_sources();
 
@@ -1398,14 +1402,12 @@ impl Room {
                     .as_mut()
                     .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
 
-                let canceled = match &live_kit.screen_track
-                { LocalTrack::Pending {
-                    publish_id: cur_publish_id,
-                } => {
-                    *cur_publish_id != publish_id
-                } _ => {
-                    true
-                }};
+                let canceled = match &live_kit.screen_track {
+                    LocalTrack::Pending {
+                        publish_id: cur_publish_id,
+                    } => *cur_publish_id != publish_id,
+                    _ => true,
+                };
 
                 match publication {
                     Ok((publication, stream)) => {

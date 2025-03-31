@@ -65,11 +65,10 @@ pub(crate) fn should_auto_close(
             let mut chars = buffer
                 .text_for_range(jsx_open_tag_node.byte_range())
                 .flat_map(|chunk| chunk.chars());
-            match (chars.next(), chars.next()) { (Some(c1), Some(c2)) => {
-                Some([c1, c2])
-            } _ => {
-                None
-            }}
+            match (chars.next(), chars.next()) {
+                (Some(c1), Some(c2)) => Some([c1, c2]),
+                _ => None,
+            }
         };
         if let Some(chars) = first_two_chars {
             if chars[0] != '<' {

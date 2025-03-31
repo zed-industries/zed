@@ -462,13 +462,13 @@ impl PickerDelegate for BranchListDelegate {
                             el.child(div().max_w_96().child({
                                 let message = if entry.is_new {
                                     match self.repo.as_ref().and_then(|repo| {
-                                            repo.read(cx).current_branch().map(|b| b.name.clone())
-                                        })
-                                    { Some(current_branch) => {
-                                        format!("based off {}", current_branch)
-                                    } _ => {
-                                        "based off the current branch".to_string()
-                                    }}
+                                        repo.read(cx).current_branch().map(|b| b.name.clone())
+                                    }) {
+                                        Some(current_branch) => {
+                                            format!("based off {}", current_branch)
+                                        }
+                                        _ => "based off the current branch".to_string(),
+                                    }
                                 } else {
                                     subject.unwrap_or("no commits found".into()).to_string()
                                 };

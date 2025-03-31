@@ -403,24 +403,32 @@ impl ContextEditor {
         if request_type == RequestType::SuggestEdits && !self.context.read(cx).contains_files(cx) {
             self.last_error = Some(AssistError::FileRequired);
             cx.notify();
-        } else { match self
-            .context
-            .update(cx, |context, cx| context.assist(request_type, cx))
-        { Some(user_message) => {
-            let new_selection = {
-                let cursor = user_message
-                    .start
-                    .to_offset(self.context.read(cx).buffer().read(cx));
-                cursor..cursor
-            };
-            self.editor.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
-                    selections.select_ranges([new_selection])
-                });
-            });
-            // Avoid scrolling to the new cursor position so the assistant's output is stable.
-            cx.defer_in(window, |this, _, _| this.scroll_position = None);
-        } _ => {}}}
+        } else {
+            match self
+                .context
+                .update(cx, |context, cx| context.assist(request_type, cx))
+            {
+                Some(user_message) => {
+                    let new_selection = {
+                        let cursor = user_message
+                            .start
+                            .to_offset(self.context.read(cx).buffer().read(cx));
+                        cursor..cursor
+                    };
+                    self.editor.update(cx, |editor, cx| {
+                        editor.change_selections(
+                            Some(Autoscroll::fit()),
+                            window,
+                            cx,
+                            |selections| selections.select_ranges([new_selection]),
+                        );
+                    });
+                    // Avoid scrolling to the new cursor position so the assistant's output is stable.
+                    cx.defer_in(window, |this, _, _| this.scroll_position = None);
+                }
+                _ => {}
+            }
+        }
 
         cx.notify();
     }
@@ -817,62 +825,69 @@ impl ContextEditor {
         }
 
         self.editor.update(cx, |editor, cx| {
-            match self.context.read(cx).invoked_slash_command(&command_id)
-            { Some(invoked_slash_command) => {
-                match invoked_slash_command.status { InvokedSlashCommandStatus::Finished => {
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (&excerpt_id, _buffer_id, _buffer_snapshot) =
-                        buffer.as_singleton().unwrap();
+            match self.context.read(cx).invoked_slash_command(&command_id) {
+                Some(invoked_slash_command) => match invoked_slash_command.status {
+                    InvokedSlashCommandStatus::Finished => {
+                        let buffer = editor.buffer().read(cx).snapshot(cx);
+                        let (&excerpt_id, _buffer_id, _buffer_snapshot) =
+                            buffer.as_singleton().unwrap();
 
-                    let start = buffer
-                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
-                        .unwrap();
-                    let end = buffer
-                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
-                        .unwrap();
-                    editor.remove_folds_with_type(
-                        &[start..end],
-                        TypeId::of::<PendingSlashCommand>(),
-                        false,
-                        cx,
-                    );
+                        let start = buffer
+                            .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
+                            .unwrap();
+                        let end = buffer
+                            .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
+                            .unwrap();
+                        editor.remove_folds_with_type(
+                            &[start..end],
+                            TypeId::of::<PendingSlashCommand>(),
+                            false,
+                            cx,
+                        );
 
+                        editor.remove_creases(
+                            HashSet::from_iter(
+                                self.invoked_slash_command_creases.remove(&command_id),
+                            ),
+                            cx,
+                        );
+                    }
+                    _ => {
+                        if let hash_map::Entry::Vacant(entry) =
+                            self.invoked_slash_command_creases.entry(command_id)
+                        {
+                            let buffer = editor.buffer().read(cx).snapshot(cx);
+                            let (&excerpt_id, _buffer_id, _buffer_snapshot) =
+                                buffer.as_singleton().unwrap();
+                            let context = self.context.downgrade();
+                            let crease_start = buffer
+                                .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
+                                .unwrap();
+                            let crease_end = buffer
+                                .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
+                                .unwrap();
+                            let crease = Crease::inline(
+                                crease_start..crease_end,
+                                invoked_slash_command_fold_placeholder(command_id, context),
+                                fold_toggle("invoked-slash-command"),
+                                |_row, _folded, _window, _cx| Empty.into_any(),
+                            );
+                            let crease_ids = editor.insert_creases([crease.clone()], cx);
+                            editor.fold_creases(vec![crease], false, window, cx);
+                            entry.insert(crease_ids[0]);
+                        } else {
+                            cx.notify()
+                        }
+                    }
+                },
+                _ => {
                     editor.remove_creases(
                         HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
                         cx,
                     );
-                } _ => if let hash_map::Entry::Vacant(entry) =
-                    self.invoked_slash_command_creases.entry(command_id)
-                {
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (&excerpt_id, _buffer_id, _buffer_snapshot) =
-                        buffer.as_singleton().unwrap();
-                    let context = self.context.downgrade();
-                    let crease_start = buffer
-                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
-                        .unwrap();
-                    let crease_end = buffer
-                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
-                        .unwrap();
-                    let crease = Crease::inline(
-                        crease_start..crease_end,
-                        invoked_slash_command_fold_placeholder(command_id, context),
-                        fold_toggle("invoked-slash-command"),
-                        |_row, _folded, _window, _cx| Empty.into_any(),
-                    );
-                    let crease_ids = editor.insert_creases([crease.clone()], cx);
-                    editor.fold_creases(vec![crease], false, window, cx);
-                    entry.insert(crease_ids[0]);
-                } else {
-                    cx.notify()
-                }}
-            } _ => {
-                editor.remove_creases(
-                    HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
-                    cx,
-                );
-                cx.notify();
-            }};
+                    cx.notify();
+                }
+            };
         });
     }
 
@@ -957,35 +972,38 @@ impl ContextEditor {
                 );
 
                 let should_refold;
-                match self.patches.get_mut(&range) { Some(state) => {
-                    if let Some(editor_state) = &state.editor {
-                        if editor_state.opened_patch != patch {
-                            state.update_task = Some({
-                                let this = this.clone();
-                                cx.spawn_in(window, async move |_, cx| {
-                                    Self::update_patch_editor(this.clone(), patch, cx)
-                                        .await
-                                        .log_err();
-                                })
-                            });
+                match self.patches.get_mut(&range) {
+                    Some(state) => {
+                        if let Some(editor_state) = &state.editor {
+                            if editor_state.opened_patch != patch {
+                                state.update_task = Some({
+                                    let this = this.clone();
+                                    cx.spawn_in(window, async move |_, cx| {
+                                        Self::update_patch_editor(this.clone(), patch, cx)
+                                            .await
+                                            .log_err();
+                                    })
+                                });
+                            }
                         }
+
+                        should_refold = snapshot
+                            .intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
                     }
+                    _ => {
+                        let crease_id = editor.insert_creases([crease.clone()], cx)[0];
+                        self.patches.insert(
+                            range.clone(),
+                            PatchViewState {
+                                crease_id,
+                                editor: None,
+                                update_task: None,
+                            },
+                        );
 
-                    should_refold =
-                        snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
-                } _ => {
-                    let crease_id = editor.insert_creases([crease.clone()], cx)[0];
-                    self.patches.insert(
-                        range.clone(),
-                        PatchViewState {
-                            crease_id,
-                            editor: None,
-                            update_task: None,
-                        },
-                    );
-
-                    should_refold = true;
-                }}
+                        should_refold = true;
+                    }
+                }
 
                 if should_refold {
                     editor.unfold_ranges(&[patch_start..patch_end], true, false, cx);
@@ -1174,17 +1192,21 @@ impl ContextEditor {
                     }
                 }
 
-                match editor { Some(editor) => {
-                    self.workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.activate_item(&editor, true, false, window, cx);
-                        })
-                        .ok();
-                } _ => {
-                    patch_state.update_task = Some(cx.spawn_in(window, async move |this, cx| {
-                        Self::open_patch_editor(this, new_patch, cx).await.log_err();
-                    }));
-                }}
+                match editor {
+                    Some(editor) => {
+                        self.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.activate_item(&editor, true, false, window, cx);
+                            })
+                            .ok();
+                    }
+                    _ => {
+                        patch_state.update_task =
+                            Some(cx.spawn_in(window, async move |this, cx| {
+                                Self::open_patch_editor(this, new_patch, cx).await.log_err();
+                            }));
+                    }
+                }
             }
         }
     }
@@ -1281,17 +1303,20 @@ impl ContextEditor {
                 .collect();
 
             if let Some(state) = &mut patch_state.editor {
-                match state.editor.upgrade() { Some(editor) => {
-                    editor.update(cx, |editor, cx| {
-                        editor.set_title(patch.title.clone(), cx);
-                        editor.reset_locations(locations, window, cx);
-                        resolved_patch.apply(editor, cx);
-                    });
+                match state.editor.upgrade() {
+                    Some(editor) => {
+                        editor.update(cx, |editor, cx| {
+                            editor.set_title(patch.title.clone(), cx);
+                            editor.reset_locations(locations, window, cx);
+                            resolved_patch.apply(editor, cx);
+                        });
 
-                    state.opened_patch = patch;
-                } _ => {
-                    patch_state.editor.take();
-                }}
+                        state.opened_patch = patch;
+                    }
+                    _ => {
+                        patch_state.editor.take();
+                    }
+                }
             }
             patch_state.update_task.take();
 
@@ -1572,26 +1597,29 @@ impl ContextEditor {
             let mut new_blocks = vec![];
             let mut block_index_to_message = vec![];
             for message in self.context.read(cx).messages(cx) {
-                match blocks_to_remove.remove(&message.id) { Some(_) => {
-                    // This is an old message that we might modify.
-                    let Some((meta, block_id)) = old_blocks.get_mut(&message.id) else {
-                        debug_assert!(
-                            false,
-                            "old_blocks should contain a message_id we've just removed."
-                        );
-                        continue;
-                    };
-                    // Should we modify it?
-                    let message_meta = MessageMetadata::from(&message);
-                    if meta != &message_meta {
-                        blocks_to_replace.insert(*block_id, render_block(message_meta.clone()));
-                        *meta = message_meta;
+                match blocks_to_remove.remove(&message.id) {
+                    Some(_) => {
+                        // This is an old message that we might modify.
+                        let Some((meta, block_id)) = old_blocks.get_mut(&message.id) else {
+                            debug_assert!(
+                                false,
+                                "old_blocks should contain a message_id we've just removed."
+                            );
+                            continue;
+                        };
+                        // Should we modify it?
+                        let message_meta = MessageMetadata::from(&message);
+                        if meta != &message_meta {
+                            blocks_to_replace.insert(*block_id, render_block(message_meta.clone()));
+                            *meta = message_meta;
+                        }
                     }
-                } _ => {
-                    // This is a new message.
-                    new_blocks.push(create_block_properties(&message));
-                    block_index_to_message.push((message.id, MessageMetadata::from(&message)));
-                }}
+                    _ => {
+                        // This is a new message.
+                        new_blocks.push(create_block_properties(&message));
+                        block_index_to_message.push((message.id, MessageMetadata::from(&message)));
+                    }
+                }
             }
             editor.replace_blocks(blocks_to_replace, None, cx);
             editor.remove_blocks(blocks_to_remove.into_values().collect(), None, cx);
@@ -2320,54 +2348,67 @@ impl ContextEditor {
                     )
                     .into_any_element(),
             )
-        } else { match configuration_error(cx) { Some(configuration_error) => {
-            let label = match configuration_error {
-                ConfigurationError::NoProvider => "No LLM provider selected.",
-                ConfigurationError::ProviderNotAuthenticated => "LLM provider is not configured.",
-                ConfigurationError::ProviderPendingTermsAcceptance(_) => {
-                    "LLM provider requires accepting the Terms of Service."
-                }
-            };
-            Some(
-                h_flex()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .bg(cx.theme().colors().editor_background)
-                    .justify_between()
-                    .child(
+        } else {
+            match configuration_error(cx) {
+                Some(configuration_error) => {
+                    let label = match configuration_error {
+                        ConfigurationError::NoProvider => "No LLM provider selected.",
+                        ConfigurationError::ProviderNotAuthenticated => {
+                            "LLM provider is not configured."
+                        }
+                        ConfigurationError::ProviderPendingTermsAcceptance(_) => {
+                            "LLM provider requires accepting the Terms of Service."
+                        }
+                    };
+                    Some(
                         h_flex()
-                            .gap_3()
+                            .px_3()
+                            .py_2()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .bg(cx.theme().colors().editor_background)
+                            .justify_between()
                             .child(
-                                Icon::new(IconName::Warning)
-                                    .size(IconSize::Small)
-                                    .color(Color::Warning),
+                                h_flex()
+                                    .gap_3()
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::Small)
+                                            .color(Color::Warning),
+                                    )
+                                    .child(Label::new(label)),
                             )
-                            .child(Label::new(label)),
+                            .child(
+                                Button::new("open-configuration", "Configure Providers")
+                                    .size(ButtonSize::Compact)
+                                    .icon(Some(IconName::SlidersVertical))
+                                    .icon_size(IconSize::Small)
+                                    .icon_position(IconPosition::Start)
+                                    .style(ButtonStyle::Filled)
+                                    .on_click({
+                                        let focus_handle = self.focus_handle(cx).clone();
+                                        move |_event, window, cx| {
+                                            focus_handle.dispatch_action(
+                                                &ShowConfiguration,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    }),
+                            )
+                            .into_any_element(),
                     )
-                    .child(
-                        Button::new("open-configuration", "Configure Providers")
-                            .size(ButtonSize::Compact)
-                            .icon(Some(IconName::SlidersVertical))
-                            .icon_size(IconSize::Small)
-                            .icon_position(IconPosition::Start)
-                            .style(ButtonStyle::Filled)
-                            .on_click({
-                                let focus_handle = self.focus_handle(cx).clone();
-                                move |_event, window, cx| {
-                                    focus_handle.dispatch_action(&ShowConfiguration, window, cx);
-                                }
-                            }),
-                    )
-                    .into_any_element(),
-            )
-        } _ => {
-            None
-        }}}
+                }
+                _ => None,
+            }
+        }
     }
 
-    fn render_send_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_send_button(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let focus_handle = self.focus_handle(cx).clone();
 
         let (style, tooltip) = match token_state(&self.context, cx) {
@@ -2426,7 +2467,11 @@ impl ContextEditor {
             })
     }
 
-    fn render_edit_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_edit_button(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let focus_handle = self.focus_handle(cx).clone();
 
         let (style, tooltip) = match token_state(&self.context, cx) {
@@ -3282,12 +3327,10 @@ impl FollowableItem for ContextEditor {
         Some(proto::view::Variant::ContextEditor(
             proto::view::ContextEditor {
                 context_id: context.id().to_proto(),
-                editor: match self.editor.read(cx).to_state_proto(window, cx)
-                { Some(proto::view::Variant::Editor(proto)) => {
-                    Some(proto)
-                } _ => {
-                    None
-                }},
+                editor: match self.editor.read(cx).to_state_proto(window, cx) {
+                    Some(proto::view::Variant::Editor(proto)) => Some(proto),
+                    _ => None,
+                },
             },
         ))
     }

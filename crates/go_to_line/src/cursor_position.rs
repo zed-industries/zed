@@ -249,24 +249,27 @@ impl StatusItemView for CursorPosition {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) { Some(editor) => {
-            self._observe_active_editor =
-                Some(
-                    cx.observe_in(&editor, window, |cursor_position, editor, window, cx| {
-                        Self::update_position(
-                            cursor_position,
-                            editor,
-                            Some(UPDATE_DEBOUNCE),
-                            window,
-                            cx,
-                        )
-                    }),
-                );
-            self.update_position(editor, None, window, cx);
-        } _ => {
-            self.position = None;
-            self._observe_active_editor = None;
-        }}
+        match active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
+            Some(editor) => {
+                self._observe_active_editor =
+                    Some(
+                        cx.observe_in(&editor, window, |cursor_position, editor, window, cx| {
+                            Self::update_position(
+                                cursor_position,
+                                editor,
+                                Some(UPDATE_DEBOUNCE),
+                                window,
+                                cx,
+                            )
+                        }),
+                    );
+                self.update_position(editor, None, window, cx);
+            }
+            _ => {
+                self.position = None;
+                self._observe_active_editor = None;
+            }
+        }
 
         cx.notify();
     }

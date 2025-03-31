@@ -387,7 +387,11 @@ impl ThemePreview {
             )
     }
 
-    fn render_page_nav(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_page_nav(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         h_flex()
             .id("theme-preview-nav")
             .items_center()

@@ -725,11 +725,12 @@ impl SshRemoteClient {
             .map(|state| state.can_reconnect())
             .unwrap_or(false);
         if !can_reconnect {
-            let error = match lock.as_ref() { Some(state) => {
-                format!("invalid state, cannot reconnect while in state {state}")
-            } _ => {
-                "no state set".to_string()
-            }};
+            let error = match lock.as_ref() {
+                Some(state) => {
+                    format!("invalid state, cannot reconnect while in state {state}")
+                }
+                _ => "no state set".to_string(),
+            };
             log::info!("aborting reconnect, because not in state that allows reconnecting");
             return Err(anyhow!(error));
         }
@@ -1117,12 +1118,11 @@ impl SshRemoteClient {
         let opts = self.connection_options();
         client_cx.spawn(async move |cx| {
             let connection = cx
-                .update_global(|c: &mut ConnectionPool, _| {
-                    match c.connections.get(&opts) { Some(ConnectionPoolEntry::Connecting(c)) => {
-                        c.clone()
-                    } _ => {
+                .update_global(|c: &mut ConnectionPool, _| match c.connections.get(&opts) {
+                    Some(ConnectionPoolEntry::Connecting(c)) => c.clone(),
+                    _ => {
                         panic!("missing test connection")
-                    }}
+                    }
                 })
                 .unwrap()
                 .await
@@ -2144,27 +2144,32 @@ impl ChannelClient {
                         }
                         rx.await.ok();
                     }
-                } else { match build_typed_envelope(peer_id, Instant::now(), incoming)
-                { Some(envelope) => {
-                    let type_name = envelope.payload_type_name();
-                    match ProtoMessageHandlerSet::handle_message(
-                        &this.message_handlers,
-                        envelope,
-                        this.clone().into(),
-                        cx.clone(),
-                    ) { Some(future) => {
-                        log::debug!("{}:ssh message received. name:{type_name}", this.name);
-                        cx.foreground_executor()
-                            .spawn(async move {
-                                match future.await {
-                                    Ok(_) => {
-                                        log::debug!(
-                                            "{}:ssh message handled. name:{type_name}",
-                                            this.name
-                                        );
-                                    }
-                                    Err(error) => {
-                                        log::error!(
+                } else {
+                    match build_typed_envelope(peer_id, Instant::now(), incoming) {
+                        Some(envelope) => {
+                            let type_name = envelope.payload_type_name();
+                            match ProtoMessageHandlerSet::handle_message(
+                                &this.message_handlers,
+                                envelope,
+                                this.clone().into(),
+                                cx.clone(),
+                            ) {
+                                Some(future) => {
+                                    log::debug!(
+                                        "{}:ssh message received. name:{type_name}",
+                                        this.name
+                                    );
+                                    cx.foreground_executor()
+                                        .spawn(async move {
+                                            match future.await {
+                                                Ok(_) => {
+                                                    log::debug!(
+                                                        "{}:ssh message handled. name:{type_name}",
+                                                        this.name
+                                                    );
+                                                }
+                                                Err(error) => {
+                                                    log::error!(
                                             "{}:error handling message. type:{}, error:{}",
                                             this.name,
                                             type_name,
@@ -2179,14 +2184,22 @@ impl ChannelClient {
                                                 }
                                             )
                                         );
-                                    }
+                                                }
+                                            }
+                                        })
+                                        .detach()
                                 }
-                            })
-                            .detach()
-                    } _ => {
-                        log::error!("{}:unhandled ssh message name:{type_name}", this.name);
-                    }}
-                } _ => {}}}
+                                _ => {
+                                    log::error!(
+                                        "{}:unhandled ssh message name:{type_name}",
+                                        this.name
+                                    );
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
             anyhow::Ok(())
         })

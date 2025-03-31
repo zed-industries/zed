@@ -299,34 +299,40 @@ impl BreakpointStore {
         if breakpoint_set.breakpoints.is_empty() {
             self.breakpoints.remove(&abs_path);
         }
-        match &self.mode { BreakpointStoreMode::Remote(remote) => {
-            if let Some(breakpoint) = breakpoint.1.to_proto(&abs_path, &breakpoint.0) {
-                cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
-                    project_id: remote._upstream_project_id,
-                    path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
-                    breakpoint: Some(breakpoint),
-                }))
-                .detach();
+        match &self.mode {
+            BreakpointStoreMode::Remote(remote) => {
+                if let Some(breakpoint) = breakpoint.1.to_proto(&abs_path, &breakpoint.0) {
+                    cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
+                        project_id: remote._upstream_project_id,
+                        path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
+                        breakpoint: Some(breakpoint),
+                    }))
+                    .detach();
+                }
             }
-        } _ => { match &self.downstream_client { Some((client, project_id)) => {
-            let breakpoints = self
-                .breakpoints
-                .get(&abs_path)
-                .map(|breakpoint_set| {
-                    breakpoint_set
+            _ => match &self.downstream_client {
+                Some((client, project_id)) => {
+                    let breakpoints = self
                         .breakpoints
-                        .iter()
-                        .filter_map(|(anchor, bp)| bp.to_proto(&abs_path, anchor))
-                        .collect()
-                })
-                .unwrap_or_default();
+                        .get(&abs_path)
+                        .map(|breakpoint_set| {
+                            breakpoint_set
+                                .breakpoints
+                                .iter()
+                                .filter_map(|(anchor, bp)| bp.to_proto(&abs_path, anchor))
+                                .collect()
+                        })
+                        .unwrap_or_default();
 
-            let _ = client.send(proto::BreakpointsForFile {
-                project_id: *project_id,
-                path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
-                breakpoints,
-            });
-        } _ => {}}}}
+                    let _ = client.send(proto::BreakpointsForFile {
+                        project_id: *project_id,
+                        path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
+                        breakpoints,
+                    });
+                }
+                _ => {}
+            },
+        }
 
         cx.emit(BreakpointStoreEvent::BreakpointsUpdated(
             abs_path,
@@ -460,61 +466,64 @@ impl BreakpointStore {
         breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
         cx: &mut Context<BreakpointStore>,
     ) -> Task<Result<()>> {
-        match &self.mode { BreakpointStoreMode::Local(mode) => {
-            let mode = mode.clone();
-            cx.spawn(async move |this, cx| {
-                let mut new_breakpoints = BTreeMap::default();
-                for (path, bps) in breakpoints {
-                    if bps.is_empty() {
-                        continue;
+        match &self.mode {
+            BreakpointStoreMode::Local(mode) => {
+                let mode = mode.clone();
+                cx.spawn(async move |this, cx| {
+                    let mut new_breakpoints = BTreeMap::default();
+                    for (path, bps) in breakpoints {
+                        if bps.is_empty() {
+                            continue;
+                        }
+                        let (worktree, relative_path) = mode
+                            .worktree_store
+                            .update(cx, |this, cx| {
+                                this.find_or_create_worktree(&path, false, cx)
+                            })?
+                            .await?;
+                        let buffer = mode
+                            .buffer_store
+                            .update(cx, |this, cx| {
+                                let path = ProjectPath {
+                                    worktree_id: worktree.read(cx).id(),
+                                    path: relative_path.into(),
+                                };
+                                this.open_buffer(path, cx)
+                            })?
+                            .await;
+                        let Ok(buffer) = buffer else {
+                            log::error!(
+                                "Todo: Serialized breakpoints which do not have buffer (yet)"
+                            );
+                            continue;
+                        };
+                        let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+
+                        let mut breakpoints_for_file =
+                            this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
+
+                        for bp in bps {
+                            let position = snapshot.anchor_after(PointUtf16::new(bp.row, 0));
+                            breakpoints_for_file.breakpoints.push((
+                                position,
+                                Breakpoint {
+                                    message: bp.message,
+                                    state: bp.state,
+                                },
+                            ))
+                        }
+                        new_breakpoints.insert(path, breakpoints_for_file);
                     }
-                    let (worktree, relative_path) = mode
-                        .worktree_store
-                        .update(cx, |this, cx| {
-                            this.find_or_create_worktree(&path, false, cx)
-                        })?
-                        .await?;
-                    let buffer = mode
-                        .buffer_store
-                        .update(cx, |this, cx| {
-                            let path = ProjectPath {
-                                worktree_id: worktree.read(cx).id(),
-                                path: relative_path.into(),
-                            };
-                            this.open_buffer(path, cx)
-                        })?
-                        .await;
-                    let Ok(buffer) = buffer else {
-                        log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");
-                        continue;
-                    };
-                    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+                    this.update(cx, |this, cx| {
+                        this.breakpoints = new_breakpoints;
+                        cx.notify();
+                    })?;
 
-                    let mut breakpoints_for_file =
-                        this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
-
-                    for bp in bps {
-                        let position = snapshot.anchor_after(PointUtf16::new(bp.row, 0));
-                        breakpoints_for_file.breakpoints.push((
-                            position,
-                            Breakpoint {
-                                message: bp.message,
-                                state: bp.state,
-                            },
-                        ))
-                    }
-                    new_breakpoints.insert(path, breakpoints_for_file);
-                }
-                this.update(cx, |this, cx| {
-                    this.breakpoints = new_breakpoints;
-                    cx.notify();
-                })?;
-
-                Ok(())
-            })
-        } _ => {
-            Task::ready(Ok(()))
-        }}
+                    Ok(())
+                })
+            }
+            _ => Task::ready(Ok(())),
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]

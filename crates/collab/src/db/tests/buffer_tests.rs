@@ -101,11 +101,12 @@ async fn test_channel_buffers(db: &Arc<Database>) {
     );
     buffer_b.apply_ops(buffer_response_b.operations.into_iter().map(|operation| {
         let operation = proto::deserialize_operation(operation).unwrap();
-        match operation { language::Operation::Buffer(operation) => {
-            operation
-        } _ => {
-            unreachable!()
-        }}
+        match operation {
+            language::Operation::Buffer(operation) => operation,
+            _ => {
+                unreachable!()
+            }
+        }
     }));
 
     assert_eq!(buffer_b.text(), "hello, cruel world");

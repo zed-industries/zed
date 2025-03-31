@@ -878,13 +878,13 @@ impl WorkspaceDb {
         match self
             .get_ssh_project(host.clone(), port, paths.clone(), user.clone())
             .await?
-        { Some(project) => {
-            Ok(project)
-        } _ => {
-            self.insert_ssh_project(host, port, paths, user)
+        {
+            Some(project) => Ok(project),
+            _ => self
+                .insert_ssh_project(host, port, paths, user)
                 .await?
-                .ok_or_else(|| anyhow!("failed to insert ssh project"))
-        }}
+                .ok_or_else(|| anyhow!("failed to insert ssh project")),
+        }
     }
 
     query! {

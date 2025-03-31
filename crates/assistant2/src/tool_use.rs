@@ -166,8 +166,8 @@ impl ToolUseState {
                     };
                 }
 
-                match self.pending_tool_uses_by_id.get(&tool_use.id) { Some(pending_tool_use) => {
-                    match pending_tool_use.status {
+                match self.pending_tool_uses_by_id.get(&tool_use.id) {
+                    Some(pending_tool_use) => match pending_tool_use.status {
                         PendingToolUseStatus::Idle => ToolUseStatus::Pending,
                         PendingToolUseStatus::NeedsConfirmation { .. } => {
                             ToolUseStatus::NeedsConfirmation
@@ -176,18 +176,15 @@ impl ToolUseState {
                         PendingToolUseStatus::Error(ref err) => {
                             ToolUseStatus::Error(err.clone().into())
                         }
-                    }
-                } _ => {
-                    ToolUseStatus::Pending
-                }}
+                    },
+                    _ => ToolUseStatus::Pending,
+                }
             })();
 
-            let (icon, needs_confirmation) = match self.tools.tool(&tool_use.name, cx)
-            { Some(tool) => {
-                (tool.icon(), tool.needs_confirmation())
-            } _ => {
-                (IconName::Cog, false)
-            }};
+            let (icon, needs_confirmation) = match self.tools.tool(&tool_use.name, cx) {
+                Some(tool) => (tool.icon(), tool.needs_confirmation()),
+                _ => (IconName::Cog, false),
+            };
 
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
@@ -209,11 +206,10 @@ impl ToolUseState {
         input: &serde_json::Value,
         cx: &App,
     ) -> SharedString {
-        match self.tools.tool(tool_name, cx) { Some(tool) => {
-            tool.ui_text(input).into()
-        } _ => {
-            format!("Unknown tool {tool_name:?}").into()
-        }}
+        match self.tools.tool(tool_name, cx) {
+            Some(tool) => tool.ui_text(input).into(),
+            _ => format!("Unknown tool {tool_name:?}").into(),
+        }
     }
 
     pub fn tool_results_for_message(&self, message_id: MessageId) -> Vec<&LanguageModelToolResult> {

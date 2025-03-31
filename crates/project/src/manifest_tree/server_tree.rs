@@ -276,16 +276,19 @@ impl LanguageServerTree {
                 let adapter = match available_lsp_adapters
                     .iter()
                     .find(|adapter| adapter.name == desired_adapter)
-                { Some(adapter) => {
-                    Some(adapter.clone())
-                } _ => { match self.languages.load_available_lsp_adapter(&desired_adapter)
-                { Some(adapter) => {
-                    self.languages
-                        .register_lsp_adapter(language_name.clone(), adapter.adapter.clone());
-                    Some(adapter)
-                } _ => {
-                    None
-                }}}}?;
+                {
+                    Some(adapter) => Some(adapter.clone()),
+                    _ => match self.languages.load_available_lsp_adapter(&desired_adapter) {
+                        Some(adapter) => {
+                            self.languages.register_lsp_adapter(
+                                language_name.clone(),
+                                adapter.adapter.clone(),
+                            );
+                            Some(adapter)
+                        }
+                        _ => None,
+                    },
+                }?;
                 let adapter_settings = crate::lsp_store::language_server_settings_for(
                     settings_location,
                     &adapter.name,

@@ -88,8 +88,8 @@ impl SlashCommand for ContextServerSlashCommand {
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();
 
-        match self.server_manager.read(cx).get_server(&server_id) { Some(server) => {
-            cx.foreground_executor().spawn(async move {
+        match self.server_manager.read(cx).get_server(&server_id) {
+            Some(server) => cx.foreground_executor().spawn(async move {
                 let Some(protocol) = server.client() else {
                     return Err(anyhow!("Context server not initialized"));
                 };
@@ -118,10 +118,9 @@ impl SlashCommand for ContextServerSlashCommand {
                     })
                     .collect();
                 Ok(completions)
-            })
-        } _ => {
-            Task::ready(Err(anyhow!("Context server not found")))
-        }}
+            }),
+            _ => Task::ready(Err(anyhow!("Context server not found"))),
+        }
     }
 
     fn run(
@@ -143,57 +142,58 @@ impl SlashCommand for ContextServerSlashCommand {
         };
 
         let manager = self.server_manager.read(cx);
-        match manager.get_server(&server_id) { Some(server) => {
-            cx.foreground_executor().spawn(async move {
-                let Some(protocol) = server.client() else {
-                    return Err(anyhow!("Context server not initialized"));
-                };
-                let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
+        match manager.get_server(&server_id) {
+            Some(server) => {
+                cx.foreground_executor().spawn(async move {
+                    let Some(protocol) = server.client() else {
+                        return Err(anyhow!("Context server not initialized"));
+                    };
+                    let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
 
-                // Check that there are only user roles
-                if result
-                    .messages
-                    .iter()
-                    .any(|msg| !matches!(msg.role, context_server::types::Role::User))
-                {
-                    return Err(anyhow!(
-                        "Prompt contains non-user roles, which is not supported"
-                    ));
-                }
+                    // Check that there are only user roles
+                    if result
+                        .messages
+                        .iter()
+                        .any(|msg| !matches!(msg.role, context_server::types::Role::User))
+                    {
+                        return Err(anyhow!(
+                            "Prompt contains non-user roles, which is not supported"
+                        ));
+                    }
 
-                // Extract text from user messages into a single prompt string
-                let mut prompt = result
-                    .messages
-                    .into_iter()
-                    .filter_map(|msg| match msg.content {
-                        context_server::types::MessageContent::Text { text, .. } => Some(text),
-                        _ => None,
-                    })
-                    .collect::<Vec<String>>()
-                    .join("\n\n");
+                    // Extract text from user messages into a single prompt string
+                    let mut prompt = result
+                        .messages
+                        .into_iter()
+                        .filter_map(|msg| match msg.content {
+                            context_server::types::MessageContent::Text { text, .. } => Some(text),
+                            _ => None,
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n\n");
 
-                // We must normalize the line endings here, since servers might return CR characters.
-                LineEnding::normalize(&mut prompt);
+                    // We must normalize the line endings here, since servers might return CR characters.
+                    LineEnding::normalize(&mut prompt);
 
-                Ok(SlashCommandOutput {
-                    sections: vec![SlashCommandOutputSection {
-                        range: 0..(prompt.len()),
-                        icon: IconName::ZedAssistant,
-                        label: SharedString::from(
-                            result
-                                .description
-                                .unwrap_or(format!("Result from {}", prompt_name)),
-                        ),
-                        metadata: None,
-                    }],
-                    text: prompt,
-                    run_commands_in_text: false,
-                }
-                .to_event_stream())
-            })
-        } _ => {
-            Task::ready(Err(anyhow!("Context server not found")))
-        }}
+                    Ok(SlashCommandOutput {
+                        sections: vec![SlashCommandOutputSection {
+                            range: 0..(prompt.len()),
+                            icon: IconName::ZedAssistant,
+                            label: SharedString::from(
+                                result
+                                    .description
+                                    .unwrap_or(format!("Result from {}", prompt_name)),
+                            ),
+                            metadata: None,
+                        }],
+                        text: prompt,
+                        run_commands_in_text: false,
+                    }
+                    .to_event_stream())
+                })
+            }
+            _ => Task::ready(Err(anyhow!("Context server not found"))),
+        }
     }
 }
 

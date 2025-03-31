@@ -890,11 +890,14 @@ impl MultiBuffer {
             let mut start_region = cursor.region().expect("start offset out of bounds");
             if !start_region.is_main_buffer {
                 cursor.next();
-                match cursor.region() { Some(region) => {
-                    start_region = region;
-                } _ => {
-                    continue;
-                }}
+                match cursor.region() {
+                    Some(region) => {
+                        start_region = region;
+                    }
+                    _ => {
+                        continue;
+                    }
+                }
             }
 
             if range.end < start_region.range.start {
@@ -907,11 +910,14 @@ impl MultiBuffer {
             let mut end_region = cursor.region().expect("end offset out of bounds");
             if !end_region.is_main_buffer {
                 cursor.prev();
-                match cursor.region() { Some(region) => {
-                    end_region = region;
-                } _ => {
-                    continue;
-                }}
+                match cursor.region() {
+                    Some(region) => {
+                        end_region = region;
+                    }
+                    _ => {
+                        continue;
+                    }
+                }
             }
 
             if range.start > end_region.range.end {
@@ -1194,32 +1200,37 @@ impl MultiBuffer {
         destination: TransactionId,
         cx: &mut Context<Self>,
     ) {
-        match self.as_singleton() { Some(buffer) => {
-            buffer.update(cx, |buffer, _| {
-                buffer.merge_transactions(transaction, destination)
-            });
-        } _ => if let Some(transaction) = self.history.forget(transaction) {
-            if let Some(destination) = self.history.transaction_mut(destination) {
-                for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
-                    if let Some(destination_buffer_transaction_id) =
-                        destination.buffer_transactions.get(&buffer_id)
-                    {
-                        if let Some(state) = self.buffers.borrow().get(&buffer_id) {
-                            state.buffer.update(cx, |buffer, _| {
-                                buffer.merge_transactions(
-                                    buffer_transaction_id,
-                                    *destination_buffer_transaction_id,
-                                )
-                            });
+        match self.as_singleton() {
+            Some(buffer) => {
+                buffer.update(cx, |buffer, _| {
+                    buffer.merge_transactions(transaction, destination)
+                });
+            }
+            _ => {
+                if let Some(transaction) = self.history.forget(transaction) {
+                    if let Some(destination) = self.history.transaction_mut(destination) {
+                        for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
+                            if let Some(destination_buffer_transaction_id) =
+                                destination.buffer_transactions.get(&buffer_id)
+                            {
+                                if let Some(state) = self.buffers.borrow().get(&buffer_id) {
+                                    state.buffer.update(cx, |buffer, _| {
+                                        buffer.merge_transactions(
+                                            buffer_transaction_id,
+                                            *destination_buffer_transaction_id,
+                                        )
+                                    });
+                                }
+                            } else {
+                                destination
+                                    .buffer_transactions
+                                    .insert(buffer_id, buffer_transaction_id);
+                            }
                         }
-                    } else {
-                        destination
-                            .buffer_transactions
-                            .insert(buffer_id, buffer_transaction_id);
                     }
                 }
             }
-        }}
+        }
     }
 
     pub fn finalize_last_transaction(&mut self, cx: &mut Context<Self>) {
@@ -1245,13 +1256,16 @@ impl MultiBuffer {
         transaction_id: TransactionId,
         cx: &mut Context<Self>,
     ) {
-        match self.as_singleton() { Some(buffer) => {
-            buffer.update(cx, |buffer, _| {
-                buffer.group_until_transaction(transaction_id)
-            });
-        } _ => {
-            self.history.group_until(transaction_id);
-        }}
+        match self.as_singleton() {
+            Some(buffer) => {
+                buffer.update(cx, |buffer, _| {
+                    buffer.group_until_transaction(transaction_id)
+                });
+            }
+            _ => {
+                self.history.group_until(transaction_id);
+            }
+        }
     }
 
     pub fn set_active_selections(
@@ -1341,29 +1355,34 @@ impl MultiBuffer {
 
     pub fn undo(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
         let mut transaction_id = None;
-        match self.as_singleton() { Some(buffer) => {
-            transaction_id = buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        } _ => {
-            while let Some(transaction) = self.history.pop_undo() {
-                let mut undone = false;
-                for (buffer_id, buffer_transaction_id) in &mut transaction.buffer_transactions {
-                    if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(buffer_id) {
-                        undone |= buffer.update(cx, |buffer, cx| {
-                            let undo_to = *buffer_transaction_id;
-                            if let Some(entry) = buffer.peek_undo_stack() {
-                                *buffer_transaction_id = entry.transaction_id();
-                            }
-                            buffer.undo_to_transaction(undo_to, cx)
-                        });
+        match self.as_singleton() {
+            Some(buffer) => {
+                transaction_id = buffer.update(cx, |buffer, cx| buffer.undo(cx));
+            }
+            _ => {
+                while let Some(transaction) = self.history.pop_undo() {
+                    let mut undone = false;
+                    for (buffer_id, buffer_transaction_id) in &mut transaction.buffer_transactions {
+                        if let Some(BufferState { buffer, .. }) =
+                            self.buffers.borrow().get(buffer_id)
+                        {
+                            undone |= buffer.update(cx, |buffer, cx| {
+                                let undo_to = *buffer_transaction_id;
+                                if let Some(entry) = buffer.peek_undo_stack() {
+                                    *buffer_transaction_id = entry.transaction_id();
+                                }
+                                buffer.undo_to_transaction(undo_to, cx)
+                            });
+                        }
+                    }
+
+                    if undone {
+                        transaction_id = Some(transaction.id);
+                        break;
                     }
                 }
-
-                if undone {
-                    transaction_id = Some(transaction.id);
-                    break;
-                }
             }
-        }}
+        }
 
         if let Some(transaction_id) = transaction_id {
             cx.emit(Event::TransactionUndone { transaction_id });
@@ -1400,33 +1419,45 @@ impl MultiBuffer {
     }
 
     pub fn undo_transaction(&mut self, transaction_id: TransactionId, cx: &mut Context<Self>) {
-        match self.as_singleton() { Some(buffer) => {
-            buffer.update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
-        } _ => if let Some(transaction) = self.history.remove_from_undo(transaction_id) {
-            for (buffer_id, transaction_id) in &transaction.buffer_transactions {
-                if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(buffer_id) {
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.undo_transaction(*transaction_id, cx)
-                    });
+        match self.as_singleton() {
+            Some(buffer) => {
+                buffer.update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
+            }
+            _ => {
+                if let Some(transaction) = self.history.remove_from_undo(transaction_id) {
+                    for (buffer_id, transaction_id) in &transaction.buffer_transactions {
+                        if let Some(BufferState { buffer, .. }) =
+                            self.buffers.borrow().get(buffer_id)
+                        {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.undo_transaction(*transaction_id, cx)
+                            });
+                        }
+                    }
                 }
             }
-        }}
+        }
     }
 
     pub fn forget_transaction(&mut self, transaction_id: TransactionId, cx: &mut Context<Self>) {
-        match self.as_singleton() { Some(buffer) => {
-            buffer.update(cx, |buffer, _| {
-                buffer.forget_transaction(transaction_id);
-            });
-        } _ => if let Some(transaction) = self.history.forget(transaction_id) {
-            for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
-                if let Some(state) = self.buffers.borrow_mut().get_mut(&buffer_id) {
-                    state.buffer.update(cx, |buffer, _| {
-                        buffer.forget_transaction(buffer_transaction_id);
-                    });
+        match self.as_singleton() {
+            Some(buffer) => {
+                buffer.update(cx, |buffer, _| {
+                    buffer.forget_transaction(transaction_id);
+                });
+            }
+            _ => {
+                if let Some(transaction) = self.history.forget(transaction_id) {
+                    for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
+                        if let Some(state) = self.buffers.borrow_mut().get_mut(&buffer_id) {
+                            state.buffer.update(cx, |buffer, _| {
+                                buffer.forget_transaction(buffer_transaction_id);
+                            });
+                        }
+                    }
                 }
             }
-        }}
+        }
     }
 
     pub fn push_excerpts<O>(
@@ -1820,12 +1851,10 @@ impl MultiBuffer {
         O: text::ToOffset,
     {
         let mut ids = Vec::new();
-        let mut next_excerpt_id =
-            match self.snapshot.borrow().excerpt_ids.last() { Some(last_entry) => {
-                last_entry.id.0 + 1
-            } _ => {
-                1
-            }};
+        let mut next_excerpt_id = match self.snapshot.borrow().excerpt_ids.last() {
+            Some(last_entry) => last_entry.id.0 + 1,
+            _ => 1,
+        };
         self.insert_excerpts_with_ids_after(
             prev_excerpt_id,
             buffer,
@@ -1893,11 +1922,10 @@ impl MultiBuffer {
             &(),
         );
 
-        let next_locator = match cursor.item() { Some(excerpt) => {
-            excerpt.locator.clone()
-        } _ => {
-            Locator::max()
-        }};
+        let next_locator = match cursor.item() {
+            Some(excerpt) => excerpt.locator.clone(),
+            _ => Locator::max(),
+        };
 
         let mut excerpts = Vec::new();
         while let Some((id, range)) = ranges.next() {
@@ -2281,16 +2309,19 @@ impl MultiBuffer {
         let mut futures = Vec::new();
         for anchor in anchors {
             if let Some(buffer_id) = anchor.buffer_id {
-                match borrow.get(&buffer_id) { Some(buffer) => {
-                    buffer.buffer.update(cx, |buffer, _| {
-                        futures.push(buffer.wait_for_anchors([anchor.text_anchor]))
-                    });
-                } _ => {
-                    error = Some(anyhow!(
-                        "buffer {buffer_id} is not part of this multi-buffer"
-                    ));
-                    break;
-                }}
+                match borrow.get(&buffer_id) {
+                    Some(buffer) => {
+                        buffer.buffer.update(cx, |buffer, _| {
+                            futures.push(buffer.wait_for_anchors([anchor.text_anchor]))
+                        });
+                    }
+                    _ => {
+                        error = Some(anyhow!(
+                            "buffer {buffer_id} is not part of this multi-buffer"
+                        ));
+                        break;
+                    }
+                }
             }
         }
         async move {
@@ -3571,17 +3602,20 @@ impl MultiBuffer {
                 .choose(rng)
                 .map(|state| state.buffer.clone());
 
-            match buffer { Some(buffer) => {
-                buffer.update(cx, |buffer, cx| {
-                    if rng.r#gen() {
-                        buffer.randomly_edit(rng, mutation_count, cx);
-                    } else {
-                        buffer.randomly_undo_redo(rng, cx);
-                    }
-                });
-            } _ => {
-                self.randomly_edit(rng, mutation_count, cx);
-            }}
+            match buffer {
+                Some(buffer) => {
+                    buffer.update(cx, |buffer, cx| {
+                        if rng.r#gen() {
+                            buffer.randomly_edit(rng, mutation_count, cx);
+                        } else {
+                            buffer.randomly_undo_redo(rng, cx);
+                        }
+                    });
+                }
+                _ => {
+                    self.randomly_edit(rng, mutation_count, cx);
+                }
+            }
         } else {
             self.randomly_edit_excerpts(rng, mutation_count, cx);
         }
@@ -3880,96 +3914,102 @@ impl MultiBufferSnapshot {
             let metadata_iter = match current_excerpt_metadata
                 .as_mut()
                 .filter(|(excerpt_id, _)| *excerpt_id == excerpt.id)
-            { Some((_, metadata)) => {
-                Some(metadata)
-            } _ => {
-                let region = cursor.region()?;
-                let mut buffer_start;
-                if region.is_main_buffer {
-                    buffer_start = region.buffer_range.start;
-                    if query_range.start > region.range.start {
-                        let overshoot = query_range.start - region.range.start;
-                        buffer_start.add_assign(&overshoot);
+            {
+                Some((_, metadata)) => Some(metadata),
+                _ => {
+                    let region = cursor.region()?;
+                    let mut buffer_start;
+                    if region.is_main_buffer {
+                        buffer_start = region.buffer_range.start;
+                        if query_range.start > region.range.start {
+                            let overshoot = query_range.start - region.range.start;
+                            buffer_start.add_assign(&overshoot);
+                        }
+                        buffer_start = buffer_start.min(region.buffer_range.end);
+                    } else {
+                        buffer_start = cursor.main_buffer_position()?;
+                    };
+                    let mut buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
+                    if let Some((end_excerpt_id, end_buffer_offset)) = range_end {
+                        if excerpt.id == end_excerpt_id {
+                            buffer_end = buffer_end.min(end_buffer_offset);
+                        }
                     }
-                    buffer_start = buffer_start.min(region.buffer_range.end);
-                } else {
-                    buffer_start = cursor.main_buffer_position()?;
-                };
-                let mut buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
-                if let Some((end_excerpt_id, end_buffer_offset)) = range_end {
-                    if excerpt.id == end_excerpt_id {
-                        buffer_end = buffer_end.min(end_buffer_offset);
+
+                    match get_buffer_metadata(&excerpt.buffer, buffer_start..buffer_end) {
+                        Some(iterator) => {
+                            Some(&mut current_excerpt_metadata.insert((excerpt.id, iterator)).1)
+                        }
+                        _ => None,
                     }
                 }
-
-                match get_buffer_metadata(&excerpt.buffer, buffer_start..buffer_end)
-                { Some(iterator) => {
-                    Some(&mut current_excerpt_metadata.insert((excerpt.id, iterator)).1)
-                } _ => {
-                    None
-                }}
-            }};
+            };
 
             // Visit each metadata item.
-            match metadata_iter.and_then(Iterator::next)
-            { Some((metadata_buffer_range, metadata)) => {
-                // Find the multibuffer regions that contain the start and end of
-                // the metadata item's range.
-                if metadata_buffer_range.start > D::default() {
+            match metadata_iter.and_then(Iterator::next) {
+                Some((metadata_buffer_range, metadata)) => {
+                    // Find the multibuffer regions that contain the start and end of
+                    // the metadata item's range.
+                    if metadata_buffer_range.start > D::default() {
+                        while let Some(region) = cursor.region() {
+                            if region.is_main_buffer
+                                && (region.buffer_range.end >= metadata_buffer_range.start
+                                    || cursor.is_at_end_of_excerpt())
+                            {
+                                break;
+                            }
+                            cursor.next();
+                        }
+                    }
+                    let start_region = cursor.region()?;
                     while let Some(region) = cursor.region() {
                         if region.is_main_buffer
-                            && (region.buffer_range.end >= metadata_buffer_range.start
+                            && (region.buffer_range.end > metadata_buffer_range.end
                                 || cursor.is_at_end_of_excerpt())
                         {
                             break;
                         }
                         cursor.next();
                     }
-                }
-                let start_region = cursor.region()?;
-                while let Some(region) = cursor.region() {
-                    if region.is_main_buffer
-                        && (region.buffer_range.end > metadata_buffer_range.end
-                            || cursor.is_at_end_of_excerpt())
+                    let end_region = cursor.region();
+
+                    // Convert the metadata item's range into multibuffer coordinates.
+                    let mut start_position = start_region.range.start;
+                    let region_buffer_start = start_region.buffer_range.start;
+                    if start_region.is_main_buffer
+                        && metadata_buffer_range.start > region_buffer_start
                     {
-                        break;
+                        start_position
+                            .add_assign(&(metadata_buffer_range.start - region_buffer_start));
+                        start_position = start_position.min(start_region.range.end);
                     }
-                    cursor.next();
-                }
-                let end_region = cursor.region();
 
-                // Convert the metadata item's range into multibuffer coordinates.
-                let mut start_position = start_region.range.start;
-                let region_buffer_start = start_region.buffer_range.start;
-                if start_region.is_main_buffer && metadata_buffer_range.start > region_buffer_start
-                {
-                    start_position.add_assign(&(metadata_buffer_range.start - region_buffer_start));
-                    start_position = start_position.min(start_region.range.end);
-                }
-
-                let mut end_position = max_position;
-                if let Some(end_region) = &end_region {
-                    end_position = end_region.range.start;
-                    debug_assert!(end_region.is_main_buffer);
-                    let region_buffer_start = end_region.buffer_range.start;
-                    if metadata_buffer_range.end > region_buffer_start {
-                        end_position.add_assign(&(metadata_buffer_range.end - region_buffer_start));
+                    let mut end_position = max_position;
+                    if let Some(end_region) = &end_region {
+                        end_position = end_region.range.start;
+                        debug_assert!(end_region.is_main_buffer);
+                        let region_buffer_start = end_region.buffer_range.start;
+                        if metadata_buffer_range.end > region_buffer_start {
+                            end_position
+                                .add_assign(&(metadata_buffer_range.end - region_buffer_start));
+                        }
+                        end_position = end_position.min(end_region.range.end);
                     }
-                    end_position = end_position.min(end_region.range.end);
-                }
 
-                if start_position <= query_range.end && end_position >= query_range.start {
-                    return Some((start_position..end_position, metadata, excerpt));
-                }
-            } _ => {
-                current_excerpt_metadata.take();
-                if let Some((end_excerpt_id, _)) = range_end {
-                    if excerpt.id == end_excerpt_id {
-                        return None;
+                    if start_position <= query_range.end && end_position >= query_range.start {
+                        return Some((start_position..end_position, metadata, excerpt));
                     }
                 }
-                cursor.next_excerpt();
-            }}
+                _ => {
+                    current_excerpt_metadata.take();
+                    if let Some((end_excerpt_id, _)) = range_end {
+                        if excerpt.id == end_excerpt_id {
+                            return None;
+                        }
+                    }
+                    cursor.next_excerpt();
+                }
+            }
         })
     }
 
@@ -4105,24 +4145,27 @@ impl MultiBufferSnapshot {
         let mut chunk;
         let mut has_trailing_newline;
         let excerpt_bytes;
-        match excerpts.region() { Some(region) => {
-            let mut bytes = region.buffer.bytes_in_range(
-                region.buffer_range.start + range.start - region.range.start
-                    ..(region.buffer_range.start + range.end - region.range.start)
-                        .min(region.buffer_range.end),
-            );
-            chunk = bytes.next().unwrap_or(&[][..]);
-            excerpt_bytes = Some(bytes);
-            has_trailing_newline = region.has_trailing_newline && range.end >= region.range.end;
-            if chunk.is_empty() && has_trailing_newline {
-                chunk = b"\n";
+        match excerpts.region() {
+            Some(region) => {
+                let mut bytes = region.buffer.bytes_in_range(
+                    region.buffer_range.start + range.start - region.range.start
+                        ..(region.buffer_range.start + range.end - region.range.start)
+                            .min(region.buffer_range.end),
+                );
+                chunk = bytes.next().unwrap_or(&[][..]);
+                excerpt_bytes = Some(bytes);
+                has_trailing_newline = region.has_trailing_newline && range.end >= region.range.end;
+                if chunk.is_empty() && has_trailing_newline {
+                    chunk = b"\n";
+                    has_trailing_newline = false;
+                }
+            }
+            _ => {
+                chunk = &[][..];
+                excerpt_bytes = None;
                 has_trailing_newline = false;
             }
-        } _ => {
-            chunk = &[][..];
-            excerpt_bytes = None;
-            has_trailing_newline = false;
-        }};
+        };
 
         MultiBufferBytes {
             range,
@@ -4234,21 +4277,22 @@ impl MultiBufferSnapshot {
     {
         let mut cursor = self.cursor();
         cursor.seek(&position);
-        match cursor.region() { Some(region) => {
-            if position >= region.range.end {
-                return region.range.end;
+        match cursor.region() {
+            Some(region) => {
+                if position >= region.range.end {
+                    return region.range.end;
+                }
+                let overshoot = position - region.range.start;
+                let mut buffer_position = region.buffer_range.start;
+                buffer_position.add_assign(&overshoot);
+                let clipped_buffer_position =
+                    clip_buffer_position(&region.buffer, buffer_position, bias);
+                let mut position = region.range.start;
+                position.add_assign(&(clipped_buffer_position - region.buffer_range.start));
+                position
             }
-            let overshoot = position - region.range.start;
-            let mut buffer_position = region.buffer_range.start;
-            buffer_position.add_assign(&overshoot);
-            let clipped_buffer_position =
-                clip_buffer_position(&region.buffer, buffer_position, bias);
-            let mut position = region.range.start;
-            position.add_assign(&(clipped_buffer_position - region.buffer_range.start));
-            position
-        } _ => {
-            D::from_text_summary(&self.text_summary())
-        }}
+            _ => D::from_text_summary(&self.text_summary()),
+        }
     }
 
     fn convert_dimension<D1, D2>(
@@ -4262,23 +4306,24 @@ impl MultiBufferSnapshot {
     {
         let mut cursor = self.cursor::<DimensionPair<D1, D2>>();
         cursor.seek(&DimensionPair { key, value: None });
-        match cursor.region() { Some(region) => {
-            if key >= region.range.end.key {
-                return region.range.end.value.unwrap();
+        match cursor.region() {
+            Some(region) => {
+                if key >= region.range.end.key {
+                    return region.range.end.value.unwrap();
+                }
+                let start_key = region.range.start.key;
+                let start_value = region.range.start.value.unwrap();
+                let buffer_start_key = region.buffer_range.start.key;
+                let buffer_start_value = region.buffer_range.start.value.unwrap();
+                let mut buffer_key = buffer_start_key;
+                buffer_key.add_assign(&(key - start_key));
+                let buffer_value = convert_buffer_dimension(&region.buffer, buffer_key);
+                let mut result = start_value;
+                result.add_assign(&(buffer_value - buffer_start_value));
+                result
             }
-            let start_key = region.range.start.key;
-            let start_value = region.range.start.value.unwrap();
-            let buffer_start_key = region.buffer_range.start.key;
-            let buffer_start_value = region.buffer_range.start.value.unwrap();
-            let mut buffer_key = buffer_start_key;
-            buffer_key.add_assign(&(key - start_key));
-            let buffer_value = convert_buffer_dimension(&region.buffer, buffer_key);
-            let mut result = start_value;
-            result.add_assign(&(buffer_value - buffer_start_value));
-            result
-        } _ => {
-            D2::from_text_summary(&self.text_summary())
-        }}
+            _ => D2::from_text_summary(&self.text_summary()),
+        }
     }
 
     pub fn point_to_buffer_offset<T: ToOffset>(
@@ -4775,58 +4820,62 @@ impl MultiBufferSnapshot {
             }
 
             let excerpt_start_position = D::from_text_summary(&cursor.start().text);
-            match cursor.item() { Some(excerpt) => {
-                if excerpt.id != excerpt_id {
+            match cursor.item() {
+                Some(excerpt) => {
+                    if excerpt.id != excerpt_id {
+                        let position = self.resolve_summary_for_anchor(
+                            &Anchor::min(),
+                            excerpt_start_position,
+                            &mut diff_transforms_cursor,
+                        );
+                        summaries.extend(excerpt_anchors.map(|_| position));
+                        continue;
+                    }
+                    let excerpt_buffer_start =
+                        excerpt.range.context.start.summary::<D>(&excerpt.buffer);
+                    let excerpt_buffer_end =
+                        excerpt.range.context.end.summary::<D>(&excerpt.buffer);
+                    for (buffer_summary, anchor) in excerpt
+                        .buffer
+                        .summaries_for_anchors_with_payload::<D, _, _>(
+                            excerpt_anchors.map(|a| (&a.text_anchor, a)),
+                        )
+                    {
+                        let summary = cmp::min(excerpt_buffer_end, buffer_summary);
+                        let mut position = excerpt_start_position;
+                        if summary > excerpt_buffer_start {
+                            position.add_assign(&(summary - excerpt_buffer_start));
+                        }
+
+                        if position > diff_transforms_cursor.start().0 .0 {
+                            diff_transforms_cursor.seek_forward(
+                                &ExcerptDimension(position),
+                                Bias::Left,
+                                &(),
+                            );
+                        }
+
+                        summaries.push(self.resolve_summary_for_anchor(
+                            anchor,
+                            position,
+                            &mut diff_transforms_cursor,
+                        ));
+                    }
+                }
+                _ => {
+                    diff_transforms_cursor.seek_forward(
+                        &ExcerptDimension(excerpt_start_position),
+                        Bias::Left,
+                        &(),
+                    );
                     let position = self.resolve_summary_for_anchor(
-                        &Anchor::min(),
+                        &Anchor::max(),
                         excerpt_start_position,
                         &mut diff_transforms_cursor,
                     );
                     summaries.extend(excerpt_anchors.map(|_| position));
-                    continue;
                 }
-                let excerpt_buffer_start =
-                    excerpt.range.context.start.summary::<D>(&excerpt.buffer);
-                let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
-                for (buffer_summary, anchor) in excerpt
-                    .buffer
-                    .summaries_for_anchors_with_payload::<D, _, _>(
-                        excerpt_anchors.map(|a| (&a.text_anchor, a)),
-                    )
-                {
-                    let summary = cmp::min(excerpt_buffer_end, buffer_summary);
-                    let mut position = excerpt_start_position;
-                    if summary > excerpt_buffer_start {
-                        position.add_assign(&(summary - excerpt_buffer_start));
-                    }
-
-                    if position > diff_transforms_cursor.start().0 .0 {
-                        diff_transforms_cursor.seek_forward(
-                            &ExcerptDimension(position),
-                            Bias::Left,
-                            &(),
-                        );
-                    }
-
-                    summaries.push(self.resolve_summary_for_anchor(
-                        anchor,
-                        position,
-                        &mut diff_transforms_cursor,
-                    ));
-                }
-            } _ => {
-                diff_transforms_cursor.seek_forward(
-                    &ExcerptDimension(excerpt_start_position),
-                    Bias::Left,
-                    &(),
-                );
-                let position = self.resolve_summary_for_anchor(
-                    &Anchor::max(),
-                    excerpt_start_position,
-                    &mut diff_transforms_cursor,
-                );
-                summaries.extend(excerpt_anchors.map(|_| position));
-            }}
+            }
         }
 
         summaries
@@ -4853,22 +4902,25 @@ impl MultiBufferSnapshot {
                 value: None,
             });
 
-            match cursor.region() { Some(region) => {
-                let overshoot = point - region.range.start.key;
-                let buffer_point = region.buffer_range.start.key + overshoot;
-                let mut position = region.range.start.value.unwrap();
-                position.add_assign(
-                    &region
-                        .buffer
-                        .text_summary_for_range(region.buffer_range.start.key..buffer_point),
-                );
-                if point == region.range.end.key && region.has_trailing_newline {
-                    position.add_assign(&D::from_text_summary(&TextSummary::newline()));
+            match cursor.region() {
+                Some(region) => {
+                    let overshoot = point - region.range.start.key;
+                    let buffer_point = region.buffer_range.start.key + overshoot;
+                    let mut position = region.range.start.value.unwrap();
+                    position.add_assign(
+                        &region
+                            .buffer
+                            .text_summary_for_range(region.buffer_range.start.key..buffer_point),
+                    );
+                    if point == region.range.end.key && region.has_trailing_newline {
+                        position.add_assign(&D::from_text_summary(&TextSummary::newline()));
+                    }
+                    return Some(position);
                 }
-                return Some(position);
-            } _ => {
-                return Some(D::from_text_summary(&self.text_summary()));
-            }}
+                _ => {
+                    return Some(D::from_text_summary(&self.text_summary()));
+                }
+            }
         })
     }
 
@@ -5005,27 +5057,29 @@ impl MultiBufferSnapshot {
         let offset_in_transform = offset - diff_transforms.start().0;
         let mut excerpt_offset = diff_transforms.start().1;
         let mut diff_base_anchor = None;
-        match diff_transforms.item()
-        { Some(DiffTransform::DeletedHunk {
-            buffer_id,
-            base_text_byte_range,
-            has_trailing_newline,
-            ..
-        }) => {
-            let diff = self.diffs.get(buffer_id).expect("missing diff");
-            if offset_in_transform > base_text_byte_range.len() {
-                debug_assert!(*has_trailing_newline);
-                bias = Bias::Right;
-            } else {
-                diff_base_anchor = Some(
-                    diff.base_text()
-                        .anchor_at(base_text_byte_range.start + offset_in_transform, bias),
-                );
-                bias = Bias::Left;
+        match diff_transforms.item() {
+            Some(DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_byte_range,
+                has_trailing_newline,
+                ..
+            }) => {
+                let diff = self.diffs.get(buffer_id).expect("missing diff");
+                if offset_in_transform > base_text_byte_range.len() {
+                    debug_assert!(*has_trailing_newline);
+                    bias = Bias::Right;
+                } else {
+                    diff_base_anchor = Some(
+                        diff.base_text()
+                            .anchor_at(base_text_byte_range.start + offset_in_transform, bias),
+                    );
+                    bias = Bias::Left;
+                }
             }
-        } _ => {
-            excerpt_offset += ExcerptOffset::new(offset_in_transform);
-        }};
+            _ => {
+                excerpt_offset += ExcerptOffset::new(offset_in_transform);
+            }
+        };
 
         if let Some((excerpt_id, buffer_id, buffer)) = self.as_singleton() {
             return Anchor {
@@ -5043,27 +5097,32 @@ impl MultiBufferSnapshot {
         if excerpts.item().is_none() && excerpt_offset == excerpts.start().0 && bias == Bias::Left {
             excerpts.prev(&());
         }
-        match excerpts.item() { Some(excerpt) => {
-            let mut overshoot = excerpt_offset.saturating_sub(excerpts.start().0).value;
-            if excerpt.has_trailing_newline && excerpt_offset == excerpts.end(&()).0 {
-                overshoot -= 1;
-                bias = Bias::Right;
-            }
+        match excerpts.item() {
+            Some(excerpt) => {
+                let mut overshoot = excerpt_offset.saturating_sub(excerpts.start().0).value;
+                if excerpt.has_trailing_newline && excerpt_offset == excerpts.end(&()).0 {
+                    overshoot -= 1;
+                    bias = Bias::Right;
+                }
 
-            let buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let text_anchor =
-                excerpt.clip_anchor(excerpt.buffer.anchor_at(buffer_start + overshoot, bias));
-            Anchor {
-                buffer_id: Some(excerpt.buffer_id),
-                excerpt_id: excerpt.id,
-                text_anchor,
-                diff_base_anchor,
+                let buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+                let text_anchor =
+                    excerpt.clip_anchor(excerpt.buffer.anchor_at(buffer_start + overshoot, bias));
+                Anchor {
+                    buffer_id: Some(excerpt.buffer_id),
+                    excerpt_id: excerpt.id,
+                    text_anchor,
+                    diff_base_anchor,
+                }
             }
-        } _ => if excerpt_offset.is_zero() && bias == Bias::Left {
-            Anchor::min()
-        } else {
-            Anchor::max()
-        }}
+            _ => {
+                if excerpt_offset.is_zero() && bias == Bias::Left {
+                    Anchor::min()
+                } else {
+                    Anchor::max()
+                }
+            }
+        }
     }
 
     /// Returns an anchor for the given excerpt and text anchor,
@@ -5210,11 +5269,10 @@ impl MultiBufferSnapshot {
             }
 
             let next_region_start = next_region.range.start.value.unwrap();
-            let next_region_end = match cursor.region() { Some(region) => {
-                region.range.start.value.unwrap()
-            } _ => {
-                self.max_point()
-            }};
+            let next_region_end = match cursor.region() {
+                Some(region) => region.range.start.value.unwrap(),
+                _ => self.max_point(),
+            };
 
             let prev = prev_region.as_ref().map(|region| ExcerptInfo {
                 id: region.excerpt.id,
@@ -6282,16 +6340,20 @@ where
                     || self.diff_transforms.item().is_none()
                 {
                     self.excerpts.next(&());
-                } else { match self.diff_transforms.item()
-                { Some(DiffTransform::DeletedHunk { hunk_info, .. }) => {
-                    if self
-                        .excerpts
-                        .item()
-                        .map_or(false, |excerpt| excerpt.id != hunk_info.excerpt_id)
-                    {
-                        self.excerpts.next(&());
+                } else {
+                    match self.diff_transforms.item() {
+                        Some(DiffTransform::DeletedHunk { hunk_info, .. }) => {
+                            if self
+                                .excerpts
+                                .item()
+                                .map_or(false, |excerpt| excerpt.id != hunk_info.excerpt_id)
+                            {
+                                self.excerpts.next(&());
+                            }
+                        }
+                        _ => {}
                     }
-                } _ => {}}}
+                }
             }
         }
     }
@@ -7218,64 +7280,67 @@ impl Iterator for MultiBufferRows<'_> {
         let mut region = self.cursor.region()?;
         while self.point >= region.range.end {
             self.cursor.next();
-            match self.cursor.region() { Some(next_region) => {
-                region = next_region;
-            } _ => {
-                if self.point == self.cursor.diff_transforms.end(&()).0 .0 {
-                    let multibuffer_row = MultiBufferRow(self.point.row);
-                    let last_excerpt = self
-                        .cursor
-                        .excerpts
-                        .item()
-                        .or(self.cursor.excerpts.prev_item())?;
-                    let last_row = last_excerpt
-                        .range
-                        .context
-                        .end
-                        .to_point(&last_excerpt.buffer)
-                        .row;
-
-                    let first_row = last_excerpt
-                        .range
-                        .context
-                        .start
-                        .to_point(&last_excerpt.buffer)
-                        .row;
-
-                    let expand_info = if self.is_singleton {
-                        None
-                    } else {
-                        let needs_expand_up = first_row == last_row
-                            && last_row > 0
-                            && !region.diff_hunk_status.is_some_and(|d| d.is_deleted());
-                        let needs_expand_down = last_row < last_excerpt.buffer.max_point().row;
-
-                        if needs_expand_up && needs_expand_down {
-                            Some(ExpandExcerptDirection::UpAndDown)
-                        } else if needs_expand_up {
-                            Some(ExpandExcerptDirection::Up)
-                        } else if needs_expand_down {
-                            Some(ExpandExcerptDirection::Down)
-                        } else {
-                            None
-                        }
-                        .map(|direction| ExpandInfo {
-                            direction,
-                            excerpt_id: last_excerpt.id,
-                        })
-                    };
-                    self.point += Point::new(1, 0);
-                    return Some(RowInfo {
-                        buffer_id: Some(last_excerpt.buffer_id),
-                        buffer_row: Some(last_row),
-                        multibuffer_row: Some(multibuffer_row),
-                        diff_status: None,
-                        expand_info,
-                    });
-                } else {
-                    return None;
+            match self.cursor.region() {
+                Some(next_region) => {
+                    region = next_region;
                 }
-            }};
+                _ => {
+                    if self.point == self.cursor.diff_transforms.end(&()).0 .0 {
+                        let multibuffer_row = MultiBufferRow(self.point.row);
+                        let last_excerpt = self
+                            .cursor
+                            .excerpts
+                            .item()
+                            .or(self.cursor.excerpts.prev_item())?;
+                        let last_row = last_excerpt
+                            .range
+                            .context
+                            .end
+                            .to_point(&last_excerpt.buffer)
+                            .row;
+
+                        let first_row = last_excerpt
+                            .range
+                            .context
+                            .start
+                            .to_point(&last_excerpt.buffer)
+                            .row;
+
+                        let expand_info = if self.is_singleton {
+                            None
+                        } else {
+                            let needs_expand_up = first_row == last_row
+                                && last_row > 0
+                                && !region.diff_hunk_status.is_some_and(|d| d.is_deleted());
+                            let needs_expand_down = last_row < last_excerpt.buffer.max_point().row;
+
+                            if needs_expand_up && needs_expand_down {
+                                Some(ExpandExcerptDirection::UpAndDown)
+                            } else if needs_expand_up {
+                                Some(ExpandExcerptDirection::Up)
+                            } else if needs_expand_down {
+                                Some(ExpandExcerptDirection::Down)
+                            } else {
+                                None
+                            }
+                            .map(|direction| ExpandInfo {
+                                direction,
+                                excerpt_id: last_excerpt.id,
+                            })
+                        };
+                        self.point += Point::new(1, 0);
+                        return Some(RowInfo {
+                            buffer_id: Some(last_excerpt.buffer_id),
+                            buffer_row: Some(last_row),
+                            multibuffer_row: Some(multibuffer_row),
+                            diff_status: None,
+                            expand_info,
+                        });
+                    } else {
+                        return None;
+                    }
+                }
+            };
         }
 
         let overshoot = self.point - region.range.start;
@@ -7349,45 +7414,56 @@ impl<'a> MultiBufferChunks<'a> {
     fn seek_to_excerpt_offset_range(&mut self, new_range: Range<ExcerptOffset>) {
         self.excerpt_offset_range = new_range.clone();
         self.excerpts.seek(&new_range.start, Bias::Right, &());
-        match self.excerpts.item() { Some(excerpt) => {
-            let excerpt_start = *self.excerpts.start();
-            match self
-                .excerpt_chunks
-                .as_mut()
-                .filter(|chunks| excerpt.id == chunks.excerpt_id)
-            { Some(excerpt_chunks) => {
-                excerpt.seek_chunks(
-                    excerpt_chunks,
-                    (self.excerpt_offset_range.start - excerpt_start).value
-                        ..(self.excerpt_offset_range.end - excerpt_start).value,
-                );
-            } _ => {
-                self.excerpt_chunks = Some(excerpt.chunks_in_range(
-                    (self.excerpt_offset_range.start - excerpt_start).value
-                        ..(self.excerpt_offset_range.end - excerpt_start).value,
-                    self.language_aware,
-                ));
-            }}
-        } _ => {
-            self.excerpt_chunks = None;
-        }}
+        match self.excerpts.item() {
+            Some(excerpt) => {
+                let excerpt_start = *self.excerpts.start();
+                match self
+                    .excerpt_chunks
+                    .as_mut()
+                    .filter(|chunks| excerpt.id == chunks.excerpt_id)
+                {
+                    Some(excerpt_chunks) => {
+                        excerpt.seek_chunks(
+                            excerpt_chunks,
+                            (self.excerpt_offset_range.start - excerpt_start).value
+                                ..(self.excerpt_offset_range.end - excerpt_start).value,
+                        );
+                    }
+                    _ => {
+                        self.excerpt_chunks = Some(excerpt.chunks_in_range(
+                            (self.excerpt_offset_range.start - excerpt_start).value
+                                ..(self.excerpt_offset_range.end - excerpt_start).value,
+                            self.language_aware,
+                        ));
+                    }
+                }
+            }
+            _ => {
+                self.excerpt_chunks = None;
+            }
+        }
     }
 
     fn next_excerpt_chunk(&mut self) -> Option<Chunk<'a>> {
         loop {
             if self.excerpt_offset_range.is_empty() {
                 return None;
-            } else { match self.excerpt_chunks.as_mut()?.next() { Some(chunk) => {
-                self.excerpt_offset_range.start.value += chunk.text.len();
-                return Some(chunk);
-            } _ => {
-                self.excerpts.next(&());
-                let excerpt = self.excerpts.item()?;
-                self.excerpt_chunks = Some(excerpt.chunks_in_range(
-                    0..(self.excerpt_offset_range.end - *self.excerpts.start()).value,
-                    self.language_aware,
-                ));
-            }}}
+            } else {
+                match self.excerpt_chunks.as_mut()?.next() {
+                    Some(chunk) => {
+                        self.excerpt_offset_range.start.value += chunk.text.len();
+                        return Some(chunk);
+                    }
+                    _ => {
+                        self.excerpts.next(&());
+                        let excerpt = self.excerpts.item()?;
+                        self.excerpt_chunks = Some(excerpt.chunks_in_range(
+                            0..(self.excerpt_offset_range.end - *self.excerpts.start()).value,
+                            self.language_aware,
+                        ));
+                    }
+                }
+            }
         }
     }
 }
@@ -7435,12 +7511,13 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         let diff_transform = self.diff_transforms.item()?;
         match diff_transform {
             DiffTransform::BufferContent { .. } => {
-                let chunk = match &mut self.buffer_chunk { Some(chunk) => {
-                    chunk
-                } _ => {
-                    let chunk = self.next_excerpt_chunk().unwrap();
-                    self.buffer_chunk.insert(chunk)
-                }};
+                let chunk = match &mut self.buffer_chunk {
+                    Some(chunk) => chunk,
+                    _ => {
+                        let chunk = self.next_excerpt_chunk().unwrap();
+                        self.buffer_chunk.insert(chunk)
+                    }
+                };
 
                 let chunk_end = self.range.start + chunk.text.len();
                 let diff_transform_end = diff_transform_end.min(self.range.end);
@@ -7475,29 +7552,36 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     .diff_base_chunks
                     .take()
                     .filter(|(id, _)| id == buffer_id)
-                { Some((_, mut chunks)) => {
-                    if chunks.range().start != base_text_start || chunks.range().end < base_text_end
-                    {
-                        chunks.seek(base_text_start..base_text_end);
+                {
+                    Some((_, mut chunks)) => {
+                        if chunks.range().start != base_text_start
+                            || chunks.range().end < base_text_end
+                        {
+                            chunks.seek(base_text_start..base_text_end);
+                        }
+                        chunks
                     }
-                    chunks
-                } _ => {
-                    let base_buffer = &self.diffs.get(&buffer_id)?.base_text();
-                    base_buffer.chunks(base_text_start..base_text_end, self.language_aware)
-                }};
+                    _ => {
+                        let base_buffer = &self.diffs.get(&buffer_id)?.base_text();
+                        base_buffer.chunks(base_text_start..base_text_end, self.language_aware)
+                    }
+                };
 
-                let chunk = match chunks.next() { Some(chunk) => {
-                    self.range.start += chunk.text.len();
-                    self.diff_base_chunks = Some((*buffer_id, chunks));
-                    chunk
-                } _ => {
-                    debug_assert!(has_trailing_newline);
-                    self.range.start += "\n".len();
-                    Chunk {
-                        text: "\n",
-                        ..Default::default()
+                let chunk = match chunks.next() {
+                    Some(chunk) => {
+                        self.range.start += chunk.text.len();
+                        self.diff_base_chunks = Some((*buffer_id, chunks));
+                        chunk
                     }
-                }};
+                    _ => {
+                        debug_assert!(has_trailing_newline);
+                        self.range.start += "\n".len();
+                        Chunk {
+                            text: "\n",
+                            ..Default::default()
+                        }
+                    }
+                };
                 Some(chunk)
             }
         }
@@ -7510,29 +7594,35 @@ impl MultiBufferBytes<'_> {
         self.chunk = &self.chunk[len..];
 
         if !self.range.is_empty() && self.chunk.is_empty() {
-            match self.excerpt_bytes.as_mut().and_then(|bytes| bytes.next()) { Some(chunk) => {
-                self.chunk = chunk;
-            } _ => if self.has_trailing_newline {
-                self.has_trailing_newline = false;
-                self.chunk = b"\n";
-            } else {
-                self.cursor.next();
-                if let Some(region) = self.cursor.region() {
-                    let mut excerpt_bytes = region.buffer.bytes_in_range(
-                        region.buffer_range.start
-                            ..(region.buffer_range.start + self.range.end - region.range.start)
-                                .min(region.buffer_range.end),
-                    );
-                    self.chunk = excerpt_bytes.next().unwrap_or(&[]);
-                    self.excerpt_bytes = Some(excerpt_bytes);
-                    self.has_trailing_newline =
-                        region.has_trailing_newline && self.range.end >= region.range.end;
-                    if self.chunk.is_empty() && self.has_trailing_newline {
+            match self.excerpt_bytes.as_mut().and_then(|bytes| bytes.next()) {
+                Some(chunk) => {
+                    self.chunk = chunk;
+                }
+                _ => {
+                    if self.has_trailing_newline {
                         self.has_trailing_newline = false;
                         self.chunk = b"\n";
+                    } else {
+                        self.cursor.next();
+                        if let Some(region) = self.cursor.region() {
+                            let mut excerpt_bytes = region.buffer.bytes_in_range(
+                                region.buffer_range.start
+                                    ..(region.buffer_range.start + self.range.end
+                                        - region.range.start)
+                                        .min(region.buffer_range.end),
+                            );
+                            self.chunk = excerpt_bytes.next().unwrap_or(&[]);
+                            self.excerpt_bytes = Some(excerpt_bytes);
+                            self.has_trailing_newline =
+                                region.has_trailing_newline && self.range.end >= region.range.end;
+                            if self.chunk.is_empty() && self.has_trailing_newline {
+                                self.has_trailing_newline = false;
+                                self.chunk = b"\n";
+                            }
+                        }
                     }
                 }
-            }}
+            }
         }
     }
 }

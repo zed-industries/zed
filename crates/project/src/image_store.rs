@@ -583,23 +583,23 @@ impl LocalImageStore {
 
         let image = self
             .image_store
-            .update(cx, |image_store, _| {
-                match image_store.get(image_id) { Some(image) => {
-                    Some(image)
-                } _ => {
+            .update(cx, |image_store, _| match image_store.get(image_id) {
+                Some(image) => Some(image),
+                _ => {
                     image_store.opened_images.remove(&image_id);
                     None
-                }}
+                }
             })
             .ok()
             .flatten();
-        let image = match image { Some(image) => {
-            image
-        } _ => {
-            self.local_image_ids_by_path.remove(&project_path);
-            self.local_image_ids_by_entry_id.remove(&entry_id);
-            return None;
-        }};
+        let image = match image {
+            Some(image) => image,
+            _ => {
+                self.local_image_ids_by_path.remove(&project_path);
+                self.local_image_ids_by_entry_id.remove(&entry_id);
+                return None;
+            }
+        };
 
         image.update(cx, |image, cx| {
             let Some(old_file) = worktree::File::from_dyn(Some(&image.file)) else {

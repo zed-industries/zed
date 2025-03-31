@@ -348,7 +348,10 @@ impl Copilot {
         this
     }
 
-    fn shutdown_language_server(&mut self, _cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
+    fn shutdown_language_server(
+        &mut self,
+        _cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
         let shutdown = match mem::replace(&mut self.server, CopilotServer::Disabled) {
             CopilotServer::Running(server) => Some(Box::pin(async move { server.lsp.shutdown() })),
             _ => None,
@@ -553,24 +556,27 @@ impl Copilot {
     }
 
     pub fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        match &mut self.server { CopilotServer::Running(server) => {
-            let task = match &server.sign_in_status {
-                SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
-                SignInStatus::SigningIn { task, .. } => {
-                    cx.notify();
-                    task.clone()
-                }
-                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
-                    let lsp = server.lsp.clone();
-                    let task = cx
-                        .spawn(async move |this, cx| {
-                            let sign_in = async {
-                                let sign_in = lsp
-                                    .request::<request::SignInInitiate>(
-                                        request::SignInInitiateParams {},
-                                    )
-                                    .await?;
-                                match sign_in {
+        match &mut self.server {
+            CopilotServer::Running(server) => {
+                let task =
+                    match &server.sign_in_status {
+                        SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
+                        SignInStatus::SigningIn { task, .. } => {
+                            cx.notify();
+                            task.clone()
+                        }
+                        SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
+                            let lsp = server.lsp.clone();
+                            let task = cx
+                                .spawn(async move |this, cx| {
+                                    let sign_in =
+                                        async {
+                                            let sign_in = lsp
+                                                .request::<request::SignInInitiate>(
+                                                    request::SignInInitiateParams {},
+                                                )
+                                                .await?;
+                                            match sign_in {
                                     request::SignInInitiateResult::AlreadySignedIn { user } => {
                                         Ok(request::SignInStatus::Ok { user: Some(user) })
                                     }
@@ -601,39 +607,41 @@ impl Copilot {
                                         Ok(response)
                                     }
                                 }
+                                        };
+
+                                    let sign_in = sign_in.await;
+                                    this.update(cx, |this, cx| match sign_in {
+                                        Ok(status) => {
+                                            this.update_sign_in_status(status, cx);
+                                            Ok(())
+                                        }
+                                        Err(error) => {
+                                            this.update_sign_in_status(
+                                                request::SignInStatus::NotSignedIn,
+                                                cx,
+                                            );
+                                            Err(Arc::new(error))
+                                        }
+                                    })?
+                                })
+                                .shared();
+                            server.sign_in_status = SignInStatus::SigningIn {
+                                prompt: None,
+                                task: task.clone(),
                             };
-
-                            let sign_in = sign_in.await;
-                            this.update(cx, |this, cx| match sign_in {
-                                Ok(status) => {
-                                    this.update_sign_in_status(status, cx);
-                                    Ok(())
-                                }
-                                Err(error) => {
-                                    this.update_sign_in_status(
-                                        request::SignInStatus::NotSignedIn,
-                                        cx,
-                                    );
-                                    Err(Arc::new(error))
-                                }
-                            })?
-                        })
-                        .shared();
-                    server.sign_in_status = SignInStatus::SigningIn {
-                        prompt: None,
-                        task: task.clone(),
+                            cx.notify();
+                            task
+                        }
                     };
-                    cx.notify();
-                    task
-                }
-            };
 
-            cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
-        } _ => {
-            // If we're downloading, wait until download is finished
-            // If we're in a stuck state, display to the user
-            Task::ready(Err(anyhow!("copilot hasn't started yet")))
-        }}
+                cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
+            }
+            _ => {
+                // If we're downloading, wait until download is finished
+                // If we're in a stuck state, display to the user
+                Task::ready(Err(anyhow!("copilot hasn't started yet")))
+            }
+        }
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -680,11 +688,10 @@ impl Copilot {
     }
 
     pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
-        match &self.server { CopilotServer::Running(server) => {
-            Some(&server.lsp)
-        } _ => {
-            None
-        }}
+        match &self.server {
+            CopilotServer::Running(server) => Some(&server.lsp),
+            _ => None,
+        }
     }
 
     pub fn register_buffer(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {

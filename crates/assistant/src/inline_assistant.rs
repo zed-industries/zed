@@ -250,34 +250,37 @@ impl InlineAssistant {
                 selection.end.column = snapshot
                     .buffer_snapshot
                     .line_len(MultiBufferRow(selection.end.row));
-            } else { match snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
-            { Some(fold) => {
-                selection.start = fold.range().start;
-                selection.end = fold.range().end;
-                if MultiBufferRow(selection.end.row) < snapshot.buffer_snapshot.max_row() {
-                    let chars = snapshot
-                        .buffer_snapshot
-                        .chars_at(Point::new(selection.end.row + 1, 0));
-
-                    for c in chars {
-                        if c == '\n' {
-                            break;
-                        }
-                        if c.is_whitespace() {
-                            continue;
-                        }
-                        if snapshot
-                            .language_at(selection.end)
-                            .is_some_and(|language| language.config().brackets.is_closing_brace(c))
-                        {
-                            selection.end.row += 1;
-                            selection.end.column = snapshot
+            } else {
+                match snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row)) {
+                    Some(fold) => {
+                        selection.start = fold.range().start;
+                        selection.end = fold.range().end;
+                        if MultiBufferRow(selection.end.row) < snapshot.buffer_snapshot.max_row() {
+                            let chars = snapshot
                                 .buffer_snapshot
-                                .line_len(MultiBufferRow(selection.end.row));
+                                .chars_at(Point::new(selection.end.row + 1, 0));
+
+                            for c in chars {
+                                if c == '\n' {
+                                    break;
+                                }
+                                if c.is_whitespace() {
+                                    continue;
+                                }
+                                if snapshot.language_at(selection.end).is_some_and(|language| {
+                                    language.config().brackets.is_closing_brace(c)
+                                }) {
+                                    selection.end.row += 1;
+                                    selection.end.column = snapshot
+                                        .buffer_snapshot
+                                        .line_len(MultiBufferRow(selection.end.row));
+                                }
+                            }
                         }
                     }
+                    _ => {}
                 }
-            } _ => {}}}
+            }
 
             if let Some(prev_selection) = selections.last_mut() {
                 if selection.start <= prev_selection.end {
@@ -1030,25 +1033,28 @@ impl InlineAssistant {
 
             let mut scroll_target_top;
             let mut scroll_target_bottom;
-            match assist.decorations.as_ref() { Some(decorations) => {
-                scroll_target_top = editor
-                    .row_for_block(decorations.prompt_block_id, cx)
-                    .unwrap()
-                    .0 as f32;
-                scroll_target_bottom = editor
-                    .row_for_block(decorations.end_block_id, cx)
-                    .unwrap()
-                    .0 as f32;
-            } _ => {
-                let snapshot = editor.snapshot(window, cx);
-                let start_row = assist
-                    .range
-                    .start
-                    .to_display_point(&snapshot.display_snapshot)
-                    .row();
-                scroll_target_top = start_row.0 as f32;
-                scroll_target_bottom = scroll_target_top + 1.;
-            }}
+            match assist.decorations.as_ref() {
+                Some(decorations) => {
+                    scroll_target_top = editor
+                        .row_for_block(decorations.prompt_block_id, cx)
+                        .unwrap()
+                        .0 as f32;
+                    scroll_target_bottom = editor
+                        .row_for_block(decorations.end_block_id, cx)
+                        .unwrap()
+                        .0 as f32;
+                }
+                _ => {
+                    let snapshot = editor.snapshot(window, cx);
+                    let start_row = assist
+                        .range
+                        .start
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row();
+                    scroll_target_top = start_row.0 as f32;
+                    scroll_target_bottom = scroll_target_top + 1.;
+                }
+            }
             scroll_target_top -= editor.vertical_scroll_margin() as f32;
             scroll_target_bottom += editor.vertical_scroll_margin() as f32;
 
@@ -1092,11 +1098,12 @@ impl InlineAssistant {
     }
 
     pub fn start_assist(&mut self, assist_id: InlineAssistId, window: &mut Window, cx: &mut App) {
-        let assist = match self.assists.get_mut(&assist_id) { Some(assist) => {
-            assist
-        } _ => {
-            return;
-        }};
+        let assist = match self.assists.get_mut(&assist_id) {
+            Some(assist) => assist,
+            _ => {
+                return;
+            }
+        };
 
         let assist_group_id = assist.group_id;
         if self.assist_groups[&assist_group_id].linked {
@@ -1127,11 +1134,12 @@ impl InlineAssistant {
     }
 
     pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut App) {
-        let assist = match self.assists.get_mut(&assist_id) { Some(assist) => {
-            assist
-        } _ => {
-            return;
-        }};
+        let assist = match self.assists.get_mut(&assist_id) {
+            Some(assist) => assist,
+            _ => {
+                return;
+            }
+        };
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
     }
@@ -2211,35 +2219,38 @@ impl PromptEditor {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             );
-        match self.workspace.clone() { Some(workspace) => {
-            token_count = token_count
-                .tooltip(move |window, cx| {
-                    Tooltip::with_meta(
-                        format!(
-                            "Tokens Used ({} from the Assistant Panel)",
-                            humanize_token_count(token_counts.assistant_panel)
-                        ),
-                        None,
-                        "Click to open the Assistant Panel",
-                        window,
-                        cx,
-                    )
-                })
-                .cursor_pointer()
-                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(move |_, window, cx| {
-                    cx.stop_propagation();
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.focus_panel::<AssistantPanel>(window, cx)
-                        })
-                        .ok();
-                });
-        } _ => {
-            token_count = token_count
-                .cursor_default()
-                .tooltip(Tooltip::text("Tokens used"));
-        }}
+        match self.workspace.clone() {
+            Some(workspace) => {
+                token_count = token_count
+                    .tooltip(move |window, cx| {
+                        Tooltip::with_meta(
+                            format!(
+                                "Tokens Used ({} from the Assistant Panel)",
+                                humanize_token_count(token_counts.assistant_panel)
+                            ),
+                            None,
+                            "Click to open the Assistant Panel",
+                            window,
+                            cx,
+                        )
+                    })
+                    .cursor_pointer()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.focus_panel::<AssistantPanel>(window, cx)
+                            })
+                            .ok();
+                    });
+            }
+            _ => {
+                token_count = token_count
+                    .cursor_default()
+                    .tooltip(Tooltip::text("Tokens used"));
+            }
+        }
 
         Some(token_count)
     }
@@ -2429,11 +2440,12 @@ impl InlineAssist {
                     InlineAssistant::update_global(cx, |this, cx| match event {
                         CodegenEvent::Undone => this.finish_assist(assist_id, false, window, cx),
                         CodegenEvent::Finished => {
-                            let assist = match this.assists.get(&assist_id) { Some(assist) => {
-                                assist
-                            } _ => {
-                                return;
-                            }};
+                            let assist = match this.assists.get(&assist_id) {
+                                Some(assist) => assist,
+                                _ => {
+                                    return;
+                                }
+                            };
 
                             if let CodegenStatus::Error(error) = codegen.read(cx).status(cx) {
                                 if assist.decorations.is_none() {
@@ -2864,28 +2876,29 @@ impl CodegenAlternative {
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &App,
     ) -> BoxFuture<'static, Result<TokenCounts>> {
-        match LanguageModelRegistry::read_global(cx).active_model() { Some(model) => {
-            let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
-            match request {
-                Ok(request) => {
-                    let total_count = model.count_tokens(request.clone(), cx);
-                    let assistant_panel_count = assistant_panel_context
-                        .map(|context| model.count_tokens(context, cx))
-                        .unwrap_or_else(|| future::ready(Ok(0)).boxed());
+        match LanguageModelRegistry::read_global(cx).active_model() {
+            Some(model) => {
+                let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
+                match request {
+                    Ok(request) => {
+                        let total_count = model.count_tokens(request.clone(), cx);
+                        let assistant_panel_count = assistant_panel_context
+                            .map(|context| model.count_tokens(context, cx))
+                            .unwrap_or_else(|| future::ready(Ok(0)).boxed());
 
-                    async move {
-                        Ok(TokenCounts {
-                            total: total_count.await?,
-                            assistant_panel: assistant_panel_count.await?,
-                        })
+                        async move {
+                            Ok(TokenCounts {
+                                total: total_count.await?,
+                                assistant_panel: assistant_panel_count.await?,
+                            })
+                        }
+                        .boxed()
                     }
-                    .boxed()
+                    Err(error) => futures::future::ready(Err(error)).boxed(),
                 }
-                Err(error) => futures::future::ready(Err(error)).boxed(),
             }
-        } _ => {
-            future::ready(Err(anyhow!("no active model"))).boxed()
-        }}
+            _ => future::ready(Err(anyhow!("no active model"))).boxed(),
+        }
     }
 
     pub fn start(
@@ -3220,11 +3233,14 @@ impl CodegenAlternative {
                 .update(cx, |this, cx| {
                     this.message_id = message_id;
                     this.last_equal_ranges.clear();
-                    match result { Err(error) => {
-                        this.status = CodegenStatus::Error(error);
-                    } _ => {
-                        this.status = CodegenStatus::Done;
-                    }}
+                    match result {
+                        Err(error) => {
+                            this.status = CodegenStatus::Error(error);
+                        }
+                        _ => {
+                            this.status = CodegenStatus::Done;
+                        }
+                    }
                     this.elapsed_time = Some(elapsed_time);
                     this.completion = Some(completion.lock().clone());
                     cx.emit(CodegenEvent::Finished);

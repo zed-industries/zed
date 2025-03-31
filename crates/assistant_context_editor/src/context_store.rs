@@ -299,13 +299,12 @@ impl ContextStore {
         }
 
         if is_shared {
-            self.contexts.retain_mut(|context| {
-                match context.upgrade() { Some(strong_context) => {
+            self.contexts.retain_mut(|context| match context.upgrade() {
+                Some(strong_context) => {
                     *context = ContextHandle::Strong(strong_context);
                     true
-                } _ => {
-                    false
-                }}
+                }
+                _ => false,
             });
             let remote_id = self.project.read(cx).remote_id().unwrap();
             self.client_subscription = self
@@ -336,8 +335,8 @@ impl ContextStore {
                 self.synchronize_contexts(cx);
             }
             project::Event::DisconnectedFromHost => {
-                self.contexts.retain_mut(|context| {
-                    match context.upgrade() { Some(strong_context) => {
+                self.contexts.retain_mut(|context| match context.upgrade() {
+                    Some(strong_context) => {
                         *context = ContextHandle::Weak(context.downgrade());
                         strong_context.update(cx, |context, cx| {
                             if context.replica_id() != ReplicaId::default() {
@@ -345,9 +344,8 @@ impl ContextStore {
                             }
                         });
                         true
-                    } _ => {
-                        false
-                    }}
+                    }
+                    _ => false,
                 });
                 self.host_contexts.clear();
                 cx.notify();
@@ -422,13 +420,14 @@ impl ContextStore {
                 .await?;
             context.update(cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(cx, |this, cx| {
-                match this.loaded_context_for_id(&context_id, cx) { Some(existing_context) => {
-                    existing_context
-                } _ => {
-                    this.register_context(&context, cx);
-                    this.synchronize_contexts(cx);
-                    context
-                }}
+                match this.loaded_context_for_id(&context_id, cx) {
+                    Some(existing_context) => existing_context,
+                    _ => {
+                        this.register_context(&context, cx);
+                        this.synchronize_contexts(cx);
+                        context
+                    }
+                }
             })
         })
     }
@@ -471,12 +470,13 @@ impl ContextStore {
                 )
             })?;
             this.update(cx, |this, cx| {
-                match this.loaded_context_for_path(&path, cx) { Some(existing_context) => {
-                    existing_context
-                } _ => {
-                    this.register_context(&context, cx);
-                    context
-                }}
+                match this.loaded_context_for_path(&path, cx) {
+                    Some(existing_context) => existing_context,
+                    _ => {
+                        this.register_context(&context, cx);
+                        context
+                    }
+                }
             })
         })
     }
@@ -591,13 +591,14 @@ impl ContextStore {
                 .await?;
             context.update(cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(cx, |this, cx| {
-                match this.loaded_context_for_id(&context_id, cx) { Some(existing_context) => {
-                    existing_context
-                } _ => {
-                    this.register_context(&context, cx);
-                    this.synchronize_contexts(cx);
-                    context
-                }}
+                match this.loaded_context_for_id(&context_id, cx) {
+                    Some(existing_context) => existing_context,
+                    _ => {
+                        this.register_context(&context, cx);
+                        this.synchronize_contexts(cx);
+                        context
+                    }
+                }
             })
         })
     }

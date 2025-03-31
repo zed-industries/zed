@@ -222,14 +222,13 @@ impl TransportDelegate {
     }
 
     pub(crate) async fn send_message(&self, message: Message) -> Result<()> {
-        match self.server_tx.lock().await.as_ref() { Some(server_tx) => {
-            server_tx
+        match self.server_tx.lock().await.as_ref() {
+            Some(server_tx) => server_tx
                 .send(message)
                 .await
-                .map_err(|e| anyhow!("Failed to send message: {}", e))
-        } _ => {
-            Err(anyhow!("Server tx already dropped"))
-        }}
+                .map_err(|e| anyhow!("Failed to send message: {}", e)),
+            _ => Err(anyhow!("Server tx already dropped")),
+        }
     }
 
     async fn handle_adapter_log<Stdout>(
@@ -343,13 +342,16 @@ impl TransportDelegate {
 
             match message {
                 Ok(Message::Response(res)) => {
-                    match pending_requests.lock().await.remove(&res.request_seq) { Some(tx) => {
-                        if let Err(e) = tx.send(Self::process_response(res)) {
-                            log::trace!("Did not send response `{:?}` for a cancelled", e);
+                    match pending_requests.lock().await.remove(&res.request_seq) {
+                        Some(tx) => {
+                            if let Err(e) = tx.send(Self::process_response(res)) {
+                                log::trace!("Did not send response `{:?}` for a cancelled", e);
+                            }
                         }
-                    } _ => {
-                        client_tx.send(Message::Response(res)).await?;
-                    }};
+                        _ => {
+                            client_tx.send(Message::Response(res)).await?;
+                        }
+                    };
                 }
                 Ok(message) => {
                     client_tx.send(message).await?;
@@ -820,19 +822,22 @@ impl FakeTransport {
                                             .lock()
                                             .await
                                             .get_mut(request.command.as_str())
-                                        { Some(handle) => {
-                                            handle(
-                                                request.seq,
-                                                request.arguments.unwrap_or(json!({})),
-                                                stdout_writer.clone(),
-                                            )
-                                            .await;
-                                        } _ => {
-                                            log::error!(
-                                                "No request handler for {}",
-                                                request.command
-                                            );
-                                        }}
+                                        {
+                                            Some(handle) => {
+                                                handle(
+                                                    request.seq,
+                                                    request.arguments.unwrap_or(json!({})),
+                                                    stdout_writer.clone(),
+                                                )
+                                                .await;
+                                            }
+                                            _ => {
+                                                log::error!(
+                                                    "No request handler for {}",
+                                                    request.command
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                                 Message::Event(event) => {
@@ -854,11 +859,17 @@ impl FakeTransport {
                                         .lock()
                                         .await
                                         .get(response.command.as_str())
-                                    { Some(handle) => {
-                                        handle(response);
-                                    } _ => {
-                                        log::error!("No response handler for {}", response.command);
-                                    }}
+                                    {
+                                        Some(handle) => {
+                                            handle(response);
+                                        }
+                                        _ => {
+                                            log::error!(
+                                                "No response handler for {}",
+                                                response.command
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         }

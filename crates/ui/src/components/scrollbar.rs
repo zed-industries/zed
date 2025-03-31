@@ -340,37 +340,42 @@ impl Element for Scrollbar {
                     if thumb_bounds.contains(&event.position) {
                         let offset = event.position.along(axis) - thumb_bounds.origin.along(axis);
                         state.drag.set(Some(offset));
-                    } else { match scroll.content_size()
-                    { Some(ContentSize {
-                        size: item_size, ..
-                    }) => {
-                        let click_offset = {
-                            let viewport_size = padded_bounds.size.along(axis);
+                    } else {
+                        match scroll.content_size() {
+                            Some(ContentSize {
+                                size: item_size, ..
+                            }) => {
+                                let click_offset = {
+                                    let viewport_size = padded_bounds.size.along(axis);
 
-                            let thumb_size = thumb_bounds.size.along(axis);
-                            let thumb_start = (event.position.along(axis)
-                                - padded_bounds.origin.along(axis)
-                                - (thumb_size / 2.))
-                                .clamp(px(0.), viewport_size - thumb_size);
+                                    let thumb_size = thumb_bounds.size.along(axis);
+                                    let thumb_start = (event.position.along(axis)
+                                        - padded_bounds.origin.along(axis)
+                                        - (thumb_size / 2.))
+                                        .clamp(px(0.), viewport_size - thumb_size);
 
-                            let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
-                            let percentage = if viewport_size > thumb_size {
-                                thumb_start / (viewport_size - thumb_size)
-                            } else {
-                                0.
-                            };
+                                    let max_offset =
+                                        (item_size.along(axis) - viewport_size).max(px(0.));
+                                    let percentage = if viewport_size > thumb_size {
+                                        thumb_start / (viewport_size - thumb_size)
+                                    } else {
+                                        0.
+                                    };
 
-                            -max_offset * percentage
-                        };
-                        match axis {
-                            ScrollbarAxis::Horizontal => {
-                                scroll.set_offset(point(click_offset, scroll.offset().y));
+                                    -max_offset * percentage
+                                };
+                                match axis {
+                                    ScrollbarAxis::Horizontal => {
+                                        scroll.set_offset(point(click_offset, scroll.offset().y));
+                                    }
+                                    ScrollbarAxis::Vertical => {
+                                        scroll.set_offset(point(scroll.offset().x, click_offset));
+                                    }
+                                }
                             }
-                            ScrollbarAxis::Vertical => {
-                                scroll.set_offset(point(scroll.offset().x, click_offset));
-                            }
+                            _ => {}
                         }
-                    } _ => {}}}
+                    }
                 }
             });
             window.on_mouse_event({
@@ -387,45 +392,49 @@ impl Element for Scrollbar {
             let state = self.state.clone();
             let axis = self.kind;
             window.on_mouse_event(move |event: &MouseMoveEvent, _, window, cx| {
-                match state.drag.get().filter(|_| event.dragging()) { Some(drag_state) => {
-                    if let Some(ContentSize {
-                        size: item_size, ..
-                    }) = scroll.content_size()
-                    {
-                        let drag_offset = {
-                            let viewport_size = padded_bounds.size.along(axis);
+                match state.drag.get().filter(|_| event.dragging()) {
+                    Some(drag_state) => {
+                        if let Some(ContentSize {
+                            size: item_size, ..
+                        }) = scroll.content_size()
+                        {
+                            let drag_offset = {
+                                let viewport_size = padded_bounds.size.along(axis);
 
-                            let thumb_size = thumb_bounds.size.along(axis);
-                            let thumb_start = (event.position.along(axis)
-                                - padded_bounds.origin.along(axis)
-                                - drag_state)
-                                .clamp(px(0.), viewport_size - thumb_size);
+                                let thumb_size = thumb_bounds.size.along(axis);
+                                let thumb_start = (event.position.along(axis)
+                                    - padded_bounds.origin.along(axis)
+                                    - drag_state)
+                                    .clamp(px(0.), viewport_size - thumb_size);
 
-                            let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
-                            let percentage = if viewport_size > thumb_size {
-                                thumb_start / (viewport_size - thumb_size)
-                            } else {
-                                0.
+                                let max_offset =
+                                    (item_size.along(axis) - viewport_size).max(px(0.));
+                                let percentage = if viewport_size > thumb_size {
+                                    thumb_start / (viewport_size - thumb_size)
+                                } else {
+                                    0.
+                                };
+
+                                -max_offset * percentage
                             };
-
-                            -max_offset * percentage
-                        };
-                        match axis {
-                            ScrollbarAxis::Horizontal => {
-                                scroll.set_offset(point(drag_offset, scroll.offset().y));
+                            match axis {
+                                ScrollbarAxis::Horizontal => {
+                                    scroll.set_offset(point(drag_offset, scroll.offset().y));
+                                }
+                                ScrollbarAxis::Vertical => {
+                                    scroll.set_offset(point(scroll.offset().x, drag_offset));
+                                }
+                            };
+                            window.refresh();
+                            if let Some(id) = state.parent_id {
+                                cx.notify(id);
                             }
-                            ScrollbarAxis::Vertical => {
-                                scroll.set_offset(point(scroll.offset().x, drag_offset));
-                            }
-                        };
-                        window.refresh();
-                        if let Some(id) = state.parent_id {
-                            cx.notify(id);
                         }
                     }
-                } _ => {
-                    state.drag.set(None);
-                }}
+                    _ => {
+                        state.drag.set(None);
+                    }
+                }
             });
             let state = self.state.clone();
             let scroll = self.state.scroll_handle.clone();

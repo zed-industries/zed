@@ -556,12 +556,10 @@ impl FollowableItem for ChannelView {
         Some(proto::view::Variant::ChannelView(
             proto::view::ChannelView {
                 channel_id: channel_buffer.channel_id.0,
-                editor: match self.editor.read(cx).to_state_proto(window, cx)
-                { Some(proto::view::Variant::Editor(proto)) => {
-                    Some(proto)
-                } _ => {
-                    None
-                }},
+                editor: match self.editor.read(cx).to_state_proto(window, cx) {
+                    Some(proto::view::Variant::Editor(proto)) => Some(proto),
+                    _ => None,
+                },
             },
         ))
     }

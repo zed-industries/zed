@@ -453,7 +453,11 @@ impl CodeCell {
         }
     }
 
-    pub fn gutter_output(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub fn gutter_output(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let is_selected = self.selected();
 
         div()

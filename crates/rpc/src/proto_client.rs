@@ -117,23 +117,24 @@ impl ProtoMessageHandlerSet {
         let payload_type_id = message.payload_type_id();
         let mut this = this.lock();
         let handler = this.message_handlers.get(&payload_type_id)?.clone();
-        let entity = match this.entities_by_message_type.get(&payload_type_id) { Some(entity) => {
-            entity.upgrade()?
-        } _ => {
-            let extract_entity_id = *this.entity_id_extractors.get(&payload_type_id)?;
-            let entity_type_id = *this.entity_types_by_message_type.get(&payload_type_id)?;
-            let entity_id = (extract_entity_id)(message.as_ref());
-            match this
-                .entities_by_type_and_remote_id
-                .get_mut(&(entity_type_id, entity_id))?
-            {
-                EntityMessageSubscriber::Pending(pending) => {
-                    pending.push(message);
-                    return None;
+        let entity = match this.entities_by_message_type.get(&payload_type_id) {
+            Some(entity) => entity.upgrade()?,
+            _ => {
+                let extract_entity_id = *this.entity_id_extractors.get(&payload_type_id)?;
+                let entity_type_id = *this.entity_types_by_message_type.get(&payload_type_id)?;
+                let entity_id = (extract_entity_id)(message.as_ref());
+                match this
+                    .entities_by_type_and_remote_id
+                    .get_mut(&(entity_type_id, entity_id))?
+                {
+                    EntityMessageSubscriber::Pending(pending) => {
+                        pending.push(message);
+                        return None;
+                    }
+                    EntityMessageSubscriber::Entity { handle } => handle.upgrade()?,
                 }
-                EntityMessageSubscriber::Entity { handle } => handle.upgrade()?,
             }
-        }};
+        };
         drop(this);
         Some(handler(entity, message, client, cx))
     }

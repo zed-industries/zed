@@ -229,19 +229,20 @@ fn collect_diagnostics(
     options: Options,
     cx: &mut App,
 ) -> Task<Result<Option<SlashCommandOutput>>> {
-    let error_source = match &options.path_matcher { Some(path_matcher) => {
-        debug_assert_eq!(path_matcher.sources().len(), 1);
-        Some(path_matcher.sources().first().cloned().unwrap_or_default())
-    } _ => {
-        None
-    }};
+    let error_source = match &options.path_matcher {
+        Some(path_matcher) => {
+            debug_assert_eq!(path_matcher.sources().len(), 1);
+            Some(path_matcher.sources().first().cloned().unwrap_or_default())
+        }
+        _ => None,
+    };
 
     let glob_is_exact_file_match = match options
         .path_matcher
         .as_ref()
         .and_then(|pm| pm.sources().first())
-    { Some(path) => {
-        PathBuf::try_from(path)
+    {
+        Some(path) => PathBuf::try_from(path)
             .ok()
             .and_then(|path| {
                 project.read(cx).worktrees(cx).find_map(|worktree| {
@@ -251,10 +252,9 @@ fn collect_diagnostics(
                     worktree.absolutize(&relative_path).ok()
                 })
             })
-            .is_some()
-    } _ => {
-        false
-    }};
+            .is_some(),
+        _ => false,
+    };
 
     let project_handle = project.downgrade();
     let diagnostic_summaries: Vec<_> = project

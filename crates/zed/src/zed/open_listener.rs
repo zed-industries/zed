@@ -378,24 +378,27 @@ async fn open_workspaces(
                         SshSettings::get_global(cx)
                             .connection_options_for(ssh.host, ssh.port, ssh.user)
                     });
-                    match connection_options { Ok(connection_options) => {
-                        cx.spawn(async move |mut cx| {
-                            open_ssh_project(
-                                connection_options,
-                                ssh.paths.into_iter().map(PathBuf::from).collect(),
-                                app_state,
-                                OpenOptions::default(),
-                                &mut cx,
-                            )
-                            .await
-                            .log_err();
-                        })
-                        .detach();
-                        // We don't set `errored` here if `open_ssh_project` fails, because for ssh projects, the
-                        // error is displayed in the window.
-                    } _ => {
-                        errored = false;
-                    }}
+                    match connection_options {
+                        Ok(connection_options) => {
+                            cx.spawn(async move |mut cx| {
+                                open_ssh_project(
+                                    connection_options,
+                                    ssh.paths.into_iter().map(PathBuf::from).collect(),
+                                    app_state,
+                                    OpenOptions::default(),
+                                    &mut cx,
+                                )
+                                .await
+                                .log_err();
+                            })
+                            .detach();
+                            // We don't set `errored` here if `open_ssh_project` fails, because for ssh projects, the
+                            // error is displayed in the window.
+                        }
+                        _ => {
+                            errored = false;
+                        }
+                    }
                 }
             }
         }

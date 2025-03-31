@@ -73,14 +73,16 @@ trait NSStringExt {
 }
 
 impl NSStringExt for id {
-    unsafe fn to_str(&self) -> &str { unsafe {
-        let cstr = self.UTF8String();
-        if cstr.is_null() {
-            ""
-        } else {
-            CStr::from_ptr(cstr as *mut c_char).to_str().unwrap()
+    unsafe fn to_str(&self) -> &str {
+        unsafe {
+            let cstr = self.UTF8String();
+            if cstr.is_null() {
+                ""
+            } else {
+                CStr::from_ptr(cstr as *mut c_char).to_str().unwrap()
+            }
         }
-    }}
+    }
 }
 
 #[repr(C)]
@@ -133,9 +135,9 @@ unsafe impl objc::Encode for NSRange {
     }
 }
 
-unsafe fn ns_string(string: &str) -> id { unsafe {
-    NSString::alloc(nil).init_str(string).autorelease()
-}}
+unsafe fn ns_string(string: &str) -> id {
+    unsafe { NSString::alloc(nil).init_str(string).autorelease() }
+}
 
 impl From<NSSize> for Size<Pixels> {
     fn from(value: NSSize) -> Self {

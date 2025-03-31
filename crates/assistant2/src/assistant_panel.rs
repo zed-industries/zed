@@ -584,20 +584,14 @@ impl Focusable for AssistantPanel {
         match self.active_view {
             ActiveView::Thread => self.message_editor.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
-            ActiveView::PromptEditor => {
-                match self.context_editor.as_ref() { Some(context_editor) => {
-                    context_editor.focus_handle(cx)
-                } _ => {
-                    cx.focus_handle()
-                }}
-            }
-            ActiveView::Configuration => {
-                match self.configuration.as_ref() { Some(configuration) => {
-                    configuration.focus_handle(cx)
-                } _ => {
-                    cx.focus_handle()
-                }}
-            }
+            ActiveView::PromptEditor => match self.context_editor.as_ref() {
+                Some(context_editor) => context_editor.focus_handle(cx),
+                _ => cx.focus_handle(),
+            },
+            ActiveView::Configuration => match self.configuration.as_ref() {
+                Some(configuration) => configuration.focus_handle(cx),
+                _ => cx.focus_handle(),
+            },
         }
     }
 }
@@ -683,7 +677,11 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_toolbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_toolbar(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let thread = self.thread.read(cx);
         let focus_handle = self.focus_handle(cx);
 

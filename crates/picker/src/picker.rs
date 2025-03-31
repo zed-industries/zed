@@ -490,11 +490,12 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match self.delegate.confirm_completion(self.query(cx), window, cx) { Some(new_query) => {
-            self.set_query(new_query, window, cx);
-        } _ => {
-            cx.propagate()
-        }}
+        match self.delegate.confirm_completion(self.query(cx), window, cx) {
+            Some(new_query) => {
+                self.set_query(new_query, window, cx);
+            }
+            _ => cx.propagate(),
+        }
     }
 
     fn handle_click(
@@ -511,12 +512,13 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
-        match self.delegate.confirm_update_query(window, cx) { Some(update_query) => {
-            self.set_query(update_query, window, cx);
-            self.delegate.set_selected_index(0, window, cx);
-        } _ => {
-            self.delegate.confirm(secondary, window, cx)
-        }}
+        match self.delegate.confirm_update_query(window, cx) {
+            Some(update_query) => {
+                self.set_query(update_query, window, cx);
+                self.delegate.set_selected_index(0, window, cx);
+            }
+            _ => self.delegate.confirm(secondary, window, cx),
+        }
     }
 
     fn on_input_editor_event(

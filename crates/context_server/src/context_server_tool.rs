@@ -77,47 +77,47 @@ impl Tool for ContextServerTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        match self.server_manager.read(cx).get_server(&self.server_id) { Some(server) => {
-            let tool_name = self.tool.name.clone();
-            let server_clone = server.clone();
-            let input_clone = input.clone();
+        match self.server_manager.read(cx).get_server(&self.server_id) {
+            Some(server) => {
+                let tool_name = self.tool.name.clone();
+                let server_clone = server.clone();
+                let input_clone = input.clone();
 
-            cx.spawn(async move |_cx| {
-                let Some(protocol) = server_clone.client() else {
-                    bail!("Context server not initialized");
-                };
+                cx.spawn(async move |_cx| {
+                    let Some(protocol) = server_clone.client() else {
+                        bail!("Context server not initialized");
+                    };
 
-                let arguments = match input_clone { serde_json::Value::Object(map) => {
-                    Some(map.into_iter().collect())
-                } _ => {
-                    None
-                }};
+                    let arguments = match input_clone {
+                        serde_json::Value::Object(map) => Some(map.into_iter().collect()),
+                        _ => None,
+                    };
 
-                log::trace!(
-                    "Running tool: {} with arguments: {:?}",
-                    tool_name,
-                    arguments
-                );
-                let response = protocol.run_tool(tool_name, arguments).await?;
+                    log::trace!(
+                        "Running tool: {} with arguments: {:?}",
+                        tool_name,
+                        arguments
+                    );
+                    let response = protocol.run_tool(tool_name, arguments).await?;
 
-                let mut result = String::new();
-                for content in response.content {
-                    match content {
-                        types::ToolResponseContent::Text { text } => {
-                            result.push_str(&text);
-                        }
-                        types::ToolResponseContent::Image { .. } => {
-                            log::warn!("Ignoring image content from tool response");
-                        }
-                        types::ToolResponseContent::Resource { .. } => {
-                            log::warn!("Ignoring resource content from tool response");
+                    let mut result = String::new();
+                    for content in response.content {
+                        match content {
+                            types::ToolResponseContent::Text { text } => {
+                                result.push_str(&text);
+                            }
+                            types::ToolResponseContent::Image { .. } => {
+                                log::warn!("Ignoring image content from tool response");
+                            }
+                            types::ToolResponseContent::Resource { .. } => {
+                                log::warn!("Ignoring resource content from tool response");
+                            }
                         }
                     }
-                }
-                Ok(result)
-            })
-        } _ => {
-            Task::ready(Err(anyhow!("Context server not found")))
-        }}
+                    Ok(result)
+                })
+            }
+            _ => Task::ready(Err(anyhow!("Context server not found"))),
+        }
     }
 }

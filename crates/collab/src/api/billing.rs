@@ -103,8 +103,8 @@ async fn update_billing_preferences(
     let max_monthly_llm_usage_spending_in_cents =
         body.max_monthly_llm_usage_spending_in_cents.max(0);
 
-    let billing_preferences =
-        match app.db.get_billing_preferences(user.id).await? { Some(_billing_preferences) => {
+    let billing_preferences = match app.db.get_billing_preferences(user.id).await? {
+        Some(_billing_preferences) => {
             app.db
                 .update_billing_preferences(
                     user.id,
@@ -115,7 +115,8 @@ async fn update_billing_preferences(
                     },
                 )
                 .await?
-        } _ => {
+        }
+        _ => {
             app.db
                 .create_billing_preferences(
                     user.id,
@@ -124,7 +125,8 @@ async fn update_billing_preferences(
                     },
                 )
                 .await?
-        }};
+        }
+    };
 
     SnowflakeRow::new(
         "Spend Limit Updated",
@@ -628,25 +630,28 @@ async fn handle_customer_event(
         .db
         .get_billing_customer_by_stripe_customer_id(&customer.id)
         .await?
-    { Some(existing_customer) => {
-        app.db
-            .update_billing_customer(
-                existing_customer.id,
-                &UpdateBillingCustomerParams {
-                    // For now we just leave the information as-is, as it is not
-                    // likely to change.
-                    ..Default::default()
-                },
-            )
-            .await?;
-    } _ => {
-        app.db
-            .create_billing_customer(&CreateBillingCustomerParams {
-                user_id: user.id,
-                stripe_customer_id: customer.id.to_string(),
-            })
-            .await?;
-    }}
+    {
+        Some(existing_customer) => {
+            app.db
+                .update_billing_customer(
+                    existing_customer.id,
+                    &UpdateBillingCustomerParams {
+                        // For now we just leave the information as-is, as it is not
+                        // likely to change.
+                        ..Default::default()
+                    },
+                )
+                .await?;
+        }
+        _ => {
+            app.db
+                .create_billing_customer(&CreateBillingCustomerParams {
+                    user_id: user.id,
+                    stripe_customer_id: customer.id.to_string(),
+                })
+                .await?;
+        }
+    }
 
     Ok(())
 }
@@ -693,69 +698,72 @@ async fn handle_customer_subscription_event(
         .db
         .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
         .await?
-    { Some(existing_subscription) => {
-        app.db
-            .update_billing_subscription(
-                existing_subscription.id,
-                &UpdateBillingSubscriptionParams {
-                    billing_customer_id: ActiveValue::set(billing_customer.id),
-                    stripe_subscription_id: ActiveValue::set(subscription.id.to_string()),
-                    stripe_subscription_status: ActiveValue::set(subscription.status.into()),
-                    stripe_cancel_at: ActiveValue::set(
-                        subscription
-                            .cancel_at
-                            .and_then(|cancel_at| DateTime::from_timestamp(cancel_at, 0))
-                            .map(|time| time.naive_utc()),
-                    ),
-                    stripe_cancellation_reason: ActiveValue::set(
-                        subscription
-                            .cancellation_details
-                            .and_then(|details| details.reason)
-                            .map(|reason| reason.into()),
-                    ),
-                },
-            )
-            .await?;
-    } _ => {
-        // If the user already has an active billing subscription, ignore the
-        // event and return an `Ok` to signal that it was processed
-        // successfully.
-        //
-        // There is the possibility that this could cause us to not create a
-        // subscription in the following scenario:
-        //
-        //   1. User has an active subscription A
-        //   2. User cancels subscription A
-        //   3. User creates a new subscription B
-        //   4. We process the new subscription B before the cancellation of subscription A
-        //   5. User ends up with no subscriptions
-        //
-        // In theory this situation shouldn't arise as we try to process the events in the order they occur.
-        if app
-            .db
-            .has_active_billing_subscription(billing_customer.user_id)
-            .await?
-        {
-            log::info!(
+    {
+        Some(existing_subscription) => {
+            app.db
+                .update_billing_subscription(
+                    existing_subscription.id,
+                    &UpdateBillingSubscriptionParams {
+                        billing_customer_id: ActiveValue::set(billing_customer.id),
+                        stripe_subscription_id: ActiveValue::set(subscription.id.to_string()),
+                        stripe_subscription_status: ActiveValue::set(subscription.status.into()),
+                        stripe_cancel_at: ActiveValue::set(
+                            subscription
+                                .cancel_at
+                                .and_then(|cancel_at| DateTime::from_timestamp(cancel_at, 0))
+                                .map(|time| time.naive_utc()),
+                        ),
+                        stripe_cancellation_reason: ActiveValue::set(
+                            subscription
+                                .cancellation_details
+                                .and_then(|details| details.reason)
+                                .map(|reason| reason.into()),
+                        ),
+                    },
+                )
+                .await?;
+        }
+        _ => {
+            // If the user already has an active billing subscription, ignore the
+            // event and return an `Ok` to signal that it was processed
+            // successfully.
+            //
+            // There is the possibility that this could cause us to not create a
+            // subscription in the following scenario:
+            //
+            //   1. User has an active subscription A
+            //   2. User cancels subscription A
+            //   3. User creates a new subscription B
+            //   4. We process the new subscription B before the cancellation of subscription A
+            //   5. User ends up with no subscriptions
+            //
+            // In theory this situation shouldn't arise as we try to process the events in the order they occur.
+            if app
+                .db
+                .has_active_billing_subscription(billing_customer.user_id)
+                .await?
+            {
+                log::info!(
                 "user {user_id} already has an active subscription, skipping creation of subscription {subscription_id}",
                 user_id = billing_customer.user_id,
                 subscription_id = subscription.id
             );
-            return Ok(());
-        }
+                return Ok(());
+            }
 
-        app.db
-            .create_billing_subscription(&CreateBillingSubscriptionParams {
-                billing_customer_id: billing_customer.id,
-                stripe_subscription_id: subscription.id.to_string(),
-                stripe_subscription_status: subscription.status.into(),
-                stripe_cancellation_reason: subscription
-                    .cancellation_details
-                    .and_then(|details| details.reason)
-                    .map(|reason| reason.into()),
-            })
-            .await?;
-    }}
+            app.db
+                .create_billing_subscription(&CreateBillingSubscriptionParams {
+                    billing_customer_id: billing_customer.id,
+                    stripe_subscription_id: subscription.id.to_string(),
+                    stripe_subscription_status: subscription.status.into(),
+                    stripe_cancellation_reason: subscription
+                        .cancellation_details
+                        .and_then(|details| details.reason)
+                        .map(|reason| reason.into()),
+                })
+                .await?;
+        }
+    }
 
     // When the user's subscription changes, we want to refresh their LLM tokens
     // to either grant/revoke access.

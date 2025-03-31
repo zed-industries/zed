@@ -581,16 +581,15 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let line_start = Point::new(position.row, 0);
         let offset_to_line = buffer.point_to_offset(line_start);
         let mut lines = buffer.text_for_range(line_start..position).lines();
-        match lines.next() { Some(line) => {
-            MentionCompletion::try_parse(line, offset_to_line)
+        match lines.next() {
+            Some(line) => MentionCompletion::try_parse(line, offset_to_line)
                 .map(|completion| {
                     completion.source_range.start <= offset_to_line + position.column as usize
                         && completion.source_range.end >= offset_to_line + position.column as usize
                 })
-                .unwrap_or(false)
-        } _ => {
-            false
-        }}
+                .unwrap_or(false),
+            _ => false,
+        }
     }
 
     fn sort_completions(&self) -> bool {

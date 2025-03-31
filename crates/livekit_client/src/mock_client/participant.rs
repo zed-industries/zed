@@ -77,42 +77,43 @@ impl LocalParticipant {
 
 impl RemoteParticipant {
     pub fn track_publications(&self) -> HashMap<TrackSid, RemoteTrackPublication> {
-        match self.room.upgrade() { Some(room) => {
-            let server = room.test_server();
-            let audio = server
-                .audio_tracks(room.token())
-                .unwrap()
-                .into_iter()
-                .filter(|track| track.publisher_id() == self.identity)
-                .map(|track| {
-                    (
-                        track.sid(),
-                        RemoteTrackPublication {
-                            sid: track.sid(),
-                            room: self.room.clone(),
-                            track: RemoteTrack::Audio(track),
-                        },
-                    )
-                });
-            let video = server
-                .video_tracks(room.token())
-                .unwrap()
-                .into_iter()
-                .filter(|track| track.publisher_id() == self.identity)
-                .map(|track| {
-                    (
-                        track.sid(),
-                        RemoteTrackPublication {
-                            sid: track.sid(),
-                            room: self.room.clone(),
-                            track: RemoteTrack::Video(track),
-                        },
-                    )
-                });
-            audio.chain(video).collect()
-        } _ => {
-            HashMap::default()
-        }}
+        match self.room.upgrade() {
+            Some(room) => {
+                let server = room.test_server();
+                let audio = server
+                    .audio_tracks(room.token())
+                    .unwrap()
+                    .into_iter()
+                    .filter(|track| track.publisher_id() == self.identity)
+                    .map(|track| {
+                        (
+                            track.sid(),
+                            RemoteTrackPublication {
+                                sid: track.sid(),
+                                room: self.room.clone(),
+                                track: RemoteTrack::Audio(track),
+                            },
+                        )
+                    });
+                let video = server
+                    .video_tracks(room.token())
+                    .unwrap()
+                    .into_iter()
+                    .filter(|track| track.publisher_id() == self.identity)
+                    .map(|track| {
+                        (
+                            track.sid(),
+                            RemoteTrackPublication {
+                                sid: track.sid(),
+                                room: self.room.clone(),
+                                track: RemoteTrack::Video(track),
+                            },
+                        )
+                    });
+                audio.chain(video).collect()
+            }
+            _ => HashMap::default(),
+        }
     }
 
     pub fn identity(&self) -> ParticipantIdentity {

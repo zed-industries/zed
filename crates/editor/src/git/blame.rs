@@ -480,16 +480,15 @@ async fn parse_commit_messages(
         .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
-        let permalink = match parsed_remote_url.as_ref() { Some((provider, git_remote)) => {
-            Some(provider.build_commit_permalink(
+        let permalink = match parsed_remote_url.as_ref() {
+            Some((provider, git_remote)) => Some(provider.build_commit_permalink(
                 git_remote,
                 git::BuildCommitPermalinkParams {
                     sha: oid.to_string().as_str(),
                 },
-            ))
-        } _ => {
-            None
-        }};
+            )),
+            _ => None,
+        };
 
         let remote = parsed_remote_url
             .as_ref()

@@ -121,18 +121,19 @@ impl PlatformAtlas for BladeAtlas {
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>> {
         let mut lock = self.0.lock();
-        match lock.tiles_by_key.get(key) { Some(tile) => {
-            Ok(Some(tile.clone()))
-        } _ => {
-            profiling::scope!("new tile");
-            let Some((size, bytes)) = build()? else {
-                return Ok(None);
-            };
-            let tile = lock.allocate(size, key.texture_kind());
-            lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile.clone());
-            Ok(Some(tile))
-        }}
+        match lock.tiles_by_key.get(key) {
+            Some(tile) => Ok(Some(tile.clone())),
+            _ => {
+                profiling::scope!("new tile");
+                let Some((size, bytes)) = build()? else {
+                    return Ok(None);
+                };
+                let tile = lock.allocate(size, key.texture_kind());
+                lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
+                lock.tiles_by_key.insert(key.clone(), tile.clone());
+                Ok(Some(tile))
+            }
+        }
     }
 
     fn remove(&self, key: &AtlasKey) {

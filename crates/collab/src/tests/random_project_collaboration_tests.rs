@@ -216,44 +216,48 @@ impl RandomizedTest for ProjectCollaborationTest {
                     // Open a new project
                     0..=70 => {
                         // Open a remote project
-                        match call.read_with(cx, |call, _| call.room().cloned()) { Some(room) => {
-                            let existing_dev_server_project_ids = cx.read(|cx| {
-                                client
-                                    .dev_server_projects()
-                                    .iter()
-                                    .map(|p| p.read(cx).remote_id().unwrap())
-                                    .collect::<Vec<_>>()
-                            });
-                            let new_dev_server_projects = room.read_with(cx, |room, _| {
-                                room.remote_participants()
-                                    .values()
-                                    .flat_map(|participant| {
-                                        participant.projects.iter().filter_map(|project| {
-                                            if existing_dev_server_project_ids.contains(&project.id)
-                                            {
-                                                None
-                                            } else {
-                                                Some((
-                                                    UserId::from_proto(participant.user.id),
-                                                    project.worktree_root_names[0].clone(),
-                                                ))
-                                            }
+                        match call.read_with(cx, |call, _| call.room().cloned()) {
+                            Some(room) => {
+                                let existing_dev_server_project_ids = cx.read(|cx| {
+                                    client
+                                        .dev_server_projects()
+                                        .iter()
+                                        .map(|p| p.read(cx).remote_id().unwrap())
+                                        .collect::<Vec<_>>()
+                                });
+                                let new_dev_server_projects = room.read_with(cx, |room, _| {
+                                    room.remote_participants()
+                                        .values()
+                                        .flat_map(|participant| {
+                                            participant.projects.iter().filter_map(|project| {
+                                                if existing_dev_server_project_ids
+                                                    .contains(&project.id)
+                                                {
+                                                    None
+                                                } else {
+                                                    Some((
+                                                        UserId::from_proto(participant.user.id),
+                                                        project.worktree_root_names[0].clone(),
+                                                    ))
+                                                }
+                                            })
                                         })
-                                    })
-                                    .collect::<Vec<_>>()
-                            });
-                            if !new_dev_server_projects.is_empty() {
-                                let (host_id, first_root_name) =
-                                    new_dev_server_projects.choose(rng).unwrap().clone();
-                                break ClientOperation::OpenRemoteProject {
-                                    host_id,
-                                    first_root_name,
-                                };
+                                        .collect::<Vec<_>>()
+                                });
+                                if !new_dev_server_projects.is_empty() {
+                                    let (host_id, first_root_name) =
+                                        new_dev_server_projects.choose(rng).unwrap().clone();
+                                    break ClientOperation::OpenRemoteProject {
+                                        host_id,
+                                        first_root_name,
+                                    };
+                                }
                             }
-                        } _ => {
-                            let first_root_name = plan.next_root_dir_name();
-                            break ClientOperation::OpenLocalProject { first_root_name };
-                        }}
+                            _ => {
+                                let first_root_name = plan.next_root_dir_name();
+                                break ClientOperation::OpenLocalProject { first_root_name };
+                            }
+                        }
                     }
 
                     // Close a remote project
@@ -1268,12 +1272,14 @@ impl RandomizedTest for ProjectCollaborationTest {
                     Some((client.user_id().unwrap(), project, cx))
                 });
 
-                let (host_user_id, host_project, host_cx) =
-                    match host_project { Some((host_user_id, host_project, host_cx)) => {
+                let (host_user_id, host_project, host_cx) = match host_project {
+                    Some((host_user_id, host_project, host_cx)) => {
                         (host_user_id, host_project, host_cx)
-                    } _ => {
+                    }
+                    _ => {
                         continue;
-                    }};
+                    }
+                };
 
                 for guest_buffer in guest_buffers {
                     let buffer_id =

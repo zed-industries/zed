@@ -244,12 +244,11 @@ impl CollabPanel {
                 0,
                 gpui::ListAlignment::Top,
                 px(1000.),
-                move |ix, window, cx| {
-                    match entity.upgrade() { Some(entity) => {
+                move |ix, window, cx| match entity.upgrade() {
+                    Some(entity) => {
                         entity.update(cx, |this, cx| this.render_list_entry(ix, window, cx))
-                    } _ => {
-                        div().into_any()
-                    }}
+                    }
+                    _ => div().into_any(),
                 },
             );
 

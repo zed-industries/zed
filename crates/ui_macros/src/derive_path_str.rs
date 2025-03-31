@@ -64,21 +64,18 @@ fn get_strum_serialize_all(attrs: &[Attribute]) -> Option<String> {
     attrs
         .iter()
         .filter(|attr| attr.path.is_ident("strum"))
-        .find_map(|attr| {
-            match attr.parse_meta() { Ok(Meta::List(meta_list)) => {
-                meta_list.nested.iter().find_map(|nested_meta| {
-                    if let NestedMeta::Meta(Meta::NameValue(name_value)) = nested_meta {
-                        if name_value.path.is_ident("serialize_all") {
-                            if let Lit::Str(lit_str) = &name_value.lit {
-                                return Some(lit_str.value());
-                            }
+        .find_map(|attr| match attr.parse_meta() {
+            Ok(Meta::List(meta_list)) => meta_list.nested.iter().find_map(|nested_meta| {
+                if let NestedMeta::Meta(Meta::NameValue(name_value)) = nested_meta {
+                    if name_value.path.is_ident("serialize_all") {
+                        if let Lit::Str(lit_str) = &name_value.lit {
+                            return Some(lit_str.value());
                         }
                     }
-                    None
-                })
-            } _ => {
+                }
                 None
-            }}
+            }),
+            _ => None,
         })
 }
 
@@ -86,20 +83,17 @@ fn get_attr_value(attrs: &[Attribute], key: &str) -> Option<String> {
     attrs
         .iter()
         .filter(|attr| attr.path.is_ident("path_str"))
-        .find_map(|attr| {
-            match attr.parse_meta() { Ok(Meta::List(meta_list)) => {
-                meta_list.nested.iter().find_map(|nested_meta| {
-                    if let NestedMeta::Meta(Meta::NameValue(name_value)) = nested_meta {
-                        if name_value.path.is_ident(key) {
-                            if let Lit::Str(lit_str) = &name_value.lit {
-                                return Some(lit_str.value());
-                            }
+        .find_map(|attr| match attr.parse_meta() {
+            Ok(Meta::List(meta_list)) => meta_list.nested.iter().find_map(|nested_meta| {
+                if let NestedMeta::Meta(Meta::NameValue(name_value)) = nested_meta {
+                    if name_value.path.is_ident(key) {
+                        if let Lit::Str(lit_str) = &name_value.lit {
+                            return Some(lit_str.value());
                         }
                     }
-                    None
-                })
-            } _ => {
+                }
                 None
-            }}
+            }),
+            _ => None,
         })
 }

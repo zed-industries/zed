@@ -2320,11 +2320,12 @@ impl Project {
         abs_path: impl AsRef<Path>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        match self.find_worktree(abs_path.as_ref(), cx) { Some((worktree, relative_path)) => {
-            self.open_buffer((worktree.read(cx).id(), relative_path), cx)
-        } _ => {
-            Task::ready(Err(anyhow!("no such path")))
-        }}
+        match self.find_worktree(abs_path.as_ref(), cx) {
+            Some((worktree, relative_path)) => {
+                self.open_buffer((worktree.read(cx).id(), relative_path), cx)
+            }
+            _ => Task::ready(Err(anyhow!("no such path"))),
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2333,11 +2334,12 @@ impl Project {
         abs_path: impl AsRef<Path>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Entity<Buffer>, lsp_store::OpenLspBufferHandle)>> {
-        match self.find_worktree(abs_path.as_ref(), cx) { Some((worktree, relative_path)) => {
-            self.open_buffer_with_lsp((worktree.read(cx).id(), relative_path), cx)
-        } _ => {
-            Task::ready(Err(anyhow!("no such path")))
-        }}
+        match self.find_worktree(abs_path.as_ref(), cx) {
+            Some((worktree, relative_path)) => {
+                self.open_buffer_with_lsp((worktree.read(cx).id(), relative_path), cx)
+            }
+            _ => Task::ready(Err(anyhow!("no such path"))),
+        }
     }
 
     pub fn open_buffer(
@@ -2410,28 +2412,31 @@ impl Project {
         id: BufferId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        match self.buffer_for_id(id, cx) { Some(buffer) => {
-            Task::ready(Ok(buffer))
-        } _ => if self.is_local() || self.is_via_ssh() {
-            Task::ready(Err(anyhow!("buffer {} does not exist", id)))
-        } else if let Some(project_id) = self.remote_id() {
-            let request = self.client.request(proto::OpenBufferById {
-                project_id,
-                id: id.into(),
-            });
-            cx.spawn(async move |project, cx| {
-                let buffer_id = BufferId::new(request.await?.buffer_id)?;
-                project
-                    .update(cx, |project, cx| {
-                        project.buffer_store.update(cx, |buffer_store, cx| {
-                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
-                        })
-                    })?
-                    .await
-            })
-        } else {
-            Task::ready(Err(anyhow!("cannot open buffer while disconnected")))
-        }}
+        match self.buffer_for_id(id, cx) {
+            Some(buffer) => Task::ready(Ok(buffer)),
+            _ => {
+                if self.is_local() || self.is_via_ssh() {
+                    Task::ready(Err(anyhow!("buffer {} does not exist", id)))
+                } else if let Some(project_id) = self.remote_id() {
+                    let request = self.client.request(proto::OpenBufferById {
+                        project_id,
+                        id: id.into(),
+                    });
+                    cx.spawn(async move |project, cx| {
+                        let buffer_id = BufferId::new(request.await?.buffer_id)?;
+                        project
+                            .update(cx, |project, cx| {
+                                project.buffer_store.update(cx, |buffer_store, cx| {
+                                    buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                                })
+                            })?
+                            .await
+                    })
+                } else {
+                    Task::ready(Err(anyhow!("cannot open buffer while disconnected")))
+                }
+            }
+        }
     }
 
     pub fn save_buffers(
@@ -3007,11 +3012,14 @@ impl Project {
                 .ok()
                 .flatten();
 
-            match task { Some(task) => {
-                task.await;
-            } _ => {
-                break;
-            }}
+            match task {
+                Some(task) => {
+                    task.await;
+                }
+                _ => {
+                    break;
+                }
+            }
         })
     }
 
@@ -3069,8 +3077,8 @@ impl Project {
         language_name: LanguageName,
         cx: &App,
     ) -> Task<Option<ToolchainList>> {
-        match self.toolchain_store.clone() { Some(toolchain_store) => {
-            cx.spawn(async move |cx| {
+        match self.toolchain_store.clone() {
+            Some(toolchain_store) => cx.spawn(async move |cx| {
                 cx.update(|cx| {
                     toolchain_store
                         .read(cx)
@@ -3078,10 +3086,9 @@ impl Project {
                 })
                 .ok()?
                 .await
-            })
-        } _ => {
-            Task::ready(None)
-        }}
+            }),
+            _ => Task::ready(None),
+        }
     }
 
     pub async fn toolchain_term(
@@ -3703,13 +3710,16 @@ impl Project {
     ) -> Receiver<Entity<Buffer>> {
         let (tx, rx) = smol::channel::unbounded();
 
-        let (client, remote_id): (AnyProtoClient, _) = match &self.ssh_client { Some(ssh_client) => {
-            (ssh_client.read(cx).proto_client(), 0)
-        } _ => if let Some(remote_id) = self.remote_id() {
-            (self.client.clone().into(), remote_id)
-        } else {
-            return rx;
-        }};
+        let (client, remote_id): (AnyProtoClient, _) = match &self.ssh_client {
+            Some(ssh_client) => (ssh_client.read(cx).proto_client(), 0),
+            _ => {
+                if let Some(remote_id) = self.remote_id() {
+                    (self.client.clone().into(), remote_id)
+                } else {
+                    return rx;
+                }
+            }
+        };
 
         let request = client.request(proto::FindSearchCandidates {
             project_id: remote_id,
@@ -3856,29 +3866,35 @@ impl Project {
                     is_dir: metadata.is_dir,
                 })
             })
-        } else { match self.ssh_client.as_ref() { Some(ssh_client) => {
-            let request_path = Path::new(path);
-            let request = ssh_client
-                .read(cx)
-                .proto_client()
-                .request(proto::GetPathMetadata {
-                    project_id: SSH_PROJECT_ID,
-                    path: request_path.to_proto(),
-                });
-            cx.background_spawn(async move {
-                let response = request.await.log_err()?;
-                if response.exists {
-                    Some(ResolvedPath::AbsPath {
-                        path: PathBuf::from_proto(response.path),
-                        is_dir: response.is_dir,
+        } else {
+            match self.ssh_client.as_ref() {
+                Some(ssh_client) => {
+                    let request_path = Path::new(path);
+                    let request =
+                        ssh_client
+                            .read(cx)
+                            .proto_client()
+                            .request(proto::GetPathMetadata {
+                                project_id: SSH_PROJECT_ID,
+                                path: request_path.to_proto(),
+                            });
+                    cx.background_spawn(async move {
+                        let response = request.await.log_err()?;
+                        if response.exists {
+                            Some(ResolvedPath::AbsPath {
+                                path: PathBuf::from_proto(response.path),
+                                is_dir: response.is_dir,
+                            })
+                        } else {
+                            None
+                        }
                     })
-                } else {
-                    None
                 }
-            })
-        } _ => {
-            return Task::ready(None);
-        }}}
+                _ => {
+                    return Task::ready(None);
+                }
+            }
+        }
     }
 
     fn resolve_path_in_worktrees(
@@ -3967,32 +3983,35 @@ impl Project {
     ) -> Task<Result<Vec<DirectoryItem>>> {
         if self.is_local() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
-        } else { match self.ssh_client.as_ref() { Some(session) => {
-            let path_buf = PathBuf::from(query);
-            let request = proto::ListRemoteDirectory {
-                dev_server_id: SSH_PROJECT_ID,
-                path: path_buf.to_proto(),
-                config: Some(proto::ListRemoteDirectoryConfig { is_dir: true }),
-            };
+        } else {
+            match self.ssh_client.as_ref() {
+                Some(session) => {
+                    let path_buf = PathBuf::from(query);
+                    let request = proto::ListRemoteDirectory {
+                        dev_server_id: SSH_PROJECT_ID,
+                        path: path_buf.to_proto(),
+                        config: Some(proto::ListRemoteDirectoryConfig { is_dir: true }),
+                    };
 
-            let response = session.read(cx).proto_client().request(request);
-            cx.background_spawn(async move {
-                let proto::ListRemoteDirectoryResponse {
-                    entries,
-                    entry_info,
-                } = response.await?;
-                Ok(entries
-                    .into_iter()
-                    .zip(entry_info)
-                    .map(|(entry, info)| DirectoryItem {
-                        path: PathBuf::from(entry),
-                        is_dir: info.is_dir,
+                    let response = session.read(cx).proto_client().request(request);
+                    cx.background_spawn(async move {
+                        let proto::ListRemoteDirectoryResponse {
+                            entries,
+                            entry_info,
+                        } = response.await?;
+                        Ok(entries
+                            .into_iter()
+                            .zip(entry_info)
+                            .map(|(entry, info)| DirectoryItem {
+                                path: PathBuf::from(entry),
+                                is_dir: info.is_dir,
+                            })
+                            .collect())
                     })
-                    .collect())
-            })
-        } _ => {
-            Task::ready(Err(anyhow!("cannot list directory in remote project")))
-        }}}
+                }
+                _ => Task::ready(Err(anyhow!("cannot list directory in remote project"))),
+            }
+        }
     }
 
     pub fn create_worktree(
@@ -4626,25 +4645,26 @@ impl Project {
                             }
                         };
                         let remote_version = language::proto::deserialize_version(&buffer.version);
-                        match this.buffer_for_id(buffer_id, cx) { Some(buffer) => {
-                            let operations =
-                                buffer.read(cx).serialize_ops(Some(remote_version), cx);
-                            cx.background_spawn(async move {
-                                let operations = operations.await;
-                                for chunk in split_operations(operations) {
-                                    client
-                                        .request(proto::UpdateBuffer {
-                                            project_id,
-                                            buffer_id: buffer_id.into(),
-                                            operations: chunk,
-                                        })
-                                        .await?;
-                                }
-                                anyhow::Ok(())
-                            })
-                        } _ => {
-                            Task::ready(Ok(()))
-                        }}
+                        match this.buffer_for_id(buffer_id, cx) {
+                            Some(buffer) => {
+                                let operations =
+                                    buffer.read(cx).serialize_ops(Some(remote_version), cx);
+                                cx.background_spawn(async move {
+                                    let operations = operations.await;
+                                    for chunk in split_operations(operations) {
+                                        client
+                                            .request(proto::UpdateBuffer {
+                                                project_id,
+                                                buffer_id: buffer_id.into(),
+                                                operations: chunk,
+                                            })
+                                            .await?;
+                                    }
+                                    anyhow::Ok(())
+                                })
+                            }
+                            _ => Task::ready(Ok(())),
+                        }
                     })
                     .collect::<Vec<_>>()
             })?;

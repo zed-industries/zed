@@ -2152,60 +2152,61 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     let ranges = map
         .buffer_snapshot
         .bracket_ranges(visible_line_range.clone());
-    match ranges { Some(ranges) => {
-        let line_range = line_range.start.to_offset(&map.buffer_snapshot)
-            ..line_range.end.to_offset(&map.buffer_snapshot);
-        let mut closest_pair_destination = None;
-        let mut closest_distance = usize::MAX;
+    match ranges {
+        Some(ranges) => {
+            let line_range = line_range.start.to_offset(&map.buffer_snapshot)
+                ..line_range.end.to_offset(&map.buffer_snapshot);
+            let mut closest_pair_destination = None;
+            let mut closest_distance = usize::MAX;
 
-        for (open_range, close_range) in ranges {
-            if map.buffer_snapshot.chars_at(open_range.start).next() == Some('<') {
-                if offset > open_range.start && offset < close_range.start {
-                    let mut chars = map.buffer_snapshot.chars_at(close_range.start);
-                    if (Some('/'), Some('>')) == (chars.next(), chars.next()) {
-                        return display_point;
+            for (open_range, close_range) in ranges {
+                if map.buffer_snapshot.chars_at(open_range.start).next() == Some('<') {
+                    if offset > open_range.start && offset < close_range.start {
+                        let mut chars = map.buffer_snapshot.chars_at(close_range.start);
+                        if (Some('/'), Some('>')) == (chars.next(), chars.next()) {
+                            return display_point;
+                        }
+                        if let Some(tag) = matching_tag(map, display_point) {
+                            return tag;
+                        }
+                    } else if close_range.contains(&offset) {
+                        return open_range.start.to_display_point(map);
+                    } else if open_range.contains(&offset) {
+                        return (close_range.end - 1).to_display_point(map);
                     }
-                    if let Some(tag) = matching_tag(map, display_point) {
-                        return tag;
+                }
+
+                if (open_range.contains(&offset) || open_range.start >= offset)
+                    && line_range.contains(&open_range.start)
+                {
+                    let distance = open_range.start.saturating_sub(offset);
+                    if distance < closest_distance {
+                        closest_pair_destination = Some(close_range.start);
+                        closest_distance = distance;
+                        continue;
                     }
-                } else if close_range.contains(&offset) {
-                    return open_range.start.to_display_point(map);
-                } else if open_range.contains(&offset) {
-                    return (close_range.end - 1).to_display_point(map);
                 }
+
+                if (close_range.contains(&offset) || close_range.start >= offset)
+                    && line_range.contains(&close_range.start)
+                {
+                    let distance = close_range.start.saturating_sub(offset);
+                    if distance < closest_distance {
+                        closest_pair_destination = Some(open_range.start);
+                        closest_distance = distance;
+                        continue;
+                    }
+                }
+
+                continue;
             }
 
-            if (open_range.contains(&offset) || open_range.start >= offset)
-                && line_range.contains(&open_range.start)
-            {
-                let distance = open_range.start.saturating_sub(offset);
-                if distance < closest_distance {
-                    closest_pair_destination = Some(close_range.start);
-                    closest_distance = distance;
-                    continue;
-                }
-            }
-
-            if (close_range.contains(&offset) || close_range.start >= offset)
-                && line_range.contains(&close_range.start)
-            {
-                let distance = close_range.start.saturating_sub(offset);
-                if distance < closest_distance {
-                    closest_pair_destination = Some(open_range.start);
-                    closest_distance = distance;
-                    continue;
-                }
-            }
-
-            continue;
+            closest_pair_destination
+                .map(|destination| destination.to_display_point(map))
+                .unwrap_or(display_point)
         }
-
-        closest_pair_destination
-            .map(|destination| destination.to_display_point(map))
-            .unwrap_or(display_point)
-    } _ => {
-        display_point
-    }}
+        _ => display_point,
+    }
 }
 
 // Go to {count} percentage in the file, on the first

@@ -654,14 +654,19 @@ impl HighlightedTextBuilder {
             match chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(syntax_theme))
-            { Some(mut highlight_style) => {
-                if let Some(override_style) = override_style {
-                    highlight_style.highlight(override_style);
+            {
+                Some(mut highlight_style) => {
+                    if let Some(override_style) = override_style {
+                        highlight_style.highlight(override_style);
+                    }
+                    self.highlights.push((start..end, highlight_style));
                 }
-                self.highlights.push((start..end, highlight_style));
-            } _ => if let Some(override_style) = override_style {
-                self.highlights.push((start..end, override_style));
-            }}
+                _ => {
+                    if let Some(override_style) = override_style {
+                        self.highlights.push((start..end, override_style));
+                    }
+                }
+            }
         }
     }
 
@@ -1366,22 +1371,25 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let mut file_changed = false;
 
-        match self.file.as_ref() { Some(old_file) => {
-            if new_file.path() != old_file.path() {
-                file_changed = true;
-            }
+        match self.file.as_ref() {
+            Some(old_file) => {
+                if new_file.path() != old_file.path() {
+                    file_changed = true;
+                }
 
-            let old_state = old_file.disk_state();
-            let new_state = new_file.disk_state();
-            if old_state != new_state {
-                file_changed = true;
-                if !was_dirty && matches!(new_state, DiskState::Present { .. }) {
-                    cx.emit(BufferEvent::ReloadNeeded)
+                let old_state = old_file.disk_state();
+                let new_state = new_file.disk_state();
+                if old_state != new_state {
+                    file_changed = true;
+                    if !was_dirty && matches!(new_state, DiskState::Present { .. }) {
+                        cx.emit(BufferEvent::ReloadNeeded)
+                    }
                 }
             }
-        } _ => {
-            file_changed = true;
-        }};
+            _ => {
+                file_changed = true;
+            }
+        };
 
         self.file = Some(new_file);
         if file_changed {
@@ -1465,11 +1473,12 @@ impl Buffer {
         if self.reparse.is_some() {
             return;
         }
-        let language = match self.language.clone() { Some(language) => {
-            language
-        } _ => {
-            return;
-        }};
+        let language = match self.language.clone() {
+            Some(language) => language,
+            _ => {
+                return;
+            }
+        };
 
         let text = self.text_snapshot();
         let parsed_version = self.version();
@@ -1565,29 +1574,34 @@ impl Buffer {
     }
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
-        match self.compute_autoindents() { Some(indent_sizes) => {
-            let indent_sizes = cx.background_spawn(indent_sizes);
-            match cx
-                .background_executor()
-                .block_with_timeout(Duration::from_micros(500), indent_sizes)
-            {
-                Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
-                Err(indent_sizes) => {
-                    self.pending_autoindent = Some(cx.spawn(async move |this, cx| {
-                        let indent_sizes = indent_sizes.await;
-                        this.update(cx, |this, cx| {
-                            this.apply_autoindents(indent_sizes, cx);
-                        })
-                        .ok();
-                    }));
+        match self.compute_autoindents() {
+            Some(indent_sizes) => {
+                let indent_sizes = cx.background_spawn(indent_sizes);
+                match cx
+                    .background_executor()
+                    .block_with_timeout(Duration::from_micros(500), indent_sizes)
+                {
+                    Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
+                    Err(indent_sizes) => {
+                        self.pending_autoindent = Some(cx.spawn(async move |this, cx| {
+                            let indent_sizes = indent_sizes.await;
+                            this.update(cx, |this, cx| {
+                                this.apply_autoindents(indent_sizes, cx);
+                            })
+                            .ok();
+                        }));
+                    }
                 }
             }
-        } _ => {
-            self.autoindent_requests.clear();
-        }}
+            _ => {
+                self.autoindent_requests.clear();
+            }
+        }
     }
 
-    fn compute_autoindents(&self) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>> + use<>> {
+    fn compute_autoindents(
+        &self,
+    ) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>> + use<>> {
         let max_rows_between_yields = 100;
         let snapshot = self.snapshot();
         if snapshot.syntax.is_empty() || self.autoindent_requests.is_empty() {
@@ -2047,12 +2061,13 @@ impl Buffer {
         } else {
             false
         };
-        match self.text.end_transaction_at(now) { Some((transaction_id, start_version)) => {
-            self.did_edit(&start_version, was_dirty, cx);
-            Some(transaction_id)
-        } _ => {
-            None
-        }}
+        match self.text.end_transaction_at(now) {
+            Some((transaction_id, start_version)) => {
+                self.did_edit(&start_version, was_dirty, cx);
+                Some(transaction_id)
+            }
+            _ => None,
+        }
     }
 
     /// Manually add a transaction to the buffer's undo history.
@@ -2098,7 +2113,10 @@ impl Buffer {
     }
 
     /// Waits for the buffer to receive operations up to the given version.
-    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> + use<> {
+    pub fn wait_for_version(
+        &mut self,
+        version: clock::Global,
+    ) -> impl Future<Output = Result<()>> + use<> {
         self.text.wait_for_version(version)
     }
 
@@ -2575,13 +2593,14 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        match self.text.undo() { Some((transaction_id, operation)) => {
-            self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, cx);
-            Some(transaction_id)
-        } _ => {
-            None
-        }}
+        match self.text.undo() {
+            Some((transaction_id, operation)) => {
+                self.send_operation(Operation::Buffer(operation), true, cx);
+                self.did_edit(&old_version, was_dirty, cx);
+                Some(transaction_id)
+            }
+            _ => None,
+        }
     }
 
     /// Manually undoes a specific transaction in the buffer's undo history.
@@ -2592,13 +2611,14 @@ impl Buffer {
     ) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
-        match self.text.undo_transaction(transaction_id) { Some(operation) => {
-            self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, cx);
-            true
-        } _ => {
-            false
-        }}
+        match self.text.undo_transaction(transaction_id) {
+            Some(operation) => {
+                self.send_operation(Operation::Buffer(operation), true, cx);
+                self.did_edit(&old_version, was_dirty, cx);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Manually undoes all changes after a given transaction in the buffer's undo history.
@@ -2634,13 +2654,14 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        match self.text.redo() { Some((transaction_id, operation)) => {
-            self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, cx);
-            Some(transaction_id)
-        } _ => {
-            None
-        }}
+        match self.text.redo() {
+            Some((transaction_id, operation)) => {
+                self.send_operation(Operation::Buffer(operation), true, cx);
+                self.did_edit(&old_version, was_dirty, cx);
+                Some(transaction_id)
+            }
+            _ => None,
+        }
     }
 
     /// Manually undoes all changes until a given transaction in the buffer's redo history.
@@ -3438,31 +3459,40 @@ impl BufferSnapshot {
         let mut annotation_row_ranges: Vec<Range<u32>> = Vec::new();
         while let Some(mat) = matches.peek() {
             let config = &configs[mat.grammar_index];
-            match self.next_outline_item(config, &mat, &range, include_extra_context, theme)
-            { Some(item) => {
-                items.push(item);
-            } _ => { match mat
-                .captures
-                .iter()
-                .find(|capture| Some(capture.index) == config.annotation_capture_ix)
-            { Some(capture) => {
-                let capture_range = capture.node.start_position()..capture.node.end_position();
-                let mut capture_row_range =
-                    capture_range.start.row as u32..capture_range.end.row as u32;
-                if capture_range.end.row > capture_range.start.row && capture_range.end.column == 0
-                {
-                    capture_row_range.end -= 1;
+            match self.next_outline_item(config, &mat, &range, include_extra_context, theme) {
+                Some(item) => {
+                    items.push(item);
                 }
-                if let Some(last_row_range) = annotation_row_ranges.last_mut() {
-                    if last_row_range.end >= capture_row_range.start.saturating_sub(1) {
-                        last_row_range.end = capture_row_range.end;
-                    } else {
-                        annotation_row_ranges.push(capture_row_range);
+                _ => {
+                    match mat
+                        .captures
+                        .iter()
+                        .find(|capture| Some(capture.index) == config.annotation_capture_ix)
+                    {
+                        Some(capture) => {
+                            let capture_range =
+                                capture.node.start_position()..capture.node.end_position();
+                            let mut capture_row_range =
+                                capture_range.start.row as u32..capture_range.end.row as u32;
+                            if capture_range.end.row > capture_range.start.row
+                                && capture_range.end.column == 0
+                            {
+                                capture_row_range.end -= 1;
+                            }
+                            if let Some(last_row_range) = annotation_row_ranges.last_mut() {
+                                if last_row_range.end >= capture_row_range.start.saturating_sub(1) {
+                                    last_row_range.end = capture_row_range.end;
+                                } else {
+                                    annotation_row_ranges.push(capture_row_range);
+                                }
+                            } else {
+                                annotation_row_ranges.push(capture_row_range);
+                            }
+                        }
+                        _ => {}
                     }
-                } else {
-                    annotation_row_ranges.push(capture_row_range);
                 }
-            } _ => {}}}}
+            }
             matches.advance();
         }
 
@@ -4488,36 +4518,38 @@ impl<'a> Iterator for BufferChunks<'a> {
         }
         self.diagnostic_endpoints = diagnostic_endpoints;
 
-        match self.chunks.peek() { Some(chunk) => {
-            let chunk_start = self.range.start;
-            let mut chunk_end = (self.chunks.offset() + chunk.len())
-                .min(next_capture_start)
-                .min(next_diagnostic_endpoint);
-            let mut highlight_id = None;
-            if let Some(highlights) = self.highlights.as_ref() {
-                if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
-                    chunk_end = chunk_end.min(*parent_capture_end);
-                    highlight_id = Some(*parent_highlight_id);
+        match self.chunks.peek() {
+            Some(chunk) => {
+                let chunk_start = self.range.start;
+                let mut chunk_end = (self.chunks.offset() + chunk.len())
+                    .min(next_capture_start)
+                    .min(next_diagnostic_endpoint);
+                let mut highlight_id = None;
+                if let Some(highlights) = self.highlights.as_ref() {
+                    if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last()
+                    {
+                        chunk_end = chunk_end.min(*parent_capture_end);
+                        highlight_id = Some(*parent_highlight_id);
+                    }
                 }
-            }
 
-            let slice =
-                &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
-            self.range.start = chunk_end;
-            if self.range.start == self.chunks.offset() + chunk.len() {
-                self.chunks.next().unwrap();
-            }
+                let slice =
+                    &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
+                self.range.start = chunk_end;
+                if self.range.start == self.chunks.offset() + chunk.len() {
+                    self.chunks.next().unwrap();
+                }
 
-            Some(Chunk {
-                text: slice,
-                syntax_highlight_id: highlight_id,
-                diagnostic_severity: self.current_diagnostic_severity(),
-                is_unnecessary: self.current_code_is_unnecessary(),
-                ..Default::default()
-            })
-        } _ => {
-            None
-        }}
+                Some(Chunk {
+                    text: slice,
+                    syntax_highlight_id: highlight_id,
+                    diagnostic_severity: self.current_diagnostic_severity(),
+                    is_unnecessary: self.current_code_is_unnecessary(),
+                    ..Default::default()
+                })
+            }
+            _ => None,
+        }
     }
 }
 
@@ -4689,22 +4721,25 @@ pub(crate) fn contiguous_ranges(
     let mut values = values;
     let mut current_range: Option<Range<u32>> = None;
     std::iter::from_fn(move || loop {
-        match values.next() { Some(value) => {
-            if let Some(range) = &mut current_range {
-                if value == range.end && range.len() < max_len {
-                    range.end += 1;
-                    continue;
+        match values.next() {
+            Some(value) => {
+                if let Some(range) = &mut current_range {
+                    if value == range.end && range.len() < max_len {
+                        range.end += 1;
+                        continue;
+                    }
+                }
+
+                let prev_range = current_range.clone();
+                current_range = Some(value..(value + 1));
+                if prev_range.is_some() {
+                    return prev_range;
                 }
             }
-
-            let prev_range = current_range.clone();
-            current_range = Some(value..(value + 1));
-            if prev_range.is_some() {
-                return prev_range;
+            _ => {
+                return current_range.take();
             }
-        } _ => {
-            return current_range.take();
-        }}
+        }
     })
 }
 

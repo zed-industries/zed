@@ -178,19 +178,20 @@ impl SyntaxTreeView {
             Some(layer) => layer,
             None => {
                 let snapshot = buffer.read(cx).snapshot();
-                let layer = match prev_layer { Some(prev_layer) => {
-                    let prev_range = prev_layer.node().byte_range();
-                    snapshot
-                        .syntax_layers()
-                        .filter(|layer| layer.language == &prev_layer.language)
-                        .min_by_key(|layer| {
-                            let range = layer.node().byte_range();
-                            ((range.start as i64) - (prev_range.start as i64)).abs()
-                                + ((range.end as i64) - (prev_range.end as i64)).abs()
-                        })?
-                } _ => {
-                    snapshot.syntax_layers().next()?
-                }};
+                let layer = match prev_layer {
+                    Some(prev_layer) => {
+                        let prev_range = prev_layer.node().byte_range();
+                        snapshot
+                            .syntax_layers()
+                            .filter(|layer| layer.language == &prev_layer.language)
+                            .min_by_key(|layer| {
+                                let range = layer.node().byte_range();
+                                ((range.start as i64) - (prev_range.start as i64)).abs()
+                                    + ((range.end as i64) - (prev_range.end as i64)).abs()
+                            })?
+                    }
+                    _ => snapshot.syntax_layers().next()?,
+                };
                 buffer_state.active_layer.insert(layer.to_owned())
             }
         };

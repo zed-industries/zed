@@ -604,13 +604,13 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let (main_label, aux_label) = match ssh_server.connection.nickname.clone()
-        { Some(nickname) => {
-            let aux_label = SharedString::from(format!("({})", ssh_server.connection.host));
-            (nickname.into(), Some(aux_label))
-        } _ => {
-            (ssh_server.connection.host.clone(), None)
-        }};
+        let (main_label, aux_label) = match ssh_server.connection.nickname.clone() {
+            Some(nickname) => {
+                let aux_label = SharedString::from(format!("({})", ssh_server.connection.host));
+                (nickname.into(), Some(aux_label))
+            }
+            _ => (ssh_server.connection.host.clone(), None),
+        };
         v_flex()
             .w_full()
             .child(ListSeparator)
@@ -916,19 +916,19 @@ impl RemoteServerProjects {
                     .bg(theme.colors().editor_background)
                     .rounded_b_sm()
                     .w_full()
-                    .map(|this| {
-                        match ssh_prompt { Some(ssh_prompt) => {
-                            this.child(h_flex().w_full().child(ssh_prompt))
-                        } _ => if let Some(address_error) = &state.address_error {
-                            this.child(
-                                h_flex().p_2().w_full().gap_2().child(
-                                    Label::new(address_error.clone())
-                                        .size(LabelSize::Small)
-                                        .color(Color::Error),
-                                ),
-                            )
-                        } else {
-                            this.child(
+                    .map(|this| match ssh_prompt {
+                        Some(ssh_prompt) => this.child(h_flex().w_full().child(ssh_prompt)),
+                        _ => {
+                            if let Some(address_error) = &state.address_error {
+                                this.child(
+                                    h_flex().p_2().w_full().gap_2().child(
+                                        Label::new(address_error.clone())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Error),
+                                    ),
+                                )
+                            } else {
+                                this.child(
                                 h_flex()
                                     .p_2()
                                     .w_full()
@@ -953,7 +953,8 @@ impl RemoteServerProjects {
                                             }),
                                     ),
                             )
-                        }}
+                            }
+                        }
                     }),
             )
     }

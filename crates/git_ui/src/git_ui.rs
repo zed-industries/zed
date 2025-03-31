@@ -319,18 +319,17 @@ mod remote_button {
         let label = label.into();
         let command = command.into();
 
-        match focus_handle { Some(handle) => {
-            Tooltip::with_meta_in(
+        match focus_handle {
+            Some(handle) => Tooltip::with_meta_in(
                 label.clone(),
                 Some(action),
                 command.clone(),
                 &handle,
                 window,
                 cx,
-            )
-        } _ => {
-            Tooltip::with_meta(label.clone(), Some(action), command.clone(), window, cx)
-        }}
+            ),
+            _ => Tooltip::with_meta(label.clone(), Some(action), command.clone(), window, cx),
+        }
     }
 
     fn render_git_action_menu(

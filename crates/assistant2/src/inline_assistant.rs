@@ -341,34 +341,37 @@ impl InlineAssistant {
                 selection.end.column = snapshot
                     .buffer_snapshot
                     .line_len(MultiBufferRow(selection.end.row));
-            } else { match snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
-            { Some(fold) => {
-                selection.start = fold.range().start;
-                selection.end = fold.range().end;
-                if MultiBufferRow(selection.end.row) < snapshot.buffer_snapshot.max_row() {
-                    let chars = snapshot
-                        .buffer_snapshot
-                        .chars_at(Point::new(selection.end.row + 1, 0));
-
-                    for c in chars {
-                        if c == '\n' {
-                            break;
-                        }
-                        if c.is_whitespace() {
-                            continue;
-                        }
-                        if snapshot
-                            .language_at(selection.end)
-                            .is_some_and(|language| language.config().brackets.is_closing_brace(c))
-                        {
-                            selection.end.row += 1;
-                            selection.end.column = snapshot
+            } else {
+                match snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row)) {
+                    Some(fold) => {
+                        selection.start = fold.range().start;
+                        selection.end = fold.range().end;
+                        if MultiBufferRow(selection.end.row) < snapshot.buffer_snapshot.max_row() {
+                            let chars = snapshot
                                 .buffer_snapshot
-                                .line_len(MultiBufferRow(selection.end.row));
+                                .chars_at(Point::new(selection.end.row + 1, 0));
+
+                            for c in chars {
+                                if c == '\n' {
+                                    break;
+                                }
+                                if c.is_whitespace() {
+                                    continue;
+                                }
+                                if snapshot.language_at(selection.end).is_some_and(|language| {
+                                    language.config().brackets.is_closing_brace(c)
+                                }) {
+                                    selection.end.row += 1;
+                                    selection.end.column = snapshot
+                                        .buffer_snapshot
+                                        .line_len(MultiBufferRow(selection.end.row));
+                                }
+                            }
                         }
                     }
+                    _ => {}
                 }
-            } _ => {}}}
+            }
 
             if let Some(prev_selection) = selections.last_mut() {
                 if selection.start <= prev_selection.end {
@@ -1128,25 +1131,28 @@ impl InlineAssistant {
 
             let mut scroll_target_top;
             let mut scroll_target_bottom;
-            match assist.decorations.as_ref() { Some(decorations) => {
-                scroll_target_top = editor
-                    .row_for_block(decorations.prompt_block_id, cx)
-                    .unwrap()
-                    .0 as f32;
-                scroll_target_bottom = editor
-                    .row_for_block(decorations.end_block_id, cx)
-                    .unwrap()
-                    .0 as f32;
-            } _ => {
-                let snapshot = editor.snapshot(window, cx);
-                let start_row = assist
-                    .range
-                    .start
-                    .to_display_point(&snapshot.display_snapshot)
-                    .row();
-                scroll_target_top = start_row.0 as f32;
-                scroll_target_bottom = scroll_target_top + 1.;
-            }}
+            match assist.decorations.as_ref() {
+                Some(decorations) => {
+                    scroll_target_top = editor
+                        .row_for_block(decorations.prompt_block_id, cx)
+                        .unwrap()
+                        .0 as f32;
+                    scroll_target_bottom = editor
+                        .row_for_block(decorations.end_block_id, cx)
+                        .unwrap()
+                        .0 as f32;
+                }
+                _ => {
+                    let snapshot = editor.snapshot(window, cx);
+                    let start_row = assist
+                        .range
+                        .start
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row();
+                    scroll_target_top = start_row.0 as f32;
+                    scroll_target_bottom = scroll_target_top + 1.;
+                }
+            }
             scroll_target_top -= editor.vertical_scroll_margin() as f32;
             scroll_target_bottom += editor.vertical_scroll_margin() as f32;
 
@@ -1190,11 +1196,12 @@ impl InlineAssistant {
     }
 
     pub fn start_assist(&mut self, assist_id: InlineAssistId, window: &mut Window, cx: &mut App) {
-        let assist = match self.assists.get_mut(&assist_id) { Some(assist) => {
-            assist
-        } _ => {
-            return;
-        }};
+        let assist = match self.assists.get_mut(&assist_id) {
+            Some(assist) => assist,
+            _ => {
+                return;
+            }
+        };
 
         let assist_group_id = assist.group_id;
         if self.assist_groups[&assist_group_id].linked {
@@ -1221,11 +1228,12 @@ impl InlineAssistant {
     }
 
     pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut App) {
-        let assist = match self.assists.get_mut(&assist_id) { Some(assist) => {
-            assist
-        } _ => {
-            return;
-        }};
+        let assist = match self.assists.get_mut(&assist_id) {
+            Some(assist) => assist,
+            _ => {
+                return;
+            }
+        };
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
     }
@@ -1448,21 +1456,28 @@ impl InlineAssistant {
                 }
             });
 
-        match context_editor { Some(context_editor) => {
-            Some(InlineAssistTarget::Editor(context_editor))
-        } _ => { match workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<Editor>(cx))
-        { Some(workspace_editor) => {
-            Some(InlineAssistTarget::Editor(workspace_editor))
-        } _ => { match workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<TerminalView>(cx))
-        { Some(terminal_view) => {
-            Some(InlineAssistTarget::Terminal(terminal_view))
-        } _ => {
-            None
-        }}}}}}
+        match context_editor {
+            Some(context_editor) => Some(InlineAssistTarget::Editor(context_editor)),
+            _ => {
+                match workspace
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                {
+                    Some(workspace_editor) => Some(InlineAssistTarget::Editor(workspace_editor)),
+                    _ => {
+                        match workspace
+                            .active_item(cx)
+                            .and_then(|item| item.act_as::<TerminalView>(cx))
+                        {
+                            Some(terminal_view) => {
+                                Some(InlineAssistTarget::Terminal(terminal_view))
+                            }
+                            _ => None,
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1653,11 +1668,12 @@ impl InlineAssist {
                     InlineAssistant::update_global(cx, |this, cx| match event {
                         CodegenEvent::Undone => this.finish_assist(assist_id, false, window, cx),
                         CodegenEvent::Finished => {
-                            let assist = match this.assists.get(&assist_id) { Some(assist) => {
-                                assist
-                            } _ => {
-                                return;
-                            }};
+                            let assist = match this.assists.get(&assist_id) {
+                                Some(assist) => assist,
+                                _ => {
+                                    return;
+                                }
+                            };
 
                             if let CodegenStatus::Error(error) = codegen.read(cx).status(cx) {
                                 if assist.decorations.is_none() {

@@ -393,57 +393,61 @@ impl Rope {
     pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {
         let mut cursor = self.chunks.cursor::<usize>(&());
         cursor.seek(&offset, Bias::Left, &());
-        match cursor.item() { Some(chunk) => {
-            let mut ix = offset - cursor.start();
-            while !chunk.text.is_char_boundary(ix) {
-                match bias {
-                    Bias::Left => {
-                        ix -= 1;
-                        offset -= 1;
-                    }
-                    Bias::Right => {
-                        ix += 1;
-                        offset += 1;
+        match cursor.item() {
+            Some(chunk) => {
+                let mut ix = offset - cursor.start();
+                while !chunk.text.is_char_boundary(ix) {
+                    match bias {
+                        Bias::Left => {
+                            ix -= 1;
+                            offset -= 1;
+                        }
+                        Bias::Right => {
+                            ix += 1;
+                            offset += 1;
+                        }
                     }
                 }
+                offset
             }
-            offset
-        } _ => {
-            self.summary().len
-        }}
+            _ => self.summary().len,
+        }
     }
 
     pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
         let mut cursor = self.chunks.cursor::<OffsetUtf16>(&());
         cursor.seek(&offset, Bias::Right, &());
-        match cursor.item() { Some(chunk) => {
-            let overshoot = offset - cursor.start();
-            *cursor.start() + chunk.as_slice().clip_offset_utf16(overshoot, bias)
-        } _ => {
-            self.summary().len_utf16
-        }}
+        match cursor.item() {
+            Some(chunk) => {
+                let overshoot = offset - cursor.start();
+                *cursor.start() + chunk.as_slice().clip_offset_utf16(overshoot, bias)
+            }
+            _ => self.summary().len_utf16,
+        }
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
         let mut cursor = self.chunks.cursor::<Point>(&());
         cursor.seek(&point, Bias::Right, &());
-        match cursor.item() { Some(chunk) => {
-            let overshoot = point - cursor.start();
-            *cursor.start() + chunk.as_slice().clip_point(overshoot, bias)
-        } _ => {
-            self.summary().lines
-        }}
+        match cursor.item() {
+            Some(chunk) => {
+                let overshoot = point - cursor.start();
+                *cursor.start() + chunk.as_slice().clip_point(overshoot, bias)
+            }
+            _ => self.summary().lines,
+        }
     }
 
     pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
         let mut cursor = self.chunks.cursor::<PointUtf16>(&());
         cursor.seek(&point.0, Bias::Right, &());
-        match cursor.item() { Some(chunk) => {
-            let overshoot = Unclipped(point.0 - cursor.start());
-            *cursor.start() + chunk.as_slice().clip_point_utf16(overshoot, bias)
-        } _ => {
-            self.summary().lines_utf16()
-        }}
+        match cursor.item() {
+            Some(chunk) => {
+                let overshoot = Unclipped(point.0 - cursor.start());
+                *cursor.start() + chunk.as_slice().clip_point_utf16(overshoot, bias)
+            }
+            _ => self.summary().lines_utf16(),
+        }
     }
 
     pub fn line_len(&self, row: u32) -> u32 {

@@ -58,19 +58,20 @@ impl TestServer {
         executor: BackgroundExecutor,
     ) -> Result<Arc<TestServer>> {
         let mut servers = SERVERS.lock();
-        match servers.entry(url.clone()) { BTreeEntry::Vacant(e) => {
-            let server = Arc::new(TestServer {
-                url,
-                api_key,
-                secret_key,
-                rooms: Default::default(),
-                executor,
-            });
-            e.insert(server.clone());
-            Ok(server)
-        } _ => {
-            Err(anyhow!("a server with url {:?} already exists", url))
-        }}
+        match servers.entry(url.clone()) {
+            BTreeEntry::Vacant(e) => {
+                let server = Arc::new(TestServer {
+                    url,
+                    api_key,
+                    secret_key,
+                    rooms: Default::default(),
+                    executor,
+                });
+                e.insert(server.clone());
+                Ok(server)
+            }
+            _ => Err(anyhow!("a server with url {:?} already exists", url)),
+        }
     }
 
     fn get(url: &str) -> Result<Arc<TestServer>> {
@@ -99,12 +100,13 @@ impl TestServer {
         self.simulate_random_delay().await;
 
         let mut server_rooms = self.rooms.lock();
-        match server_rooms.entry(room.clone()) { Entry::Vacant(e) => {
-            e.insert(Default::default());
-            Ok(())
-        } _ => {
-            Err(anyhow!("room {:?} already exists", room))
-        }}
+        match server_rooms.entry(room.clone()) {
+            Entry::Vacant(e) => {
+                e.insert(Default::default());
+                Ok(())
+            }
+            _ => Err(anyhow!("room {:?} already exists", room)),
+        }
     }
 
     async fn delete_room(&self, room: String) -> Result<()> {
@@ -126,62 +128,63 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         let room = (*server_rooms).entry(room_name.to_string()).or_default();
 
-        match room.client_rooms.entry(identity.clone()) { Entry::Vacant(e) => {
-            for server_track in &room.video_tracks {
-                let track = RemoteTrack::Video(RemoteVideoTrack {
-                    server_track: server_track.clone(),
-                    _room: client_room.downgrade(),
-                });
-                client_room
-                    .0
-                    .lock()
-                    .updates_tx
-                    .blocking_send(RoomEvent::TrackSubscribed {
-                        track: track.clone(),
-                        publication: RemoteTrackPublication {
-                            sid: server_track.sid.clone(),
-                            room: client_room.downgrade(),
-                            track,
-                        },
-                        participant: RemoteParticipant {
-                            room: client_room.downgrade(),
-                            identity: server_track.publisher_id.clone(),
-                        },
-                    })
-                    .unwrap();
+        match room.client_rooms.entry(identity.clone()) {
+            Entry::Vacant(e) => {
+                for server_track in &room.video_tracks {
+                    let track = RemoteTrack::Video(RemoteVideoTrack {
+                        server_track: server_track.clone(),
+                        _room: client_room.downgrade(),
+                    });
+                    client_room
+                        .0
+                        .lock()
+                        .updates_tx
+                        .blocking_send(RoomEvent::TrackSubscribed {
+                            track: track.clone(),
+                            publication: RemoteTrackPublication {
+                                sid: server_track.sid.clone(),
+                                room: client_room.downgrade(),
+                                track,
+                            },
+                            participant: RemoteParticipant {
+                                room: client_room.downgrade(),
+                                identity: server_track.publisher_id.clone(),
+                            },
+                        })
+                        .unwrap();
+                }
+                for server_track in &room.audio_tracks {
+                    let track = RemoteTrack::Audio(RemoteAudioTrack {
+                        server_track: server_track.clone(),
+                        room: client_room.downgrade(),
+                    });
+                    client_room
+                        .0
+                        .lock()
+                        .updates_tx
+                        .blocking_send(RoomEvent::TrackSubscribed {
+                            track: track.clone(),
+                            publication: RemoteTrackPublication {
+                                sid: server_track.sid.clone(),
+                                room: client_room.downgrade(),
+                                track,
+                            },
+                            participant: RemoteParticipant {
+                                room: client_room.downgrade(),
+                                identity: server_track.publisher_id.clone(),
+                            },
+                        })
+                        .unwrap();
+                }
+                e.insert(client_room);
+                Ok(identity)
             }
-            for server_track in &room.audio_tracks {
-                let track = RemoteTrack::Audio(RemoteAudioTrack {
-                    server_track: server_track.clone(),
-                    room: client_room.downgrade(),
-                });
-                client_room
-                    .0
-                    .lock()
-                    .updates_tx
-                    .blocking_send(RoomEvent::TrackSubscribed {
-                        track: track.clone(),
-                        publication: RemoteTrackPublication {
-                            sid: server_track.sid.clone(),
-                            room: client_room.downgrade(),
-                            track,
-                        },
-                        participant: RemoteParticipant {
-                            room: client_room.downgrade(),
-                            identity: server_track.publisher_id.clone(),
-                        },
-                    })
-                    .unwrap();
-            }
-            e.insert(client_room);
-            Ok(identity)
-        } _ => {
-            Err(anyhow!(
+            _ => Err(anyhow!(
                 "{:?} attempted to join room {:?} twice",
                 identity,
                 room_name
-            ))
-        }}
+            )),
+        }
     }
 
     async fn leave_room(&self, token: String) -> Result<()> {
@@ -212,29 +215,30 @@ impl TestServer {
         let local_identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap().to_string();
 
-        match self.rooms.lock().get(&room_name) { Some(server_room) => {
-            let room = server_room
-                .client_rooms
-                .get(&local_identity)
-                .unwrap()
-                .downgrade();
-            Ok(server_room
-                .client_rooms
-                .iter()
-                .filter(|(identity, _)| *identity != &local_identity)
-                .map(|(identity, _)| {
-                    (
-                        identity.clone(),
-                        RemoteParticipant {
-                            room: room.clone(),
-                            identity: identity.clone(),
-                        },
-                    )
-                })
-                .collect())
-        } _ => {
-            Ok(Default::default())
-        }}
+        match self.rooms.lock().get(&room_name) {
+            Some(server_room) => {
+                let room = server_room
+                    .client_rooms
+                    .get(&local_identity)
+                    .unwrap()
+                    .downgrade();
+                Ok(server_room
+                    .client_rooms
+                    .iter()
+                    .filter(|(identity, _)| *identity != &local_identity)
+                    .map(|(identity, _)| {
+                        (
+                            identity.clone(),
+                            RemoteParticipant {
+                                room: room.clone(),
+                                identity: identity.clone(),
+                            },
+                        )
+                    })
+                    .collect())
+            }
+            _ => Ok(Default::default()),
+        }
     }
 
     async fn remove_participant(

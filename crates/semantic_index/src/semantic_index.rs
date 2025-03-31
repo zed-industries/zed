@@ -112,36 +112,38 @@ impl SemanticDb {
             let full_path;
             let file_content;
             match last_loaded_file
-                    .as_ref()
-                    .filter(|(last_worktree, last_path, _, _)| {
-                        last_worktree == &result.worktree && last_path == &result.path
-                    })
-            { Some(last_loaded_file) => {
-                full_path = last_loaded_file.2.clone();
-                file_content = &last_loaded_file.3;
-            } _ => {
-                let output = result.worktree.read_with(cx, |worktree, _cx| {
-                    let entry_abs_path = worktree.abs_path().join(&result.path);
-                    let mut entry_full_path = PathBuf::from(worktree.root_name());
-                    entry_full_path.push(&result.path);
-                    let file_content = async {
-                        let entry_abs_path = entry_abs_path;
-                        fs.load(&entry_abs_path).await
+                .as_ref()
+                .filter(|(last_worktree, last_path, _, _)| {
+                    last_worktree == &result.worktree && last_path == &result.path
+                }) {
+                Some(last_loaded_file) => {
+                    full_path = last_loaded_file.2.clone();
+                    file_content = &last_loaded_file.3;
+                }
+                _ => {
+                    let output = result.worktree.read_with(cx, |worktree, _cx| {
+                        let entry_abs_path = worktree.abs_path().join(&result.path);
+                        let mut entry_full_path = PathBuf::from(worktree.root_name());
+                        entry_full_path.push(&result.path);
+                        let file_content = async {
+                            let entry_abs_path = entry_abs_path;
+                            fs.load(&entry_abs_path).await
+                        };
+                        (entry_full_path, file_content)
+                    })?;
+                    full_path = output.0;
+                    let Some(content) = output.1.await.log_err() else {
+                        continue;
                     };
-                    (entry_full_path, file_content)
-                })?;
-                full_path = output.0;
-                let Some(content) = output.1.await.log_err() else {
-                    continue;
-                };
-                last_loaded_file = Some((
-                    result.worktree.clone(),
-                    result.path.clone(),
-                    full_path.clone(),
-                    content,
-                ));
-                file_content = &last_loaded_file.as_ref().unwrap().3;
-            }};
+                    last_loaded_file = Some((
+                        result.worktree.clone(),
+                        result.path.clone(),
+                        full_path.clone(),
+                        content,
+                    ));
+                    file_content = &last_loaded_file.as_ref().unwrap().3;
+                }
+            };
 
             let query_index = max_scores_by_path[&(result.worktree.clone(), result.path.clone())].1;
 

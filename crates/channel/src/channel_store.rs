@@ -329,17 +329,16 @@ impl ChannelStore {
                     .request(proto::GetChannelMessagesById { message_ids }),
             )
         };
-        cx.spawn(async move |this, cx| {
-            match request { Some(request) => {
+        cx.spawn(async move |this, cx| match request {
+            Some(request) => {
                 let response = request.await?;
                 let this = this
                     .upgrade()
                     .ok_or_else(|| anyhow!("channel store dropped"))?;
                 let user_store = this.update(cx, |this, _| this.user_store.clone())?;
                 ChannelMessage::from_proto_vec(response.messages, &user_store, cx).await
-            } _ => {
-                Ok(Vec::new())
-            }}
+            }
+            _ => Ok(Vec::new()),
         })
     }
 
@@ -465,14 +464,15 @@ impl ChannelStore {
         let task = loop {
             match get_map(self).entry(channel_id) {
                 hash_map::Entry::Occupied(e) => match e.get() {
-                    OpenEntityHandle::Open(entity) => {
-                        match entity.upgrade() { Some(entity) => {
+                    OpenEntityHandle::Open(entity) => match entity.upgrade() {
+                        Some(entity) => {
                             break Task::ready(Ok(entity)).shared();
-                        } _ => {
+                        }
+                        _ => {
                             get_map(self).remove(&channel_id);
                             continue;
-                        }}
-                    }
+                        }
+                    },
                     OpenEntityHandle::Loading(task) => {
                         break task.clone();
                     }
@@ -824,7 +824,10 @@ impl ChannelStore {
         })
     }
 
-    pub fn remove_channel(&self, channel_id: ChannelId) -> impl Future<Output = Result<()>> + use<> {
+    pub fn remove_channel(
+        &self,
+        channel_id: ChannelId,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let client = self.client.clone();
         async move {
             client

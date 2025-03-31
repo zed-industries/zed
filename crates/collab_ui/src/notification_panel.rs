@@ -187,11 +187,10 @@ impl NotificationPanel {
                 .await
                 .log_err()
                 .flatten()
-            { Some(panel) => {
-                Some(serde_json::from_str::<SerializedNotificationPanel>(&panel)?)
-            } _ => {
-                None
-            }};
+            {
+                Some(panel) => Some(serde_json::from_str::<SerializedNotificationPanel>(&panel)?),
+                _ => None,
+            };
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let panel = Self::new(workspace, window, cx);
@@ -494,15 +493,16 @@ impl NotificationPanel {
 
         if let Notification::ChannelMessageMention { channel_id, .. } = &notification {
             if let Some(workspace) = self.workspace.upgrade() {
-                return match workspace.read(cx).panel::<ChatPanel>(cx) { Some(panel) => {
-                    let panel = panel.read(cx);
-                    panel.is_scrolled_to_bottom()
-                        && panel
-                            .active_chat()
-                            .map_or(false, |chat| chat.read(cx).channel_id.0 == *channel_id)
-                } _ => {
-                    false
-                }};
+                return match workspace.read(cx).panel::<ChatPanel>(cx) {
+                    Some(panel) => {
+                        let panel = panel.read(cx);
+                        panel.is_scrolled_to_bottom()
+                            && panel
+                                .active_chat()
+                                .map_or(false, |chat| chat.read(cx).channel_id.0 == *channel_id)
+                    }
+                    _ => false,
+                };
             }
         }
 

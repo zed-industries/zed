@@ -421,20 +421,17 @@ impl PickerDelegate for ChannelModalDelegate {
                                 el.child(IconButton::new("ellipsis", IconName::Ellipsis))
                             })
                             .when(is_me, |el| el.child(Label::new("You").color(Color::Muted)))
-                            .children(
-                                match (&self.context_menu, selected) { (Some((menu, _)), true) => {
-                                    Some(
-                                        deferred(
-                                            anchored()
-                                                .anchor(gpui::Corner::TopRight)
-                                                .child(menu.clone()),
-                                        )
-                                        .with_priority(1),
+                            .children(match (&self.context_menu, selected) {
+                                (Some((menu, _)), true) => Some(
+                                    deferred(
+                                        anchored()
+                                            .anchor(gpui::Corner::TopRight)
+                                            .child(menu.clone()),
                                     )
-                                } _ => {
-                                    None
-                                }},
-                            ),
+                                    .with_priority(1),
+                                ),
+                                _ => None,
+                            }),
                         Mode::InviteMembers => match request_status {
                             Some(proto::channel_member::Kind::Invitee) => {
                                 slot.children(Some(Label::new("Invited")))

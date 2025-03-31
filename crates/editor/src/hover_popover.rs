@@ -289,92 +289,95 @@ fn show_hover(
                 // Find the entry with the most specific range
                 .min_by_key(|entry| entry.range.len());
 
-            let diagnostic_popover = match local_diagnostic { Some(local_diagnostic) => {
-                let text = match local_diagnostic.diagnostic.source {
-                    Some(ref source) => {
-                        format!("{source}: {}", local_diagnostic.diagnostic.message)
-                    }
-                    None => local_diagnostic.diagnostic.message.clone(),
-                };
-                let local_diagnostic = DiagnosticEntry {
-                    diagnostic: local_diagnostic.diagnostic,
-                    range: snapshot
-                        .buffer_snapshot
-                        .anchor_before(local_diagnostic.range.start)
-                        ..snapshot
+            let diagnostic_popover = match local_diagnostic {
+                Some(local_diagnostic) => {
+                    let text = match local_diagnostic.diagnostic.source {
+                        Some(ref source) => {
+                            format!("{source}: {}", local_diagnostic.diagnostic.message)
+                        }
+                        None => local_diagnostic.diagnostic.message.clone(),
+                    };
+                    let local_diagnostic = DiagnosticEntry {
+                        diagnostic: local_diagnostic.diagnostic,
+                        range: snapshot
                             .buffer_snapshot
-                            .anchor_after(local_diagnostic.range.end),
-                };
+                            .anchor_before(local_diagnostic.range.start)
+                            ..snapshot
+                                .buffer_snapshot
+                                .anchor_after(local_diagnostic.range.end),
+                    };
 
-                let mut border_color: Option<Hsla> = None;
-                let mut background_color: Option<Hsla> = None;
+                    let mut border_color: Option<Hsla> = None;
+                    let mut background_color: Option<Hsla> = None;
 
-                let parsed_content = cx
-                    .new_window_entity(|window, cx| {
-                        let status_colors = cx.theme().status();
+                    let parsed_content = cx
+                        .new_window_entity(|window, cx| {
+                            let status_colors = cx.theme().status();
 
-                        match local_diagnostic.diagnostic.severity {
-                            DiagnosticSeverity::ERROR => {
-                                background_color = Some(status_colors.error_background);
-                                border_color = Some(status_colors.error_border);
-                            }
-                            DiagnosticSeverity::WARNING => {
-                                background_color = Some(status_colors.warning_background);
-                                border_color = Some(status_colors.warning_border);
-                            }
-                            DiagnosticSeverity::INFORMATION => {
-                                background_color = Some(status_colors.info_background);
-                                border_color = Some(status_colors.info_border);
-                            }
-                            DiagnosticSeverity::HINT => {
-                                background_color = Some(status_colors.hint_background);
-                                border_color = Some(status_colors.hint_border);
-                            }
-                            _ => {
-                                background_color = Some(status_colors.ignored_background);
-                                border_color = Some(status_colors.ignored_border);
-                            }
-                        };
-                        let settings = ThemeSettings::get_global(cx);
-                        let mut base_text_style = window.text_style();
-                        base_text_style.refine(&TextStyleRefinement {
-                            font_family: Some(settings.ui_font.family.clone()),
-                            font_fallbacks: settings.ui_font.fallbacks.clone(),
-                            font_size: Some(settings.ui_font_size(cx).into()),
-                            color: Some(cx.theme().colors().editor_foreground),
-                            background_color: Some(gpui::transparent_black()),
+                            match local_diagnostic.diagnostic.severity {
+                                DiagnosticSeverity::ERROR => {
+                                    background_color = Some(status_colors.error_background);
+                                    border_color = Some(status_colors.error_border);
+                                }
+                                DiagnosticSeverity::WARNING => {
+                                    background_color = Some(status_colors.warning_background);
+                                    border_color = Some(status_colors.warning_border);
+                                }
+                                DiagnosticSeverity::INFORMATION => {
+                                    background_color = Some(status_colors.info_background);
+                                    border_color = Some(status_colors.info_border);
+                                }
+                                DiagnosticSeverity::HINT => {
+                                    background_color = Some(status_colors.hint_background);
+                                    border_color = Some(status_colors.hint_border);
+                                }
+                                _ => {
+                                    background_color = Some(status_colors.ignored_background);
+                                    border_color = Some(status_colors.ignored_border);
+                                }
+                            };
+                            let settings = ThemeSettings::get_global(cx);
+                            let mut base_text_style = window.text_style();
+                            base_text_style.refine(&TextStyleRefinement {
+                                font_family: Some(settings.ui_font.family.clone()),
+                                font_fallbacks: settings.ui_font.fallbacks.clone(),
+                                font_size: Some(settings.ui_font_size(cx).into()),
+                                color: Some(cx.theme().colors().editor_foreground),
+                                background_color: Some(gpui::transparent_black()),
 
-                            ..Default::default()
-                        });
-                        let markdown_style = MarkdownStyle {
-                            base_text_style,
-                            selection_background_color: { cx.theme().players().local().selection },
-                            link: TextStyleRefinement {
-                                underline: Some(gpui::UnderlineStyle {
-                                    thickness: px(1.),
-                                    color: Some(cx.theme().colors().editor_foreground),
-                                    wavy: false,
-                                }),
                                 ..Default::default()
-                            },
-                            ..Default::default()
-                        };
-                        Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
-                            .open_url(open_markdown_url)
-                    })
-                    .ok();
+                            });
+                            let markdown_style = MarkdownStyle {
+                                base_text_style,
+                                selection_background_color: {
+                                    cx.theme().players().local().selection
+                                },
+                                link: TextStyleRefinement {
+                                    underline: Some(gpui::UnderlineStyle {
+                                        thickness: px(1.),
+                                        color: Some(cx.theme().colors().editor_foreground),
+                                        wavy: false,
+                                    }),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            };
+                            Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
+                                .open_url(open_markdown_url)
+                        })
+                        .ok();
 
-                Some(DiagnosticPopover {
-                    local_diagnostic,
-                    parsed_content,
-                    border_color,
-                    background_color,
-                    keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
-                    anchor: Some(anchor),
-                })
-            } _ => {
-                None
-            }};
+                    Some(DiagnosticPopover {
+                        local_diagnostic,
+                        parsed_content,
+                        border_color,
+                        background_color,
+                        keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                        anchor: Some(anchor),
+                    })
+                }
+                _ => None,
+            };
 
             this.update(cx, |this, _| {
                 this.hover_state.diagnostic_popover = diagnostic_popover;
@@ -385,31 +388,36 @@ fn show_hover(
                 .chars_at(anchor)
                 .next()
                 .filter(|&c| is_invisible(c))
-            { Some(invisible) => {
-                let after = snapshot.buffer_snapshot.anchor_after(
-                    anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
-                );
-                Some((invisible, anchor..after))
-            } _ => { match snapshot
-                .buffer_snapshot
-                .reversed_chars_at(anchor)
-                .next()
-                .filter(|&c| is_invisible(c))
-            { Some(invisible) => {
-                let before = snapshot.buffer_snapshot.anchor_before(
-                    anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
-                );
+            {
+                Some(invisible) => {
+                    let after = snapshot.buffer_snapshot.anchor_after(
+                        anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
+                    );
+                    Some((invisible, anchor..after))
+                }
+                _ => {
+                    match snapshot
+                        .buffer_snapshot
+                        .reversed_chars_at(anchor)
+                        .next()
+                        .filter(|&c| is_invisible(c))
+                    {
+                        Some(invisible) => {
+                            let before = snapshot.buffer_snapshot.anchor_before(
+                                anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
+                            );
 
-                Some((invisible, before..anchor))
-            } _ => {
-                None
-            }}}};
+                            Some((invisible, before..anchor))
+                        }
+                        _ => None,
+                    }
+                }
+            };
 
-            let hovers_response = match hover_request { Some(hover_request) => {
-                hover_request.await
-            } _ => {
-                Vec::new()
-            }};
+            let hovers_response = match hover_request {
+                Some(hover_request) => hover_request.await,
+                _ => Vec::new(),
+            };
             let snapshot = this.update_in(cx, |this, window, cx| this.snapshot(window, cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(
@@ -543,12 +551,13 @@ async fn parse_blocks(
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<Entity<Markdown>> {
-    let fallback_language_name = match language { Some(ref l) => {
-        let l = Arc::clone(l);
-        Some(l.lsp_id().clone())
-    } _ => {
-        None
-    }};
+    let fallback_language_name = match language {
+        Some(ref l) => {
+            let l = Arc::clone(l);
+            Some(l.lsp_id().clone())
+        }
+        _ => None,
+    };
 
     let combined_text = blocks
         .iter()

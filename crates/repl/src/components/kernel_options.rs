@@ -85,14 +85,14 @@ impl PickerDelegate for KernelPickerDelegate {
     }
 
     fn selected_index(&self) -> usize {
-        match self.selected_kernelspec.as_ref() { Some(kernelspec) => {
-            self.filtered_kernels
+        match self.selected_kernelspec.as_ref() {
+            Some(kernelspec) => self
+                .filtered_kernels
                 .iter()
                 .position(|k| k == kernelspec)
-                .unwrap_or(0)
-        } _ => {
-            0
-        }}
+                .unwrap_or(0),
+            _ => 0,
+        }
     }
 
     fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {

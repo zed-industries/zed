@@ -430,13 +430,18 @@ impl VimCommand {
 
         let action = if has_bang && self.bang_action.is_some() {
             self.bang_action.as_ref().unwrap().boxed_clone()
-        } else { match self.action.as_ref() { Some(action) => {
-            action.boxed_clone()
-        } _ => if let Some(action_name) = self.action_name {
-            cx.build_action(action_name, None).log_err()?
         } else {
-            return None;
-        }}};
+            match self.action.as_ref() {
+                Some(action) => action.boxed_clone(),
+                _ => {
+                    if let Some(action_name) = self.action_name {
+                        cx.build_action(action_name, None).log_err()?
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        };
 
         if let Some(range) = range {
             self.range.as_ref().and_then(|f| f(action, range))
@@ -585,14 +590,13 @@ impl Position {
                         Point::new(row.saturating_sub(1), 0),
                         cx,
                     )
-                }) { Some(anchor) => {
-                    anchor
+                }) {
+                    Some(anchor) => anchor
                         .to_point(&snapshot.buffer_snapshot)
                         .row
-                        .saturating_add_signed(*offset)
-                } _ => {
-                    row.saturating_add_signed(offset.saturating_sub(1))
-                }}
+                        .saturating_add_signed(*offset),
+                    _ => row.saturating_add_signed(offset.saturating_sub(1)),
+                }
             }
             Position::Mark { name, offset } => {
                 let Some(Mark::Local(anchors)) =
@@ -996,11 +1000,10 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
             start: Position::Line { row: 0, offset: 0 },
             end: Some(Position::LastLine { offset: 0 }),
         });
-        match OnMatchingLines::parse(query, invert, range, cx) { Some(action) => {
-            Some(action.boxed_clone())
-        } _ => {
-            None
-        }}
+        match OnMatchingLines::parse(query, invert, range, cx) {
+            Some(action) => Some(action.boxed_clone()),
+            _ => None,
+        }
     } else if query.contains('!') {
         ShellExec::parse(query, range.clone())
     } else {

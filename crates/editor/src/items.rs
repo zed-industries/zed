@@ -557,38 +557,39 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        match data.downcast::<NavigationData>() { Ok(data) => {
-            let newest_selection = self.selections.newest::<Point>(cx);
-            let buffer = self.buffer.read(cx).read(cx);
-            let offset = if buffer.can_resolve(&data.cursor_anchor) {
-                data.cursor_anchor.to_point(&buffer)
-            } else {
-                buffer.clip_point(data.cursor_position, Bias::Left)
-            };
+        match data.downcast::<NavigationData>() {
+            Ok(data) => {
+                let newest_selection = self.selections.newest::<Point>(cx);
+                let buffer = self.buffer.read(cx).read(cx);
+                let offset = if buffer.can_resolve(&data.cursor_anchor) {
+                    data.cursor_anchor.to_point(&buffer)
+                } else {
+                    buffer.clip_point(data.cursor_position, Bias::Left)
+                };
 
-            let mut scroll_anchor = data.scroll_anchor;
-            if !buffer.can_resolve(&scroll_anchor.anchor) {
-                scroll_anchor.anchor = buffer.anchor_before(
-                    buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
-                );
+                let mut scroll_anchor = data.scroll_anchor;
+                if !buffer.can_resolve(&scroll_anchor.anchor) {
+                    scroll_anchor.anchor = buffer.anchor_before(
+                        buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
+                    );
+                }
+
+                drop(buffer);
+
+                if newest_selection.head() == offset {
+                    false
+                } else {
+                    let nav_history = self.nav_history.take();
+                    self.set_scroll_anchor(scroll_anchor, window, cx);
+                    self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        s.select_ranges([offset..offset])
+                    });
+                    self.nav_history = nav_history;
+                    true
+                }
             }
-
-            drop(buffer);
-
-            if newest_selection.head() == offset {
-                false
-            } else {
-                let nav_history = self.nav_history.take();
-                self.set_scroll_anchor(scroll_anchor, window, cx);
-                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_ranges([offset..offset])
-                });
-                self.nav_history = nav_history;
-                true
-            }
-        } _ => {
-            false
-        }}
+            _ => false,
+        }
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
@@ -760,11 +761,10 @@ impl Item for Editor {
 
     fn can_save(&self, cx: &App) -> bool {
         let buffer = &self.buffer().read(cx);
-        match buffer.as_singleton() { Some(buffer) => {
-            buffer.read(cx).project_path(cx).is_some()
-        } _ => {
-            true
-        }}
+        match buffer.as_singleton() {
+            Some(buffer) => buffer.read(cx).project_path(cx).is_some(),
+            _ => true,
+        }
     }
 
     fn save(

@@ -1192,13 +1192,12 @@ impl Window {
             entity_id,
             Box::new(move |cx| {
                 window_handle
-                    .update(cx, |_, window, cx| {
-                        match observed.upgrade() { Some(handle) => {
+                    .update(cx, |_, window, cx| match observed.upgrade() {
+                        Some(handle) => {
                             on_notify(handle, window, cx);
                             true
-                        } _ => {
-                            false
-                        }}
+                        }
+                        _ => false,
                     })
                     .unwrap_or(false)
             }),
@@ -1228,13 +1227,14 @@ impl Window {
                 Box::new(move |event, cx| {
                     window_handle
                         .update(cx, |_, window, cx| {
-                            match Entity::<Emitter>::upgrade_from(&entity) { Some(handle) => {
-                                let event = event.downcast_ref().expect("invalid event type");
-                                on_event(handle, event, window, cx);
-                                true
-                            } _ => {
-                                false
-                            }}
+                            match Entity::<Emitter>::upgrade_from(&entity) {
+                                Some(handle) => {
+                                    let event = event.downcast_ref().expect("invalid event type");
+                                    on_event(handle, event, window, cx);
+                                    true
+                                }
+                                _ => false,
+                            }
                         })
                         .unwrap_or(false)
                 }),
@@ -1465,14 +1465,15 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        match rem_size { Some(rem_size) => {
-            self.rem_size_override_stack.push(rem_size.into());
-            let result = f(self);
-            self.rem_size_override_stack.pop();
-            result
-        } _ => {
-            f(self)
-        }}
+        match rem_size {
+            Some(rem_size) => {
+                self.rem_size_override_stack.push(rem_size.into());
+                let result = f(self);
+                self.rem_size_override_stack.pop();
+                result
+            }
+            _ => f(self),
+        }
     }
 
     /// The line height associated with the current text style.
@@ -1643,20 +1644,26 @@ impl Window {
         let mut prompt_element = None;
         let mut active_drag_element = None;
         let mut tooltip_element = None;
-        match self.prompt.take() { Some(prompt) => {
-            let mut element = prompt.view.any_view().into_any();
-            element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
-            prompt_element = Some(element);
-            self.prompt = Some(prompt);
-        } _ => { match cx.active_drag.take() { Some(active_drag) => {
-            let mut element = active_drag.view.clone().into_any();
-            let offset = self.mouse_position() - active_drag.cursor_offset;
-            element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
-            active_drag_element = Some(element);
-            cx.active_drag = Some(active_drag);
-        } _ => {
-            tooltip_element = self.prepaint_tooltip(cx);
-        }}}}
+        match self.prompt.take() {
+            Some(prompt) => {
+                let mut element = prompt.view.any_view().into_any();
+                element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
+                prompt_element = Some(element);
+                self.prompt = Some(prompt);
+            }
+            _ => match cx.active_drag.take() {
+                Some(active_drag) => {
+                    let mut element = active_drag.view.clone().into_any();
+                    let offset = self.mouse_position() - active_drag.cursor_offset;
+                    element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
+                    active_drag_element = Some(element);
+                    cx.active_drag = Some(active_drag);
+                }
+                _ => {
+                    tooltip_element = self.prepaint_tooltip(cx);
+                }
+            },
+        }
 
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
@@ -2158,61 +2165,64 @@ impl Window {
             .element_states
             .remove(&key)
             .or_else(|| self.rendered_frame.element_states.remove(&key))
-        { Some(any) => {
-            let ElementStateBox {
-                inner,
-                #[cfg(debug_assertions)]
-                type_name,
-            } = any;
-            // Using the extra inner option to avoid needing to reallocate a new box.
-            let mut state_box = inner
-                .downcast::<Option<S>>()
-                .map_err(|_| {
-                    #[cfg(debug_assertions)]
-                    {
-                        anyhow::anyhow!(
-                            "invalid element state type for id, requested {:?}, actual: {:?}",
-                            std::any::type_name::<S>(),
-                            type_name
-                        )
-                    }
-
-                    #[cfg(not(debug_assertions))]
-                    {
-                        anyhow::anyhow!(
-                            "invalid element state type for id, requested {:?}",
-                            std::any::type_name::<S>(),
-                        )
-                    }
-                })
-                .unwrap();
-
-            let state = state_box.take().expect(
-                "reentrant call to with_element_state for the same state type and element id",
-            );
-            let (result, state) = f(Some(state), self);
-            state_box.replace(state);
-            self.next_frame.element_states.insert(
-                key,
-                ElementStateBox {
-                    inner: state_box,
+        {
+            Some(any) => {
+                let ElementStateBox {
+                    inner,
                     #[cfg(debug_assertions)]
                     type_name,
-                },
-            );
-            result
-        } _ => {
-            let (result, state) = f(None, self);
-            self.next_frame.element_states.insert(
-                key,
-                ElementStateBox {
-                    inner: Box::new(Some(state)),
-                    #[cfg(debug_assertions)]
-                    type_name: std::any::type_name::<S>(),
-                },
-            );
-            result
-        }}
+                } = any;
+                // Using the extra inner option to avoid needing to reallocate a new box.
+                let mut state_box = inner
+                    .downcast::<Option<S>>()
+                    .map_err(|_| {
+                        #[cfg(debug_assertions)]
+                        {
+                            anyhow::anyhow!(
+                                "invalid element state type for id, requested {:?}, actual: {:?}",
+                                std::any::type_name::<S>(),
+                                type_name
+                            )
+                        }
+
+                        #[cfg(not(debug_assertions))]
+                        {
+                            anyhow::anyhow!(
+                                "invalid element state type for id, requested {:?}",
+                                std::any::type_name::<S>(),
+                            )
+                        }
+                    })
+                    .unwrap();
+
+                let state = state_box.take().expect(
+                    "reentrant call to with_element_state for the same state type and element id",
+                );
+                let (result, state) = f(Some(state), self);
+                state_box.replace(state);
+                self.next_frame.element_states.insert(
+                    key,
+                    ElementStateBox {
+                        inner: state_box,
+                        #[cfg(debug_assertions)]
+                        type_name,
+                    },
+                );
+                result
+            }
+            _ => {
+                let (result, state) = f(None, self);
+                self.next_frame.element_states.insert(
+                    key,
+                    ElementStateBox {
+                        inner: Box::new(Some(state)),
+                        #[cfg(debug_assertions)]
+                        type_name: std::any::type_name::<S>(),
+                    },
+                );
+                result
+            }
+        }
     }
 
     /// A variant of `with_element_state` that allows the element's id to be optional. This is a convenience
@@ -3126,11 +3136,17 @@ impl Window {
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
-        match event.mouse_event() { Some(any_mouse_event) => {
-            self.dispatch_mouse_event(any_mouse_event, cx);
-        } _ => { match event.keyboard_event() { Some(any_key_event) => {
-            self.dispatch_key_event(any_key_event, cx);
-        } _ => {}}}}
+        match event.mouse_event() {
+            Some(any_mouse_event) => {
+                self.dispatch_mouse_event(any_mouse_event, cx);
+            }
+            _ => match event.keyboard_event() {
+                Some(any_key_event) => {
+                    self.dispatch_key_event(any_key_event, cx);
+                }
+                _ => {}
+            },
+        }
 
         DispatchEventResult {
             propagate: cx.propagate_event,

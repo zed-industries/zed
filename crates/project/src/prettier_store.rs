@@ -806,11 +806,10 @@ impl Default for DefaultPrettier {
 
 impl DefaultPrettier {
     pub fn instance(&self) -> Option<&PrettierInstance> {
-        match &self.prettier { PrettierInstallation::Installed(instance) => {
-            Some(instance)
-        } _ => {
-            None
-        }}
+        match &self.prettier {
+            PrettierInstallation::Installed(instance) => Some(instance),
+            _ => None,
+        }
     }
 
     pub fn prettier_task(

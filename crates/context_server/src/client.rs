@@ -62,11 +62,10 @@ pub struct Client {
 pub struct ContextServerId(pub Arc<str>);
 
 fn is_null_value<T: Serialize>(value: &T) -> bool {
-    match serde_json::to_value(value) { Ok(Value::Null) => {
-        true
-    } _ => {
-        false
-    }}
+    match serde_json::to_value(value) {
+        Ok(Value::Null) => true,
+        _ => false,
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -232,12 +231,19 @@ impl Client {
                         handler(Ok(message.to_string()));
                     }
                 }
-            } else { match serde_json::from_str::<AnyNotification>(&message) { Ok(notification) => {
-                let mut notification_handlers = notification_handlers.lock();
-                if let Some(handler) = notification_handlers.get_mut(notification.method.as_str()) {
-                    handler(notification.params.unwrap_or(Value::Null), cx.clone());
+            } else {
+                match serde_json::from_str::<AnyNotification>(&message) {
+                    Ok(notification) => {
+                        let mut notification_handlers = notification_handlers.lock();
+                        if let Some(handler) =
+                            notification_handlers.get_mut(notification.method.as_str())
+                        {
+                            handler(notification.params.unwrap_or(Value::Null), cx.clone());
+                        }
+                    }
+                    _ => {}
                 }
-            } _ => {}}}
+            }
         }
 
         smol::future::yield_now().await;

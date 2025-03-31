@@ -47,11 +47,16 @@ impl IpsFile {
                 Some(panic_message) => format!("Panic `{}`", panic_message),
                 None => "Crash `Abort trap: 6` (possible panic)".into(),
             }
-        } else { match &self.body.exception.message { Some(msg) => {
-            format!("Exception `{}`", msg)
-        } _ => {
-            format!("Crash `{}`", self.body.termination.indicator)
-        }}};
+        } else {
+            match &self.body.exception.message {
+                Some(msg) => {
+                    format!("Exception `{}`", msg)
+                }
+                _ => {
+                    format!("Crash `{}`", self.body.termination.indicator)
+                }
+            }
+        };
         if let Some(thread) = self.faulting_thread() {
             if let Some(queue) = thread.queue.as_ref() {
                 desc += &format!(
@@ -81,11 +86,14 @@ impl IpsFile {
                             return None;
                         }
                         Some(format!("{:#}", rustc_demangle::demangle(name)))
-                    } else { match self.body.used_images.get(frame.image_index) { Some(image) => {
-                        Some(image.name.clone().unwrap_or("<unknown-image>".into()))
-                    } _ => {
-                        Some("<unknown>".into())
-                    }}}
+                    } else {
+                        match self.body.used_images.get(frame.image_index) {
+                            Some(image) => {
+                                Some(image.name.clone().unwrap_or("<unknown-image>".into()))
+                            }
+                            _ => Some("<unknown>".into()),
+                        }
+                    }
                 })
                 .collect::<Vec<_>>();
 

@@ -101,13 +101,16 @@ impl Database {
                 }
 
                 if let Some(wasm_api_version) = version.wasm_api_version.as_ref() {
-                    match SemanticVersion::from_str(wasm_api_version).log_err() { Some(version) => {
-                        if !constraints.wasm_api_versions.contains(&version) {
+                    match SemanticVersion::from_str(wasm_api_version).log_err() {
+                        Some(version) => {
+                            if !constraints.wasm_api_versions.contains(&version) {
+                                continue;
+                            }
+                        }
+                        _ => {
                             continue;
                         }
-                    } _ => {
-                        continue;
-                    }}
+                    }
                 }
             }
 

@@ -1679,11 +1679,14 @@ impl LocalWorktree {
         async move {
             let mut is_scanning = *is_scanning_rx.borrow();
             while is_scanning {
-                match is_scanning_rx.recv().await { Some(value) => {
-                    is_scanning = value;
-                } _ => {
-                    break;
-                }}
+                match is_scanning_rx.recv().await {
+                    Some(value) => {
+                        is_scanning = value;
+                    }
+                    _ => {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -2389,11 +2392,14 @@ impl RemoteWorktree {
                     }
                 }
 
-                match rx.next().await { Some(next_update) => {
-                    update = next_update;
-                } _ => {
-                    break;
-                }}
+                match rx.next().await {
+                    Some(next_update) => {
+                        update = next_update;
+                    }
+                    _ => {
+                        break;
+                    }
+                }
             }
             this.update(cx, |this, _| {
                 let this = this.as_remote_mut().unwrap();
@@ -2407,7 +2413,10 @@ impl RemoteWorktree {
         self.completed_scan_id >= scan_id
     }
 
-    pub fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> + use<> {
+    pub fn wait_for_snapshot(
+        &mut self,
+        scan_id: usize,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let (tx, rx) = oneshot::channel();
         if self.observed_snapshot(scan_id) {
             let _ = tx.send(());
@@ -3014,11 +3023,14 @@ impl LocalSnapshot {
         let mut new_ignores = Vec::new();
         for (index, ancestor) in abs_path.ancestors().enumerate() {
             if index > 0 {
-                match self.ignores_by_parent_abs_path.get(ancestor) { Some((ignore, _)) => {
-                    new_ignores.push((ancestor, Some(ignore.clone())));
-                } _ => {
-                    new_ignores.push((ancestor, None));
-                }}
+                match self.ignores_by_parent_abs_path.get(ancestor) {
+                    Some((ignore, _)) => {
+                        new_ignores.push((ancestor, Some(ignore.clone())));
+                    }
+                    _ => {
+                        new_ignores.push((ancestor, None));
+                    }
+                }
             }
             if ancestor.join(*DOT_GIT).exists() {
                 break;
@@ -3030,9 +3042,14 @@ impl LocalSnapshot {
             if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
-            } else { match ignore { Some(ignore) => {
-                ignore_stack = ignore_stack.append(parent_abs_path.into(), ignore);
-            } _ => {}}}
+            } else {
+                match ignore {
+                    Some(ignore) => {
+                        ignore_stack = ignore_stack.append(parent_abs_path.into(), ignore);
+                    }
+                    _ => {}
+                }
+            }
         }
 
         if ignore_stack.is_abs_path_ignored(abs_path, is_dir) {
@@ -3203,9 +3220,14 @@ impl BackgroundScannerState {
                 if removed_entry.mtime == Some(mtime) || removed_entry.path == entry.path {
                     entry.id = removed_entry.id;
                 }
-            } else { match self.snapshot.entry_for_path(&entry.path) { Some(existing_entry) => {
-                entry.id = existing_entry.id;
-            } _ => {}}}
+            } else {
+                match self.snapshot.entry_for_path(&entry.path) {
+                    Some(existing_entry) => {
+                        entry.id = existing_entry.id;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -3232,15 +3254,16 @@ impl BackgroundScannerState {
             .snapshot
             .entries_by_path
             .get(&PathKey(parent_path.clone()), &())
-        { Some(parent_entry) => {
-            parent_entry.clone()
-        } _ => {
-            log::warn!(
-                "populating a directory {:?} that has been removed",
-                parent_path
-            );
-            return;
-        }};
+        {
+            Some(parent_entry) => parent_entry.clone(),
+            _ => {
+                log::warn!(
+                    "populating a directory {:?} that has been removed",
+                    parent_path
+                );
+                return;
+            }
+        };
 
         match parent_entry.kind {
             EntryKind::PendingDir | EntryKind::UnloadedDir => parent_entry.kind = EntryKind::Dir,
@@ -4239,14 +4262,18 @@ impl BackgroundScanner {
                     // Unless $HOME is itself the worktree root, don't consider it as a
                     // containing git repository---expensive and likely unwanted.
                     break;
-                } else { match build_gitignore(&ancestor.join(*GITIGNORE), self.fs.as_ref()).await
-                { Ok(ignore) => {
-                    self.state
-                        .lock()
-                        .snapshot
-                        .ignores_by_parent_abs_path
-                        .insert(ancestor.into(), (ignore.into(), false));
-                } _ => {}}}
+                } else {
+                    match build_gitignore(&ancestor.join(*GITIGNORE), self.fs.as_ref()).await {
+                        Ok(ignore) => {
+                            self.state
+                                .lock()
+                                .snapshot
+                                .ignores_by_parent_abs_path
+                                .insert(ancestor.into(), (ignore.into(), false));
+                        }
+                        _ => {}
+                    }
+                }
             }
 
             let ancestor_dot_git = ancestor.join(*DOT_GIT);

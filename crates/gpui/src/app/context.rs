@@ -59,14 +59,14 @@ impl<'a, T: 'static> Context<'a, T> {
         W: 'static,
     {
         let this = self.weak_entity();
-        self.app.observe_internal(entity, move |e, cx| {
-            match this.upgrade() { Some(this) => {
-                this.update(cx, |this, cx| on_notify(this, e, cx));
-                true
-            } _ => {
-                false
-            }}
-        })
+        self.app
+            .observe_internal(entity, move |e, cx| match this.upgrade() {
+                Some(this) => {
+                    this.update(cx, |this, cx| on_notify(this, e, cx));
+                    true
+                }
+                _ => false,
+            })
     }
 
     /// Subscribe to an event type from another entity
@@ -81,14 +81,14 @@ impl<'a, T: 'static> Context<'a, T> {
         Evt: 'static,
     {
         let this = self.weak_entity();
-        self.app.subscribe_internal(entity, move |e, event, cx| {
-            match this.upgrade() { Some(this) => {
-                this.update(cx, |this, cx| on_event(this, e, event, cx));
-                true
-            } _ => {
-                false
-            }}
-        })
+        self.app
+            .subscribe_internal(entity, move |e, event, cx| match this.upgrade() {
+                Some(this) => {
+                    this.update(cx, |this, cx| on_event(this, e, event, cx));
+                    true
+                }
+                _ => false,
+            })
     }
 
     /// Subscribe to an event type from ourself
@@ -287,15 +287,15 @@ impl<'a, T: 'static> Context<'a, T> {
             Box::new(move |cx| {
                 window_handle
                     .update(cx, |_, window, cx| {
-                        match observer.upgrade().zip(observed.upgrade())
-                        { Some((observer, observed)) => {
-                            observer.update(cx, |observer, cx| {
-                                on_notify(observer, observed, window, cx);
-                            });
-                            true
-                        } _ => {
-                            false
-                        }}
+                        match observer.upgrade().zip(observed.upgrade()) {
+                            Some((observer, observed)) => {
+                                observer.update(cx, |observer, cx| {
+                                    on_notify(observer, observed, window, cx);
+                                });
+                                true
+                            }
+                            _ => false,
+                        }
                     })
                     .unwrap_or(false)
             }),
@@ -325,16 +325,16 @@ impl<'a, T: 'static> Context<'a, T> {
                 Box::new(move |event, cx| {
                     window_handle
                         .update(cx, |_, window, cx| {
-                            match subscriber.upgrade().zip(emitter.upgrade())
-                            { Some((subscriber, emitter)) => {
-                                let event = event.downcast_ref().expect("invalid event type");
-                                subscriber.update(cx, |subscriber, cx| {
-                                    on_event(subscriber, &emitter, event, window, cx);
-                                });
-                                true
-                            } _ => {
-                                false
-                            }}
+                            match subscriber.upgrade().zip(emitter.upgrade()) {
+                                Some((subscriber, emitter)) => {
+                                    let event = event.downcast_ref().expect("invalid event type");
+                                    subscriber.update(cx, |subscriber, cx| {
+                                        on_event(subscriber, &emitter, event, window, cx);
+                                    });
+                                    true
+                                }
+                                _ => false,
+                            }
                         })
                         .unwrap_or(false)
                 }),
@@ -450,13 +450,12 @@ impl<'a, T: 'static> Context<'a, T> {
         let view = self.weak_entity();
         inner(
             &mut self.keystroke_observers,
-            Box::new(move |event, window, cx| {
-                match view.upgrade() { Some(view) => {
+            Box::new(move |event, window, cx| match view.upgrade() {
+                Some(view) => {
                     view.update(cx, |view, cx| f(view, event, window, cx));
                     true
-                } _ => {
-                    false
-                }}
+                }
+                _ => false,
             }),
         )
     }

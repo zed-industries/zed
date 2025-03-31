@@ -37,34 +37,37 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
     use serde_json::Value;
     use std::fs;
 
-    match tree { Value::Object(map) => {
-        for (name, contents) in map {
-            let mut path = PathBuf::from(path);
-            path.push(name);
-            match contents {
-                Value::Object(_) => {
-                    fs::create_dir(&path).unwrap();
+    match tree {
+        Value::Object(map) => {
+            for (name, contents) in map {
+                let mut path = PathBuf::from(path);
+                path.push(name);
+                match contents {
+                    Value::Object(_) => {
+                        fs::create_dir(&path).unwrap();
 
-                    if path.file_name() == Some(OsStr::new(".git")) {
-                        git2::Repository::init(path.parent().unwrap()).unwrap();
+                        if path.file_name() == Some(OsStr::new(".git")) {
+                            git2::Repository::init(path.parent().unwrap()).unwrap();
+                        }
+
+                        write_tree(&path, contents);
                     }
-
-                    write_tree(&path, contents);
-                }
-                Value::Null => {
-                    fs::create_dir(&path).unwrap();
-                }
-                Value::String(contents) => {
-                    fs::write(&path, contents).unwrap();
-                }
-                _ => {
-                    panic!("JSON object must contain only objects, strings, or null");
+                    Value::Null => {
+                        fs::create_dir(&path).unwrap();
+                    }
+                    Value::String(contents) => {
+                        fs::write(&path, contents).unwrap();
+                    }
+                    _ => {
+                        panic!("JSON object must contain only objects, strings, or null");
+                    }
                 }
             }
         }
-    } _ => {
-        panic!("You must pass a JSON object to this helper")
-    }}
+        _ => {
+            panic!("You must pass a JSON object to this helper")
+        }
+    }
 }
 
 pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {

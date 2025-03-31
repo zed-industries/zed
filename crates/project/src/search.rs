@@ -232,11 +232,10 @@ impl SearchQuery {
             } => {
                 if *multiline {
                     let mut text = String::new();
-                    match reader.read_to_string(&mut text) { Err(err) => {
-                        Err(err.into())
-                    } _ => {
-                        Ok(regex.find(&text)?.is_some())
-                    }}
+                    match reader.read_to_string(&mut text) {
+                        Err(err) => Err(err.into()),
+                        _ => Ok(regex.find(&text)?.is_some()),
+                    }
                 } else {
                     for line in reader.lines() {
                         let line = line?;

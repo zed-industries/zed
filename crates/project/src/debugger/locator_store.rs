@@ -30,10 +30,9 @@ impl LocatorStore {
             return Ok(());
         };
 
-        match self.locators.get(locator_name as &str) { Some(locator) => {
-            locator.run_locator(debug_config).await
-        } _ => {
-            Err(anyhow!("Couldn't find locator {}", locator_name))
-        }}
+        match self.locators.get(locator_name as &str) {
+            Some(locator) => locator.run_locator(debug_config).await,
+            _ => Err(anyhow!("Couldn't find locator {}", locator_name)),
+        }
     }
 }

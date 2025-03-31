@@ -510,12 +510,15 @@ impl LanguageServer {
         while let Some(msg) = input_handler.notifications_channel.next().await {
             {
                 let mut notification_handlers = notification_handlers.lock();
-                match notification_handlers.get_mut(msg.method.as_str()) { Some(handler) => {
-                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx);
-                } _ => {
-                    drop(notification_handlers);
-                    on_unhandled_notification(msg);
-                }}
+                match notification_handlers.get_mut(msg.method.as_str()) {
+                    Some(handler) => {
+                        handler(msg.id, msg.params.unwrap_or(Value::Null), cx);
+                    }
+                    _ => {
+                        drop(notification_handlers);
+                        on_unhandled_notification(msg);
+                    }
+                }
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
@@ -831,26 +834,27 @@ impl LanguageServer {
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
-        match self.io_tasks.lock().take() { Some(tasks) => {
-            let response_handlers = self.response_handlers.clone();
-            let next_id = AtomicI32::new(self.next_id.load(SeqCst));
-            let outbound_tx = self.outbound_tx.clone();
-            let executor = self.executor.clone();
-            let mut output_done = self.output_done_rx.lock().take().unwrap();
-            let shutdown_request = Self::request_internal::<request::Shutdown>(
-                &next_id,
-                &response_handlers,
-                &outbound_tx,
-                &executor,
-                (),
-            );
-            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, &());
-            outbound_tx.close();
+        match self.io_tasks.lock().take() {
+            Some(tasks) => {
+                let response_handlers = self.response_handlers.clone();
+                let next_id = AtomicI32::new(self.next_id.load(SeqCst));
+                let outbound_tx = self.outbound_tx.clone();
+                let executor = self.executor.clone();
+                let mut output_done = self.output_done_rx.lock().take().unwrap();
+                let shutdown_request = Self::request_internal::<request::Shutdown>(
+                    &next_id,
+                    &response_handlers,
+                    &outbound_tx,
+                    &executor,
+                    (),
+                );
+                let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, &());
+                outbound_tx.close();
 
-            let server = self.server.clone();
-            let name = self.name.clone();
-            let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
-            Some(
+                let server = self.server.clone();
+                let name = self.name.clone();
+                let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
+                Some(
                 async move {
                     log::debug!("language server shutdown started");
 
@@ -875,9 +879,9 @@ impl LanguageServer {
                 }
                 .log_err(),
             )
-        } _ => {
-            None
-        }}
+            }
+            _ => None,
+        }
     }
 
     /// Register a handler to handle incoming LSP notifications.

@@ -9526,16 +9526,18 @@ async fn test_word_completion(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, window, cx| {
-        match editor.context_menu.borrow_mut().as_ref()
-        { Some(CodeContextMenu::Completions(menu)) => {
-            assert_eq!(
-                completion_menu_entries(&menu),
-                &["first", "last"],
-                "When LSP server is fast to reply, no fallback word completions are used"
-            );
-        } _ => {
-            panic!("expected completion menu to be open");
-        }}
+        match editor.context_menu.borrow_mut().as_ref() {
+            Some(CodeContextMenu::Completions(menu)) => {
+                assert_eq!(
+                    completion_menu_entries(&menu),
+                    &["first", "last"],
+                    "When LSP server is fast to reply, no fallback word completions are used"
+                );
+            }
+            _ => {
+                panic!("expected completion menu to be open");
+            }
+        }
         editor.cancel(&Cancel, window, cx);
     });
     cx.executor().run_until_parked();
@@ -9663,18 +9665,20 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-    cx.update_editor(|editor, _, _| {
-        match editor.context_menu.borrow_mut().as_ref()
-        { Some(CodeContextMenu::Completions(menu)) => {
-            assert_eq!(
-                completion_menu_entries(&menu),
-                &["first", "last", "second"],
-                "`ShowWordCompletions` action should show word completions"
-            );
-        } _ => {
-            panic!("expected completion menu to be open");
-        }}
-    });
+    cx.update_editor(
+        |editor, _, _| match editor.context_menu.borrow_mut().as_ref() {
+            Some(CodeContextMenu::Completions(menu)) => {
+                assert_eq!(
+                    completion_menu_entries(&menu),
+                    &["first", "last", "second"],
+                    "`ShowWordCompletions` action should show word completions"
+                );
+            }
+            _ => {
+                panic!("expected completion menu to be open");
+            }
+        },
+    );
 
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
@@ -9981,39 +9985,45 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
     cx.simulate_keystroke(".");
     cx.executor().run_until_parked();
 
-    cx.update_editor(|editor, _, _| {
-        match editor.context_menu.borrow_mut().as_ref()
-        { Some(CodeContextMenu::Completions(menu)) => {
-            assert_eq!(completion_menu_entries(&menu), &["first", "last"]);
-        } _ => {
-            panic!("expected completion menu to be open");
-        }}
-    });
+    cx.update_editor(
+        |editor, _, _| match editor.context_menu.borrow_mut().as_ref() {
+            Some(CodeContextMenu::Completions(menu)) => {
+                assert_eq!(completion_menu_entries(&menu), &["first", "last"]);
+            }
+            _ => {
+                panic!("expected completion menu to be open");
+            }
+        },
+    );
 
     cx.update_editor(|editor, window, cx| {
         editor.move_page_down(&MovePageDown::default(), window, cx);
-        match editor.context_menu.borrow_mut().as_ref()
-        { Some(CodeContextMenu::Completions(menu)) => {
-            assert!(
-                menu.selected_item == 1,
-                "expected PageDown to select the last item from the context menu"
-            );
-        } _ => {
-            panic!("expected completion menu to stay open after PageDown");
-        }}
+        match editor.context_menu.borrow_mut().as_ref() {
+            Some(CodeContextMenu::Completions(menu)) => {
+                assert!(
+                    menu.selected_item == 1,
+                    "expected PageDown to select the last item from the context menu"
+                );
+            }
+            _ => {
+                panic!("expected completion menu to stay open after PageDown");
+            }
+        }
     });
 
     cx.update_editor(|editor, window, cx| {
         editor.move_page_up(&MovePageUp::default(), window, cx);
-        match editor.context_menu.borrow_mut().as_ref()
-        { Some(CodeContextMenu::Completions(menu)) => {
-            assert!(
-                menu.selected_item == 0,
-                "expected PageUp to select the first item from the context menu"
-            );
-        } _ => {
-            panic!("expected completion menu to stay open after PageUp");
-        }}
+        match editor.context_menu.borrow_mut().as_ref() {
+            Some(CodeContextMenu::Completions(menu)) => {
+                assert!(
+                    menu.selected_item == 0,
+                    "expected PageUp to select the first item from the context menu"
+                );
+            }
+            _ => {
+                panic!("expected completion menu to stay open after PageUp");
+            }
+        }
     });
 }
 
@@ -10074,17 +10084,19 @@ async fn test_completion_sort(cx: &mut TestAppContext) {
     });
     cx.executor().run_until_parked();
 
-    cx.update_editor(|editor, _, _| {
-        match editor.context_menu.borrow_mut().as_ref()
-        { Some(CodeContextMenu::Completions(menu)) => {
-            assert_eq!(
-                completion_menu_entries(&menu),
-                &["r", "ret", "Range", "return"]
-            );
-        } _ => {
-            panic!("expected completion menu to be open");
-        }}
-    });
+    cx.update_editor(
+        |editor, _, _| match editor.context_menu.borrow_mut().as_ref() {
+            Some(CodeContextMenu::Completions(menu)) => {
+                assert_eq!(
+                    completion_menu_entries(&menu),
+                    &["r", "ret", "Range", "return"]
+                );
+            }
+            _ => {
+                panic!("expected completion menu to be open");
+            }
+        },
+    );
 }
 
 #[gpui::test]
@@ -13056,42 +13068,48 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     // word character in the 'element' scope, which contains the cursor.
     cx.simulate_keystroke("-");
     cx.executor().run_until_parked();
-    cx.update_editor(|editor, _, _| {
-        match editor.context_menu.borrow_mut().as_ref()
-        { Some(CodeContextMenu::Completions(menu)) => {
-            assert_eq!(
-                completion_menu_entries(&menu),
-                &["bg-red", "bg-blue", "bg-yellow"]
-            );
-        } _ => {
-            panic!("expected completion menu to be open");
-        }}
-    });
+    cx.update_editor(
+        |editor, _, _| match editor.context_menu.borrow_mut().as_ref() {
+            Some(CodeContextMenu::Completions(menu)) => {
+                assert_eq!(
+                    completion_menu_entries(&menu),
+                    &["bg-red", "bg-blue", "bg-yellow"]
+                );
+            }
+            _ => {
+                panic!("expected completion menu to be open");
+            }
+        },
+    );
 
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
-    cx.update_editor(|editor, _, _| {
-        match editor.context_menu.borrow_mut().as_ref()
-        { Some(CodeContextMenu::Completions(menu)) => {
-            assert_eq!(completion_menu_entries(&menu), &["bg-blue", "bg-yellow"]);
-        } _ => {
-            panic!("expected completion menu to be open");
-        }}
-    });
+    cx.update_editor(
+        |editor, _, _| match editor.context_menu.borrow_mut().as_ref() {
+            Some(CodeContextMenu::Completions(menu)) => {
+                assert_eq!(completion_menu_entries(&menu), &["bg-blue", "bg-yellow"]);
+            }
+            _ => {
+                panic!("expected completion menu to be open");
+            }
+        },
+    );
 
     // When filtering completions, consider the character after the '-' to
     // be the start of a subword.
     cx.set_state(r#"<p class="yelˇ" />"#);
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
-    cx.update_editor(|editor, _, _| {
-        match editor.context_menu.borrow_mut().as_ref()
-        { Some(CodeContextMenu::Completions(menu)) => {
-            assert_eq!(completion_menu_entries(&menu), &["bg-yellow"]);
-        } _ => {
-            panic!("expected completion menu to be open");
-        }}
-    });
+    cx.update_editor(
+        |editor, _, _| match editor.context_menu.borrow_mut().as_ref() {
+            Some(CodeContextMenu::Completions(menu)) => {
+                assert_eq!(completion_menu_entries(&menu), &["bg-yellow"]);
+            }
+            _ => {
+                panic!("expected completion menu to be open");
+            }
+        },
+    );
 }
 
 fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {

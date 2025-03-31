@@ -1935,42 +1935,42 @@ impl LspCommand for GetHover {
         _: &clock::Global,
         _: &mut App,
     ) -> proto::GetHoverResponse {
-        match response { Some(response) => {
-            let (start, end) = match response.range { Some(range) => {
-                (
-                    Some(language::proto::serialize_anchor(&range.start)),
-                    Some(language::proto::serialize_anchor(&range.end)),
-                )
-            } _ => {
-                (None, None)
-            }};
+        match response {
+            Some(response) => {
+                let (start, end) = match response.range {
+                    Some(range) => (
+                        Some(language::proto::serialize_anchor(&range.start)),
+                        Some(language::proto::serialize_anchor(&range.end)),
+                    ),
+                    _ => (None, None),
+                };
 
-            let contents = response
-                .contents
-                .into_iter()
-                .map(|block| proto::HoverBlock {
-                    text: block.text,
-                    is_markdown: block.kind == HoverBlockKind::Markdown,
-                    language: if let HoverBlockKind::Code { language } = block.kind {
-                        Some(language)
-                    } else {
-                        None
-                    },
-                })
-                .collect();
+                let contents = response
+                    .contents
+                    .into_iter()
+                    .map(|block| proto::HoverBlock {
+                        text: block.text,
+                        is_markdown: block.kind == HoverBlockKind::Markdown,
+                        language: if let HoverBlockKind::Code { language } = block.kind {
+                            Some(language)
+                        } else {
+                            None
+                        },
+                    })
+                    .collect();
 
-            proto::GetHoverResponse {
-                start,
-                end,
-                contents,
+                proto::GetHoverResponse {
+                    start,
+                    end,
+                    contents,
+                }
             }
-        } _ => {
-            proto::GetHoverResponse {
+            _ => proto::GetHoverResponse {
                 start: None,
                 end: None,
                 contents: Vec::new(),
-            }
-        }}
+            },
+        }
     }
 
     async fn response_from_proto(
@@ -2059,18 +2059,17 @@ impl LspCommand for GetCompletions {
         mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let mut response_list = None;
-        let mut completions = match completions { Some(completions) => {
-            match completions {
+        let mut completions = match completions {
+            Some(completions) => match completions {
                 lsp::CompletionResponse::Array(completions) => completions,
                 lsp::CompletionResponse::List(mut list) => {
                     let items = std::mem::take(&mut list.items);
                     response_list = Some(list);
                     items
                 }
-            }
-        } _ => {
-            Vec::new()
-        }};
+            },
+            _ => Vec::new(),
+        };
 
         let language_server_adapter = lsp_store
             .update(&mut cx, |lsp_store, _| {
@@ -2359,12 +2358,13 @@ impl LspCommand for GetCodeActions {
                     .kinds
                     .as_ref()
                     .zip(Self::supported_code_action_kinds(capabilities))
-                { Some((requested, supported)) => {
-                    let server_supported = supported.into_iter().collect::<HashSet<_>>();
-                    requested.iter().any(|kind| server_supported.contains(kind))
-                } _ => {
-                    true
-                }}
+                {
+                    Some((requested, supported)) => {
+                        let server_supported = supported.into_iter().collect::<HashSet<_>>();
+                        requested.iter().any(|kind| server_supported.contains(kind))
+                    }
+                    _ => true,
+                }
             }
         }
     }

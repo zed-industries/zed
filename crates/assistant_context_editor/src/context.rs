@@ -1877,16 +1877,19 @@ impl AssistantContext {
 
         if let Some(mut pending_patch) = pending_patch {
             let patch_start = pending_patch.range.start.to_offset(buffer);
-            match self.message_for_offset(patch_start, cx) { Some(message) => {
-                if message.anchor_range.end == text::Anchor::MAX {
-                    pending_patch.range.end = text::Anchor::MAX;
-                } else {
-                    let message_end = buffer.anchor_after(message.offset_range.end - 1);
-                    pending_patch.range.end = message_end;
+            match self.message_for_offset(patch_start, cx) {
+                Some(message) => {
+                    if message.anchor_range.end == text::Anchor::MAX {
+                        pending_patch.range.end = text::Anchor::MAX;
+                    } else {
+                        let message_end = buffer.anchor_after(message.offset_range.end - 1);
+                        pending_patch.range.end = message_end;
+                    }
                 }
-            } _ => {
-                pending_patch.range.end = text::Anchor::MAX;
-            }}
+                _ => {
+                    pending_patch.range.end = text::Anchor::MAX;
+                }
+            }
 
             new_patches.push(pending_patch);
         }
@@ -2631,16 +2634,17 @@ impl AssistantContext {
     }
 
     pub fn cancel_last_assist(&mut self, cx: &mut Context<Self>) -> bool {
-        match self.pending_completions.pop() { Some(pending_completion) => {
-            self.update_metadata(pending_completion.assistant_message_id, cx, |metadata| {
-                if metadata.status == MessageStatus::Pending {
-                    metadata.status = MessageStatus::Canceled;
-                }
-            });
-            true
-        } _ => {
-            false
-        }}
+        match self.pending_completions.pop() {
+            Some(pending_completion) => {
+                self.update_metadata(pending_completion.assistant_message_id, cx, |metadata| {
+                    if metadata.status == MessageStatus::Pending {
+                        metadata.status = MessageStatus::Canceled;
+                    }
+                });
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut Context<Self>) {
@@ -2799,122 +2803,124 @@ impl AssistantContext {
     ) -> (Option<MessageAnchor>, Option<MessageAnchor>) {
         let start_message = self.message_for_offset(range.start, cx);
         let end_message = self.message_for_offset(range.end, cx);
-        match start_message.zip(end_message) { Some((start_message, end_message)) => {
-            // Prevent splitting when range spans multiple messages.
-            if start_message.id != end_message.id {
-                return (None, None);
-            }
-
-            let message = start_message;
-            let role = message.role;
-            let mut edited_buffer = false;
-
-            let mut suffix_start = None;
-
-            // TODO: why did this start panicking?
-            if range.start > message.offset_range.start
-                && range.end < message.offset_range.end.saturating_sub(1)
-            {
-                if self.buffer.read(cx).chars_at(range.end).next() == Some('\n') {
-                    suffix_start = Some(range.end + 1);
-                } else if self.buffer.read(cx).reversed_chars_at(range.end).next() == Some('\n') {
-                    suffix_start = Some(range.end);
+        match start_message.zip(end_message) {
+            Some((start_message, end_message)) => {
+                // Prevent splitting when range spans multiple messages.
+                if start_message.id != end_message.id {
+                    return (None, None);
                 }
-            }
 
-            let version = self.version.clone();
-            let suffix = if let Some(suffix_start) = suffix_start {
-                MessageAnchor {
-                    id: MessageId(self.next_timestamp()),
-                    start: self.buffer.read(cx).anchor_before(suffix_start),
-                }
-            } else {
-                self.buffer.update(cx, |buffer, cx| {
-                    buffer.edit([(range.end..range.end, "\n")], None, cx);
-                });
-                edited_buffer = true;
-                MessageAnchor {
-                    id: MessageId(self.next_timestamp()),
-                    start: self.buffer.read(cx).anchor_before(range.end + 1),
-                }
-            };
+                let message = start_message;
+                let role = message.role;
+                let mut edited_buffer = false;
 
-            let suffix_metadata = MessageMetadata {
-                role,
-                status: MessageStatus::Done,
-                timestamp: suffix.id.0,
-                cache: None,
-            };
-            self.insert_message(suffix.clone(), suffix_metadata.clone(), cx);
-            self.push_op(
-                ContextOperation::InsertMessage {
-                    anchor: suffix.clone(),
-                    metadata: suffix_metadata,
-                    version,
-                },
-                cx,
-            );
+                let mut suffix_start = None;
 
-            let new_messages =
-                if range.start == range.end || range.start == message.offset_range.start {
-                    (None, Some(suffix))
-                } else {
-                    let mut prefix_end = None;
-                    if range.start > message.offset_range.start
-                        && range.end < message.offset_range.end - 1
+                // TODO: why did this start panicking?
+                if range.start > message.offset_range.start
+                    && range.end < message.offset_range.end.saturating_sub(1)
+                {
+                    if self.buffer.read(cx).chars_at(range.end).next() == Some('\n') {
+                        suffix_start = Some(range.end + 1);
+                    } else if self.buffer.read(cx).reversed_chars_at(range.end).next() == Some('\n')
                     {
-                        if self.buffer.read(cx).chars_at(range.start).next() == Some('\n') {
-                            prefix_end = Some(range.start + 1);
-                        } else if self.buffer.read(cx).reversed_chars_at(range.start).next()
-                            == Some('\n')
-                        {
-                            prefix_end = Some(range.start);
-                        }
+                        suffix_start = Some(range.end);
                     }
+                }
 
-                    let version = self.version.clone();
-                    let selection = if let Some(prefix_end) = prefix_end {
-                        MessageAnchor {
-                            id: MessageId(self.next_timestamp()),
-                            start: self.buffer.read(cx).anchor_before(prefix_end),
-                        }
-                    } else {
-                        self.buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(range.start..range.start, "\n")], None, cx)
-                        });
-                        edited_buffer = true;
-                        MessageAnchor {
-                            id: MessageId(self.next_timestamp()),
-                            start: self.buffer.read(cx).anchor_before(range.end + 1),
-                        }
-                    };
-
-                    let selection_metadata = MessageMetadata {
-                        role,
-                        status: MessageStatus::Done,
-                        timestamp: selection.id.0,
-                        cache: None,
-                    };
-                    self.insert_message(selection.clone(), selection_metadata.clone(), cx);
-                    self.push_op(
-                        ContextOperation::InsertMessage {
-                            anchor: selection.clone(),
-                            metadata: selection_metadata,
-                            version,
-                        },
-                        cx,
-                    );
-
-                    (Some(selection), Some(suffix))
+                let version = self.version.clone();
+                let suffix = if let Some(suffix_start) = suffix_start {
+                    MessageAnchor {
+                        id: MessageId(self.next_timestamp()),
+                        start: self.buffer.read(cx).anchor_before(suffix_start),
+                    }
+                } else {
+                    self.buffer.update(cx, |buffer, cx| {
+                        buffer.edit([(range.end..range.end, "\n")], None, cx);
+                    });
+                    edited_buffer = true;
+                    MessageAnchor {
+                        id: MessageId(self.next_timestamp()),
+                        start: self.buffer.read(cx).anchor_before(range.end + 1),
+                    }
                 };
 
-            if !edited_buffer {
-                cx.emit(ContextEvent::MessagesEdited);
+                let suffix_metadata = MessageMetadata {
+                    role,
+                    status: MessageStatus::Done,
+                    timestamp: suffix.id.0,
+                    cache: None,
+                };
+                self.insert_message(suffix.clone(), suffix_metadata.clone(), cx);
+                self.push_op(
+                    ContextOperation::InsertMessage {
+                        anchor: suffix.clone(),
+                        metadata: suffix_metadata,
+                        version,
+                    },
+                    cx,
+                );
+
+                let new_messages =
+                    if range.start == range.end || range.start == message.offset_range.start {
+                        (None, Some(suffix))
+                    } else {
+                        let mut prefix_end = None;
+                        if range.start > message.offset_range.start
+                            && range.end < message.offset_range.end - 1
+                        {
+                            if self.buffer.read(cx).chars_at(range.start).next() == Some('\n') {
+                                prefix_end = Some(range.start + 1);
+                            } else if self.buffer.read(cx).reversed_chars_at(range.start).next()
+                                == Some('\n')
+                            {
+                                prefix_end = Some(range.start);
+                            }
+                        }
+
+                        let version = self.version.clone();
+                        let selection = if let Some(prefix_end) = prefix_end {
+                            MessageAnchor {
+                                id: MessageId(self.next_timestamp()),
+                                start: self.buffer.read(cx).anchor_before(prefix_end),
+                            }
+                        } else {
+                            self.buffer.update(cx, |buffer, cx| {
+                                buffer.edit([(range.start..range.start, "\n")], None, cx)
+                            });
+                            edited_buffer = true;
+                            MessageAnchor {
+                                id: MessageId(self.next_timestamp()),
+                                start: self.buffer.read(cx).anchor_before(range.end + 1),
+                            }
+                        };
+
+                        let selection_metadata = MessageMetadata {
+                            role,
+                            status: MessageStatus::Done,
+                            timestamp: selection.id.0,
+                            cache: None,
+                        };
+                        self.insert_message(selection.clone(), selection_metadata.clone(), cx);
+                        self.push_op(
+                            ContextOperation::InsertMessage {
+                                anchor: selection.clone(),
+                                metadata: selection_metadata,
+                                version,
+                            },
+                            cx,
+                        );
+
+                        (Some(selection), Some(suffix))
+                    };
+
+                if !edited_buffer {
+                    cx.emit(ContextEvent::MessagesEdited);
+                }
+                new_messages
             }
-            new_messages
-        } _ => {
-            (None, None)
-        }}
+            _ => (None, None),
+        }
     }
 
     fn insert_message(

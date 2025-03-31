@@ -184,11 +184,12 @@ impl TerminalInlineAssistant {
     }
 
     fn start_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut App) {
-        let assist = match self.assists.get_mut(&assist_id) { Some(assist) => {
-            assist
-        } _ => {
-            return;
-        }};
+        let assist = match self.assists.get_mut(&assist_id) {
+            Some(assist) => assist,
+            _ => {
+                return;
+            }
+        };
 
         let Some(user_prompt) = assist
             .prompt_editor
@@ -222,11 +223,12 @@ impl TerminalInlineAssistant {
     }
 
     fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut App) {
-        let assist = match self.assists.get_mut(&assist_id) { Some(assist) => {
-            assist
-        } _ => {
-            return;
-        }};
+        let assist = match self.assists.get_mut(&assist_id) {
+            Some(assist) => assist,
+            _ => {
+                return;
+            }
+        };
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
     }
@@ -436,11 +438,12 @@ impl TerminalInlineAssist {
                 window.subscribe(&codegen, cx, move |codegen, event, window, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| match event {
                         CodegenEvent::Finished => {
-                            let assist = match this.assists.get(&assist_id) { Some(assist) => {
-                                assist
-                            } _ => {
-                                return;
-                            }};
+                            let assist = match this.assists.get(&assist_id) {
+                                Some(assist) => assist,
+                                _ => {
+                                    return;
+                                }
+                            };
 
                             if let CodegenStatus::Error(error) = &codegen.read(cx).status {
                                 if assist.prompt_editor.is_none() {
@@ -664,8 +667,8 @@ impl Render for PromptEditor {
                         },
                         gpui::Corner::TopRight,
                     ))
-                    .children(
-                        match &self.codegen.read(cx).status { CodegenStatus::Error(error) => {
+                    .children(match &self.codegen.read(cx).status {
+                        CodegenStatus::Error(error) => {
                             let error_message = SharedString::from(error.to_string());
                             Some(
                                 div()
@@ -677,10 +680,9 @@ impl Render for PromptEditor {
                                             .color(Color::Error),
                                     ),
                             )
-                        } _ => {
-                            None
-                        }},
-                    ),
+                        }
+                        _ => None,
+                    }),
             )
             .child(div().flex_1().child(self.render_prompt_editor(cx)))
             .child(
@@ -1007,32 +1009,35 @@ impl PromptEditor {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             );
-        match self.workspace.clone() { Some(workspace) => {
-            token_count = token_count
-                .tooltip(|window, cx| {
-                    Tooltip::with_meta(
-                        "Tokens Used by Inline Assistant",
-                        None,
-                        "Click to Open Assistant Panel",
-                        window,
-                        cx,
-                    )
-                })
-                .cursor_pointer()
-                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(move |_, window, cx| {
-                    cx.stop_propagation();
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.focus_panel::<AssistantPanel>(window, cx)
-                        })
-                        .ok();
-                });
-        } _ => {
-            token_count = token_count
-                .cursor_default()
-                .tooltip(Tooltip::text("Tokens Used by Inline Assistant"));
-        }}
+        match self.workspace.clone() {
+            Some(workspace) => {
+                token_count = token_count
+                    .tooltip(|window, cx| {
+                        Tooltip::with_meta(
+                            "Tokens Used by Inline Assistant",
+                            None,
+                            "Click to Open Assistant Panel",
+                            window,
+                            cx,
+                        )
+                    })
+                    .cursor_pointer()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.focus_panel::<AssistantPanel>(window, cx)
+                            })
+                            .ok();
+                    });
+            }
+            _ => {
+                token_count = token_count
+                    .cursor_default()
+                    .tooltip(Tooltip::text("Tokens Used by Inline Assistant"));
+            }
+        }
 
         Some(token_count)
     }
@@ -1217,11 +1222,14 @@ impl Codegen {
             let result = generate.await;
 
             this.update(cx, |this, cx| {
-                match result { Err(error) => {
-                    this.status = CodegenStatus::Error(error);
-                } _ => {
-                    this.status = CodegenStatus::Done;
-                }}
+                match result {
+                    Err(error) => {
+                        this.status = CodegenStatus::Error(error);
+                    }
+                    _ => {
+                        this.status = CodegenStatus::Done;
+                    }
+                }
                 cx.emit(CodegenEvent::Finished);
                 cx.notify();
             })

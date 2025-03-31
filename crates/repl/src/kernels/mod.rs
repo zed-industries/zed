@@ -87,11 +87,12 @@ pub fn python_env_kernel_specifications(
     let background_executor = cx.background_executor().clone();
 
     async move {
-        let toolchains = match toolchains.await { Some(toolchains) => {
-            toolchains
-        } _ => {
-            return Ok(Vec::new());
-        }};
+        let toolchains = match toolchains.await {
+            Some(toolchains) => toolchains,
+            _ => {
+                return Ok(Vec::new());
+            }
+        };
 
         let kernelspecs = toolchains.toolchains.into_iter().map(|toolchain| {
             background_executor.spawn(async move {

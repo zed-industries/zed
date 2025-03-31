@@ -62,27 +62,28 @@ impl Render for DiagnosticIndicator {
                 .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
         };
 
-        let status = match &self.current_diagnostic { Some(diagnostic) => {
-            let message = diagnostic.message.split('\n').next().unwrap().to_string();
-            Some(
-                Button::new("diagnostic_message", message)
-                    .label_size(LabelSize::Small)
-                    .tooltip(|window, cx| {
-                        Tooltip::for_action(
-                            "Next Diagnostic",
-                            &editor::actions::GoToDiagnostic,
-                            window,
-                            cx,
-                        )
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.go_to_next_diagnostic(window, cx);
-                    }))
-                    .into_any_element(),
-            )
-        } _ => {
-            None
-        }};
+        let status = match &self.current_diagnostic {
+            Some(diagnostic) => {
+                let message = diagnostic.message.split('\n').next().unwrap().to_string();
+                Some(
+                    Button::new("diagnostic_message", message)
+                        .label_size(LabelSize::Small)
+                        .tooltip(|window, cx| {
+                            Tooltip::for_action(
+                                "Next Diagnostic",
+                                &editor::actions::GoToDiagnostic,
+                                window,
+                                cx,
+                            )
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.go_to_next_diagnostic(window, cx);
+                        }))
+                        .into_any_element(),
+                )
+            }
+            _ => None,
+        };
 
         h_flex()
             .gap_2()
@@ -187,15 +188,18 @@ impl StatusItemView for DiagnosticIndicator {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match active_pane_item.and_then(|item| item.downcast::<Editor>()) { Some(editor) => {
-            self.active_editor = Some(editor.downgrade());
-            self._observe_active_editor = Some(cx.observe_in(&editor, window, Self::update));
-            self.update(editor, window, cx);
-        } _ => {
-            self.active_editor = None;
-            self.current_diagnostic = None;
-            self._observe_active_editor = None;
-        }}
+        match active_pane_item.and_then(|item| item.downcast::<Editor>()) {
+            Some(editor) => {
+                self.active_editor = Some(editor.downgrade());
+                self._observe_active_editor = Some(cx.observe_in(&editor, window, Self::update));
+                self.update(editor, window, cx);
+            }
+            _ => {
+                self.active_editor = None;
+                self.current_diagnostic = None;
+                self._observe_active_editor = None;
+            }
+        }
         cx.notify();
     }
 }

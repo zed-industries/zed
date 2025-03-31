@@ -676,11 +676,14 @@ impl CodegenAlternative {
                 .update(cx, |this, cx| {
                     this.message_id = message_id;
                     this.last_equal_ranges.clear();
-                    match result { Err(error) => {
-                        this.status = CodegenStatus::Error(error);
-                    } _ => {
-                        this.status = CodegenStatus::Done;
-                    }}
+                    match result {
+                        Err(error) => {
+                            this.status = CodegenStatus::Error(error);
+                        }
+                        _ => {
+                            this.status = CodegenStatus::Done;
+                        }
+                    }
                     this.elapsed_time = Some(elapsed_time);
                     this.completion = Some(completion.lock().clone());
                     if let Some(usage) = token_usage {

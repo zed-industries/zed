@@ -139,7 +139,10 @@ impl CopilotCodeVerification {
         cx.notify();
     }
 
-    fn render_device_code(data: &PromptUserDeviceFlow, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_device_code(
+        data: &PromptUserDeviceFlow,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let copied = cx
             .read_from_clipboard()
             .map(|item| item.text().as_ref() == Some(&data.user_code))

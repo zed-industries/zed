@@ -145,12 +145,17 @@ impl super::LspAdapter for GoLspAdapter {
                     });
                 }
             }
-        } else { match this
-            .cached_server_binary(container_dir.clone(), delegate)
-            .await
-        { Some(path) => {
-            return Ok(path);
-        } _ => {}}}
+        } else {
+            match this
+                .cached_server_binary(container_dir.clone(), delegate)
+                .await
+            {
+                Some(path) => {
+                    return Ok(path);
+                }
+                _ => {}
+            }
+        }
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;

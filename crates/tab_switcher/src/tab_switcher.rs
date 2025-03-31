@@ -425,11 +425,10 @@ impl PickerDelegate for TabSwitcherDelegate {
         });
 
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
-        let indicator_color = match indicator { Some(ref indicator) => {
-            indicator.color
-        } _ => {
-            Color::default()
-        }};
+        let indicator_color = match indicator {
+            Some(ref indicator) => indicator.color,
+            _ => Color::default(),
+        };
         let indicator = h_flex()
             .flex_shrink_0()
             .children(indicator)

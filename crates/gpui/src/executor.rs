@@ -178,21 +178,23 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
     pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
-        match self.block_internal(false, future, None) { Ok(value) => {
-            value
-        } _ => {
-            unreachable!()
-        }}
+        match self.block_internal(false, future, None) {
+            Ok(value) => value,
+            _ => {
+                unreachable!()
+            }
+        }
     }
 
     /// Block the current thread until the given future resolves.
     /// Consider using `block_with_timeout` instead.
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
-        match self.block_internal(true, future, None) { Ok(value) => {
-            value
-        } _ => {
-            unreachable!()
-        }}
+        match self.block_internal(true, future, None) {
+            Ok(value) => value,
+            _ => {
+                unreachable!()
+            }
+        }
     }
 
     #[cfg(not(any(test, feature = "test-support")))]

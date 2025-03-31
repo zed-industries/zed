@@ -1216,11 +1216,10 @@ impl Workspace {
         cx.spawn(async move |cx| {
             let mut paths_to_open = Vec::with_capacity(abs_paths.len());
             for path in abs_paths.into_iter() {
-                match app_state.fs.canonicalize(&path).await.ok() { Some(canonical) => {
-                    paths_to_open.push(canonical)
-                } _ => {
-                    paths_to_open.push(path)
-                }}
+                match app_state.fs.canonicalize(&path).await.ok() {
+                    Some(canonical) => paths_to_open.push(canonical),
+                    _ => paths_to_open.push(path),
+                }
             }
 
             let serialized_workspace: Option<SerializedWorkspace> =
@@ -1259,11 +1258,14 @@ impl Workspace {
                     })?
                     .await
                     .log_err()
-                { Some((_, project_entry)) => {
-                    project_paths.push((path, Some(project_entry)));
-                } _ => {
-                    project_paths.push((path, None));
-                }}
+                {
+                    Some((_, project_entry)) => {
+                        project_paths.push((path, Some(project_entry)));
+                    }
+                    _ => {
+                        project_paths.push((path, None));
+                    }
+                }
             }
 
             let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
@@ -1491,51 +1493,56 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
-        let to_load = match pane.upgrade() { Some(pane) => {
-            pane.update(cx, |pane, cx| {
-                window.focus(&pane.focus_handle(cx));
-                loop {
-                    // Retrieve the weak item handle from the history.
-                    let entry = pane.nav_history_mut().pop(mode, cx)?;
+        let to_load = match pane.upgrade() {
+            Some(pane) => {
+                pane.update(cx, |pane, cx| {
+                    window.focus(&pane.focus_handle(cx));
+                    loop {
+                        // Retrieve the weak item handle from the history.
+                        let entry = pane.nav_history_mut().pop(mode, cx)?;
 
-                    // If the item is still present in this pane, then activate it.
-                    match entry
-                        .item
-                        .upgrade()
-                        .and_then(|v| pane.index_for_item(v.as_ref()))
-                    { Some(index) => {
-                        let prev_active_item_index = pane.active_item_index();
-                        pane.nav_history_mut().set_mode(mode);
-                        pane.activate_item(index, true, true, window, cx);
-                        pane.nav_history_mut().set_mode(NavigationMode::Normal);
+                        // If the item is still present in this pane, then activate it.
+                        match entry
+                            .item
+                            .upgrade()
+                            .and_then(|v| pane.index_for_item(v.as_ref()))
+                        {
+                            Some(index) => {
+                                let prev_active_item_index = pane.active_item_index();
+                                pane.nav_history_mut().set_mode(mode);
+                                pane.activate_item(index, true, true, window, cx);
+                                pane.nav_history_mut().set_mode(NavigationMode::Normal);
 
-                        let mut navigated = prev_active_item_index != pane.active_item_index();
-                        if let Some(data) = entry.data {
-                            navigated |= pane.active_item()?.navigate(data, window, cx);
+                                let mut navigated =
+                                    prev_active_item_index != pane.active_item_index();
+                                if let Some(data) = entry.data {
+                                    navigated |= pane.active_item()?.navigate(data, window, cx);
+                                }
+
+                                if navigated {
+                                    break None;
+                                }
+                            }
+                            _ => {
+                                // If the item is no longer present in this pane, then retrieve its
+                                // path info in order to reopen it.
+                                break pane.nav_history().path_for_item(entry.item.id()).map(
+                                    |(project_path, abs_path)| (project_path, abs_path, entry),
+                                );
+                            }
                         }
+                    }
+                })
+            }
+            _ => None,
+        };
 
-                        if navigated {
-                            break None;
-                        }
-                    } _ => {
-                        // If the item is no longer present in this pane, then retrieve its
-                        // path info in order to reopen it.
-                        break pane
-                            .nav_history()
-                            .path_for_item(entry.item.id())
-                            .map(|(project_path, abs_path)| (project_path, abs_path, entry));
-                    }}
-                }
-            })
-        } _ => {
-            None
-        }};
+        match to_load {
+            Some((project_path, abs_path, entry)) => {
+                // If the item was no longer present, then load it again from its previous path, first try the local path
+                let open_by_project_path = self.load_path(project_path.clone(), window, cx);
 
-        match to_load { Some((project_path, abs_path, entry)) => {
-            // If the item was no longer present, then load it again from its previous path, first try the local path
-            let open_by_project_path = self.load_path(project_path.clone(), window, cx);
-
-            cx.spawn_in(window, async move  |workspace, cx| {
+                cx.spawn_in(window, async move  |workspace, cx| {
                 let open_by_project_path = open_by_project_path.await;
                 let mut navigated = false;
                 match open_by_project_path
@@ -1606,9 +1613,9 @@ impl Workspace {
 
                 Ok(())
             })
-        } _ => {
-            Task::ready(Ok(()))
-        }}
+            }
+            _ => Task::ready(Ok(())),
+        }
     }
 
     pub fn go_back(
@@ -1772,17 +1779,20 @@ impl Workspace {
                 .ok()
             });
 
-            match project_path { Some(project_path) => {
-                let (worktree, path) = project_path.await?;
-                let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
-                tx.send(Some(ProjectPath {
-                    worktree_id,
-                    path: path.into(),
-                }))
-                .ok();
-            } _ => {
-                tx.send(None).ok();
-            }}
+            match project_path {
+                Some(project_path) => {
+                    let (worktree, path) = project_path.await?;
+                    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
+                    tx.send(Some(ProjectPath {
+                        worktree_id,
+                        path: path.into(),
+                    }))
+                    .ok();
+                }
+                _ => {
+                    tx.send(None).ok();
+                }
+            }
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -1820,7 +1830,10 @@ impl Workspace {
         }
     }
 
-    pub fn worktrees<'a>(&self, cx: &'a App) -> impl 'a + Iterator<Item = Entity<Worktree>> + use<'a> {
+    pub fn worktrees<'a>(
+        &self,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = Entity<Worktree>> + use<'a> {
         self.project.read(cx).worktrees(cx)
     }
 
@@ -2061,11 +2074,14 @@ impl Workspace {
                             match item
                                 .to_serializable_item_handle(cx)
                                 .and_then(|handle| handle.serialize(workspace, true, window, cx))
-                            { Some(task) => {
-                                serialize_tasks.push(task);
-                            } _ => {
-                                remaining_dirty_items.push((pane, item));
-                            }}
+                            {
+                                Some(task) => {
+                                    serialize_tasks.push(task);
+                                }
+                                _ => {
+                                    remaining_dirty_items.push((pane, item));
+                                }
+                            }
                         }
                         (serialize_tasks, remaining_dirty_items)
                     })?;
@@ -2415,14 +2431,11 @@ impl Workspace {
         let item = pane.read(cx).active_item();
         let pane = pane.downgrade();
 
-        window.spawn(cx, async move |mut cx| {
-            match item { Some(item) => {
-                Pane::save_item(project, &pane, item.as_ref(), save_intent, &mut cx)
-                    .await
-                    .map(|_| ())
-            } _ => {
-                Ok(())
-            }}
+        window.spawn(cx, async move |mut cx| match item {
+            Some(item) => Pane::save_item(project, &pane, item.as_ref(), save_intent, &mut cx)
+                .await
+                .map(|_| ()),
+            _ => Ok(()),
         })
     }
 
@@ -2765,18 +2778,18 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        match self.last_active_center_pane.clone() { Some(center_pane) => {
-            match center_pane.upgrade() { Some(center_pane) => {
-                center_pane.update(cx, |pane, cx| {
-                    pane.add_item(item, true, true, None, window, cx)
-                });
-                true
-            } _ => {
-                false
-            }}
-        } _ => {
-            false
-        }}
+        match self.last_active_center_pane.clone() {
+            Some(center_pane) => match center_pane.upgrade() {
+                Some(center_pane) => {
+                    center_pane.update(cx, |pane, cx| {
+                        pane.add_item(item, true, true, None, window, cx)
+                    });
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     pub fn add_item_to_active_pane(
@@ -3122,14 +3135,15 @@ impl Workspace {
                 .index_for_item(item)
                 .map(|ix| (pane.clone(), ix))
         });
-        match result { Some((pane, ix)) => {
-            pane.update(cx, |pane, cx| {
-                pane.activate_item(ix, activate_pane, focus_item, window, cx)
-            });
-            true
-        } _ => {
-            false
-        }}
+        match result {
+            Some((pane, ix)) => {
+                pane.update(cx, |pane, cx| {
+                    pane.activate_item(ix, activate_pane, focus_item, window, cx)
+                });
+                true
+            }
+            _ => false,
+        }
     }
 
     fn activate_pane_at_index(
@@ -3139,11 +3153,14 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let panes = self.center.panes();
-        match panes.get(action.0).map(|p| (*p).clone()) { Some(pane) => {
-            window.focus(&pane.focus_handle(cx));
-        } _ => {
-            self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, window, cx);
-        }}
+        match panes.get(action.0).map(|p| (*p).clone()) {
+            Some(pane) => {
+                window.focus(&pane.focus_handle(cx));
+            }
+            _ => {
+                self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, window, cx);
+            }
+        }
     }
 
     fn move_item_to_pane_at_index(
@@ -3232,26 +3249,20 @@ impl Workspace {
         let target = match (origin, direction) {
             // We're in the center, so we first try to go to a different pane,
             // otherwise try to go to a dock.
-            (Origin::Center, direction) => {
-                match self.find_pane_in_direction(direction, cx) { Some(pane) => {
-                    Some(Target::Pane(pane))
-                } _ => {
-                    match direction {
-                        SplitDirection::Up => None,
-                        SplitDirection::Down => try_dock(&self.bottom_dock),
-                        SplitDirection::Left => try_dock(&self.left_dock),
-                        SplitDirection::Right => try_dock(&self.right_dock),
-                    }
-                }}
-            }
+            (Origin::Center, direction) => match self.find_pane_in_direction(direction, cx) {
+                Some(pane) => Some(Target::Pane(pane)),
+                _ => match direction {
+                    SplitDirection::Up => None,
+                    SplitDirection::Down => try_dock(&self.bottom_dock),
+                    SplitDirection::Left => try_dock(&self.left_dock),
+                    SplitDirection::Right => try_dock(&self.right_dock),
+                },
+            },
 
-            (Origin::LeftDock, SplitDirection::Right) => {
-                match get_last_active_pane() { Some(last_active_pane) => {
-                    Some(Target::Pane(last_active_pane))
-                } _ => {
-                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.right_dock))
-                }}
-            }
+            (Origin::LeftDock, SplitDirection::Right) => match get_last_active_pane() {
+                Some(last_active_pane) => Some(Target::Pane(last_active_pane)),
+                _ => try_dock(&self.bottom_dock).or_else(|| try_dock(&self.right_dock)),
+            },
 
             (Origin::LeftDock, SplitDirection::Down)
             | (Origin::RightDock, SplitDirection::Down) => try_dock(&self.bottom_dock),
@@ -3260,13 +3271,10 @@ impl Workspace {
             (Origin::BottomDock, SplitDirection::Left) => try_dock(&self.left_dock),
             (Origin::BottomDock, SplitDirection::Right) => try_dock(&self.right_dock),
 
-            (Origin::RightDock, SplitDirection::Left) => {
-                match get_last_active_pane() { Some(last_active_pane) => {
-                    Some(Target::Pane(last_active_pane))
-                } _ => {
-                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.left_dock))
-                }}
-            }
+            (Origin::RightDock, SplitDirection::Left) => match get_last_active_pane() {
+                Some(last_active_pane) => Some(Target::Pane(last_active_pane)),
+                _ => try_dock(&self.bottom_dock).or_else(|| try_dock(&self.left_dock)),
+            },
 
             _ => None,
         };
@@ -3549,17 +3557,17 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Pane>> {
         let item = pane.read(cx).active_item()?;
-        let maybe_pane_handle =
-            match item.clone_on_split(self.database_id(), window, cx) { Some(clone) => {
+        let maybe_pane_handle = match item.clone_on_split(self.database_id(), window, cx) {
+            Some(clone) => {
                 let new_pane = self.add_pane(window, cx);
                 new_pane.update(cx, |pane, cx| {
                     pane.add_item(clone, true, true, None, window, cx)
                 });
                 self.center.split(&pane, &new_pane, direction).unwrap();
                 Some(new_pane)
-            } _ => {
-                None
-            }};
+            }
+            _ => None,
+        };
         cx.notify();
         maybe_pane_handle
     }
@@ -3773,24 +3781,27 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let collaborators = self.project.read(cx).collaborators();
-        let next_leader_id = match self.leader_for_pane(&self.active_pane) { Some(leader_id) => {
-            let mut collaborators = collaborators.keys().copied();
-            for peer_id in collaborators.by_ref() {
-                if peer_id == leader_id {
-                    break;
+        let next_leader_id = match self.leader_for_pane(&self.active_pane) {
+            Some(leader_id) => {
+                let mut collaborators = collaborators.keys().copied();
+                for peer_id in collaborators.by_ref() {
+                    if peer_id == leader_id {
+                        break;
+                    }
                 }
+                collaborators.next()
             }
-            collaborators.next()
-        } _ => { match self.last_leaders_by_pane.get(&self.active_pane.downgrade())
-        { Some(last_leader_id) => {
-            if collaborators.contains_key(last_leader_id) {
-                Some(*last_leader_id)
-            } else {
-                None
-            }
-        } _ => {
-            None
-        }}}};
+            _ => match self.last_leaders_by_pane.get(&self.active_pane.downgrade()) {
+                Some(last_leader_id) => {
+                    if collaborators.contains_key(last_leader_id) {
+                        Some(*last_leader_id)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+        };
 
         let pane = self.active_pane.clone();
         let Some(leader_id) = next_leader_id.or_else(|| collaborators.keys().copied().next())
@@ -4069,11 +4080,12 @@ impl Workspace {
             proto::update_followers::Variant::CreateView(view) => {
                 let view_id = ViewId::from_proto(view.id.clone().context("invalid view id")?)?;
                 let should_add_view = this.update(cx, |this, _| {
-                    match this.follower_states.get_mut(&leader_id) { Some(state) => {
-                        anyhow::Ok(!state.items_by_leader_view_id.contains_key(&view_id))
-                    } _ => {
-                        anyhow::Ok(false)
-                    }}
+                    match this.follower_states.get_mut(&leader_id) {
+                        Some(state) => {
+                            anyhow::Ok(!state.items_by_leader_view_id.contains_key(&view_id))
+                        }
+                        _ => anyhow::Ok(false),
+                    }
                 })??;
 
                 if should_add_view {
@@ -4082,22 +4094,23 @@ impl Workspace {
             }
             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
                 let should_add_view = this.update(cx, |this, _| {
-                    match this.follower_states.get_mut(&leader_id) { Some(state) => {
-                        state.active_view_id = update_active_view
-                            .view
-                            .as_ref()
-                            .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
+                    match this.follower_states.get_mut(&leader_id) {
+                        Some(state) => {
+                            state.active_view_id = update_active_view
+                                .view
+                                .as_ref()
+                                .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
 
-                        if state.active_view_id.is_some_and(|view_id| {
-                            !state.items_by_leader_view_id.contains_key(&view_id)
-                        }) {
-                            anyhow::Ok(true)
-                        } else {
-                            anyhow::Ok(false)
+                            if state.active_view_id.is_some_and(|view_id| {
+                                !state.items_by_leader_view_id.contains_key(&view_id)
+                            }) {
+                                anyhow::Ok(true)
+                            } else {
+                                anyhow::Ok(false)
+                            }
                         }
-                    } _ => {
-                        anyhow::Ok(false)
-                    }}
+                        _ => anyhow::Ok(false),
+                    }
                 })??;
 
                 if should_add_view {
@@ -4170,52 +4183,53 @@ impl Workspace {
                 }
             })
         })?;
-        let item = match existing_item { Some(existing_item) => {
-            existing_item
-        } _ => {
-            let variant = view.variant.clone();
-            if variant.is_none() {
-                Err(anyhow!("missing view variant"))?;
-            }
+        let item = match existing_item {
+            Some(existing_item) => existing_item,
+            _ => {
+                let variant = view.variant.clone();
+                if variant.is_none() {
+                    Err(anyhow!("missing view variant"))?;
+                }
 
-            let task = cx.update(|window, cx| {
-                FollowableViewRegistry::from_state_proto(this.clone(), id, variant, window, cx)
-            })?;
+                let task = cx.update(|window, cx| {
+                    FollowableViewRegistry::from_state_proto(this.clone(), id, variant, window, cx)
+                })?;
 
-            let Some(task) = task else {
-                return Err(anyhow!(
+                let Some(task) = task else {
+                    return Err(anyhow!(
                     "failed to construct view from leader (maybe from a different version of zed?)"
                 ));
-            };
+                };
 
-            let mut new_item = task.await?;
-            pane.update_in(cx, |pane, window, cx| {
-                let mut item_to_remove = None;
-                for (ix, item) in pane.items().enumerate() {
-                    if let Some(item) = item.to_followable_item_handle(cx) {
-                        match new_item.dedup(item.as_ref(), window, cx) {
-                            Some(item::Dedup::KeepExisting) => {
-                                new_item =
-                                    item.boxed_clone().to_followable_item_handle(cx).unwrap();
-                                break;
+                let mut new_item = task.await?;
+                pane.update_in(cx, |pane, window, cx| {
+                    let mut item_to_remove = None;
+                    for (ix, item) in pane.items().enumerate() {
+                        if let Some(item) = item.to_followable_item_handle(cx) {
+                            match new_item.dedup(item.as_ref(), window, cx) {
+                                Some(item::Dedup::KeepExisting) => {
+                                    new_item =
+                                        item.boxed_clone().to_followable_item_handle(cx).unwrap();
+                                    break;
+                                }
+                                Some(item::Dedup::ReplaceExisting) => {
+                                    item_to_remove = Some((ix, item.item_id()));
+                                    break;
+                                }
+                                None => {}
                             }
-                            Some(item::Dedup::ReplaceExisting) => {
-                                item_to_remove = Some((ix, item.item_id()));
-                                break;
-                            }
-                            None => {}
                         }
                     }
-                }
 
-                if let Some((ix, id)) = item_to_remove {
-                    pane.remove_item(id, false, false, window, cx);
-                    pane.add_item(new_item.boxed_clone(), false, false, Some(ix), window, cx);
-                }
-            })?;
+                    if let Some((ix, id)) = item_to_remove {
+                        pane.remove_item(id, false, false, window, cx);
+                        pane.add_item(new_item.boxed_clone(), false, false, Some(ix), window, cx);
+                    }
+                })?;
 
-            new_item
-        }};
+                new_item
+            }
+        };
 
         this.update_in(cx, |this, window, cx| {
             let state = this.follower_states.get_mut(&leader_id)?;
@@ -4381,10 +4395,14 @@ impl Workspace {
                     item_to_activate = Some((item.location, item.view.boxed_clone()));
                 }
             }
-        } else { match self.shared_screen_for_peer(leader_id, &state.center_pane, window, cx)
-        { Some(shared_screen) => {
-            item_to_activate = Some((None, Box::new(shared_screen)));
-        } _ => {}}}
+        } else {
+            match self.shared_screen_for_peer(leader_id, &state.center_pane, window, cx) {
+                Some(shared_screen) => {
+                    item_to_activate = Some((None, Box::new(shared_screen)));
+                }
+                _ => {}
+            }
+        }
 
         let (panel_id, item) = item_to_activate?;
 
@@ -4406,11 +4424,12 @@ impl Workspace {
 
         pane.update(cx, |pane, cx| {
             let focus_active_item = pane.has_focus(window, cx) || transfer_focus;
-            match pane.index_for_item(item.as_ref()) { Some(index) => {
-                pane.activate_item(index, false, false, window, cx);
-            } _ => {
-                pane.add_item(item.boxed_clone(), false, false, None, window, cx)
-            }}
+            match pane.index_for_item(item.as_ref()) {
+                Some(index) => {
+                    pane.activate_item(index, false, false, window, cx);
+                }
+                _ => pane.add_item(item.boxed_clone(), false, false, None, window, cx),
+            }
 
             if focus_active_item {
                 pane.focus_active_item(window, cx)
@@ -4836,12 +4855,15 @@ impl Workspace {
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
-                    match active_pane { Some(active_pane) => {
-                        workspace.set_active_pane(&active_pane, window, cx);
-                        cx.focus_self(window);
-                    } _ => {
-                        workspace.set_active_pane(&workspace.center.first_pane(), window, cx);
-                    }}
+                    match active_pane {
+                        Some(active_pane) => {
+                            workspace.set_active_pane(&active_pane, window, cx);
+                            cx.focus_self(window);
+                        }
+                        _ => {
+                            workspace.set_active_pane(&workspace.center.first_pane(), window, cx);
+                        }
+                    }
                 }
 
                 let docks = serialized_workspace.docks;
@@ -5268,36 +5290,39 @@ fn open_items(
     cx.spawn_in(window, async move |workspace, cx| {
         let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 
-        match restored_items { Some(restored_items) => {
-            let restored_items = restored_items.await?;
+        match restored_items {
+            Some(restored_items) => {
+                let restored_items = restored_items.await?;
 
-            let restored_project_paths = restored_items
-                .iter()
-                .filter_map(|item| {
-                    cx.update(|_, cx| item.as_ref()?.project_path(cx))
-                        .ok()
-                        .flatten()
-                })
-                .collect::<HashSet<_>>();
+                let restored_project_paths = restored_items
+                    .iter()
+                    .filter_map(|item| {
+                        cx.update(|_, cx| item.as_ref()?.project_path(cx))
+                            .ok()
+                            .flatten()
+                    })
+                    .collect::<HashSet<_>>();
 
-            for restored_item in restored_items {
-                opened_items.push(restored_item.map(Ok));
-            }
+                for restored_item in restored_items {
+                    opened_items.push(restored_item.map(Ok));
+                }
 
-            project_paths_to_open
-                .iter_mut()
-                .for_each(|(_, project_path)| {
-                    if let Some(project_path_to_open) = project_path {
-                        if restored_project_paths.contains(project_path_to_open) {
-                            *project_path = None;
+                project_paths_to_open
+                    .iter_mut()
+                    .for_each(|(_, project_path)| {
+                        if let Some(project_path_to_open) = project_path {
+                            if restored_project_paths.contains(project_path_to_open) {
+                                *project_path = None;
+                            }
                         }
-                    }
-                });
-        } _ => {
-            for _ in 0..project_paths_to_open.len() {
-                opened_items.push(None);
+                    });
             }
-        }}
+            _ => {
+                for _ in 0..project_paths_to_open.len() {
+                    opened_items.push(None);
+                }
+            }
+        }
         assert!(opened_items.len() == project_paths_to_open.len());
 
         let tasks =
@@ -8196,12 +8221,15 @@ mod tests {
             let workspace = workspace.clone();
             move |cx: &mut VisualTestContext| {
                 workspace.update_in(cx, |workspace, window, cx| {
-                    match workspace.active_modal::<TestModal>(cx) { Some(_) => {
-                        workspace.toggle_modal(window, cx, TestModal::new);
-                        workspace.toggle_modal(window, cx, TestModal::new);
-                    } _ => {
-                        workspace.toggle_modal(window, cx, TestModal::new);
-                    }}
+                    match workspace.active_modal::<TestModal>(cx) {
+                        Some(_) => {
+                            workspace.toggle_modal(window, cx, TestModal::new);
+                            workspace.toggle_modal(window, cx, TestModal::new);
+                        }
+                        _ => {
+                            workspace.toggle_modal(window, cx, TestModal::new);
+                        }
+                    }
                 })
             }
         };

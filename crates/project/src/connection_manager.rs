@@ -45,12 +45,9 @@ impl Manager {
             cx.on_release(move |project, cx| {
                 manager
                     .update(cx, |manager, cx| {
-                        manager.projects.retain(|p| {
-                            match p.upgrade() { Some(p) => {
-                                p.read(cx).remote_id() != project.remote_id()
-                            } _ => {
-                                false
-                            }}
+                        manager.projects.retain(|p| match p.upgrade() {
+                            Some(p) => p.read(cx).remote_id() != project.remote_id(),
+                            _ => false,
                         });
                         if manager.projects.is_empty() {
                             manager.maintain_connection.take();
@@ -81,8 +78,8 @@ impl Manager {
             rejoined_projects: self
                 .projects
                 .iter()
-                .filter_map(|project| {
-                    match project.upgrade() { Some(handle) => {
+                .filter_map(|project| match project.upgrade() {
+                    Some(handle) => {
                         let project = handle.read(cx);
                         let project_id = project.remote_id()?;
                         projects.insert(project_id, handle.clone());
@@ -106,9 +103,8 @@ impl Manager {
                             worktrees,
                             repositories,
                         })
-                    } _ => {
-                        None
-                    }}
+                    }
+                    _ => None,
                 })
                 .collect(),
         });

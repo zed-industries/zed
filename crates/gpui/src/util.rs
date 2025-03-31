@@ -32,12 +32,9 @@ pub trait FluentBuilder {
     where
         Self: Sized,
     {
-        self.map(|this| {
-            match option { Some(value) => {
-                then(this, value)
-            } _ => {
-                this
-            }}
+        self.map(|this| match option {
+            Some(value) => then(this, value),
+            _ => this,
         })
     }
     /// Conditionally unwrap and modify self with the given closure, if the given option is Some.

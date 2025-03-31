@@ -238,11 +238,14 @@ fn assert_editor_active_edit_completion(
             .as_ref()
             .expect("editor has no active completion");
 
-        match &completion_state.completion { InlineCompletion::Edit { edits, .. } => {
-            assert(editor.buffer().read(cx).snapshot(cx), edits);
-        } _ => {
-            panic!("expected edit completion");
-        }}
+        match &completion_state.completion {
+            InlineCompletion::Edit { edits, .. } => {
+                assert(editor.buffer().read(cx).snapshot(cx), edits);
+            }
+            _ => {
+                panic!("expected edit completion");
+            }
+        }
     })
 }
 
@@ -256,11 +259,14 @@ fn assert_editor_active_move_completion(
             .as_ref()
             .expect("editor has no active completion");
 
-        match &completion_state.completion { InlineCompletion::Move { target, .. } => {
-            assert(editor.buffer().read(cx).snapshot(cx), *target);
-        } _ => {
-            panic!("expected move completion");
-        }}
+        match &completion_state.completion {
+            InlineCompletion::Move { target, .. } => {
+                assert(editor.buffer().read(cx).snapshot(cx), *target);
+            }
+            _ => {
+                panic!("expected move completion");
+            }
+        }
     })
 }
 

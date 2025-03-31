@@ -432,69 +432,96 @@ impl EditorElement {
         register_action(editor, window, Editor::expand_all_diff_hunks);
 
         register_action(editor, window, |editor, action, window, cx| {
-            match editor.format(action, window, cx) { Some(task) => {
-                task.detach_and_notify_err(window, cx);
-            } _ => {
-                cx.propagate();
-            }}
+            match editor.format(action, window, cx) {
+                Some(task) => {
+                    task.detach_and_notify_err(window, cx);
+                }
+                _ => {
+                    cx.propagate();
+                }
+            }
         });
         register_action(editor, window, |editor, action, window, cx| {
-            match editor.format_selections(action, window, cx) { Some(task) => {
-                task.detach_and_notify_err(window, cx);
-            } _ => {
-                cx.propagate();
-            }}
+            match editor.format_selections(action, window, cx) {
+                Some(task) => {
+                    task.detach_and_notify_err(window, cx);
+                }
+                _ => {
+                    cx.propagate();
+                }
+            }
         });
         register_action(editor, window, |editor, action, window, cx| {
-            match editor.organize_imports(action, window, cx) { Some(task) => {
-                task.detach_and_notify_err(window, cx);
-            } _ => {
-                cx.propagate();
-            }}
+            match editor.organize_imports(action, window, cx) {
+                Some(task) => {
+                    task.detach_and_notify_err(window, cx);
+                }
+                _ => {
+                    cx.propagate();
+                }
+            }
         });
         register_action(editor, window, Editor::restart_language_server);
         register_action(editor, window, Editor::show_character_palette);
         register_action(editor, window, |editor, action, window, cx| {
-            match editor.confirm_completion(action, window, cx) { Some(task) => {
-                task.detach_and_notify_err(window, cx);
-            } _ => {
-                cx.propagate();
-            }}
+            match editor.confirm_completion(action, window, cx) {
+                Some(task) => {
+                    task.detach_and_notify_err(window, cx);
+                }
+                _ => {
+                    cx.propagate();
+                }
+            }
         });
         register_action(editor, window, |editor, action, window, cx| {
-            match editor.compose_completion(action, window, cx) { Some(task) => {
-                task.detach_and_notify_err(window, cx);
-            } _ => {
-                cx.propagate();
-            }}
+            match editor.compose_completion(action, window, cx) {
+                Some(task) => {
+                    task.detach_and_notify_err(window, cx);
+                }
+                _ => {
+                    cx.propagate();
+                }
+            }
         });
         register_action(editor, window, |editor, action, window, cx| {
-            match editor.confirm_code_action(action, window, cx) { Some(task) => {
-                task.detach_and_notify_err(window, cx);
-            } _ => {
-                cx.propagate();
-            }}
+            match editor.confirm_code_action(action, window, cx) {
+                Some(task) => {
+                    task.detach_and_notify_err(window, cx);
+                }
+                _ => {
+                    cx.propagate();
+                }
+            }
         });
         register_action(editor, window, |editor, action, window, cx| {
-            match editor.rename(action, window, cx) { Some(task) => {
-                task.detach_and_notify_err(window, cx);
-            } _ => {
-                cx.propagate();
-            }}
+            match editor.rename(action, window, cx) {
+                Some(task) => {
+                    task.detach_and_notify_err(window, cx);
+                }
+                _ => {
+                    cx.propagate();
+                }
+            }
         });
         register_action(editor, window, |editor, action, window, cx| {
-            match editor.confirm_rename(action, window, cx) { Some(task) => {
-                task.detach_and_notify_err(window, cx);
-            } _ => {
-                cx.propagate();
-            }}
+            match editor.confirm_rename(action, window, cx) {
+                Some(task) => {
+                    task.detach_and_notify_err(window, cx);
+                }
+                _ => {
+                    cx.propagate();
+                }
+            }
         });
         register_action(editor, window, |editor, action, window, cx| {
-            match editor.find_all_references(action, window, cx) { Some(task) => {
-                task.detach_and_log_err(cx);
-            } _ => {
-                cx.propagate();
-            }}
+            match editor.find_all_references(action, window, cx) {
+                Some(task) => {
+                    task.detach_and_log_err(cx);
+                }
+                _ => {
+                    cx.propagate();
+                }
+            }
         });
         register_action(editor, window, Editor::show_signature_help);
         register_action(editor, window, Editor::next_edit_prediction);
@@ -1097,82 +1124,88 @@ impl EditorElement {
                 selections.push((player, layouts));
             }
 
-            match &editor.collaboration_hub { Some(collaboration_hub) => {
-                // When following someone, render the local selections in their color.
-                if let Some(leader_id) = editor.leader_peer_id {
-                    if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id)
-                    {
-                        if let Some(participant_index) = collaboration_hub
-                            .user_participant_indices(cx)
-                            .get(&collaborator.user_id)
+            match &editor.collaboration_hub {
+                Some(collaboration_hub) => {
+                    // When following someone, render the local selections in their color.
+                    if let Some(leader_id) = editor.leader_peer_id {
+                        if let Some(collaborator) =
+                            collaboration_hub.collaborators(cx).get(&leader_id)
                         {
-                            if let Some((local_selection_style, _)) = selections.first_mut() {
-                                *local_selection_style = cx
-                                    .theme()
-                                    .players()
-                                    .color_for_participant(participant_index.0);
+                            if let Some(participant_index) = collaboration_hub
+                                .user_participant_indices(cx)
+                                .get(&collaborator.user_id)
+                            {
+                                if let Some((local_selection_style, _)) = selections.first_mut() {
+                                    *local_selection_style = cx
+                                        .theme()
+                                        .players()
+                                        .color_for_participant(participant_index.0);
+                                }
                             }
                         }
                     }
-                }
 
-                let mut remote_selections = HashMap::default();
-                for selection in snapshot.remote_selections_in_range(
-                    &(start_anchor..end_anchor),
-                    collaboration_hub.as_ref(),
-                    cx,
-                ) {
-                    let selection_style =
-                        Self::get_participant_color(selection.participant_index, cx);
+                    let mut remote_selections = HashMap::default();
+                    for selection in snapshot.remote_selections_in_range(
+                        &(start_anchor..end_anchor),
+                        collaboration_hub.as_ref(),
+                        cx,
+                    ) {
+                        let selection_style =
+                            Self::get_participant_color(selection.participant_index, cx);
 
-                    // Don't re-render the leader's selections, since the local selections
-                    // match theirs.
-                    if Some(selection.peer_id) == editor.leader_peer_id {
-                        continue;
+                        // Don't re-render the leader's selections, since the local selections
+                        // match theirs.
+                        if Some(selection.peer_id) == editor.leader_peer_id {
+                            continue;
+                        }
+                        let key = HoveredCursor {
+                            replica_id: selection.replica_id,
+                            selection_id: selection.selection.id,
+                        };
+
+                        let is_shown =
+                            editor.show_cursor_names || editor.hovered_cursors.contains_key(&key);
+
+                        remote_selections
+                            .entry(selection.replica_id)
+                            .or_insert((selection_style, Vec::new()))
+                            .1
+                            .push(SelectionLayout::new(
+                                selection.selection,
+                                selection.line_mode,
+                                selection.cursor_shape,
+                                &snapshot.display_snapshot,
+                                false,
+                                false,
+                                if is_shown { selection.user_name } else { None },
+                            ));
                     }
-                    let key = HoveredCursor {
-                        replica_id: selection.replica_id,
-                        selection_id: selection.selection.id,
-                    };
 
-                    let is_shown =
-                        editor.show_cursor_names || editor.hovered_cursors.contains_key(&key);
-
-                    remote_selections
-                        .entry(selection.replica_id)
-                        .or_insert((selection_style, Vec::new()))
-                        .1
-                        .push(SelectionLayout::new(
-                            selection.selection,
-                            selection.line_mode,
-                            selection.cursor_shape,
-                            &snapshot.display_snapshot,
-                            false,
-                            false,
-                            if is_shown { selection.user_name } else { None },
-                        ));
+                    selections.extend(remote_selections.into_values());
                 }
-
-                selections.extend(remote_selections.into_values());
-            } _ => if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
-                let layouts = snapshot
-                    .buffer_snapshot
-                    .selections_in_range(&(start_anchor..end_anchor), true)
-                    .map(move |(_, line_mode, cursor_shape, selection)| {
-                        SelectionLayout::new(
-                            selection,
-                            line_mode,
-                            cursor_shape,
-                            &snapshot.display_snapshot,
-                            false,
-                            false,
-                            None,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let player = editor.current_user_player_color(cx);
-                selections.push((player, layouts));
-            }}
+                _ => {
+                    if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
+                        let layouts = snapshot
+                            .buffer_snapshot
+                            .selections_in_range(&(start_anchor..end_anchor), true)
+                            .map(move |(_, line_mode, cursor_shape, selection)| {
+                                SelectionLayout::new(
+                                    selection,
+                                    line_mode,
+                                    cursor_shape,
+                                    &snapshot.display_snapshot,
+                                    false,
+                                    false,
+                                    None,
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        let player = editor.current_user_player_color(cx);
+                        selections.push((player, layouts));
+                    }
+                }
+            }
         });
         (selections, active_rows, newest_selection_head)
     }
@@ -2056,21 +2089,18 @@ impl EditorElement {
         cx: &mut App,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
-            let active_task_indicator_row =
-                match editor.context_menu.borrow().as_ref()
-                { Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
+            let active_task_indicator_row = match editor.context_menu.borrow().as_ref() {
+                Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
                     deployed_from_indicator,
                     actions,
                     ..
-                })) => {
-                    actions
-                        .tasks
-                        .as_ref()
-                        .map(|tasks| tasks.position.to_display_point(snapshot).row())
-                        .or(*deployed_from_indicator)
-                } _ => {
-                    None
-                }};
+                })) => actions
+                    .tasks
+                    .as_ref()
+                    .map(|tasks| tasks.position.to_display_point(snapshot).row())
+                    .or(*deployed_from_indicator),
+                _ => None,
+            };
 
             let offset_range_start =
                 snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left);
@@ -4079,12 +4109,13 @@ impl EditorElement {
         );
 
         let maybe_element = self.editor.update(cx, |editor, cx| {
-            match editor.signature_help_state.popover_mut() { Some(popover) => {
-                let element = popover.render(max_size, cx);
-                Some(element)
-            } _ => {
-                None
-            }}
+            match editor.signature_help_state.popover_mut() {
+                Some(popover) => {
+                    let element = popover.render(max_size, cx);
+                    Some(element)
+                }
+                _ => None,
+            }
         });
         if let Some(mut element) = maybe_element {
             let window_size = window.viewport_size();
@@ -4189,7 +4220,11 @@ impl EditorElement {
                     None;
                 for (&new_row, &new_background) in &layout.highlighted_rows {
                     match &mut current_paint {
-                        &mut Some((ref mut current_background, ref mut current_range, mut edges)) => {
+                        &mut Some((
+                            ref mut current_background,
+                            ref mut current_range,
+                            mut edges,
+                        )) => {
                             let current_background = *current_background;
                             let new_range_started = current_background != new_background
                                 || current_range.end.next_row() != new_row;
@@ -4924,28 +4959,30 @@ impl EditorElement {
                             scrollbars_layout
                                 .iter_scrollbars()
                                 .find(|(_, a)| *a == axis)
-                        })
-                    { Some((scrollbar_layout, axis)) => {
-                        let ScrollbarLayout {
-                            hitbox,
-                            text_unit_size,
-                            ..
-                        } = scrollbar_layout;
+                        }) {
+                        Some((scrollbar_layout, axis)) => {
+                            let ScrollbarLayout {
+                                hitbox,
+                                text_unit_size,
+                                ..
+                            } = scrollbar_layout;
 
-                        let old_position = mouse_position.along(axis);
-                        let new_position = event.position.along(axis);
-                        if (hitbox.origin.along(axis)..hitbox.bottom_right().along(axis))
-                            .contains(&old_position)
-                        {
-                            let position = editor.scroll_position(cx).apply_along(axis, |p| {
-                                (p + (new_position - old_position) / *text_unit_size).max(0.)
-                            });
-                            editor.set_scroll_position(position, window, cx);
+                            let old_position = mouse_position.along(axis);
+                            let new_position = event.position.along(axis);
+                            if (hitbox.origin.along(axis)..hitbox.bottom_right().along(axis))
+                                .contains(&old_position)
+                            {
+                                let position = editor.scroll_position(cx).apply_along(axis, |p| {
+                                    (p + (new_position - old_position) / *text_unit_size).max(0.)
+                                });
+                                editor.set_scroll_position(position, window, cx);
+                            }
+                            cx.stop_propagation();
                         }
-                        cx.stop_propagation();
-                    } _ => {
-                        editor.scroll_manager.reset_scrollbar_dragging_state(cx);
-                    }}
+                        _ => {
+                            editor.scroll_manager.reset_scrollbar_dragging_state(cx);
+                        }
+                    }
 
                     if scrollbars_layout.get_hovered_axis(window).is_some() {
                         editor.scroll_manager.show_scrollbars(window, cx);
@@ -5655,14 +5692,13 @@ pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
 
 impl AcceptEditPredictionBinding {
     pub fn keystroke(&self) -> Option<&Keystroke> {
-        match self.0.as_ref() { Some(binding) => {
-            match &binding.keystrokes() {
+        match self.0.as_ref() {
+            Some(binding) => match &binding.keystrokes() {
                 [keystroke] => Some(keystroke),
                 _ => None,
-            }
-        } _ => {
-            None
-        }}
+            },
+            _ => None,
+        }
     }
 }
 
@@ -5949,89 +5985,9 @@ impl LineWithInvisibles {
             is_tab: false,
             replacement: None,
         }]) {
-            match highlighted_chunk.replacement { Some(replacement) => {
-                if !line.is_empty() {
-                    let shaped_line = window
-                        .text_system()
-                        .shape_line(line.clone().into(), font_size, &styles)
-                        .unwrap();
-                    width += shaped_line.width;
-                    len += shaped_line.len;
-                    fragments.push(LineFragment::Text(shaped_line));
-                    line.clear();
-                    styles.clear();
-                }
-
-                match replacement {
-                    ChunkReplacement::Renderer(renderer) => {
-                        let available_width = if renderer.constrain_width {
-                            let chunk = if highlighted_chunk.text == ellipsis.as_ref() {
-                                ellipsis.clone()
-                            } else {
-                                SharedString::from(Arc::from(highlighted_chunk.text))
-                            };
-                            let shaped_line = window
-                                .text_system()
-                                .shape_line(
-                                    chunk,
-                                    font_size,
-                                    &[text_style.to_run(highlighted_chunk.text.len())],
-                                )
-                                .unwrap();
-                            AvailableSpace::Definite(shaped_line.width)
-                        } else {
-                            AvailableSpace::MinContent
-                        };
-
-                        let mut element = (renderer.render)(&mut ChunkRendererContext {
-                            context: cx,
-                            window,
-                            max_width: text_width,
-                        });
-                        let line_height = text_style.line_height_in_pixels(window.rem_size());
-                        let size = element.layout_as_root(
-                            size(available_width, AvailableSpace::Definite(line_height)),
-                            window,
-                            cx,
-                        );
-
-                        width += size.width;
-                        len += highlighted_chunk.text.len();
-                        fragments.push(LineFragment::Element {
-                            element: Some(element),
-                            size,
-                            len: highlighted_chunk.text.len(),
-                        });
-                    }
-                    ChunkReplacement::Str(x) => {
-                        let text_style = match highlighted_chunk.style { Some(style) => {
-                            Cow::Owned(text_style.clone().highlight(style))
-                        } _ => {
-                            Cow::Borrowed(text_style)
-                        }};
-
-                        let run = TextRun {
-                            len: x.len(),
-                            font: text_style.font(),
-                            color: text_style.color,
-                            background_color: text_style.background_color,
-                            underline: text_style.underline,
-                            strikethrough: text_style.strikethrough,
-                        };
-                        let line_layout = window
-                            .text_system()
-                            .shape_line(x, font_size, &[run])
-                            .unwrap()
-                            .with_len(highlighted_chunk.text.len());
-
-                        width += line_layout.width;
-                        len += highlighted_chunk.text.len();
-                        fragments.push(LineFragment::Text(line_layout))
-                    }
-                }
-            } _ => {
-                for (ix, mut line_chunk) in highlighted_chunk.text.split('\n').enumerate() {
-                    if ix > 0 {
+            match highlighted_chunk.replacement {
+                Some(replacement) => {
+                    if !line.is_empty() {
                         let shaped_line = window
                             .text_system()
                             .shape_line(line.clone().into(), font_size, &styles)
@@ -6039,83 +5995,164 @@ impl LineWithInvisibles {
                         width += shaped_line.width;
                         len += shaped_line.len;
                         fragments.push(LineFragment::Text(shaped_line));
-                        layouts.push(Self {
-                            width: mem::take(&mut width),
-                            len: mem::take(&mut len),
-                            fragments: mem::take(&mut fragments),
-                            invisibles: std::mem::take(&mut invisibles),
-                            font_size,
-                        });
-
                         line.clear();
                         styles.clear();
-                        row += 1;
-                        line_exceeded_max_len = false;
-                        non_whitespace_added = false;
-                        if row == max_line_count {
-                            return layouts;
-                        }
                     }
 
-                    if !line_chunk.is_empty() && !line_exceeded_max_len {
-                        let text_style = match highlighted_chunk.style { Some(style) => {
-                            Cow::Owned(text_style.clone().highlight(style))
-                        } _ => {
-                            Cow::Borrowed(text_style)
-                        }};
-
-                        if line.len() + line_chunk.len() > max_line_len {
-                            let mut chunk_len = max_line_len - line.len();
-                            while !line_chunk.is_char_boundary(chunk_len) {
-                                chunk_len -= 1;
-                            }
-                            line_chunk = &line_chunk[..chunk_len];
-                            line_exceeded_max_len = true;
-                        }
-
-                        styles.push(TextRun {
-                            len: line_chunk.len(),
-                            font: text_style.font(),
-                            color: text_style.color,
-                            background_color: text_style.background_color,
-                            underline: text_style.underline,
-                            strikethrough: text_style.strikethrough,
-                        });
-
-                        if editor_mode == EditorMode::Full {
-                            // Line wrap pads its contents with fake whitespaces,
-                            // avoid printing them
-                            let is_soft_wrapped = is_row_soft_wrapped(row);
-                            if highlighted_chunk.is_tab {
-                                if non_whitespace_added || !is_soft_wrapped {
-                                    invisibles.push(Invisible::Tab {
-                                        line_start_offset: line.len(),
-                                        line_end_offset: line.len() + line_chunk.len(),
-                                    });
-                                }
+                    match replacement {
+                        ChunkReplacement::Renderer(renderer) => {
+                            let available_width = if renderer.constrain_width {
+                                let chunk = if highlighted_chunk.text == ellipsis.as_ref() {
+                                    ellipsis.clone()
+                                } else {
+                                    SharedString::from(Arc::from(highlighted_chunk.text))
+                                };
+                                let shaped_line = window
+                                    .text_system()
+                                    .shape_line(
+                                        chunk,
+                                        font_size,
+                                        &[text_style.to_run(highlighted_chunk.text.len())],
+                                    )
+                                    .unwrap();
+                                AvailableSpace::Definite(shaped_line.width)
                             } else {
-                                invisibles.extend(line_chunk.char_indices().filter_map(
-                                    |(index, c)| {
-                                        let is_whitespace = c.is_whitespace();
-                                        non_whitespace_added |= !is_whitespace;
-                                        if is_whitespace
-                                            && (non_whitespace_added || !is_soft_wrapped)
-                                        {
-                                            Some(Invisible::Whitespace {
-                                                line_offset: line.len() + index,
-                                            })
-                                        } else {
-                                            None
-                                        }
-                                    },
-                                ))
-                            }
-                        }
+                                AvailableSpace::MinContent
+                            };
 
-                        line.push_str(line_chunk);
+                            let mut element = (renderer.render)(&mut ChunkRendererContext {
+                                context: cx,
+                                window,
+                                max_width: text_width,
+                            });
+                            let line_height = text_style.line_height_in_pixels(window.rem_size());
+                            let size = element.layout_as_root(
+                                size(available_width, AvailableSpace::Definite(line_height)),
+                                window,
+                                cx,
+                            );
+
+                            width += size.width;
+                            len += highlighted_chunk.text.len();
+                            fragments.push(LineFragment::Element {
+                                element: Some(element),
+                                size,
+                                len: highlighted_chunk.text.len(),
+                            });
+                        }
+                        ChunkReplacement::Str(x) => {
+                            let text_style = match highlighted_chunk.style {
+                                Some(style) => Cow::Owned(text_style.clone().highlight(style)),
+                                _ => Cow::Borrowed(text_style),
+                            };
+
+                            let run = TextRun {
+                                len: x.len(),
+                                font: text_style.font(),
+                                color: text_style.color,
+                                background_color: text_style.background_color,
+                                underline: text_style.underline,
+                                strikethrough: text_style.strikethrough,
+                            };
+                            let line_layout = window
+                                .text_system()
+                                .shape_line(x, font_size, &[run])
+                                .unwrap()
+                                .with_len(highlighted_chunk.text.len());
+
+                            width += line_layout.width;
+                            len += highlighted_chunk.text.len();
+                            fragments.push(LineFragment::Text(line_layout))
+                        }
                     }
                 }
-            }}
+                _ => {
+                    for (ix, mut line_chunk) in highlighted_chunk.text.split('\n').enumerate() {
+                        if ix > 0 {
+                            let shaped_line = window
+                                .text_system()
+                                .shape_line(line.clone().into(), font_size, &styles)
+                                .unwrap();
+                            width += shaped_line.width;
+                            len += shaped_line.len;
+                            fragments.push(LineFragment::Text(shaped_line));
+                            layouts.push(Self {
+                                width: mem::take(&mut width),
+                                len: mem::take(&mut len),
+                                fragments: mem::take(&mut fragments),
+                                invisibles: std::mem::take(&mut invisibles),
+                                font_size,
+                            });
+
+                            line.clear();
+                            styles.clear();
+                            row += 1;
+                            line_exceeded_max_len = false;
+                            non_whitespace_added = false;
+                            if row == max_line_count {
+                                return layouts;
+                            }
+                        }
+
+                        if !line_chunk.is_empty() && !line_exceeded_max_len {
+                            let text_style = match highlighted_chunk.style {
+                                Some(style) => Cow::Owned(text_style.clone().highlight(style)),
+                                _ => Cow::Borrowed(text_style),
+                            };
+
+                            if line.len() + line_chunk.len() > max_line_len {
+                                let mut chunk_len = max_line_len - line.len();
+                                while !line_chunk.is_char_boundary(chunk_len) {
+                                    chunk_len -= 1;
+                                }
+                                line_chunk = &line_chunk[..chunk_len];
+                                line_exceeded_max_len = true;
+                            }
+
+                            styles.push(TextRun {
+                                len: line_chunk.len(),
+                                font: text_style.font(),
+                                color: text_style.color,
+                                background_color: text_style.background_color,
+                                underline: text_style.underline,
+                                strikethrough: text_style.strikethrough,
+                            });
+
+                            if editor_mode == EditorMode::Full {
+                                // Line wrap pads its contents with fake whitespaces,
+                                // avoid printing them
+                                let is_soft_wrapped = is_row_soft_wrapped(row);
+                                if highlighted_chunk.is_tab {
+                                    if non_whitespace_added || !is_soft_wrapped {
+                                        invisibles.push(Invisible::Tab {
+                                            line_start_offset: line.len(),
+                                            line_end_offset: line.len() + line_chunk.len(),
+                                        });
+                                    }
+                                } else {
+                                    invisibles.extend(line_chunk.char_indices().filter_map(
+                                        |(index, c)| {
+                                            let is_whitespace = c.is_whitespace();
+                                            non_whitespace_added |= !is_whitespace;
+                                            if is_whitespace
+                                                && (non_whitespace_added || !is_soft_wrapped)
+                                            {
+                                                Some(Invisible::Whitespace {
+                                                    line_offset: line.len() + index,
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        },
+                                    ))
+                                }
+                            }
+
+                            line.push_str(line_chunk);
+                        }
+                    }
+                }
+            }
         }
 
         layouts
@@ -8070,15 +8107,16 @@ impl PositionMap {
         let (column, x_overshoot_after_line_end) = match self
             .line_layouts
             .get(row as usize - scroll_position.y as usize)
-        { Some(line) => {
-            if let Some(ix) = line.index_for_x(x) {
-                (ix as u32, px(0.))
-            } else {
-                (line.len as u32, px(0.).max(x - line.width))
+        {
+            Some(line) => {
+                if let Some(ix) = line.index_for_x(x) {
+                    (ix as u32, px(0.))
+                } else {
+                    (line.len as u32, px(0.).max(x - line.width))
+                }
             }
-        } _ => {
-            (0, x)
-        }};
+            _ => (0, x),
+        };
 
         let mut exact_unclipped = DisplayPoint::new(DisplayRow(row), column);
         let previous_valid = self.snapshot.clip_point(exact_unclipped, Bias::Left);

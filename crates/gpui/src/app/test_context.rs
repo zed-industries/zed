@@ -448,7 +448,10 @@ impl TestAppContext {
     }
 
     /// Returns a stream of notifications whenever the Entity is updated.
-    pub fn notifications<T: 'static>(&mut self, entity: &Entity<T>) -> impl Stream<Item = ()> + use<T> {
+    pub fn notifications<T: 'static>(
+        &mut self,
+        entity: &Entity<T>,
+    ) -> impl Stream<Item = ()> + use<T> {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         self.update(|cx| {
             cx.observe(entity, {
@@ -521,7 +524,10 @@ impl TestAppContext {
 
 impl<T: 'static> Entity<T> {
     /// Block until the next event is emitted by the entity, then return it.
-    pub fn next_event<Event>(&self, cx: &mut TestAppContext) -> impl Future<Output = Event> + use<Event, T>
+    pub fn next_event<Event>(
+        &self,
+        cx: &mut TestAppContext,
+    ) -> impl Future<Output = Event> + use<Event, T>
     where
         Event: Send + Clone + 'static,
         T: EventEmitter<Event>,
@@ -843,17 +849,18 @@ impl VisualTestContext {
                     .take()
             })
             .unwrap();
-        match handler { Some(mut handler) => {
-            let should_close = handler();
-            self.cx
-                .update_window(self.window, |_, window, _| {
-                    window.platform_window.on_should_close(handler);
-                })
-                .unwrap();
-            should_close
-        } _ => {
-            false
-        }}
+        match handler {
+            Some(mut handler) => {
+                let should_close = handler();
+                self.cx
+                    .update_window(self.window, |_, window, _| {
+                        window.platform_window.on_should_close(handler);
+                    })
+                    .unwrap();
+                should_close
+            }
+            _ => false,
+        }
     }
 
     /// Get an &mut VisualTestContext (which is mostly what you need to pass to other methods).

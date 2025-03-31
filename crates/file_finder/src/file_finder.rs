@@ -996,11 +996,10 @@ impl FileFinderDelegate {
 
             let abs_file_exists = match project.update(cx, |this, cx| {
                 this.resolve_abs_file_path(query.path_query(), cx)
-            }) { Ok(task) => {
-                task.await.is_some()
-            } _ => {
-                false
-            }};
+            }) {
+                Ok(task) => task.await.is_some(),
+                _ => false,
+            };
 
             if abs_file_exists {
                 let update_result = project

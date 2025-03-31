@@ -950,33 +950,37 @@ impl ProjectSearchView {
             }
         });
 
-        let search = match existing { Some(existing) => {
-            workspace.activate_item(&existing, true, true, window, cx);
-            existing
-        } _ => {
-            let settings = cx
-                .global::<ActiveSettings>()
-                .0
-                .get(&workspace.project().downgrade());
+        let search = match existing {
+            Some(existing) => {
+                workspace.activate_item(&existing, true, true, window, cx);
+                existing
+            }
+            _ => {
+                let settings = cx
+                    .global::<ActiveSettings>()
+                    .0
+                    .get(&workspace.project().downgrade());
 
-            let settings = settings.cloned();
+                let settings = settings.cloned();
 
-            let weak_workspace = cx.entity().downgrade();
+                let weak_workspace = cx.entity().downgrade();
 
-            let project_search = cx.new(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-            let project_search_view = cx.new(|cx| {
-                ProjectSearchView::new(weak_workspace, project_search, window, cx, settings)
-            });
+                let project_search =
+                    cx.new(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+                let project_search_view = cx.new(|cx| {
+                    ProjectSearchView::new(weak_workspace, project_search, window, cx, settings)
+                });
 
-            workspace.add_item_to_active_pane(
-                Box::new(project_search_view.clone()),
-                None,
-                true,
-                window,
-                cx,
-            );
-            project_search_view
-        }};
+                workspace.add_item_to_active_pane(
+                    Box::new(project_search_view.clone()),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+                project_search_view
+            }
+        };
 
         search.update(cx, |search, cx| {
             search.replace_enabled = action.replace_enabled;
@@ -1499,18 +1503,19 @@ impl ProjectSearchBar {
     }
 
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut Context<Self>) -> bool {
-        match self.active_project_search.as_ref() { Some(search_view) => {
-            search_view.update(cx, |search_view, cx| {
-                search_view.toggle_search_option(option, cx);
-                if search_view.entity.read(cx).active_query.is_some() {
-                    search_view.search(cx);
-                }
-            });
-            cx.notify();
-            true
-        } _ => {
-            false
-        }}
+        match self.active_project_search.as_ref() {
+            Some(search_view) => {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.toggle_search_option(option, cx);
+                    if search_view.entity.read(cx).active_query.is_some() {
+                        search_view.search(cx);
+                    }
+                });
+                cx.notify();
+                true
+            }
+            _ => false,
+        }
     }
 
     fn toggle_replace(&mut self, _: &ToggleReplace, window: &mut Window, cx: &mut Context<Self>) {
@@ -1529,47 +1534,48 @@ impl ProjectSearchBar {
     }
 
     fn toggle_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        match self.active_project_search.as_ref() { Some(search_view) => {
-            search_view.update(cx, |search_view, cx| {
-                search_view.toggle_filters(cx);
-                search_view
-                    .included_files_editor
-                    .update(cx, |_, cx| cx.notify());
-                search_view
-                    .excluded_files_editor
-                    .update(cx, |_, cx| cx.notify());
-                window.refresh();
+        match self.active_project_search.as_ref() {
+            Some(search_view) => {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.toggle_filters(cx);
+                    search_view
+                        .included_files_editor
+                        .update(cx, |_, cx| cx.notify());
+                    search_view
+                        .excluded_files_editor
+                        .update(cx, |_, cx| cx.notify());
+                    window.refresh();
+                    cx.notify();
+                });
                 cx.notify();
-            });
-            cx.notify();
-            true
-        } _ => {
-            false
-        }}
+                true
+            }
+            _ => false,
+        }
     }
 
     fn toggle_opened_only(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        match self.active_project_search.as_ref() { Some(search_view) => {
-            search_view.update(cx, |search_view, cx| {
-                search_view.toggle_opened_only(window, cx);
-                if search_view.entity.read(cx).active_query.is_some() {
-                    search_view.search(cx);
-                }
-            });
+        match self.active_project_search.as_ref() {
+            Some(search_view) => {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.toggle_opened_only(window, cx);
+                    if search_view.entity.read(cx).active_query.is_some() {
+                        search_view.search(cx);
+                    }
+                });
 
-            cx.notify();
-            true
-        } _ => {
-            false
-        }}
+                cx.notify();
+                true
+            }
+            _ => false,
+        }
     }
 
     fn is_opened_only_enabled(&self, cx: &App) -> bool {
-        match self.active_project_search.as_ref() { Some(search_view) => {
-            search_view.read(cx).included_opened_only
-        } _ => {
-            false
-        }}
+        match self.active_project_search.as_ref() {
+            Some(search_view) => search_view.read(cx).included_opened_only,
+            _ => false,
+        }
     }
 
     fn move_focus_to_results(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1582,11 +1588,10 @@ impl ProjectSearchBar {
     }
 
     fn is_option_enabled(&self, option: SearchOptions, cx: &App) -> bool {
-        match self.active_project_search.as_ref() { Some(search) => {
-            search.read(cx).search_options.contains(option)
-        } _ => {
-            false
-        }}
+        match self.active_project_search.as_ref() {
+            Some(search) => search.read(cx).search_options.contains(option),
+            _ => false,
+        }
     }
 
     fn next_history_query(
@@ -1617,12 +1622,13 @@ impl ProjectSearchBar {
                                     .search_history_mut(kind)
                                     .next(model.cursor_mut(kind))
                                     .map(str::to_string)
-                            }) { Some(new_query) => {
-                                new_query
-                            } _ => {
-                                model.cursor_mut(kind).reset();
-                                String::new()
-                            }}
+                            }) {
+                                Some(new_query) => new_query,
+                                _ => {
+                                    model.cursor_mut(kind).reset();
+                                    String::new()
+                                }
+                            }
                         });
                         search_view.set_search_editor(kind, &new_query, window, cx);
                     }
@@ -1709,7 +1715,11 @@ impl ProjectSearchBar {
         }
     }
 
-    fn render_text_input(&self, editor: &Entity<Editor>, cx: &Context<Self>) -> impl IntoElement + use<> {
+    fn render_text_input(
+        &self,
+        editor: &Entity<Editor>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
         let (color, use_syntax) = if editor.read(cx).read_only(cx) {
             (cx.theme().colors().text_disabled, false)
         } else {
@@ -2150,13 +2160,14 @@ impl ToolbarItemView for ProjectSearchBar {
         cx.notify();
         self.subscription = None;
         self.active_project_search = None;
-        match active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) { Some(search) => {
-            self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
-            self.active_project_search = Some(search);
-            ToolbarItemLocation::PrimaryLeft {}
-        } _ => {
-            ToolbarItemLocation::Hidden
-        }}
+        match active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) {
+            Some(search) => {
+                self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
+                self.active_project_search = Some(search);
+                ToolbarItemLocation::PrimaryLeft {}
+            }
+            _ => ToolbarItemLocation::Hidden,
+        }
     }
 }
 

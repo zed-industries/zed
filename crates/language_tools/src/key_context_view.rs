@@ -55,28 +55,32 @@ impl KeyContextView {
             this.last_possibilities = possibilities
                 .into_iter()
                 .map(|binding| {
-                    let match_state = match binding.predicate() { Some(predicate) => {
-                        if this.matches(&predicate) {
+                    let match_state = match binding.predicate() {
+                        Some(predicate) => {
+                            if this.matches(&predicate) {
+                                if this.action_matches(&e.action, binding.action()) {
+                                    Some(true)
+                                } else {
+                                    Some(false)
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        _ => {
                             if this.action_matches(&e.action, binding.action()) {
                                 Some(true)
                             } else {
                                 Some(false)
                             }
-                        } else {
-                            None
                         }
-                    } _ => {
-                        if this.action_matches(&e.action, binding.action()) {
-                            Some(true)
-                        } else {
-                            Some(false)
+                    };
+                    let predicate = match binding.predicate() {
+                        Some(predicate) => {
+                            format!("{}", predicate)
                         }
-                    }};
-                    let predicate = match binding.predicate() { Some(predicate) => {
-                        format!("{}", predicate)
-                    } _ => {
-                        "".to_string()
-                    }};
+                        _ => "".to_string(),
+                    };
                     let mut name = binding.action().name();
                     if name == "zed::NoAction" {
                         name = "(null)"

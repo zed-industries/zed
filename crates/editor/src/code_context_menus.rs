@@ -735,12 +735,12 @@ impl CompletionsMenu {
 
                 let completion = &completions[mat.candidate_id];
                 let sort_key = completion.sort_key();
-                let sort_text =
-                    match &completion.source { CompletionSource::Lsp { lsp_completion, .. } => {
+                let sort_text = match &completion.source {
+                    CompletionSource::Lsp { lsp_completion, .. } => {
                         lsp_completion.sort_text.as_deref()
-                    } _ => {
-                        None
-                    }};
+                    }
+                    _ => None,
+                };
                 let score = Reverse(OrderedFloat(mat.score));
 
                 if mat.score >= 0.2 {

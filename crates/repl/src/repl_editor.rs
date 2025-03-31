@@ -111,36 +111,36 @@ pub fn run(
 
         let fs = store.read(cx).fs().clone();
 
-        let session = match store.read(cx).get_session(editor.entity_id()).cloned()
-        { Some(session) => {
-            session
-        } _ => {
-            let weak_editor = editor.downgrade();
-            let session =
-                cx.new(|cx| Session::new(weak_editor, fs, kernel_specification, window, cx));
+        let session = match store.read(cx).get_session(editor.entity_id()).cloned() {
+            Some(session) => session,
+            _ => {
+                let weak_editor = editor.downgrade();
+                let session =
+                    cx.new(|cx| Session::new(weak_editor, fs, kernel_specification, window, cx));
 
-            editor.update(cx, |_editor, cx| {
-                cx.notify();
+                editor.update(cx, |_editor, cx| {
+                    cx.notify();
 
-                cx.subscribe(&session, {
-                    let store = store.clone();
-                    move |_this, _session, event, cx| match event {
-                        SessionEvent::Shutdown(shutdown_event) => {
-                            store.update(cx, |store, _cx| {
-                                store.remove_session(shutdown_event.entity_id());
-                            });
+                    cx.subscribe(&session, {
+                        let store = store.clone();
+                        move |_this, _session, event, cx| match event {
+                            SessionEvent::Shutdown(shutdown_event) => {
+                                store.update(cx, |store, _cx| {
+                                    store.remove_session(shutdown_event.entity_id());
+                                });
+                            }
                         }
-                    }
-                })
-                .detach();
-            });
+                    })
+                    .detach();
+                });
 
-            store.update(cx, |store, _cx| {
-                store.insert_session(editor.entity_id(), session.clone());
-            });
+                store.update(cx, |store, _cx| {
+                    store.insert_session(editor.entity_id(), session.clone());
+                });
 
-            session
-        }};
+                session
+            }
+        };
 
         let selected_text;
         let anchor_range;

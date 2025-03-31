@@ -99,27 +99,28 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
     Application::new().run(move |cx| {
         match cx.open_window(gpui::WindowOptions::default(), |_, cx| {
             cx.new(|_| gpui::Empty)
-        }) { Ok(window) => {
-            window
-                .update(cx, |_, window, cx| {
-                    let response = window.prompt(
-                        gpui::PromptLevel::Critical,
-                        message,
-                        Some(&error_details),
-                        &["Exit"],
-                        cx,
-                    );
+        }) {
+            Ok(window) => {
+                window
+                    .update(cx, |_, window, cx| {
+                        let response = window.prompt(
+                            gpui::PromptLevel::Critical,
+                            message,
+                            Some(&error_details),
+                            &["Exit"],
+                            cx,
+                        );
 
-                    cx.spawn_in(window, async move |_, cx| {
-                        response.await?;
-                        cx.update(|_, cx| cx.quit())
+                        cx.spawn_in(window, async move |_, cx| {
+                            response.await?;
+                            cx.update(|_, cx| cx.quit())
+                        })
+                        .detach_and_log_err(cx);
                     })
-                    .detach_and_log_err(cx);
-                })
-                .log_err();
-        } _ => {
-            fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
-        }}
+                    .log_err();
+            }
+            _ => fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx),
+        }
     })
 }
 
@@ -747,14 +748,19 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             }
         })
         .detach()
-    } else { match task { Some(task) => {
-        cx.spawn(async move |mut cx| {
-            if let Err(err) = task.await {
-                fail_to_open_window_async(err, &mut cx);
+    } else {
+        match task {
+            Some(task) => {
+                cx.spawn(async move |mut cx| {
+                    if let Err(err) = task.await {
+                        fail_to_open_window_async(err, &mut cx);
+                    }
+                })
+                .detach();
             }
-        })
-        .detach();
-    } _ => {}}}
+            _ => {}
+        }
+    }
 }
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
@@ -813,56 +819,61 @@ async fn installation_id() -> Result<IdType> {
 }
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
-    match restorable_workspace_locations(cx, &app_state).await { Some(locations) => {
-        for location in locations {
-            match location {
-                SerializedWorkspaceLocation::Local(location, _) => {
-                    let task = cx.update(|cx| {
-                        workspace::open_paths(
-                            location.paths().as_ref(),
-                            app_state.clone(),
-                            workspace::OpenOptions::default(),
-                            cx,
-                        )
-                    })?;
-                    task.await?;
-                }
-                SerializedWorkspaceLocation::Ssh(ssh) => {
-                    let connection_options = cx.update(|cx| {
-                        SshSettings::get_global(cx)
-                            .connection_options_for(ssh.host, ssh.port, ssh.user)
-                    })?;
-                    let app_state = app_state.clone();
-                    cx.spawn(async move |cx| {
-                        recent_projects::open_ssh_project(
-                            connection_options,
-                            ssh.paths.into_iter().map(PathBuf::from).collect(),
-                            app_state,
-                            workspace::OpenOptions::default(),
-                            cx,
-                        )
-                        .await
-                        .log_err();
-                    })
-                    .detach();
+    match restorable_workspace_locations(cx, &app_state).await {
+        Some(locations) => {
+            for location in locations {
+                match location {
+                    SerializedWorkspaceLocation::Local(location, _) => {
+                        let task = cx.update(|cx| {
+                            workspace::open_paths(
+                                location.paths().as_ref(),
+                                app_state.clone(),
+                                workspace::OpenOptions::default(),
+                                cx,
+                            )
+                        })?;
+                        task.await?;
+                    }
+                    SerializedWorkspaceLocation::Ssh(ssh) => {
+                        let connection_options = cx.update(|cx| {
+                            SshSettings::get_global(cx)
+                                .connection_options_for(ssh.host, ssh.port, ssh.user)
+                        })?;
+                        let app_state = app_state.clone();
+                        cx.spawn(async move |cx| {
+                            recent_projects::open_ssh_project(
+                                connection_options,
+                                ssh.paths.into_iter().map(PathBuf::from).collect(),
+                                app_state,
+                                workspace::OpenOptions::default(),
+                                cx,
+                            )
+                            .await
+                            .log_err();
+                        })
+                        .detach();
+                    }
                 }
             }
         }
-    } _ => if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-        cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
-    } else {
-        cx.update(|cx| {
-            workspace::open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |workspace, window, cx| {
-                    Editor::new_file(workspace, &Default::default(), window, cx)
-                },
-            )
-        })?
-        .await?;
-    }}
+        _ => {
+            if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+                cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
+            } else {
+                cx.update(|cx| {
+                    workspace::open_new(
+                        Default::default(),
+                        app_state,
+                        cx,
+                        |workspace, window, cx| {
+                            Editor::new_file(workspace, &Default::default(), window, cx)
+                        },
+                    )
+                })?
+                .await?;
+            }
+        }
+    }
 
     Ok(())
 }

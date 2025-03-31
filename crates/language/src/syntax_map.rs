@@ -466,19 +466,18 @@ impl SyntaxSnapshot {
 
         loop {
             let step = queue.pop();
-            let position = match &step { Some(step) => {
-                SyntaxLayerPosition {
+            let position = match &step {
+                Some(step) => SyntaxLayerPosition {
                     depth: step.depth,
                     range: step.range.clone(),
                     language: step.language.id(),
-                }
-            } _ => {
-                SyntaxLayerPosition {
+                },
+                _ => SyntaxLayerPosition {
                     depth: max_depth + 1,
                     range: Anchor::MAX..Anchor::MAX,
                     language: None,
-                }
-            }};
+                },
+            };
 
             let mut done = cursor.item().is_none();
             while !done && position.cmp(&cursor.end(text), text).is_gt() {
@@ -978,11 +977,12 @@ impl<'a> SyntaxMapCaptures<'a> {
     }
 
     pub fn advance(&mut self) -> bool {
-        let layer = match self.layers[..self.active_layer_count].first_mut() { Some(layer) => {
-            layer
-        } _ => {
-            return false;
-        }};
+        let layer = match self.layers[..self.active_layer_count].first_mut() {
+            Some(layer) => layer,
+            _ => {
+                return false;
+            }
+        };
 
         layer.advance();
         if layer.next_capture.is_some() {
@@ -1119,11 +1119,12 @@ impl<'a> SyntaxMapMatches<'a> {
     }
 
     pub fn advance(&mut self) -> bool {
-        let layer = match self.layers.first_mut() { Some(layer) => {
-            layer
-        } _ => {
-            return false;
-        }};
+        let layer = match self.layers.first_mut() {
+            Some(layer) => layer,
+            _ => {
+                return false;
+            }
+        };
 
         layer.advance();
         if layer.has_next {
@@ -1159,14 +1160,17 @@ impl SyntaxMapCapturesLayer<'_> {
 
 impl SyntaxMapMatchesLayer<'_> {
     fn advance(&mut self) {
-        match self.matches.next() { Some(mat) => {
-            self.next_captures.clear();
-            self.next_captures.extend_from_slice(mat.captures);
-            self.next_pattern_index = mat.pattern_index;
-            self.has_next = true;
-        } _ => {
-            self.has_next = false;
-        }}
+        match self.matches.next() {
+            Some(mat) => {
+                self.next_captures.clear();
+                self.next_captures.extend_from_slice(mat.captures);
+                self.next_pattern_index = mat.pattern_index;
+                self.has_next = true;
+            }
+            _ => {
+                self.has_next = false;
+            }
+        }
     }
 
     fn sort_key(&self) -> (usize, Reverse<usize>, usize) {
@@ -1333,33 +1337,36 @@ fn get_injections(
                     .now_or_never()
                     .and_then(|language| language.ok());
                 let range = text.anchor_before(step_range.start)..text.anchor_after(step_range.end);
-                match language { Some(language) => {
-                    if combined {
-                        combined_injection_ranges
-                            .entry(language.id)
-                            .or_insert_with(|| (language.clone(), vec![]))
-                            .1
-                            .extend(content_ranges);
-                    } else {
+                match language {
+                    Some(language) => {
+                        if combined {
+                            combined_injection_ranges
+                                .entry(language.id)
+                                .or_insert_with(|| (language.clone(), vec![]))
+                                .1
+                                .extend(content_ranges);
+                        } else {
+                            queue.push(ParseStep {
+                                depth,
+                                language: ParseStepLanguage::Loaded { language },
+                                included_ranges: content_ranges,
+                                range,
+                                mode: ParseMode::Single,
+                            });
+                        }
+                    }
+                    _ => {
                         queue.push(ParseStep {
                             depth,
-                            language: ParseStepLanguage::Loaded { language },
+                            language: ParseStepLanguage::Pending {
+                                name: language_name.into(),
+                            },
                             included_ranges: content_ranges,
                             range,
                             mode: ParseMode::Single,
                         });
                     }
-                } _ => {
-                    queue.push(ParseStep {
-                        depth,
-                        language: ParseStepLanguage::Pending {
-                            name: language_name.into(),
-                        },
-                        included_ranges: content_ranges,
-                        range,
-                        mode: ParseMode::Single,
-                    });
-                }}
+                }
             }
         }
     }

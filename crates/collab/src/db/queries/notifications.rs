@@ -195,26 +195,27 @@ impl Database {
         match self
             .find_notification(recipient_id, notification, tx)
             .await?
-        { Some(id) => {
-            let row = notification::Entity::update(notification::ActiveModel {
-                id: ActiveValue::Unchanged(id),
-                recipient_id: ActiveValue::Unchanged(recipient_id),
-                is_read: ActiveValue::Set(true),
-                response: if let Some(response) = response {
-                    ActiveValue::Set(Some(response))
-                } else {
-                    ActiveValue::NotSet
-                },
-                ..Default::default()
-            })
-            .exec(tx)
-            .await?;
-            Ok(model_to_proto(self, row)
-                .map(|notification| (recipient_id, notification))
-                .ok())
-        } _ => {
-            Ok(None)
-        }}
+        {
+            Some(id) => {
+                let row = notification::Entity::update(notification::ActiveModel {
+                    id: ActiveValue::Unchanged(id),
+                    recipient_id: ActiveValue::Unchanged(recipient_id),
+                    is_read: ActiveValue::Set(true),
+                    response: if let Some(response) = response {
+                        ActiveValue::Set(Some(response))
+                    } else {
+                        ActiveValue::NotSet
+                    },
+                    ..Default::default()
+                })
+                .exec(tx)
+                .await?;
+                Ok(model_to_proto(self, row)
+                    .map(|notification| (recipient_id, notification))
+                    .ok())
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Find an unread notification by its recipient, kind and entity id.

@@ -214,27 +214,32 @@ impl RemoteBufferStore {
                     anyhow::Ok(())
                 });
 
-                match result { Err(error) => {
-                    self.loading_remote_buffers_by_id.remove(&buffer_id);
-                    if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
-                        for listener in listeners {
-                            listener.send(Err(error.cloned())).ok();
+                match result {
+                    Err(error) => {
+                        self.loading_remote_buffers_by_id.remove(&buffer_id);
+                        if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
+                            for listener in listeners {
+                                listener.send(Err(error.cloned())).ok();
+                            }
                         }
                     }
-                } _ => if chunk.is_last {
-                    self.loading_remote_buffers_by_id.remove(&buffer_id);
-                    if self.upstream_client.is_via_collab() {
-                        // retain buffers sent by peers to avoid races.
-                        self.shared_with_me.insert(buffer.clone());
-                    }
+                    _ => {
+                        if chunk.is_last {
+                            self.loading_remote_buffers_by_id.remove(&buffer_id);
+                            if self.upstream_client.is_via_collab() {
+                                // retain buffers sent by peers to avoid races.
+                                self.shared_with_me.insert(buffer.clone());
+                            }
 
-                    if let Some(senders) = self.remote_buffer_listeners.remove(&buffer_id) {
-                        for sender in senders {
-                            sender.send(Ok(buffer.clone())).ok();
+                            if let Some(senders) = self.remote_buffer_listeners.remove(&buffer_id) {
+                                for sender in senders {
+                                    sender.send(Ok(buffer.clone())).ok();
+                                }
+                            }
+                            return Ok(Some(buffer));
                         }
                     }
-                    return Ok(Some(buffer));
-                }}
+                }
             }
         }
         return Ok(None);
@@ -469,21 +474,23 @@ impl LocalBufferStore {
             }
         };
 
-        let buffer = match this.get(buffer_id) { Some(buffer) => {
-            Some(buffer)
-        } _ => {
-            this.opened_buffers.remove(&buffer_id);
-            None
-        }};
+        let buffer = match this.get(buffer_id) {
+            Some(buffer) => Some(buffer),
+            _ => {
+                this.opened_buffers.remove(&buffer_id);
+                None
+            }
+        };
 
-        let buffer = match buffer { Some(buffer) => {
-            buffer
-        } _ => {
-            let this = this.as_local_mut()?;
-            this.local_buffer_ids_by_path.remove(&project_path);
-            this.local_buffer_ids_by_entry_id.remove(&entry_id);
-            return None;
-        }};
+        let buffer = match buffer {
+            Some(buffer) => buffer,
+            _ => {
+                let this = this.as_local_mut()?;
+                this.local_buffer_ids_by_path.remove(&project_path);
+                this.local_buffer_ids_by_entry_id.remove(&entry_id);
+                return None;
+            }
+        };
 
         let events = buffer.update(cx, |buffer, cx| {
             let local = this.as_local_mut()?;
@@ -978,7 +985,12 @@ impl BufferStore {
 
     pub fn loading_buffers(
         &self,
-    ) -> impl Iterator<Item = (&ProjectPath, impl Future<Output = Result<Entity<Buffer>>> + use<>)> {
+    ) -> impl Iterator<
+        Item = (
+            &ProjectPath,
+            impl Future<Output = Result<Entity<Buffer>>> + use<>,
+        ),
+    > {
         self.loading_buffers.iter().map(|(path, task)| {
             let task = task.clone();
             (path, async move { task.await.map_err(|e| anyhow!("{e}")) })

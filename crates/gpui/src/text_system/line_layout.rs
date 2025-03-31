@@ -490,42 +490,45 @@ impl LineLayoutCache {
         }
 
         let previous_frame_entry = self.previous_frame.lock().wrapped_lines.remove_entry(key);
-        match previous_frame_entry { Some((key, layout)) => {
-            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-            current_frame
-                .wrapped_lines
-                .insert(key.clone(), layout.clone());
-            current_frame.used_wrapped_lines.push(key);
-            layout
-        } _ => {
-            drop(current_frame);
-            let text = SharedString::from(text);
-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs);
-            let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
-            } else {
-                SmallVec::new()
-            };
-            let layout = Arc::new(WrappedLineLayout {
-                unwrapped_layout,
-                wrap_boundaries,
-                wrap_width,
-            });
-            let key = Arc::new(CacheKey {
-                text,
-                font_size,
-                runs: SmallVec::from(runs),
-                wrap_width,
-            });
+        match previous_frame_entry {
+            Some((key, layout)) => {
+                let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+                current_frame
+                    .wrapped_lines
+                    .insert(key.clone(), layout.clone());
+                current_frame.used_wrapped_lines.push(key);
+                layout
+            }
+            _ => {
+                drop(current_frame);
+                let text = SharedString::from(text);
+                let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs);
+                let wrap_boundaries = if let Some(wrap_width) = wrap_width {
+                    unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
+                } else {
+                    SmallVec::new()
+                };
+                let layout = Arc::new(WrappedLineLayout {
+                    unwrapped_layout,
+                    wrap_boundaries,
+                    wrap_width,
+                });
+                let key = Arc::new(CacheKey {
+                    text,
+                    font_size,
+                    runs: SmallVec::from(runs),
+                    wrap_width,
+                });
 
-            let mut current_frame = self.current_frame.write();
-            current_frame
-                .wrapped_lines
-                .insert(key.clone(), layout.clone());
-            current_frame.used_wrapped_lines.push(key);
+                let mut current_frame = self.current_frame.write();
+                current_frame
+                    .wrapped_lines
+                    .insert(key.clone(), layout.clone());
+                current_frame.used_wrapped_lines.push(key);
 
-            layout
-        }}
+                layout
+            }
+        }
     }
 
     pub fn layout_line<Text>(
@@ -551,26 +554,29 @@ impl LineLayoutCache {
         }
 
         let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-        match self.previous_frame.lock().lines.remove_entry(key) { Some((key, layout)) => {
-            current_frame.lines.insert(key.clone(), layout.clone());
-            current_frame.used_lines.push(key);
-            layout
-        } _ => {
-            let text = SharedString::from(text);
-            let layout = Arc::new(
-                self.platform_text_system
-                    .layout_line(&text, font_size, runs),
-            );
-            let key = Arc::new(CacheKey {
-                text,
-                font_size,
-                runs: SmallVec::from(runs),
-                wrap_width: None,
-            });
-            current_frame.lines.insert(key.clone(), layout.clone());
-            current_frame.used_lines.push(key);
-            layout
-        }}
+        match self.previous_frame.lock().lines.remove_entry(key) {
+            Some((key, layout)) => {
+                current_frame.lines.insert(key.clone(), layout.clone());
+                current_frame.used_lines.push(key);
+                layout
+            }
+            _ => {
+                let text = SharedString::from(text);
+                let layout = Arc::new(
+                    self.platform_text_system
+                        .layout_line(&text, font_size, runs),
+                );
+                let key = Arc::new(CacheKey {
+                    text,
+                    font_size,
+                    runs: SmallVec::from(runs),
+                    wrap_width: None,
+                });
+                current_frame.lines.insert(key.clone(), layout.clone());
+                current_frame.used_lines.push(key);
+                layout
+            }
+        }
     }
 }
 

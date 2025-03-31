@@ -379,15 +379,18 @@ impl Thread {
         cx.spawn(async move |this, cx| {
             let result = restore.await;
             this.update(cx, |this, cx| {
-                match result.as_ref() { Err(err) => {
-                    this.last_restore_checkpoint = Some(LastRestoreCheckpoint::Error {
-                        message_id: checkpoint.message_id,
-                        error: err.to_string(),
-                    });
-                } _ => {
-                    this.truncate(checkpoint.message_id, cx);
-                    this.last_restore_checkpoint = None;
-                }}
+                match result.as_ref() {
+                    Err(err) => {
+                        this.last_restore_checkpoint = Some(LastRestoreCheckpoint::Error {
+                            message_id: checkpoint.message_id,
+                            error: err.to_string(),
+                        });
+                    }
+                    _ => {
+                        this.truncate(checkpoint.message_id, cx);
+                        this.last_restore_checkpoint = None;
+                    }
+                }
                 this.pending_checkpoint = None;
                 cx.emit(ThreadEvent::CheckpointChanged);
                 cx.notify();
@@ -721,8 +724,8 @@ impl Thread {
             })
             .next();
 
-        match selected_rules_file { Some((rel_rules_path, abs_rules_path)) => {
-            cx.spawn(async move |_| {
+        match selected_rules_file {
+            Some((rel_rules_path, abs_rules_path)) => cx.spawn(async move |_| {
                 let rules_file_result = maybe!(async move {
                     let abs_rules_path = abs_rules_path?;
                     let text = fs.load(&abs_rules_path).await.with_context(|| {
@@ -751,17 +754,16 @@ impl Thread {
                     rules_file,
                 };
                 (worktree_info, rules_file_error)
-            })
-        } _ => {
-            Task::ready((
+            }),
+            _ => Task::ready((
                 WorktreeInfoForSystemPrompt {
                     root_name,
                     abs_path,
                     rules_file: None,
                 },
                 None,
-            ))
-        }}
+            )),
+        }
     }
 
     pub fn send_to_model(
@@ -1198,38 +1200,44 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for tool_use in pending_tool_uses.iter() {
-            match self.tools.tool(&tool_use.name, cx) { Some(tool) => {
-                if tool.needs_confirmation()
-                    && !AssistantSettings::get_global(cx).always_allow_tool_actions
-                {
-                    self.tool_use.confirm_tool_use(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        tool_use.input.clone(),
-                        messages.clone(),
-                        tool,
-                    );
-                    cx.emit(ThreadEvent::ToolConfirmationNeeded);
-                } else {
-                    self.run_tool(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        tool_use.input.clone(),
-                        &messages,
-                        tool,
-                        cx,
-                    );
+            match self.tools.tool(&tool_use.name, cx) {
+                Some(tool) => {
+                    if tool.needs_confirmation()
+                        && !AssistantSettings::get_global(cx).always_allow_tool_actions
+                    {
+                        self.tool_use.confirm_tool_use(
+                            tool_use.id.clone(),
+                            tool_use.ui_text.clone(),
+                            tool_use.input.clone(),
+                            messages.clone(),
+                            tool,
+                        );
+                        cx.emit(ThreadEvent::ToolConfirmationNeeded);
+                    } else {
+                        self.run_tool(
+                            tool_use.id.clone(),
+                            tool_use.ui_text.clone(),
+                            tool_use.input.clone(),
+                            &messages,
+                            tool,
+                            cx,
+                        );
+                    }
                 }
-            } _ => { match self.tools.tool(&tool_use.name, cx) { Some(tool) => {
-                self.run_tool(
-                    tool_use.id.clone(),
-                    tool_use.ui_text.clone(),
-                    tool_use.input.clone(),
-                    &messages,
-                    tool,
-                    cx,
-                );
-            } _ => {}}}}
+                _ => match self.tools.tool(&tool_use.name, cx) {
+                    Some(tool) => {
+                        self.run_tool(
+                            tool_use.id.clone(),
+                            tool_use.ui_text.clone(),
+                            tool_use.input.clone(),
+                            &messages,
+                            tool,
+                            cx,
+                        );
+                    }
+                    _ => {}
+                },
+            }
         }
 
         pending_tool_uses

@@ -32,12 +32,9 @@ impl StartingState {
         let _notify_parent = cx.spawn(async move |this, cx| {
             let entity = task.await;
 
-            this.update(cx, |_, cx| {
-                match entity { Ok(entity) => {
-                    cx.emit(StartingEvent::Finished(entity))
-                } _ => {
-                    cx.emit(StartingEvent::Failed)
-                }}
+            this.update(cx, |_, cx| match entity {
+                Ok(entity) => cx.emit(StartingEvent::Finished(entity)),
+                _ => cx.emit(StartingEvent::Failed),
             })
             .ok();
         });

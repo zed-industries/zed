@@ -37,13 +37,13 @@ impl LocalTrackPublication {
     }
 
     pub fn is_muted(&self) -> bool {
-        match self.room.upgrade() { Some(room) => {
-            room.test_server()
+        match self.room.upgrade() {
+            Some(room) => room
+                .test_server()
                 .is_track_muted(&room.token(), &self.sid)
-                .unwrap_or(false)
-        } _ => {
-            false
-        }}
+                .unwrap_or(false),
+            _ => false,
+        }
     }
 }
 
@@ -61,21 +61,20 @@ impl RemoteTrackPublication {
     }
 
     pub fn is_muted(&self) -> bool {
-        match self.room.upgrade() { Some(room) => {
-            room.test_server()
+        match self.room.upgrade() {
+            Some(room) => room
+                .test_server()
                 .is_track_muted(&room.token(), &self.sid)
-                .unwrap_or(false)
-        } _ => {
-            false
-        }}
+                .unwrap_or(false),
+            _ => false,
+        }
     }
 
     pub fn is_enabled(&self) -> bool {
-        match self.room.upgrade() { Some(room) => {
-            !room.0.lock().paused_audio_tracks.contains(&self.sid)
-        } _ => {
-            false
-        }}
+        match self.room.upgrade() {
+            Some(room) => !room.0.lock().paused_audio_tracks.contains(&self.sid),
+            _ => false,
+        }
     }
 
     pub fn set_enabled(&self, enabled: bool, _cx: &App) {

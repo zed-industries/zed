@@ -96,32 +96,37 @@ impl LspStdoutHandler {
                 }
             }
 
-            match serde_json::from_slice::<AnyNotification>(&buffer) { Ok(msg) => {
-                notifications_sender.unbounded_send(msg)?;
-            } _ => if let Ok(AnyResponse {
-                id, error, result, ..
-            }) = serde_json::from_slice(&buffer)
-            {
-                let mut response_handlers = response_handlers.lock();
-                if let Some(handler) = response_handlers
-                    .as_mut()
-                    .and_then(|handlers| handlers.remove(&id))
-                {
-                    drop(response_handlers);
-                    if let Some(error) = error {
-                        handler(Err(error));
-                    } else if let Some(result) = result {
-                        handler(Ok(result.get().into()));
+            match serde_json::from_slice::<AnyNotification>(&buffer) {
+                Ok(msg) => {
+                    notifications_sender.unbounded_send(msg)?;
+                }
+                _ => {
+                    if let Ok(AnyResponse {
+                        id, error, result, ..
+                    }) = serde_json::from_slice(&buffer)
+                    {
+                        let mut response_handlers = response_handlers.lock();
+                        if let Some(handler) = response_handlers
+                            .as_mut()
+                            .and_then(|handlers| handlers.remove(&id))
+                        {
+                            drop(response_handlers);
+                            if let Some(error) = error {
+                                handler(Err(error));
+                            } else if let Some(result) = result {
+                                handler(Ok(result.get().into()));
+                            } else {
+                                handler(Ok("null".into()));
+                            }
+                        }
                     } else {
-                        handler(Ok("null".into()));
+                        warn!(
+                            "failed to deserialize LSP message:\n{}",
+                            std::str::from_utf8(&buffer)?
+                        );
                     }
                 }
-            } else {
-                warn!(
-                    "failed to deserialize LSP message:\n{}",
-                    std::str::from_utf8(&buffer)?
-                );
-            }}
+            }
         }
     }
 }

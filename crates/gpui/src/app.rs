@@ -503,12 +503,9 @@ impl App {
         let handle = entity.downgrade();
         self.new_observer(
             entity_id,
-            Box::new(move |cx| {
-                match Entity::<W>::upgrade_from(&handle) { Some(handle) => {
-                    on_notify(handle, cx)
-                } _ => {
-                    false
-                }}
+            Box::new(move |cx| match Entity::<W>::upgrade_from(&handle) {
+                Some(handle) => on_notify(handle, cx),
+                _ => false,
             }),
         )
     }
@@ -556,11 +553,10 @@ impl App {
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
                     let event: &Evt = event.downcast_ref().expect("invalid event type");
-                    match Entity::<T>::upgrade_from(&entity) { Some(handle) => {
-                        on_event(handle, event, cx)
-                    } _ => {
-                        false
-                    }}
+                    match Entity::<T>::upgrade_from(&entity) {
+                        Some(handle) => on_event(handle, event, cx),
+                        _ => false,
+                    }
                 }),
             ),
         )
@@ -834,8 +830,8 @@ impl App {
             self.release_dropped_entities();
             self.release_dropped_focus_handles();
 
-            match self.pending_effects.pop_front() { Some(effect) => {
-                match effect {
+            match self.pending_effects.pop_front() {
+                Some(effect) => match effect {
                     Effect::Notify { emitter } => {
                         self.apply_notify_effect(emitter);
                     }
@@ -864,26 +860,27 @@ impl App {
                     } => {
                         self.apply_entity_created_effect(entity, tid, window);
                     }
-                }
-            } _ => {
-                #[cfg(any(test, feature = "test-support"))]
-                for window in self
-                    .windows
-                    .values()
-                    .filter_map(|window| {
-                        let window = window.as_ref()?;
-                        window.invalidator.is_dirty().then_some(window.handle)
-                    })
-                    .collect::<Vec<_>>()
-                {
-                    self.update_window(window, |_, window, cx| window.draw(cx))
-                        .unwrap();
-                }
+                },
+                _ => {
+                    #[cfg(any(test, feature = "test-support"))]
+                    for window in self
+                        .windows
+                        .values()
+                        .filter_map(|window| {
+                            let window = window.as_ref()?;
+                            window.invalidator.is_dirty().then_some(window.handle)
+                        })
+                        .collect::<Vec<_>>()
+                    {
+                        self.update_window(window, |_, window, cx| window.draw(cx))
+                            .unwrap();
+                    }
 
-                if self.pending_effects.is_empty() {
-                    break;
+                    if self.pending_effects.is_empty() {
+                        break;
+                    }
                 }
-            }}
+            }
         }
     }
 

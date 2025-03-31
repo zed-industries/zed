@@ -129,48 +129,50 @@ impl Editor {
 
         let mut target_top;
         let mut target_bottom;
-        match self.highlighted_display_row_for_autoscroll(&display_map)
-        { Some(first_highlighted_row) => {
-            target_top = first_highlighted_row.as_f32();
-            target_bottom = target_top + 1.;
-        } _ => {
-            let selections = self.selections.all::<Point>(cx);
+        match self.highlighted_display_row_for_autoscroll(&display_map) {
+            Some(first_highlighted_row) => {
+                target_top = first_highlighted_row.as_f32();
+                target_bottom = target_top + 1.;
+            }
+            _ => {
+                let selections = self.selections.all::<Point>(cx);
 
-            target_top = selections
-                .first()
-                .unwrap()
-                .head()
-                .to_display_point(&display_map)
-                .row()
-                .as_f32();
-            target_bottom = selections
-                .last()
-                .unwrap()
-                .head()
-                .to_display_point(&display_map)
-                .row()
-                .next_row()
-                .as_f32();
-
-            let selections_fit = target_bottom - target_top <= visible_lines;
-            if matches!(
-                autoscroll,
-                Autoscroll::Strategy(AutoscrollStrategy::Newest, _)
-            ) || (matches!(autoscroll, Autoscroll::Strategy(AutoscrollStrategy::Fit, _))
-                && !selections_fit)
-            {
-                let newest_selection_top = selections
-                    .iter()
-                    .max_by_key(|s| s.id)
+                target_top = selections
+                    .first()
                     .unwrap()
                     .head()
                     .to_display_point(&display_map)
                     .row()
                     .as_f32();
-                target_top = newest_selection_top;
-                target_bottom = newest_selection_top + 1.;
+                target_bottom = selections
+                    .last()
+                    .unwrap()
+                    .head()
+                    .to_display_point(&display_map)
+                    .row()
+                    .next_row()
+                    .as_f32();
+
+                let selections_fit = target_bottom - target_top <= visible_lines;
+                if matches!(
+                    autoscroll,
+                    Autoscroll::Strategy(AutoscrollStrategy::Newest, _)
+                ) || (matches!(autoscroll, Autoscroll::Strategy(AutoscrollStrategy::Fit, _))
+                    && !selections_fit)
+                {
+                    let newest_selection_top = selections
+                        .iter()
+                        .max_by_key(|s| s.id)
+                        .unwrap()
+                        .head()
+                        .to_display_point(&display_map)
+                        .row()
+                        .as_f32();
+                    target_top = newest_selection_top;
+                    target_bottom = newest_selection_top + 1.;
+                }
             }
-        }}
+        }
 
         let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             0.

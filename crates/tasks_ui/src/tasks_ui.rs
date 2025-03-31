@@ -34,57 +34,62 @@ pub fn init(cx: &mut App) {
                                     .map(|id| TaskId(id.clone()))
                                     .as_ref(),
                             )
-                        })
-                    { Some((task_source_kind, mut last_scheduled_task)) => {
-                        if action.reevaluate_context {
-                            let mut original_task = last_scheduled_task.original_task().clone();
-                            if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
-                                original_task.allow_concurrent_runs = allow_concurrent_runs;
-                            }
-                            if let Some(use_new_terminal) = action.use_new_terminal {
-                                original_task.use_new_terminal = use_new_terminal;
-                            }
-                            let task_contexts = task_contexts(workspace, window, cx);
-                            cx.spawn_in(window, async move |workspace, cx| {
-                                let task_contexts = task_contexts.await;
-                                let default_context = TaskContext::default();
-                                workspace
-                                    .update_in(cx, |workspace, _, cx| {
-                                        schedule_task(
-                                            workspace,
-                                            task_source_kind,
-                                            &original_task,
-                                            task_contexts
-                                                .active_context()
-                                                .unwrap_or(&default_context),
-                                            false,
-                                            cx,
-                                        )
-                                    })
-                                    .ok()
-                            })
-                            .detach()
-                        } else {
-                            if let Some(resolved) = last_scheduled_task.resolved.as_mut() {
+                        }) {
+                        Some((task_source_kind, mut last_scheduled_task)) => {
+                            if action.reevaluate_context {
+                                let mut original_task = last_scheduled_task.original_task().clone();
                                 if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
-                                    resolved.allow_concurrent_runs = allow_concurrent_runs;
+                                    original_task.allow_concurrent_runs = allow_concurrent_runs;
                                 }
                                 if let Some(use_new_terminal) = action.use_new_terminal {
-                                    resolved.use_new_terminal = use_new_terminal;
+                                    original_task.use_new_terminal = use_new_terminal;
                                 }
-                            }
+                                let task_contexts = task_contexts(workspace, window, cx);
+                                cx.spawn_in(window, async move |workspace, cx| {
+                                    let task_contexts = task_contexts.await;
+                                    let default_context = TaskContext::default();
+                                    workspace
+                                        .update_in(cx, |workspace, _, cx| {
+                                            schedule_task(
+                                                workspace,
+                                                task_source_kind,
+                                                &original_task,
+                                                task_contexts
+                                                    .active_context()
+                                                    .unwrap_or(&default_context),
+                                                false,
+                                                cx,
+                                            )
+                                        })
+                                        .ok()
+                                })
+                                .detach()
+                            } else {
+                                if let Some(resolved) = last_scheduled_task.resolved.as_mut() {
+                                    if let Some(allow_concurrent_runs) =
+                                        action.allow_concurrent_runs
+                                    {
+                                        resolved.allow_concurrent_runs = allow_concurrent_runs;
+                                    }
+                                    if let Some(use_new_terminal) = action.use_new_terminal {
+                                        resolved.use_new_terminal = use_new_terminal;
+                                    }
+                                }
 
-                            schedule_resolved_task(
-                                workspace,
-                                task_source_kind,
-                                last_scheduled_task,
-                                false,
-                                cx,
-                            );
+                                schedule_resolved_task(
+                                    workspace,
+                                    task_source_kind,
+                                    last_scheduled_task,
+                                    false,
+                                    cx,
+                                );
+                            }
                         }
-                    } _ => {
-                        toggle_modal(workspace, None, TaskModal::ScriptModal, window, cx).detach();
-                    }};
+                        _ => {
+                            toggle_modal(workspace, None, TaskModal::ScriptModal, window, cx)
+                                .detach();
+                        }
+                    };
                 });
 
             let Some(window) = window else {

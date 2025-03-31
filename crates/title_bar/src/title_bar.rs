@@ -519,7 +519,10 @@ impl TitleBar {
             }))
     }
 
-    pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+    pub fn render_project_branch(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
         let repository = self.project.read(cx).active_repository(cx)?;
         let workspace = self.workspace.upgrade()?;
         let branch_name = repository.read(cx).current_branch()?.name.clone();

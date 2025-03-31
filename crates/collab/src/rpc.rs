@@ -1313,9 +1313,8 @@ async fn join_room(
             .trace_err();
     }
 
-    let live_kit_connection_info = match session.app_state.livekit_client.as_ref()
-    { Some(live_kit) => {
-        live_kit
+    let live_kit_connection_info = match session.app_state.livekit_client.as_ref() {
+        Some(live_kit) => live_kit
             .room_token(
                 &joined_room.room.livekit_room,
                 &session.user_id().to_string(),
@@ -1325,10 +1324,9 @@ async fn join_room(
                 server_url: live_kit.url().into(),
                 token,
                 can_publish: true,
-            })
-    } _ => {
-        None
-    }};
+            }),
+        _ => None,
+    };
 
     response.send(proto::JoinRoomResponse {
         room: Some(joined_room.room),
@@ -4393,24 +4391,27 @@ async fn leave_room_for_session(session: &Session, connection_id: ConnectionId) 
     let room;
     let channel;
 
-    match session.db().await.leave_room(connection_id).await? { Some(mut left_room) => {
-        contacts_to_update.insert(session.user_id());
+    match session.db().await.leave_room(connection_id).await? {
+        Some(mut left_room) => {
+            contacts_to_update.insert(session.user_id());
 
-        for project in left_room.left_projects.values() {
-            project_left(project, session);
+            for project in left_room.left_projects.values() {
+                project_left(project, session);
+            }
+
+            room_id = RoomId::from_proto(left_room.room.id);
+            canceled_calls_to_user_ids = mem::take(&mut left_room.canceled_calls_to_user_ids);
+            livekit_room = mem::take(&mut left_room.room.livekit_room);
+            delete_livekit_room = left_room.deleted;
+            room = mem::take(&mut left_room.room);
+            channel = mem::take(&mut left_room.channel);
+
+            room_updated(&room, &session.peer);
         }
-
-        room_id = RoomId::from_proto(left_room.room.id);
-        canceled_calls_to_user_ids = mem::take(&mut left_room.canceled_calls_to_user_ids);
-        livekit_room = mem::take(&mut left_room.room.livekit_room);
-        delete_livekit_room = left_room.deleted;
-        room = mem::take(&mut left_room.room);
-        channel = mem::take(&mut left_room.channel);
-
-        room_updated(&room, &session.peer);
-    } _ => {
-        return Ok(());
-    }}
+        _ => {
+            return Ok(());
+        }
+    }
 
     if let Some(channel) = channel {
         channel_updated(

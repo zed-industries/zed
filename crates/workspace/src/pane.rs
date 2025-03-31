@@ -542,9 +542,14 @@ impl Pane {
                 .find_position(|item| item.item_id() == alternative.id());
             if let Some((ix, _)) = existing {
                 self.activate_item(ix, true, true, window, cx);
-            } else { match alternative.upgrade() { Some(upgraded) => {
-                self.add_item(upgraded, true, true, None, window, cx);
-            } _ => {}}}
+            } else {
+                match alternative.upgrade() {
+                    Some(upgraded) => {
+                        self.add_item(upgraded, true, true, None, window, cx);
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -608,12 +613,17 @@ impl Pane {
                 }
 
                 active_item.item_focus_handle(cx).focus(window);
-            } else { match window.focused(cx) { Some(focused) => {
-                if !self.context_menu_focused(window, cx) {
-                    self.last_focus_handle_by_item
-                        .insert(active_item.item_id(), focused.downgrade());
+            } else {
+                match window.focused(cx) {
+                    Some(focused) => {
+                        if !self.context_menu_focused(window, cx) {
+                            self.last_focus_handle_by_item
+                                .insert(active_item.item_id(), focused.downgrade());
+                        }
+                    }
+                    _ => {}
                 }
-            } _ => {}}}
+            }
         }
     }
 
@@ -878,46 +888,49 @@ impl Pane {
                 }
             }
         }
-        match existing_item { Some((index, existing_item)) => {
-            // If the item is already open, and the item is a preview item
-            // and we are not allowing items to open as preview, mark the item as persistent.
-            if let Some(preview_item_id) = self.preview_item_id {
-                if let Some(tab) = self.items.get(index) {
-                    if tab.item_id() == preview_item_id && !allow_preview {
-                        self.set_preview_item_id(None, cx);
+        match existing_item {
+            Some((index, existing_item)) => {
+                // If the item is already open, and the item is a preview item
+                // and we are not allowing items to open as preview, mark the item as persistent.
+                if let Some(preview_item_id) = self.preview_item_id {
+                    if let Some(tab) = self.items.get(index) {
+                        if tab.item_id() == preview_item_id && !allow_preview {
+                            self.set_preview_item_id(None, cx);
+                        }
                     }
                 }
+                if activate {
+                    self.activate_item(index, focus_item, focus_item, window, cx);
+                }
+                existing_item
             }
-            if activate {
-                self.activate_item(index, focus_item, focus_item, window, cx);
+            _ => {
+                // If the item is being opened as preview and we have an existing preview tab,
+                // open the new item in the position of the existing preview tab.
+                let destination_index = if allow_preview {
+                    self.close_current_preview_item(window, cx)
+                } else {
+                    suggested_position
+                };
+
+                let new_item = build_item(self, window, cx);
+
+                if allow_preview {
+                    self.set_preview_item_id(Some(new_item.item_id()), cx);
+                }
+                self.add_item_inner(
+                    new_item.clone(),
+                    true,
+                    focus_item,
+                    activate,
+                    destination_index,
+                    window,
+                    cx,
+                );
+
+                new_item
             }
-            existing_item
-        } _ => {
-            // If the item is being opened as preview and we have an existing preview tab,
-            // open the new item in the position of the existing preview tab.
-            let destination_index = if allow_preview {
-                self.close_current_preview_item(window, cx)
-            } else {
-                suggested_position
-            };
-
-            let new_item = build_item(self, window, cx);
-
-            if allow_preview {
-                self.set_preview_item_id(Some(new_item.item_id()), cx);
-            }
-            self.add_item_inner(
-                new_item.clone(),
-                true,
-                focus_item,
-                activate,
-                destination_index,
-                window,
-                cx,
-            );
-
-            new_item
-        }}
+        }
     }
 
     pub fn close_current_preview_item(
@@ -1778,27 +1791,30 @@ impl Pane {
             self.set_preview_item_id(None, cx);
         }
 
-        match item.project_path(cx) { Some(path) => {
-            let abs_path = self
-                .nav_history
-                .0
-                .lock()
-                .paths_by_item
-                .get(&item.item_id())
-                .and_then(|(_, abs_path)| abs_path.clone());
+        match item.project_path(cx) {
+            Some(path) => {
+                let abs_path = self
+                    .nav_history
+                    .0
+                    .lock()
+                    .paths_by_item
+                    .get(&item.item_id())
+                    .and_then(|(_, abs_path)| abs_path.clone());
 
-            self.nav_history
-                .0
-                .lock()
-                .paths_by_item
-                .insert(item.item_id(), (path, abs_path));
-        } _ => {
-            self.nav_history
-                .0
-                .lock()
-                .paths_by_item
-                .remove(&item.item_id());
-        }}
+                self.nav_history
+                    .0
+                    .lock()
+                    .paths_by_item
+                    .insert(item.item_id(), (path, abs_path));
+            }
+            _ => {
+                self.nav_history
+                    .0
+                    .lock()
+                    .paths_by_item
+                    .remove(&item.item_id());
+            }
+        }
 
         if self.zoom_out_on_close && self.items.is_empty() && close_pane_if_empty && self.zoomed {
             cx.emit(Event::ZoomOut);
@@ -1943,33 +1959,36 @@ impl Pane {
                             None
                         }
                     })?;
-                    match answer_task { Some(answer_task) => {
-                        let answer = answer_task.await;
-                        pane.update(cx, |pane, _| {
+                    match answer_task {
+                        Some(answer_task) => {
+                            let answer = answer_task.await;
+                            pane.update(cx, |pane, _| {
                             if !pane.save_modals_spawned.remove(&item_id) {
                                 debug_panic!(
                                     "save modal was not present in spawned modals after awaiting for its answer"
                                 )
                             }
                         })?;
-                        match answer {
-                            Ok(0) => {}
-                            Ok(1) => {
-                                // Don't save this file
-                                pane.update_in(cx, |pane, window, cx| {
-                                    if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
-                                        pane.pinned_tab_count -= 1;
-                                    }
-                                    item.discarded(project, window, cx)
-                                })
-                                .log_err();
-                                return Ok(true);
+                            match answer {
+                                Ok(0) => {}
+                                Ok(1) => {
+                                    // Don't save this file
+                                    pane.update_in(cx, |pane, window, cx| {
+                                        if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
+                                            pane.pinned_tab_count -= 1;
+                                        }
+                                        item.discarded(project, window, cx)
+                                    })
+                                    .log_err();
+                                    return Ok(true);
+                                }
+                                _ => return Ok(false), // Cancel
                             }
-                            _ => return Ok(false), // Cancel
                         }
-                    } _ => {
-                        return Ok(false);
-                    }}
+                        _ => {
+                            return Ok(false);
+                        }
+                    }
                 }
             }
 
@@ -1988,18 +2007,21 @@ impl Pane {
                         workspace.prompt_for_new_path(window, cx)
                     })
                 })??;
-                match abs_path.await.ok().flatten() { Some(abs_path) => {
-                    pane.update_in(cx, |pane, window, cx| {
-                        if let Some(item) = pane.item_for_path(abs_path.clone(), cx) {
-                            pane.remove_item(item.item_id(), false, false, window, cx);
-                        }
+                match abs_path.await.ok().flatten() {
+                    Some(abs_path) => {
+                        pane.update_in(cx, |pane, window, cx| {
+                            if let Some(item) = pane.item_for_path(abs_path.clone(), cx) {
+                                pane.remove_item(item.item_id(), false, false, window, cx);
+                            }
 
-                        item.save_as(project, abs_path, window, cx)
-                    })?
-                    .await?;
-                } _ => {
-                    return Ok(false);
-                }}
+                            item.save_as(project, abs_path, window, cx)
+                        })?
+                        .await?;
+                    }
+                    _ => {
+                        return Ok(false);
+                    }
+                }
             }
         }
 
@@ -2670,7 +2692,11 @@ impl Pane {
         })
     }
 
-    fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> impl IntoElement + use<> {
+    fn render_tab_bar(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> impl IntoElement + use<> {
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
@@ -3318,15 +3344,15 @@ impl Render for Pane {
                     .when(is_local, |div| {
                         div.on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
                     })
-                    .map(|div| {
-                        match self.active_item() { Some(item) => {
-                            div.id("pane_placeholder")
-                                .v_flex()
-                                .size_full()
-                                .overflow_hidden()
-                                .child(self.toolbar.clone())
-                                .child(item.to_any())
-                        } _ => {
+                    .map(|div| match self.active_item() {
+                        Some(item) => div
+                            .id("pane_placeholder")
+                            .v_flex()
+                            .size_full()
+                            .overflow_hidden()
+                            .child(self.toolbar.clone())
+                            .child(item.to_any()),
+                        _ => {
                             let placeholder = div
                                 .id("pane_placeholder")
                                 .h_flex()
@@ -3350,7 +3376,7 @@ impl Render for Pane {
                                         .color(Color::Muted),
                                 )
                             }
-                        }}
+                        }
                     })
                     .child(
                         // drag target
@@ -3466,16 +3492,21 @@ impl NavHistory {
             .iter()
             .chain(borrowed_history.backward_stack.iter())
             .chain(borrowed_history.closed_stack.iter())
-            .for_each(|entry| {
-                match borrowed_history.paths_by_item.get(&entry.item.id())
-                { Some(project_and_abs_path) => {
-                    f(entry, project_and_abs_path.clone());
-                } _ => { match entry.item.upgrade() { Some(item) => {
-                    if let Some(path) = item.project_path(cx) {
-                        f(entry, (path, None));
+            .for_each(
+                |entry| match borrowed_history.paths_by_item.get(&entry.item.id()) {
+                    Some(project_and_abs_path) => {
+                        f(entry, project_and_abs_path.clone());
                     }
-                } _ => {}}}}
-            })
+                    _ => match entry.item.upgrade() {
+                        Some(item) => {
+                            if let Some(path) = item.project_path(cx) {
+                                f(entry, (path, None));
+                            }
+                        }
+                        _ => {}
+                    },
+                },
+            )
     }
 
     pub fn set_mode(&mut self, mode: NavigationMode) {

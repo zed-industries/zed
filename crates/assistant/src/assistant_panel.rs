@@ -741,21 +741,30 @@ impl AssistantPanel {
                     }
                 });
 
-        match context_editor { Some(context_editor) => {
-            Some(InlineAssistTarget::Editor(context_editor, false))
-        } _ => { match workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<Editor>(cx))
-        { Some(workspace_editor) => {
-            Some(InlineAssistTarget::Editor(workspace_editor, true))
-        } _ => { match workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<TerminalView>(cx))
-        { Some(terminal_view) => {
-            Some(InlineAssistTarget::Terminal(terminal_view))
-        } _ => {
-            None
-        }}}}}}
+        match context_editor {
+            Some(context_editor) => Some(InlineAssistTarget::Editor(context_editor, false)),
+            _ => {
+                match workspace
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                {
+                    Some(workspace_editor) => {
+                        Some(InlineAssistTarget::Editor(workspace_editor, true))
+                    }
+                    _ => {
+                        match workspace
+                            .active_item(cx)
+                            .and_then(|item| item.act_as::<TerminalView>(cx))
+                        {
+                            Some(terminal_view) => {
+                                Some(InlineAssistTarget::Terminal(terminal_view))
+                            }
+                            _ => None,
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn create_new_context(

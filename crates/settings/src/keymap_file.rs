@@ -395,14 +395,13 @@ impl KeymapFile {
             }
         };
 
-        match KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) { Some(validator) => {
-            match validator.validate(&key_binding) {
+        match KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
+            Some(validator) => match validator.validate(&key_binding) {
                 Ok(()) => Ok(key_binding),
                 Err(error) => Err(error.0),
-            }
-        } _ => {
-            Ok(key_binding)
-        }}
+            },
+            _ => Ok(key_binding),
+        }
     }
 
     pub fn generate_json_schema_for_registered_actions(cx: &mut App) -> Value {

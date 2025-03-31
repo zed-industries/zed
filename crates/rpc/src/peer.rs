@@ -286,71 +286,81 @@ impl Peer {
                         .get(&responding_to)
                         .cloned();
 
-                    match response_channel { Some(tx) => {
-                        let requester_resumed = oneshot::channel();
-                        if let Err(error) = tx.send((incoming, received_at, requester_resumed.0)) {
+                    match response_channel {
+                        Some(tx) => {
+                            let requester_resumed = oneshot::channel();
+                            if let Err(error) =
+                                tx.send((incoming, received_at, requester_resumed.0))
+                            {
+                                tracing::trace!(
+                                    %connection_id,
+                                    message_id,
+                                    responding_to = responding_to,
+                                    ?error,
+                                    "incoming response: request future dropped",
+                                );
+                            }
+
                             tracing::trace!(
                                 %connection_id,
                                 message_id,
-                                responding_to = responding_to,
-                                ?error,
-                                "incoming response: request future dropped",
+                                responding_to,
+                                "incoming response: waiting to resume requester"
                             );
-                        }
-
-                        tracing::trace!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            "incoming response: waiting to resume requester"
-                        );
-                        let _ = requester_resumed.1.await;
-                        tracing::trace!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            "incoming response: requester resumed"
-                        );
-                    } _ => { match stream_response_channel { Some(tx) => {
-                        let requester_resumed = oneshot::channel();
-                        if let Err(error) = tx.unbounded_send((Ok(incoming), requester_resumed.0)) {
-                            tracing::debug!(
+                            let _ = requester_resumed.1.await;
+                            tracing::trace!(
                                 %connection_id,
                                 message_id,
-                                responding_to = responding_to,
-                                ?error,
-                                "incoming stream response: request future dropped",
+                                responding_to,
+                                "incoming response: requester resumed"
                             );
                         }
+                        _ => match stream_response_channel {
+                            Some(tx) => {
+                                let requester_resumed = oneshot::channel();
+                                if let Err(error) =
+                                    tx.unbounded_send((Ok(incoming), requester_resumed.0))
+                                {
+                                    tracing::debug!(
+                                        %connection_id,
+                                        message_id,
+                                        responding_to = responding_to,
+                                        ?error,
+                                        "incoming stream response: request future dropped",
+                                    );
+                                }
 
-                        tracing::debug!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            "incoming stream response: waiting to resume requester"
-                        );
-                        let _ = requester_resumed.1.await;
-                        tracing::debug!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            "incoming stream response: requester resumed"
-                        );
-                    } _ => {
-                        let message_type = proto::build_typed_envelope(
-                            connection_id.into(),
-                            received_at,
-                            incoming,
-                        )
-                        .map(|p| p.payload_type_name());
-                        tracing::warn!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            message_type,
-                            "incoming response: unknown request"
-                        );
-                    }}}}
+                                tracing::debug!(
+                                    %connection_id,
+                                    message_id,
+                                    responding_to,
+                                    "incoming stream response: waiting to resume requester"
+                                );
+                                let _ = requester_resumed.1.await;
+                                tracing::debug!(
+                                    %connection_id,
+                                    message_id,
+                                    responding_to,
+                                    "incoming stream response: requester resumed"
+                                );
+                            }
+                            _ => {
+                                let message_type = proto::build_typed_envelope(
+                                    connection_id.into(),
+                                    received_at,
+                                    incoming,
+                                )
+                                .map(|p| p.payload_type_name());
+                                tracing::warn!(
+                                    %connection_id,
+                                    message_id,
+                                    responding_to,
+                                    message_type,
+                                    "incoming response: unknown request"
+                                );
+                            }
+                        },
+                    }
 
                     None
                 } else {
@@ -488,7 +498,8 @@ impl Peer {
         &self,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<impl Unpin + Stream<Item = Result<T::Response>> + use<T>>> + use<T> {
+    ) -> impl Future<Output = Result<impl Unpin + Stream<Item = Result<T::Response>> + use<T>>> + use<T>
+    {
         let (tx, rx) = mpsc::unbounded();
         let send = self.connection_state(receiver_id).and_then(|connection| {
             let message_id = connection.next_message_id.fetch_add(1, SeqCst);
@@ -775,15 +786,20 @@ mod tests {
         ) -> Result<()> {
             while let Some(envelope) = messages.next().await {
                 let envelope = envelope.into_any();
-                match envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() { Some(envelope) => {
-                    let receipt = envelope.receipt();
-                    peer.respond(receipt, proto::Ack {})?
-                } _ => { match envelope.downcast_ref::<TypedEnvelope<proto::Test>>()
-                { Some(envelope) => {
-                    peer.respond(envelope.receipt(), envelope.payload.clone())?
-                } _ => {
-                    panic!("unknown message type");
-                }}}}
+                match envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() {
+                    Some(envelope) => {
+                        let receipt = envelope.receipt();
+                        peer.respond(receipt, proto::Ack {})?
+                    }
+                    _ => match envelope.downcast_ref::<TypedEnvelope<proto::Test>>() {
+                        Some(envelope) => {
+                            peer.respond(envelope.receipt(), envelope.payload.clone())?
+                        }
+                        _ => {
+                            panic!("unknown message type");
+                        }
+                    },
+                }
             }
 
             Ok(())
