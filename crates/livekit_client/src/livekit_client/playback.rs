@@ -327,7 +327,7 @@ pub(crate) async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(crate::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
-    let resolution = dbg!(capture_source.resolution()?);
+    let resolution = capture_source.resolution()?;
     let track_source = gpui_tokio::Tokio::spawn(cx, async move {
         NativeVideoSource::new(VideoResolution {
             width: resolution.width.0 as u32,
@@ -627,7 +627,6 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
     use livekit::webrtc::prelude::NV12Buffer;
     match frame.0 {
         scap::frame::Frame::BGRx(frame) => {
-            dbg!(frame.width, frame.height);
             let mut buffer = NV12Buffer::new(frame.width as u32, frame.height as u32);
             let (stride_y, stride_uv) = buffer.strides();
             let (data_y, data_uv) = buffer.data_mut();

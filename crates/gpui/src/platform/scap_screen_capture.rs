@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use futures::channel::oneshot;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
+use util::ResultExt;
 
 /// Populates the receiver with the screens that can be captured.
 ///
@@ -180,15 +181,17 @@ fn run_capture(
     stream_tx: oneshot::Sender<Result<Box<dyn ScreenCaptureStream>>>,
 ) {
     let cancel_stream = Arc::new(AtomicBool::new(false));
-    stream_tx
-        .send(Ok(Box::new(ScapStream {
-            cancel_stream: cancel_stream.clone(),
-        }) as Box<dyn ScreenCaptureStream>))
-        .ok();
+    let stream_send_result = stream_tx.send(Ok(Box::new(ScapStream {
+        cancel_stream: cancel_stream.clone(),
+    }) as Box<dyn ScreenCaptureStream>));
+    if let Err(_) = stream_send_result {
+        return;
+    }
     while !cancel_stream.load(std::sync::atomic::Ordering::SeqCst) {
         match capturer.get_next_frame() {
             Ok(frame) => frame_callback(ScreenCaptureFrame(frame)),
             Err(std::sync::mpsc::RecvError) => {
+                log::error!("Screen capture stream unexpectedly ended.");
                 break;
             }
         }
