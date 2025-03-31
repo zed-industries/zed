@@ -1,5 +1,6 @@
 mod bash_tool;
 mod batch_tool;
+mod code_action_tool;
 mod code_symbol_iter;
 mod code_symbols_tool;
 mod copy_path_tool;
@@ -32,6 +33,7 @@ use move_path_tool::MovePathTool;
 
 use crate::bash_tool::BashTool;
 use crate::batch_tool::BatchTool;
+use crate::code_action_tool::CodeActionTool;
 use crate::code_symbols_tool::CodeSymbolsTool;
 use crate::create_directory_tool::CreateDirectoryTool;
 use crate::create_file_tool::CreateFileTool;
@@ -62,6 +64,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(DeletePathTool);
     registry.register_tool(FindReplaceFileTool);
     registry.register_tool(SymbolInfoTool);
+    registry.register_tool(CodeActionTool);
     registry.register_tool(MovePathTool);
     registry.register_tool(DiagnosticsTool);
     registry.register_tool(EditFilesTool);
