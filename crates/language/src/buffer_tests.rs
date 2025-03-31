@@ -57,10 +57,11 @@ fn test_line_endings(cx: &mut gpui::App) {
         buffer.check_invariants();
         buffer.edit(
             [(buffer.len()..buffer.len(), "\r\nfour")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
-        buffer.edit([(0..0, "zero\r\n")], None, cx);
+        buffer.edit([(0..0, "zero\r\n")], Default::default(), None, cx);
         assert_eq!(buffer.text(), "zero\none\ntwo\nthree\nfour");
         assert_eq!(buffer.line_ending(), LineEnding::Windows);
         buffer.check_invariants();
@@ -298,7 +299,7 @@ fn test_edit_events(cx: &mut gpui::App) {
 
             // An edit emits an edited event, followed by a dirty changed event,
             // since the buffer was previously in a clean state.
-            buffer.edit([(2..4, "XYZ")], None, cx);
+            buffer.edit([(2..4, "XYZ")], Default::default(), None, cx);
 
             // An empty transaction does not emit any events.
             buffer.start_transaction();
@@ -307,8 +308,8 @@ fn test_edit_events(cx: &mut gpui::App) {
             // A transaction containing two edits emits one edited event.
             now += Duration::from_secs(1);
             buffer.start_transaction_at(now);
-            buffer.edit([(5..5, "u")], None, cx);
-            buffer.edit([(6..6, "w")], None, cx);
+            buffer.edit([(5..5, "u")], Default::default(), None, cx);
+            buffer.edit([(6..6, "w")], Default::default(), None, cx);
             buffer.end_transaction_at(now, cx);
 
             // Undoing a transaction emits one edited event.
@@ -425,6 +426,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
                 (Point::new(0, 1)..Point::new(0, 1), "EE"),
                 (Point::new(3, 5)..Point::new(3, 5), "EEE"),
             ],
+            Default::default(),
             None,
             cx,
         );
@@ -498,11 +500,11 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         buf.start_transaction();
 
         let offset = buf.text().find(')').unwrap();
-        buf.edit([(offset..offset, "b: C")], None, cx);
+        buf.edit([(offset..offset, "b: C")], Default::default(), None, cx);
         assert!(!buf.is_parsing());
 
         let offset = buf.text().find('}').unwrap();
-        buf.edit([(offset..offset, " d; ")], None, cx);
+        buf.edit([(offset..offset, " d; ")], Default::default(), None, cx);
         assert!(!buf.is_parsing());
 
         buf.end_transaction(cx);
@@ -526,19 +528,19 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
     // * add a turbofish to the method call
     buffer.update(cx, |buf, cx| {
         let offset = buf.text().find(';').unwrap();
-        buf.edit([(offset..offset, ".e")], None, cx);
+        buf.edit([(offset..offset, ".e")], Default::default(), None, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
         assert!(buf.is_parsing());
     });
     buffer.update(cx, |buf, cx| {
         let offset = buf.text().find(';').unwrap();
-        buf.edit([(offset..offset, "(f)")], None, cx);
+        buf.edit([(offset..offset, "(f)")], Default::default(), None, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
         assert!(buf.is_parsing());
     });
     buffer.update(cx, |buf, cx| {
         let offset = buf.text().find("(f)").unwrap();
-        buf.edit([(offset..offset, "::<G>")], None, cx);
+        buf.edit([(offset..offset, "::<G>")], Default::default(), None, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
         assert!(buf.is_parsing());
     });
@@ -1173,11 +1175,17 @@ fn test_autoindent_with_soft_tabs(cx: &mut App) {
         let text = "fn a() {}";
         let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
+        buffer.edit(
+            [(8..8, "\n\n")],
+            Default::default(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
 
         buffer.edit(
             [(Point::new(1, 4)..Point::new(1, 4), "b()\n")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1187,6 +1195,7 @@ fn test_autoindent_with_soft_tabs(cx: &mut App) {
         // to be indented.
         buffer.edit(
             [(Point::new(2, 4)..Point::new(2, 4), ".c")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1196,6 +1205,7 @@ fn test_autoindent_with_soft_tabs(cx: &mut App) {
         // causing the line to be outdented.
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 9), "")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1215,11 +1225,17 @@ fn test_autoindent_with_hard_tabs(cx: &mut App) {
         let text = "fn a() {}";
         let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
+        buffer.edit(
+            [(8..8, "\n\n")],
+            Default::default(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
         assert_eq!(buffer.text(), "fn a() {\n\t\n}");
 
         buffer.edit(
             [(Point::new(1, 1)..Point::new(1, 1), "b()\n")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1229,6 +1245,7 @@ fn test_autoindent_with_hard_tabs(cx: &mut App) {
         // to be indented.
         buffer.edit(
             [(Point::new(2, 1)..Point::new(2, 1), ".c")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1238,6 +1255,7 @@ fn test_autoindent_with_hard_tabs(cx: &mut App) {
         // causing the line to be outdented.
         buffer.edit(
             [(Point::new(2, 2)..Point::new(2, 3), "")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1578,6 +1596,7 @@ fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut App) {
         let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
         buffer.edit(
             [(0..1, "\n"), (2..3, "\n")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1604,6 +1623,7 @@ fn test_autoindent_multi_line_insertion(cx: &mut App) {
         let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
         buffer.edit(
             [(Point::new(3, 0)..Point::new(3, 0), "e(\n    f()\n);\n")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1658,6 +1678,7 @@ fn test_autoindent_block_mode(cx: &mut App) {
         // so that the first line matches the previous line's indentation.
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
+            Default::default(),
             Some(AutoindentMode::Block {
                 original_indent_columns: original_indent_columns.clone(),
             }),
@@ -1683,9 +1704,15 @@ fn test_autoindent_block_mode(cx: &mut App) {
         buffer.undo(cx); // Undo the original edit
 
         // Insert the block at a deeper indent level. The entire block is outdented.
-        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "        ")], None, cx);
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), "        ")],
+            Default::default(),
+            None,
+            cx,
+        );
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 8), inserted_text)],
+            Default::default(),
             Some(AutoindentMode::Block {
                 original_indent_columns: original_indent_columns.clone(),
             }),
@@ -1735,6 +1762,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
         // so that the first line matches the previous line's indentation.
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
+            Default::default(),
             Some(AutoindentMode::Block {
                 original_indent_columns: original_indent_columns.clone(),
             }),
@@ -1761,11 +1789,13 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
         // Insert the block at a deeper indent level. The entire block is outdented.
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), " ".repeat(12))],
+            Default::default(),
             None,
             cx,
         );
         buffer.edit(
             [(Point::new(2, 12)..Point::new(2, 12), inserted_text)],
+            Default::default(),
             Some(AutoindentMode::Block {
                 original_indent_columns: Vec::new(),
             }),
@@ -1822,6 +1852,7 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
                 (ranges_to_replace[1].clone(), "fn two() {\n    102\n}\n"),
                 (ranges_to_replace[2].clone(), "fn three() {\n    103\n}\n"),
             ],
+            Default::default(),
             Some(AutoindentMode::Block {
                 original_indent_columns: vec![Some(0), Some(0), Some(0)],
             }),
@@ -1878,6 +1909,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut App) {
         );
         buffer.edit(
             [(Point::new(3, 0)..Point::new(3, 0), "\n")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1946,6 +1978,7 @@ fn test_autoindent_with_injected_languages(cx: &mut App) {
         buffer.set_language(Some(html_language), cx);
         buffer.edit(
             ranges.into_iter().map(|range| (range, "\na")),
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -1992,7 +2025,12 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut App) {
         "#
         .unindent();
 
-        buffer.edit([(0..0, text)], Some(AutoindentMode::EachLine), cx);
+        buffer.edit(
+            [(0..0, text)],
+            Default::default(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
 
         assert_eq!(
             buffer.text(),
@@ -2027,7 +2065,12 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
         // This causes autoindent to be async.
         buffer.set_sync_parse_timeout(Duration::ZERO);
 
-        buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
+        buffer.edit(
+            [(8..8, "\n\n")],
+            Default::default(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
         buffer.refresh_preview();
 
         // Synchronously, we haven't auto-indented and we're still preserving the preview.
@@ -2048,6 +2091,7 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
         // Then refresh the preview version.
         buffer.edit(
             [(Point::new(1, 4)..Point::new(1, 4), "\n")],
+            Default::default(),
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -2056,7 +2100,12 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
         assert!(buffer.preserve_preview());
 
         // Then perform another edit, this time without refreshing the preview version.
-        buffer.edit([(Point::new(1, 4)..Point::new(1, 4), "x")], None, cx);
+        buffer.edit(
+            [(Point::new(1, 4)..Point::new(1, 4), "x")],
+            Default::default(),
+            None,
+            cx,
+        );
         // This causes the preview to not be preserved.
         assert!(!buffer.preserve_preview());
     });
@@ -2461,18 +2510,18 @@ fn test_serialization(cx: &mut gpui::App) {
 
     let buffer1 = cx.new(|cx| {
         let mut buffer = Buffer::local("abc", cx);
-        buffer.edit([(3..3, "D")], None, cx);
+        buffer.edit([(3..3, "D")], Default::default(), None, cx);
 
         now += Duration::from_secs(1);
         buffer.start_transaction_at(now);
-        buffer.edit([(4..4, "E")], None, cx);
+        buffer.edit([(4..4, "E")], Default::default(), None, cx);
         buffer.end_transaction_at(now, cx);
         assert_eq!(buffer.text(), "abcDE");
 
         buffer.undo(cx);
         assert_eq!(buffer.text(), "abcD");
 
-        buffer.edit([(4..4, "F")], None, cx);
+        buffer.edit([(4..4, "F")], Default::default(), None, cx);
         assert_eq!(buffer.text(), "abcDF");
         buffer
     });
@@ -2530,6 +2579,7 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
                 (Point::new(1, 0)..Point::new(1, 0), "1.5\n"),
                 (Point::new(2, 0)..Point::new(2, 5), "THREE"),
             ],
+            Default::default(),
             None,
             cx,
         )
@@ -2554,7 +2604,12 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
 
     // Edits to the base are applied to the branch.
     base.update(cx, |buffer, cx| {
-        buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "ZERO\n")], None, cx)
+        buffer.edit(
+            [(Point::new(0, 0)..Point::new(0, 0), "ZERO\n")],
+            Default::default(),
+            None,
+            cx,
+        )
     });
     branch.read_with(cx, |buffer, cx| {
         assert_eq!(base.read(cx).text(), "ZERO\none\ntwo\nthree\n");
@@ -2563,7 +2618,12 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
 
     // Edits to any replica of the base are applied to the branch.
     base_replica.update(cx, |buffer, cx| {
-        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "2.5\n")], None, cx)
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), "2.5\n")],
+            Default::default(),
+            None,
+            cx,
+        )
     });
     branch.read_with(cx, |buffer, cx| {
         assert_eq!(base.read(cx).text(), "ZERO\none\ntwo\n2.5\nthree\n");
@@ -2590,7 +2650,12 @@ fn test_merge_into_base(cx: &mut TestAppContext) {
 
     // Make 3 edits, merge one into the base.
     branch.update(cx, |branch, cx| {
-        branch.edit([(0..3, "ABC"), (7..9, "HI"), (11..11, "LMN")], None, cx);
+        branch.edit(
+            [(0..3, "ABC"), (7..9, "HI"), (11..11, "LMN")],
+            Default::default(),
+            None,
+            cx,
+        );
         branch.merge_into_base(vec![5..8], cx);
     });
 
@@ -2599,7 +2664,7 @@ fn test_merge_into_base(cx: &mut TestAppContext) {
 
     // Undo the one already-merged edit. Merge that into the base.
     branch.update(cx, |branch, cx| {
-        branch.edit([(7..9, "hi")], None, cx);
+        branch.edit([(7..9, "hi")], Default::default(), None, cx);
         branch.merge_into_base(vec![5..8], cx);
     });
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
@@ -2614,7 +2679,7 @@ fn test_merge_into_base(cx: &mut TestAppContext) {
 
     // Deleted the inserted text and merge that into the base.
     branch.update(cx, |branch, cx| {
-        branch.edit([(11..14, "")], None, cx);
+        branch.edit([(11..14, "")], Default::default(), None, cx);
         branch.merge_into_base(vec![10..11], cx);
     });
 
@@ -2630,7 +2695,7 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
 
     // Make 2 edits, merge one into the base.
     branch.update(cx, |branch, cx| {
-        branch.edit([(0..3, "ABC"), (7..9, "HI")], None, cx);
+        branch.edit([(0..3, "ABC"), (7..9, "HI")], Default::default(), None, cx);
         branch.merge_into_base(vec![7..7], cx);
     });
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));

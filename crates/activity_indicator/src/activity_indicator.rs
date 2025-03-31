@@ -131,6 +131,7 @@ impl ActivityIndicator {
                                 0..0,
                                 format!("Language server error: {}\n\n{}", server_name, error),
                             )],
+                            Default::default(),
                             None,
                             cx,
                         );

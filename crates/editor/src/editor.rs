@@ -109,8 +109,8 @@ use language::{
     },
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
     Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    EditPreview, EditSource, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt,
+    Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -2532,8 +2532,9 @@ impl Editor {
             return;
         }
 
-        self.buffer
-            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(edits, Default::default(), None, cx)
+        });
     }
 
     pub fn edit_with_autoindent<I, S, T>(&mut self, edits: I, cx: &mut Context<Self>)
@@ -2547,7 +2548,7 @@ impl Editor {
         }
 
         self.buffer.update(cx, |buffer, cx| {
-            buffer.edit(edits, self.autoindent_mode.clone(), cx)
+            buffer.edit(edits, Default::default(), self.autoindent_mode.clone(), cx)
         });
     }
 
@@ -2568,6 +2569,7 @@ impl Editor {
         self.buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 edits,
+                Default::default(),
                 Some(AutoindentMode::Block {
                     original_indent_columns,
                 }),
@@ -3323,7 +3325,12 @@ impl Editor {
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                buffer.edit(
+                    edits,
+                    EditSource::UserInput,
+                    this.autoindent_mode.clone(),
+                    cx,
+                );
             });
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
@@ -3337,7 +3344,7 @@ impl Editor {
                             (start_point..end_point, text)
                         })
                         .sorted_by_key(|(range, _)| range.start);
-                    buffer.edit(edits, None, cx);
+                    buffer.edit(edits, Default::default(), None, cx);
                 })
             }
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
@@ -3751,6 +3758,7 @@ impl Editor {
                     old_selections
                         .iter()
                         .map(|s| (s.start..s.end, text.clone())),
+                    Default::default(),
                     autoindent_mode,
                     cx,
                 );
@@ -4669,7 +4677,7 @@ impl Editor {
             } else {
                 this.buffer.update(cx, |buffer, cx| {
                     let edits = ranges.iter().map(|range| (range.clone(), text));
-                    buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                    buffer.edit(edits, Default::default(), this.autoindent_mode.clone(), cx);
                 });
             }
             for (buffer, edits) in linked_edits {
@@ -4684,7 +4692,7 @@ impl Editor {
                             (start_point..end_point, text)
                         })
                         .sorted_by_key(|(range, _)| range.start);
-                    buffer.edit(edits, None, cx);
+                    buffer.edit(edits, Default::default(), None, cx);
                 })
             }
 
@@ -5688,7 +5696,7 @@ impl Editor {
                 let last_edit_end = edits.last().unwrap().0.end.bias_right(&snapshot);
 
                 self.buffer.update(cx, |buffer, cx| {
-                    buffer.edit(edits.iter().cloned(), None, cx)
+                    buffer.edit(edits.iter().cloned(), Default::default(), None, cx)
                 });
 
                 self.change_selections(None, window, cx, |s| {
@@ -7692,7 +7700,12 @@ impl Editor {
                 .iter()
                 .cloned()
                 .map(|range| (range, snippet_text.clone()));
-            buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
+            buffer.edit(
+                edits,
+                Default::default(),
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
 
             let snapshot = &*buffer.read(cx);
             let snippet = &snippet;
@@ -7959,7 +7972,7 @@ impl Editor {
                     .sorted_by_key(|(range, _)| range.start)
                     .collect::<Vec<_>>();
                 buffer.update(cx, |this, cx| {
-                    this.edit(edits, None, cx);
+                    this.edit(edits, Default::default(), None, cx);
                 })
             }
             this.refresh_inline_completion(true, false, window, cx);
@@ -8070,7 +8083,8 @@ impl Editor {
         }
 
         self.transact(window, cx, |this, window, cx| {
-            this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
+            this.buffer
+                .update(cx, |b, cx| b.edit(edits, Default::default(), None, cx));
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select(selections)
             });
@@ -8100,7 +8114,8 @@ impl Editor {
         }
 
         self.transact(window, cx, |this, window, cx| {
-            this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
+            this.buffer
+                .update(cx, |b, cx| b.edit(edits, Default::default(), None, cx));
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select(selections)
             });
@@ -8246,6 +8261,7 @@ impl Editor {
                     deletion_ranges
                         .into_iter()
                         .map(|range| (range, empty_str.clone())),
+                    Default::default(),
                     None,
                     cx,
                 );
@@ -8337,6 +8353,7 @@ impl Editor {
                     edit_ranges
                         .into_iter()
                         .map(|range| (range, empty_str.clone())),
+                    Default::default(),
                     None,
                     cx,
                 );
@@ -8417,7 +8434,12 @@ impl Editor {
                         };
 
                     this.buffer.update(cx, |buffer, cx| {
-                        buffer.edit([(end_of_line..start_of_next_line, replace)], None, cx)
+                        buffer.edit(
+                            [(end_of_line..start_of_next_line, replace)],
+                            Default::default(),
+                            None,
+                            cx,
+                        )
                     });
                 }
             }
@@ -8951,7 +8973,7 @@ impl Editor {
 
         self.transact(window, cx, |this, window, cx| {
             let buffer = this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
+                buffer.edit(edits, Default::default(), None, cx);
                 buffer.snapshot(cx)
             });
 
@@ -9113,7 +9135,7 @@ impl Editor {
 
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
+                buffer.edit(edits, Default::default(), None, cx);
             });
 
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -9182,7 +9204,7 @@ impl Editor {
 
         self.transact(window, cx, |this, _, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
+                buffer.edit(edits, Default::default(), None, cx);
             });
 
             this.request_autoscroll(Autoscroll::fit(), cx);
@@ -9308,7 +9330,7 @@ impl Editor {
             this.unfold_ranges(&unfold_ranges, true, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
-                    buffer.edit([(range, text)], None, cx);
+                    buffer.edit([(range, text)], Default::default(), None, cx);
                 }
             });
             this.fold_creases(refold_creases, true, window, cx);
@@ -9405,7 +9427,7 @@ impl Editor {
             this.unfold_ranges(&unfold_ranges, true, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
-                    buffer.edit([(range, text)], None, cx);
+                    buffer.edit([(range, text)], Default::default(), None, cx);
                 }
             });
             this.fold_creases(refold_creases, true, window, cx);
@@ -9464,8 +9486,9 @@ impl Editor {
                 });
                 edits
             });
-            this.buffer
-                .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, Default::default(), None, cx)
+            });
             let selections = this.selections.all::<usize>(cx);
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select(selections);
@@ -9637,8 +9660,9 @@ impl Editor {
             rewrapped_row_ranges.push(start_row..=end_row);
         }
 
-        self.buffer
-            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(edits, Default::default(), None, cx)
+        });
     }
 
     pub fn cut_common(&mut self, window: &mut Window, cx: &mut Context<Self>) -> ClipboardItem {
@@ -9881,6 +9905,7 @@ impl Editor {
 
                     buffer.edit(
                         edits,
+                        Default::default(),
                         if auto_indent_on_paste {
                             Some(AutoindentMode::Block {
                                 original_indent_columns,
@@ -11996,7 +12021,7 @@ impl Editor {
 
             drop(snapshot);
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
+                buffer.edit(edits, Default::default(), None, cx);
             });
 
             // Adjust selections so that they end before any comment suffixes that
@@ -13612,7 +13637,7 @@ impl Editor {
                     let rename_editor = cx.new(|cx| {
                         let mut editor = Editor::single_line(window, cx);
                         editor.buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(0..0, old_name.clone())], None, cx)
+                            buffer.edit([(0..0, old_name.clone())], Default::default(), None, cx)
                         });
                         let rename_selection_range = match cursor_offset_in_rename_range
                             .cmp(&cursor_offset_in_rename_range_end)
@@ -17490,6 +17515,7 @@ impl Editor {
                             changes
                                 .into_iter()
                                 .map(|(range, text)| (range, text.to_string())),
+                            Default::default(),
                             None,
                             cx,
                         );

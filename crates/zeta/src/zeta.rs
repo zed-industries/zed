@@ -1691,7 +1691,9 @@ mod tests {
                 vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(2..5, "")], Default::default(), None, cx)
+            });
             assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -1711,7 +1713,9 @@ mod tests {
                 vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(2..5, "R")], Default::default(), None, cx)
+            });
             assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -1721,7 +1725,9 @@ mod tests {
                 vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(3..3, "E")], Default::default(), None, cx)
+            });
             assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -1731,7 +1737,9 @@ mod tests {
                 vec![(4..4, "M".to_string()), (8..10, "".to_string())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..4, "M")], Default::default(), None, cx)
+            });
             assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -1741,7 +1749,9 @@ mod tests {
                 vec![(9..11, "".to_string())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..5, "")], Default::default(), None, cx)
+            });
             assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -1751,7 +1761,9 @@ mod tests {
                 vec![(4..4, "M".to_string()), (8..10, "".to_string())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(8..10, "")], Default::default(), None, cx)
+            });
             assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -1761,7 +1773,9 @@ mod tests {
                 vec![(4..4, "M".to_string())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..6, "")], Default::default(), None, cx)
+            });
             assert_eq!(completion.interpolate(&buffer.read(cx).snapshot()), None);
         })
     }
@@ -1885,7 +1899,12 @@ mod tests {
 
         let completion = completion_task.await.unwrap().unwrap();
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(completion.edits.iter().cloned(), None, cx)
+            buffer.edit(
+                completion.edits.iter().cloned(),
+                Default::default(),
+                None,
+                cx,
+            )
         });
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),

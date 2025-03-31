@@ -1803,7 +1803,7 @@ pub mod tests {
 
             let ix = snapshot.buffer_snapshot.text().find("seven").unwrap();
             buffer.update(cx, |buffer, cx| {
-                buffer.edit([(ix..ix, "and ")], None, cx);
+                buffer.edit([(ix..ix, "and ")], Default::default(), None, cx);
             });
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
@@ -1862,6 +1862,7 @@ pub mod tests {
                         "\t",
                     ),
                 ],
+                Default::default(),
                 None,
                 cx,
             )
@@ -1939,7 +1940,7 @@ pub mod tests {
         // Regression test: updating the display map does not crash when a
         // block is immediately followed by a multi-line inlay.
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(1..1, "b")], None, cx);
+            buffer.edit([(1..1, "b")], Default::default(), None, cx);
         });
         map.update(cx, |m, cx| assert_eq!(m.snapshot(cx).text(), "\n\n\nab"));
     }

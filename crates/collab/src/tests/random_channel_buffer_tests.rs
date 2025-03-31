@@ -208,6 +208,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                                 let end = snapshot.clip_offset(range.end, Bias::Right);
                                 (start..end, text)
                             }),
+                            Default::default(),
                             None,
                             cx,
                         );

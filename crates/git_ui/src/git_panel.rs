@@ -1702,7 +1702,7 @@ impl GitPanel {
                     this.update(cx, |this, cx| {
                         this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                             let insert_position = buffer.anchor_before(buffer.len());
-                            buffer.edit([(insert_position..insert_position, "\n")], None, cx)
+                            buffer.edit([(insert_position..insert_position, "\n")], Default::default(), None, cx)
                         });
                     })?;
                 }
@@ -1713,7 +1713,7 @@ impl GitPanel {
                     this.update(cx, |this, cx| {
                         this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                             let insert_position = buffer.anchor_before(buffer.len());
-                            buffer.edit([(insert_position..insert_position, text)], None, cx);
+                            buffer.edit([(insert_position..insert_position, text)], Default::default(), None, cx);
                         });
                     })?;
                 }

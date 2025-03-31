@@ -79,6 +79,7 @@ impl EditorBlock {
                             buffer_snapshot.max_point()..buffer_snapshot.max_point(),
                             "\n",
                         )],
+                        Default::default(),
                         None,
                         cx,
                     )

@@ -135,6 +135,8 @@ pub struct LanguageSettings {
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     pub use_on_type_format: bool,
+    /// Whether indentation should be automatically adjusted when typing.
+    pub auto_indent_on_input: bool,
     /// Whether indentation of pasted content should be adjusted based on the context.
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
@@ -507,6 +509,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
+    /// Whether indentation should be automatically adjusted when typing.
+    ///
+    /// Default: true
+    pub auto_indent_on_input: Option<bool>,
     /// Whether indentation of pasted content should be adjusted based on the context.
     ///
     /// Default: true
@@ -1360,6 +1366,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.use_auto_surround, src.use_auto_surround);
     merge(&mut settings.use_on_type_format, src.use_on_type_format);
+    merge(&mut settings.auto_indent_on_input, src.auto_indent_on_input);
     merge(&mut settings.auto_indent_on_paste, src.auto_indent_on_paste);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,

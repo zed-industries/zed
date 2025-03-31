@@ -19,10 +19,10 @@ use itertools::Itertools;
 use language::{
     language_settings::{language_settings, IndentGuideSettings, LanguageSettings},
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentSize, Language,
-    LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
-    TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
-    Unclipped,
+    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, EditSource, File, IndentSize,
+    Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16,
+    Selection, TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId,
+    TreeSitterOptions, Unclipped,
 };
 
 use rope::DimensionPair;
@@ -745,6 +745,7 @@ impl MultiBuffer {
     pub fn edit<I, S, T>(
         &self,
         edits: I,
+        edit_source: EditSource,
         autoindent_mode: Option<AutoindentMode>,
         cx: &mut Context<Self>,
     ) where
@@ -764,13 +765,14 @@ impl MultiBuffer {
             })
             .collect::<Vec<_>>();
 
-        return edit_internal(self, snapshot, edits, autoindent_mode, cx);
+        return edit_internal(self, snapshot, edits, edit_source, autoindent_mode, cx);
 
         // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
         fn edit_internal(
             this: &MultiBuffer,
             snapshot: Ref<MultiBufferSnapshot>,
             edits: Vec<(Range<usize>, Arc<str>)>,
+            edit_source: EditSource,
             mut autoindent_mode: Option<AutoindentMode>,
             cx: &mut Context<MultiBuffer>,
         ) {
@@ -862,8 +864,13 @@ impl MultiBuffer {
                                 autoindent_mode.clone()
                             };
 
-                        buffer.edit(deletions, deletion_autoindent_mode, cx);
-                        buffer.edit(insertions, insertion_autoindent_mode, cx);
+                        buffer.edit(deletions, edit_source.clone(), deletion_autoindent_mode, cx);
+                        buffer.edit(
+                            insertions,
+                            edit_source.clone(),
+                            insertion_autoindent_mode,
+                            cx,
+                        );
                     })
             }
 
@@ -3450,7 +3457,7 @@ impl MultiBuffer {
         log::info!("mutating multi-buffer with {:?}", edits);
         drop(snapshot);
 
-        self.edit(edits, None, cx);
+        self.edit(edits, Default::default(), None, cx);
     }
 
     pub fn randomly_edit_excerpts(

@@ -1230,7 +1230,12 @@ mod tests {
 
         // Edits before or after the inlay should not affect it.
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(2..3, "x"), (3..3, "y"), (4..4, "z")], None, cx)
+            buffer.edit(
+                [(2..3, "x"), (3..3, "y"), (4..4, "z")],
+                Default::default(),
+                None,
+                cx,
+            )
         });
         let (inlay_snapshot, _) = inlay_map.sync(
             buffer.read(cx).snapshot(cx),
@@ -1239,7 +1244,9 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abxy|123|dzefghi");
 
         // An edit surrounding the inlay should invalidate it.
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "D")], None, cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(4..5, "D")], Default::default(), None, cx)
+        });
         let (inlay_snapshot, _) = inlay_map.sync(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
@@ -1264,7 +1271,9 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abx|123||456|yDzefghi");
 
         // Edits ending where the inlay starts should not move it if it has a left bias.
-        buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "JKL")], None, cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(3..3, "JKL")], Default::default(), None, cx)
+        });
         let (inlay_snapshot, _) = inlay_map.sync(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
