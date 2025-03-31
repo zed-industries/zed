@@ -410,7 +410,11 @@ fn render_accept_terms(
         .icon_size(IconSize::XSmall)
         .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
-    let text = "To start using Zed AI, please read and accept the";
+    let thread_view = match view_kind {
+        LanguageModelProviderTosView::ThreadEmptyState => true,
+        LanguageModelProviderTosView::PromptEditorPopup => false,
+        LanguageModelProviderTosView::Configuration => false,
+    };
 
     let form = v_flex()
         .w_full()
@@ -418,14 +422,20 @@ fn render_accept_terms(
         .child(
             h_flex()
                 .flex_wrap()
-                .items_start()
-                .child(Label::new(text))
+                .when(thread_view, |this| this.justify_center())
+                .child(Label::new(
+                    "To start using Zed AI, please read and accept the",
+                ))
                 .child(terms_button),
         )
         .child({
             let button_container = h_flex().w_full().child(
                 Button::new("accept_terms", "I accept the Terms of Service")
                     .style(ButtonStyle::Tinted(TintColor::Accent))
+                    .icon(IconName::Check)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .full_width()
                     .disabled(accept_terms_disabled)
                     .on_click({
                         let state = state.downgrade();
@@ -439,10 +449,8 @@ fn render_accept_terms(
 
             match view_kind {
                 LanguageModelProviderTosView::PromptEditorPopup => button_container.justify_end(),
-                LanguageModelProviderTosView::Configuration
-                | LanguageModelProviderTosView::ThreadEmptyState => {
-                    button_container.justify_start()
-                }
+                LanguageModelProviderTosView::Configuration => button_container.justify_start(),
+                LanguageModelProviderTosView::ThreadEmptyState => button_container.justify_center(),
             }
         });
 
