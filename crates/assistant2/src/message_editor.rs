@@ -31,7 +31,7 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AssistantDiff, Chat, ChatMode, OpenAssistantDiff, RemoveAllContext, ThreadEvent,
+    AssistantDiff, Chat, ChatMode, NewThread, OpenAssistantDiff, RemoveAllContext, ThreadEvent,
     ToggleContextPicker, ToggleProfileSelector,
 };
 
@@ -320,7 +320,6 @@ impl Render for MessageEditor {
         let inline_context_picker = self.inline_context_picker.clone();
 
         let thread = self.thread.read(cx);
-        let empty_thread = thread.is_empty();
         let is_generating = thread.is_generating();
         let is_too_long = thread.is_getting_too_long(cx);
         let is_model_selected = self.is_model_selected(cx);

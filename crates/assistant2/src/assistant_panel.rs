@@ -773,14 +773,17 @@ impl AssistantPanel {
                                     .tooltip(move |window, cx| {
                                         Tooltip::for_action_in(
                                             "New Thread",
-                                            &NewThread,
+                                            &NewThread::default(),
                                             &focus_handle,
                                             window,
                                             cx,
                                         )
                                     })
                                     .on_click(move |_event, window, cx| {
-                                        window.dispatch_action(NewThread.boxed_clone(), cx);
+                                        window.dispatch_action(
+                                            NewThread::default().boxed_clone(),
+                                            cx,
+                                        );
                                     }),
                             )
                             .child(
@@ -808,6 +811,7 @@ impl AssistantPanel {
                                                     "New Prompt Editor",
                                                     NewPromptEditor.boxed_clone(),
                                                 )
+                                                // todo! only render this if thread isn't empty
                                                 .action(
                                                     "Continue in New Thread",
                                                     Box::new(NewThread {
