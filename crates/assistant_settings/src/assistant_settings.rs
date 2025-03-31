@@ -5,7 +5,7 @@ use std::sync::Arc;
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use deepseek::Model as DeepseekModel;
-use feature_flags::FeatureFlagAppExt;
+use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Pixels};
 use indexmap::IndexMap;
 use language_model::{CloudModel, LanguageModel};
@@ -88,6 +88,10 @@ pub struct AssistantSettings {
 
 impl AssistantSettings {
     pub fn are_live_diffs_enabled(&self, cx: &App) -> bool {
+        if cx.has_flag::<Assistant2FeatureFlag>() {
+            return false;
+        }
+
         cx.is_staff() || self.enable_experimental_live_diffs
     }
 }
