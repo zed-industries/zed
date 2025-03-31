@@ -1,4 +1,3 @@
-use crate::HighlightStyles;
 use collections::BTreeSet;
 use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
@@ -189,7 +188,6 @@ pub struct TokenChunks<'a> {
     token_chunk: Option<&'a str>,
     output_offset: TokenOffset,
     max_output_offset: TokenOffset,
-    highlights: Highlights<'a>,
     snapshot: &'a TokenSnapshot,
 }
 
@@ -908,7 +906,6 @@ impl TokenSnapshot {
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
-            highlights,
             snapshot: self,
         }
     }

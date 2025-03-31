@@ -84,7 +84,6 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type SemanticHighlights = Vec<Token>;
 type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
@@ -110,8 +109,6 @@ pub struct DisplayMap {
     block_map: BlockMap,
     /// Regions of text that should be highlighted.
     text_highlights: TextHighlights,
-    /// Regions of text that are highlighted from the language server protocol
-    semantic_highlights: SemanticHighlights,
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
@@ -157,7 +154,6 @@ impl DisplayMap {
             block_map,
             crease_map,
             fold_placeholder,
-            semantic_highlights: Default::default(),
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
@@ -189,7 +185,6 @@ impl DisplayMap {
             crease_snapshot: self.crease_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
-            semantic_highlights: self.semantic_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
@@ -526,7 +521,7 @@ impl DisplayMap {
     }
 
     pub(crate) fn current_tokens(&self) -> impl Iterator<Item = &Token> {
-        self.semantic_highlights.iter()
+        self.token_map.current_tokens()
     }
 
     pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
@@ -612,7 +607,6 @@ impl DisplayMap {
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
-    pub semantic_highlights: Option<&'a SemanticHighlights>,
     pub styles: HighlightStyles,
 }
 
@@ -748,7 +742,6 @@ pub struct DisplaySnapshot {
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
-    semantic_highlights: SemanticHighlights,
     clip_at_line_ends: bool,
     masked: bool,
     pub(crate) fold_placeholder: FoldPlaceholder,
@@ -931,7 +924,6 @@ impl DisplaySnapshot {
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
-                semantic_highlights: Some(&self.semantic_highlights),
                 styles: highlight_styles,
             },
         )
