@@ -1273,10 +1273,10 @@ impl Workspace {
             };
 
             let toolchains = DB.toolchains(workspace_id).await?;
-            for (toolchain, worktree_id) in toolchains {
+            for (toolchain, worktree_id, path) in toolchains {
                 project_handle
                     .update(cx, |this, cx| {
-                        this.activate_toolchain(worktree_id, toolchain, cx)
+                        this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
                     })?
                     .await;
             }
@@ -6319,10 +6319,10 @@ pub fn open_ssh_project(
         })?;
 
         let toolchains = DB.toolchains(workspace_id).await?;
-        for (toolchain, worktree_id) in toolchains {
+        for (toolchain, worktree_id, path) in toolchains {
             project
                 .update(cx, |this, cx| {
-                    this.activate_toolchain(worktree_id, toolchain, cx)
+                    this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
                 })?
                 .await;
         }

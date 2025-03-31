@@ -15,8 +15,8 @@ use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
     LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest, RateLimiter,
-    ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
+    LanguageModelToolSchemaFormat, RateLimiter, ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
@@ -557,6 +557,10 @@ impl LanguageModel for CloudLanguageModel {
 
     fn availability(&self) -> LanguageModelAvailability {
         self.model.availability()
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        self.model.tool_input_format()
     }
 
     fn max_token_count(&self) -> usize {

@@ -752,27 +752,11 @@ impl DisplaySnapshot {
 
     // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
-        let max_row = self.buffer_snapshot.max_row().0;
-        let new_start = if range.start.row == 0 {
-            MultiBufferPoint::new(0, 0)
-        } else if range.start.row == max_row || (range.end.column > 0 && range.end.row == max_row) {
-            MultiBufferPoint::new(
-                range.start.row - 1,
-                self.buffer_snapshot
-                    .line_len(MultiBufferRow(range.start.row - 1)),
-            )
-        } else {
-            self.prev_line_boundary(range.start).0
-        };
-
-        let new_end = if range.end.column == 0 {
-            range.end
-        } else if range.end.row < max_row {
-            self.buffer_snapshot
-                .clip_point(MultiBufferPoint::new(range.end.row + 1, 0), Bias::Left)
-        } else {
-            self.buffer_snapshot.max_point()
-        };
+        let new_start = MultiBufferPoint::new(range.start.row, 0);
+        let new_end = MultiBufferPoint::new(
+            range.end.row,
+            self.buffer_snapshot.line_len(MultiBufferRow(range.end.row)),
+        );
 
         new_start..new_end
     }
