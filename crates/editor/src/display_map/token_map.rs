@@ -469,10 +469,6 @@ impl TokenMap {
         to_remove: &[usize],
         to_insert: Vec<Token>,
     ) -> (TokenSnapshot, Vec<TokenEdit>) {
-        log::error!("splice ({}, {})", to_remove.len(), to_insert.len());
-        if to_remove.len() > 100 {
-            panic!()
-        }
         let snapshot = &mut self.snapshot;
         let mut buffer_edits = vec![];
 
@@ -862,18 +858,6 @@ impl TokenSnapshot {
         #[cfg(any(debug_assertions, feature = "test-support"))]
         {
             assert_eq!(self.transforms.summary().input, self.buffer.text_summary());
-            let mut transforms = self.transforms.iter().peekable();
-            while let Some(transform) = transforms.next() {
-                let transform_is_isomorphic = matches!(transform, Transform::Isomorphic(_));
-                if let Some(next_transform) = transforms.peek() {
-                    let next_transform_is_isomorphic =
-                        matches!(next_transform, Transform::Isomorphic(_));
-                    assert!(
-                        !transform_is_isomorphic || !next_transform_is_isomorphic,
-                        "two adjacent isomorphic transforms"
-                    );
-                }
-            }
         }
     }
 }

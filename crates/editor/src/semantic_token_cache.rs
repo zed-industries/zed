@@ -585,7 +585,6 @@ fn calculate_token_updates(
     let mut add_to_cache = Vec::<SemanticToken>::new();
     let mut excerpt_tokens_to_persist = HashMap::default();
     for new_token in new_excerpt_tokens {
-        // TODO: REVIEW
         if !contains_position(&fetch_range, new_token.range.start, buffer_snapshot) {
             continue;
         }
