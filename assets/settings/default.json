@@ -666,6 +666,7 @@
           "path-search": true,
           "read-file": true,
           "regex-search": true,
+          "symbol-info": true,
           "thinking": true
         }
       }
