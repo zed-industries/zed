@@ -1,5 +1,6 @@
 use crate::{HighlightStyles, InlayId};
 use collections::BTreeSet;
+use gpui::{HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{
     Anchor, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset,
@@ -560,7 +561,6 @@ impl InlayMap {
 
     pub fn splice(
         &mut self,
-        token_map: &mut TokenMap,
         to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
@@ -602,13 +602,12 @@ impl InlayMap {
         let buffer_edits = edits
             .into_iter()
             .map(|offset| Edit {
-                old: offset..offset,
-                new: offset..offset,
+                old: TokenOffset(offset)..TokenOffset(offset),
+                new: TokenOffset(offset)..TokenOffset(offset),
             })
             .collect();
-        let buffer_snapshot = snapshot.token_snapshot.buffer.clone();
-        let (snapshot, edits) = token_map.sync(buffer_snapshot, buffer_edits);
-        let (snapshot, edits) = self.sync(snapshot, edits);
+        let token_snapshot = snapshot.token_snapshot.clone();
+        let (snapshot, edits) = self.sync(token_snapshot, buffer_edits);
         (snapshot, edits)
     }
 
@@ -619,7 +618,6 @@ impl InlayMap {
     #[cfg(test)]
     pub(crate) fn randomly_mutate(
         &mut self,
-        token_map: &mut TokenMap,
         next_inlay_id: &mut usize,
         rng: &mut rand::rngs::StdRng,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
@@ -677,7 +675,7 @@ impl InlayMap {
         }
         log::info!("removing inlays: {:?}", to_remove);
 
-        let (snapshot, edits) = self.splice(token_map, &to_remove, to_insert);
+        let (snapshot, edits) = self.splice(&to_remove, to_insert);
         (snapshot, edits)
     }
 }
@@ -1211,7 +1209,6 @@ mod tests {
         let mut next_inlay_id = 0;
 
         let (inlay_snapshot, _) = inlay_map.splice(
-            &mut token_map,
             &[],
             vec![Inlay {
                 id: InlayId::Hint(post_inc(&mut next_inlay_id)),
@@ -1290,7 +1287,6 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abxyDzefghi");
 
         let (inlay_snapshot, _) = inlay_map.splice(
-            &mut token_map,
             &[],
             vec![
                 Inlay {
@@ -1489,7 +1485,6 @@ mod tests {
 
         // The inlays can be manually removed.
         let (inlay_snapshot, _) = inlay_map.splice(
-            &mut token_map,
             &inlay_map
                 .inlays
                 .iter()
@@ -1509,7 +1504,6 @@ mod tests {
         let mut next_inlay_id = 0;
 
         let (inlay_snapshot, _) = inlay_map.splice(
-            &mut token_map,
             &[],
             vec![
                 Inlay {
@@ -1568,8 +1562,7 @@ mod tests {
             let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
                 0..=50 => {
-                    let (snapshot, edits) =
-                        inlay_map.randomly_mutate(&mut token_map, &mut next_inlay_id, &mut rng);
+                    let (snapshot, edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
                     log::info!("mutated text: {:?}", snapshot.text());
                     inlay_edits = Patch::new(edits);
                 }

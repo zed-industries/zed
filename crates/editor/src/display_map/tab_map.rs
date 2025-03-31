@@ -760,7 +760,7 @@ mod tests {
         fold_map.randomly_mutate(&mut rng);
         let (fold_snapshot, _) = fold_map.read(inlay_snapshot, vec![]);
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
-        let (inlay_snapshot, _) = inlay_map.randomly_mutate(&mut token_map, &mut 0, &mut rng);
+        let (inlay_snapshot, _) = inlay_map.randomly_mutate(&mut 0, &mut rng);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
 
         let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
