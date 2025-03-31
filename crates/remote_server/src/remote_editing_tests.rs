@@ -10,18 +10,18 @@ use fs::{FakeFs, Fs};
 use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
-    language_settings::{language_settings, AllLanguageSettings},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
+    language_settings::{AllLanguageSettings, language_settings},
 };
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{
-    search::{SearchQuery, SearchResult},
     Project, ProjectPath,
+    search::{SearchQuery, SearchResult},
 };
 use remote::SshRemoteClient;
 use serde_json::json;
-use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
+use settings::{Settings, SettingsLocation, SettingsStore, initial_server_settings_content};
 use smol::stream::StreamExt;
 use std::{
     collections::HashSet,

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use collections::HashMap;
-use futures::{channel::mpsc, SinkExt};
+use futures::{SinkExt, channel::mpsc};
 use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
 use gpui_tokio::Tokio;
 use playback::capture_local_video_track;
@@ -11,7 +11,7 @@ mod playback;
 
 use crate::{LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication};
 pub use playback::AudioStream;
-pub(crate) use playback::{play_remote_video_track, RemoteVideoFrame};
+pub(crate) use playback::{RemoteVideoFrame, play_remote_video_track};
 
 #[derive(Clone, Debug)]
 pub struct RemoteVideoTrack(livekit::track::RemoteVideoTrack);

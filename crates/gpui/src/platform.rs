@@ -30,13 +30,13 @@ mod windows;
 pub(crate) mod scap_screen_capture;
 
 use crate::{
-    point, Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
-    GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window, DEFAULT_WINDOW_SIZE,
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
+    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
+    Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
+    SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window, point,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_task::Runnable;
 use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
@@ -1311,11 +1311,7 @@ impl ClipboardItem {
             }
         }
 
-        if any_entries {
-            Some(answer)
-        } else {
-            None
-        }
+        if any_entries { Some(answer) } else { None }
     }
 
     /// If this item is one ClipboardEntry::String, returns its metadata.

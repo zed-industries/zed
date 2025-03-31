@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::ClickEvent;
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::context::{ContextKind, ContextSnapshot};
 

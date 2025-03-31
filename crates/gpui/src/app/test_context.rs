@@ -8,7 +8,7 @@ use crate::{
     WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
-use futures::{channel::oneshot, Stream, StreamExt};
+use futures::{Stream, StreamExt, channel::oneshot};
 use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
@@ -448,7 +448,10 @@ impl TestAppContext {
     }
 
     /// Returns a stream of notifications whenever the Entity is updated.
-    pub fn notifications<T: 'static>(&mut self, entity: &Entity<T>) -> impl Stream<Item = ()> {
+    pub fn notifications<T: 'static>(
+        &mut self,
+        entity: &Entity<T>,
+    ) -> impl Stream<Item = ()> + use<T> {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         self.update(|cx| {
             cx.observe(entity, {

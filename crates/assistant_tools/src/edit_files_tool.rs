@@ -2,12 +2,14 @@ mod edit_action;
 pub mod log;
 
 use crate::replace::{replace_exact, replace_with_flexible_indent};
-use anyhow::{anyhow, Context, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Context, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
-use edit_action::{EditAction, EditActionParser};
-use futures::{channel::mpsc, SinkExt, StreamExt};
+use edit_action::{EditAction, EditActionParser, edit_model_prompt};
+use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
+use language_model::LanguageModelToolSchemaFormat;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
@@ -91,9 +93,8 @@ impl Tool for EditFilesTool {
         IconName::Pencil
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(EditFilesToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<EditFilesToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
@@ -229,10 +230,7 @@ impl EditToolRequest {
 
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: vec![
-                include_str!("./edit_files_tool/edit_prompt.md").into(),
-                input.edit_instructions.into(),
-            ],
+            content: vec![edit_model_prompt().into(), input.edit_instructions.into()],
             cache: false,
         });
 
@@ -528,7 +526,8 @@ impl EditToolRequest {
                         }
                     }
 
-                    write!(&mut output,
+                    write!(
+                        &mut output,
                         "The SEARCH section must exactly match an existing block of lines including all white \
                         space, comments, indentation, docstrings, etc."
                     )?;
@@ -547,7 +546,8 @@ impl EditToolRequest {
                 }
 
                 if has_errors {
-                    writeln!(&mut output,
+                    writeln!(
+                        &mut output,
                         "\n\nYou can fix errors by running the tool again. You can include instructions, \
                         but errors are part of the conversation so you don't need to repeat them.",
                     )?;

@@ -8,7 +8,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use editor::display_map::{Crease, FoldId};
 use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
 use file_context_picker::render_file_context_entry;
@@ -18,19 +18,19 @@ use gpui::{
 use multi_buffer::MultiBufferRow;
 use project::ProjectPath;
 use symbol_context_picker::SymbolContextPicker;
-use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
+use thread_context_picker::{ThreadContextEntry, render_thread_context_entry};
 use ui::{
-    prelude::*, ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor,
+    ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor, prelude::*,
 };
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::{Workspace, notifications::NotifyResultExt};
 
+use crate::AssistantPanel;
 pub use crate::context_picker::completion_provider::ContextPickerCompletionProvider;
 use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
-use crate::AssistantPanel;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ConfirmBehavior {

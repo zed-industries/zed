@@ -261,6 +261,7 @@
       "o": "vim::OtherEndRowAware",
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
+      "delete": "vim::VisualDelete",
       "shift-d": "vim::VisualDeleteLine",
       "shift-x": "vim::VisualDeleteLine",
       "y": "vim::VisualYank",

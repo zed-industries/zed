@@ -1,38 +1,39 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{
-        channel_id, following_tests::join_channel, room_participants, rust_lang, RoomParticipants,
-        TestClient, TestServer,
+        RoomParticipants, TestClient, TestServer, channel_id, following_tests::join_channel,
+        room_participants, rust_lang,
     },
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_context_editor::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
-use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
-use call::{room, ActiveCall, ParticipantLocation, Room};
-use client::{User, RECEIVE_TIMEOUT};
+use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
+use call::{ActiveCall, ParticipantLocation, Room, room};
+use client::{RECEIVE_TIMEOUT, User};
 use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
-use futures::{channel::mpsc, StreamExt as _};
+use futures::{StreamExt as _, channel::mpsc};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
-    px, size, App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent,
-    TestAppContext, UpdateGlobal,
+    App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent, TestAppContext,
+    UpdateGlobal, px, size,
 };
 use language::{
+    Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
+    LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{
         AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
     },
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, FakeLspAdapter,
-    Language, LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
+    tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
+    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
     lsp_store::{FormatTrigger, LspFormatTarget},
     search::{SearchQuery, SearchResult},
-    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
 };
 use prompt_store::PromptBuilder;
 use rand::prelude::*;
@@ -44,8 +45,8 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -5103,7 +5104,9 @@ async fn test_project_search(
                 results.entry(buffer).or_insert(ranges);
             }
             SearchResult::LimitReached => {
-                panic!("Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call.")
+                panic!(
+                    "Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call."
+                )
             }
         };
     }
@@ -5602,7 +5605,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
 
     let definitions;
     let buffer_b2;
-    if rng.gen() {
+    if rng.r#gen() {
         definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         (buffer_b2, _) = project_b
             .update(cx_b, |p, cx| {
@@ -6204,15 +6207,19 @@ async fn test_contact_requests(
     executor.run_until_parked();
     assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
     assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
-    assert!(client_b
-        .summarize_contacts(cx_b)
-        .incoming_requests
-        .is_empty());
+    assert!(
+        client_b
+            .summarize_contacts(cx_b)
+            .incoming_requests
+            .is_empty()
+    );
     assert!(client_c.summarize_contacts(cx_c).current.is_empty());
-    assert!(client_c
-        .summarize_contacts(cx_c)
-        .outgoing_requests
-        .is_empty());
+    assert!(
+        client_c
+            .summarize_contacts(cx_c)
+            .outgoing_requests
+            .is_empty()
+    );
 
     async fn disconnect_and_reconnect(client: &TestClient, cx: &mut TestAppContext) {
         client.disconnect(&cx.to_async());

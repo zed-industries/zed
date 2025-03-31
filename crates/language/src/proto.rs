@@ -1,7 +1,7 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
-use crate::{diagnostic_set::DiagnosticEntry, CursorShape, Diagnostic};
-use anyhow::{anyhow, Context as _, Result};
+use crate::{CursorShape, Diagnostic, diagnostic_set::DiagnosticEntry};
+use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;

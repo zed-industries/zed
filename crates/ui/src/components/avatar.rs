@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
+use gpui::{AnyElement, Hsla, ImageSource, Img, IntoElement, Styled, img};
 
 /// An element that renders a user avatar with customizable appearance options.
 ///

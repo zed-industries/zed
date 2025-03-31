@@ -9,7 +9,7 @@ use std::sync::Arc;
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
-    div, px, size, AnyView, App, Bounds, Context, Render, Window, WindowBounds, WindowOptions,
+    AnyView, App, Bounds, Context, Render, Window, WindowBounds, WindowOptions, div, px, size,
 };
 use log::LevelFilter;
 use project::Project;

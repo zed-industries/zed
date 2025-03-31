@@ -11,13 +11,13 @@ pub mod fake_provider;
 use anyhow::Result;
 use client::Client;
 use futures::FutureExt;
-use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
+use futures::{StreamExt, TryStreamExt as _, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
 use icons::IconName;
 use parking_lot::Mutex;
 use proto::Plan;
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
 use std::ops::{Add, Sub};
 use std::{future::Future, sync::Arc};
@@ -64,6 +64,15 @@ pub enum LanguageModelCompletionEvent {
     ToolUse(LanguageModelToolUse),
     StartMessage { message_id: String },
     UsageUpdate(TokenUsage),
+}
+
+/// Indicates the format used to define the input schema for a language model tool.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LanguageModelToolSchemaFormat {
+    /// A JSON schema, see https://json-schema.org
+    JsonSchema,
+    /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
+    JsonSchemaSubset,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
@@ -174,6 +183,10 @@ pub trait LanguageModel: Send + Sync {
     /// Returns the availability of this language model.
     fn availability(&self) -> LanguageModelAvailability {
         LanguageModelAvailability::Public
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        LanguageModelToolSchemaFormat::JsonSchema
     }
 
     fn max_token_count(&self) -> usize;

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
@@ -19,12 +19,12 @@ use std::{
     process::Output,
     str,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc, LazyLock,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{ResultExt, fs::remove_matching, maybe};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -168,7 +168,9 @@ impl super::LspAdapter for GoLspAdapter {
                 String::from_utf8_lossy(&install_output.stderr)
             );
 
-            return Err(anyhow!("failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."));
+            return Err(anyhow!(
+                "failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."
+            ));
         }
 
         let installed_binary_path = gobin_dir.join(BINARY);

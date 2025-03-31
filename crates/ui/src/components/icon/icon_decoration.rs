@@ -1,4 +1,4 @@
-use gpui::{svg, Hsla, IntoElement, Point};
+use gpui::{Hsla, IntoElement, Point, svg};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::DerivePathStr;
 

@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context as _, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -11,7 +11,7 @@ use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{DocumentSymbol, Symbol};
 use text::OffsetRangeExt;
-use ui::{prelude::*, ListItem};
+use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 

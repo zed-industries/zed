@@ -133,7 +133,7 @@ impl schemars::JsonSchema for FontFeatures {
         "FontFeatures".into()
     }
 
-    fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
         let mut schema = SchemaObject::default();
         schema.instance_type = Some(schemars::schema::SingleOrVec::Single(Box::new(
             InstanceType::Object,

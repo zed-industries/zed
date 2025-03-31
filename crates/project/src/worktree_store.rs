@@ -2,36 +2,36 @@ use std::{
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     pin::pin,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
 };
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{
-    future::{BoxFuture, Shared},
     FutureExt, SinkExt,
+    future::{BoxFuture, Shared},
 };
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
 use postage::oneshot;
 use rpc::{
-    proto::{self, FromProto, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorExt, TypedEnvelope,
+    proto::{self, FromProto, SSH_PROJECT_ID, ToProto},
 };
 use smol::{
     channel::{Receiver, Sender},
     stream::StreamExt,
 };
 use text::ReplicaId;
-use util::{paths::SanitizedPath, ResultExt};
+use util::{ResultExt, paths::SanitizedPath};
 use worktree::{
     Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
     WorktreeSettings,
 };
 
-use crate::{search::SearchQuery, ProjectPath};
+use crate::{ProjectPath, search::SearchQuery};
 
 struct MatchingEntry {
     worktree_path: Arc<Path>,
