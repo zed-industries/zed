@@ -160,6 +160,7 @@ impl ProjectDiff {
                 _ => {}
             },
         );
+
         // FIXME worktree store subscription?
 
         let (mut send, recv) = postage::watch::channel::<()>();
@@ -1530,6 +1531,28 @@ mod tests {
 
         cx.run_until_parked();
         eprintln!("<<<<<<<< modify");
+
+        cx.update_window_entity(&diff_editor, |diff_editor, window, cx| {
+            let snapshot = diff_editor.snapshot(window, cx);
+            dbg!(
+                diff_editor.buffer().entity_id(),
+                &snapshot.buffer_snapshot.diffs
+            );
+        });
+
+        cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
+            buffer_editor.expand_all_diff_hunks(&Default::default(), window, cx);
+        });
+
+        assert_state_with_diff(
+            &buffer_editor,
+            cx,
+            &"
+                - original
+                + different
+                  ˇ"
+            .unindent(),
+        );
 
         assert_state_with_diff(
             &diff_editor,
