@@ -13,8 +13,8 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
     task::{Context, Poll},
     time::{Duration, Instant},
@@ -196,12 +196,12 @@ impl BackgroundExecutor {
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
-    pub(crate) fn block_internal<R>(
+    pub(crate) fn block_internal<Fut: Future>(
         &self,
         _background_only: bool,
-        future: impl Future<Output = R>,
+        future: Fut,
         timeout: Option<Duration>,
-    ) -> Result<R, impl Future<Output = R>> {
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<'_, Fut>> {
         use std::time::Instant;
 
         let mut future = Box::pin(future);
@@ -234,12 +234,12 @@ impl BackgroundExecutor {
 
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
-    pub(crate) fn block_internal<R>(
+    pub(crate) fn block_internal<Fut: Future>(
         &self,
         background_only: bool,
-        future: impl Future<Output = R>,
+        future: Fut,
         timeout: Option<Duration>,
-    ) -> Result<R, impl Future<Output = R>> {
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<'_, Fut>> {
         use std::sync::atomic::AtomicBool;
 
         let mut future = Box::pin(future);
@@ -291,8 +291,8 @@ impl BackgroundExecutor {
                                 waiting_message = format!("\n  waiting on: {}\n", waiting_hint);
                             }
                             panic!(
-                                    "parked with nothing left to run{waiting_message}{backtrace_message}",
-                                )
+                                "parked with nothing left to run{waiting_message}{backtrace_message}",
+                            )
                         }
                         self.dispatcher.park(None);
                     }
@@ -303,11 +303,11 @@ impl BackgroundExecutor {
 
     /// Block the current thread until the given future resolves
     /// or `duration` has elapsed.
-    pub fn block_with_timeout<R>(
+    pub fn block_with_timeout<Fut: Future>(
         &self,
         duration: Duration,
-        future: impl Future<Output = R>,
-    ) -> Result<R, impl Future<Output = R>> {
+        future: Fut,
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<'_, Fut>> {
         self.block_internal(true, future, Some(duration))
     }
 

@@ -101,7 +101,7 @@ mod sys {
 
     use anyhow::Result;
     use core_graphics::display::CGDirectDisplayID;
-    use foreign_types::{foreign_type, ForeignType};
+    use foreign_types::{ForeignType, foreign_type};
     use std::{
         ffi::c_void,
         fmt::{self, Debug, Formatter},
@@ -202,7 +202,7 @@ mod sys {
     #[link(name = "CoreFoundation", kind = "framework")]
     #[link(name = "CoreVideo", kind = "framework")]
     #[allow(improper_ctypes, unknown_lints, clippy::duplicated_attributes)]
-    extern "C" {
+    unsafe extern "C" {
         pub fn CVDisplayLinkCreateWithActiveCGDisplays(
             display_link_out: *mut *mut CVDisplayLink,
         ) -> i32;

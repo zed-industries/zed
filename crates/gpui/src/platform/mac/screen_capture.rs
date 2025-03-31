@@ -1,11 +1,12 @@
 use crate::{
+    Pixels, Size,
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
-    px, size, Pixels, Size,
+    px, size,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
-    base::{id, nil, YES},
+    base::{YES, id, nil},
     foundation::NSArray,
 };
 use core_foundation::base::TCFType;
@@ -37,7 +38,7 @@ pub struct MacScreenCaptureStream {
 }
 
 #[link(name = "ScreenCaptureKit", kind = "framework")]
-extern "C" {}
+unsafe extern "C" {}
 
 static mut DELEGATE_CLASS: *const Class = ptr::null();
 static mut OUTPUT_CLASS: *const Class = ptr::null();
