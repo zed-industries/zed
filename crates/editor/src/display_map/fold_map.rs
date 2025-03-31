@@ -1616,7 +1616,7 @@ mod tests {
 
         let len = rng.gen_range(0..10);
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-        let buffer = if rng.gen() {
+        let buffer = if rng.r#gen() {
             MultiBuffer::build_simple(&text, cx)
         } else {
             MultiBuffer::build_random(&mut rng, cx)
@@ -1962,7 +1962,7 @@ mod tests {
                         let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                         to_unfold.push(start..end);
                     }
-                    let inclusive = rng.gen();
+                    let inclusive = rng.r#gen();
                     log::info!("unfolding {:?} (inclusive: {})", to_unfold, inclusive);
                     let (mut writer, snapshot, edits) = self.write(inlay_snapshot, vec![]);
                     snapshot_edits.push((snapshot, edits));

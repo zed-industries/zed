@@ -1814,11 +1814,9 @@ impl Pane {
         save_intent: SaveIntent,
         cx: &mut AsyncWindowContext,
     ) -> Result<bool> {
-        const CONFLICT_MESSAGE: &str =
-                "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+        const CONFLICT_MESSAGE: &str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
-        const DELETED_MESSAGE: &str =
-                        "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
+        const DELETED_MESSAGE: &str = "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
 
         if save_intent == SaveIntent::Skip {
             return Ok(true);
@@ -2208,7 +2206,7 @@ impl Pane {
         focus_handle: &FocusHandle,
         window: &mut Window,
         cx: &mut Context<Pane>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let is_active = ix == self.active_item_index;
         let is_preview = self
             .preview_item_id
@@ -3499,7 +3497,7 @@ impl NavHistory {
         let mut state = self.0.lock();
         let entry = match mode {
             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
-                return None
+                return None;
             }
             NavigationMode::GoingBack => &mut state.backward_stack,
             NavigationMode::GoingForward => &mut state.forward_stack,

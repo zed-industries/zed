@@ -46,7 +46,7 @@ fn normalize_query(input: &str) -> String {
         match (last_char, char) {
             (Some(':'), ':') => continue,
             (Some(last_char), char) if last_char.is_whitespace() && char.is_whitespace() => {
-                continue
+                continue;
             }
             _ => {
                 last_char = Some(char);

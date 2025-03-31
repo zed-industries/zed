@@ -117,7 +117,7 @@ impl MetadataCache {
 }
 
 impl PromptStore {
-    pub fn global(cx: &App) -> impl Future<Output = Result<Arc<Self>>> {
+    pub fn global(cx: &App) -> impl Future<Output = Result<Arc<Self>>> + use<> {
         let store = GlobalPromptStore::global(cx).0.clone();
         async move { store.await.map_err(|err| anyhow!(err)) }
     }

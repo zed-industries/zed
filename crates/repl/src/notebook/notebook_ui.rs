@@ -642,7 +642,7 @@ impl NotebookItem {
                 .and_then(|spec| spec.language.clone()))
     }
 
-    pub fn notebook_language(&self) -> impl Future<Output = Option<Arc<Language>>> {
+    pub fn notebook_language(&self) -> impl Future<Output = Option<Arc<Language>>> + use<> {
         let language_name = self.language_name();
         let languages = self.languages.clone();
 

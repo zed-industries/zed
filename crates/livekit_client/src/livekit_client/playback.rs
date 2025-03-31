@@ -427,7 +427,7 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
 
 pub fn play_remote_video_track(
     track: &crate::RemoteVideoTrack,
-) -> impl Stream<Item = RemoteVideoFrame> {
+) -> impl Stream<Item = RemoteVideoFrame> + use<> {
     #[cfg(target_os = "macos")]
     {
         let mut pool = None;
@@ -660,7 +660,7 @@ mod macos {
         callback: *mut ::std::os::raw::c_void,
     ) -> OSStatus {
         let wrapper = callback as *mut PropertyListenerCallbackWrapper;
-        (*wrapper).0();
+        unsafe { (*wrapper).0() };
         0
     }
 

@@ -398,7 +398,7 @@ impl ExtensionStore {
         &mut self,
         modified_extension: Option<Arc<str>>,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let (tx, rx) = oneshot::channel();
         self.reload_complete_senders.push(tx);
         self.reload_tx

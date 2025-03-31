@@ -465,7 +465,7 @@ mod linux {
             match fork::fork() {
                 Ok(Fork::Parent(_)) => Ok(()),
                 Ok(Fork::Child) => {
-                    std::env::set_var(FORCE_CLI_MODE_ENV_VAR_NAME, "");
+                    unsafe { std::env::set_var(FORCE_CLI_MODE_ENV_VAR_NAME, "") };
                     if let Err(_) = fork::setsid() {
                         eprintln!("failed to setsid: {}", std::io::Error::last_os_error());
                         process::exit(1);
@@ -521,7 +521,7 @@ mod flatpak {
             paths.push(extra_path.into());
         }
 
-        env::set_var("LD_LIBRARY_PATH", env::join_paths(paths).unwrap());
+        unsafe { env::set_var("LD_LIBRARY_PATH", env::join_paths(paths).unwrap()) };
     }
 
     /// Restarts outside of the sandbox if currently running within it
@@ -562,7 +562,9 @@ mod flatpak {
         {
             if args.zed.is_none() {
                 args.zed = Some("/app/libexec/zed-editor".into());
-                env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed");
+                unsafe {
+                    env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed")
+                };
             }
         }
         args

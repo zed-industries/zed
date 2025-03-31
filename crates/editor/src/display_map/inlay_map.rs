@@ -610,9 +610,9 @@ impl InlayMap {
         let mut to_insert = Vec::new();
         let snapshot = &mut self.snapshot;
         for i in 0..rng.gen_range(1..=5) {
-            if self.inlays.is_empty() || rng.gen() {
+            if self.inlays.is_empty() || rng.r#gen() {
                 let position = snapshot.buffer.random_byte_range(0, rng).start;
-                let bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                let bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
                 let len = if rng.gen_bool(0.01) {
                     0
                 } else {
@@ -1500,7 +1500,7 @@ mod tests {
             .unwrap_or(10);
 
         let len = rng.gen_range(0..30);
-        let buffer = if rng.gen() {
+        let buffer = if rng.r#gen() {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();

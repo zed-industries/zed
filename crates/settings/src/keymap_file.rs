@@ -6,7 +6,7 @@ use gpui::{
     NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
 };
 use schemars::{
-    gen::{SchemaGenerator, SchemaSettings},
+    r#gen::{SchemaGenerator, SchemaSettings},
     schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
     JsonSchema,
 };
@@ -363,7 +363,7 @@ impl KeymapFile {
                 return Err(format!(
                     "didn't find an action named {}.",
                     inline_code_string(&name)
-                ))
+                ));
             }
             Err(ActionBuildError::BuildError { name, error }) => match action_input_string {
                 Some(action_input_string) => {
@@ -372,14 +372,14 @@ impl KeymapFile {
                         inline_code_string(&name),
                         MarkdownString::inline_code(&action_input_string),
                         MarkdownString::escape(&error.to_string())
-                    ))
+                    ));
                 }
                 None => {
                     return Err(format!(
                         "can't build {} action - it requires input data via [name, input]: {}",
                         inline_code_string(&name),
                         MarkdownString::escape(&error.to_string())
-                    ))
+                    ));
                 }
             },
         };
@@ -391,7 +391,7 @@ impl KeymapFile {
                     "invalid keystroke {}. {}",
                     inline_code_string(&keystroke),
                     KEYSTROKE_PARSE_EXPECTED_MESSAGE
-                ))
+                ));
             }
         };
 

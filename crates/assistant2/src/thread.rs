@@ -1192,7 +1192,7 @@ impl Thread {
     pub fn use_pending_tools(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> impl IntoIterator<Item = PendingToolUse> {
+    ) -> impl IntoIterator<Item = PendingToolUse> + use<> {
         let request = self.to_completion_request(RequestKind::Chat, cx);
         let messages = Arc::new(request.messages);
         let pending_tool_uses = self

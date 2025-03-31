@@ -76,7 +76,8 @@ impl<'a> Statement<'a> {
 
                     bail!(
                         "Write statement prepared with connection that is not write capable. SQL:\n{} ",
-                        sql.to_str()?)
+                        sql.to_str()?
+                    )
                 }
             }
         }

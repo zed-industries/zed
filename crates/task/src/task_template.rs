@@ -3,7 +3,7 @@ use util::serde::default_true;
 
 use anyhow::{bail, Context};
 use collections::{HashMap, HashSet};
-use schemars::{gen::SchemaSettings, JsonSchema};
+use schemars::{r#gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
@@ -649,7 +649,10 @@ mod tests {
             );
             assert_eq!(
                 spawn_in_terminal.command_label,
-                format!("{} arg1 test_selected_text arg2 5678 arg3 {long_value}", spawn_in_terminal.command),
+                format!(
+                    "{} arg1 test_selected_text arg2 5678 arg3 {long_value}",
+                    spawn_in_terminal.command
+                ),
                 "Command label args should be substituted with variables and those should not be shortened"
             );
 
@@ -686,7 +689,10 @@ mod tests {
                     project_env: HashMap::default(),
                 },
             );
-            assert_eq!(resolved_task_attempt, None, "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})");
+            assert_eq!(
+                resolved_task_attempt, None,
+                "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})"
+            );
         }
     }
 

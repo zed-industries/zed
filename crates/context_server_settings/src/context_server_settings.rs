@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use gpui::App;
-use schemars::gen::SchemaGenerator;
+use schemars::r#gen::SchemaGenerator;
 use schemars::schema::{InstanceType, Schema, SchemaObject};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

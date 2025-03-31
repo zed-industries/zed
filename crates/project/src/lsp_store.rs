@@ -974,7 +974,7 @@ impl LocalLspStore {
     fn shutdown_language_servers(
         &mut self,
         _cx: &mut Context<LspStore>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let shutdown_futures = self
             .language_servers
             .drain()
@@ -2564,7 +2564,10 @@ impl LocalLspStore {
                         }
                     })?;
                 } else {
-                    log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command)
+                    log::warn!(
+                        "Cannot execute a command {} not listed in the language server capabilities",
+                        command.command
+                    )
                 }
             }
         }
@@ -3230,16 +3233,16 @@ impl LocalLspStore {
 
         if registrations.remove(registration_id).is_some() {
             log::info!(
-                    "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
-                    language_server_id,
-                    registration_id
-                );
+                "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
+                language_server_id,
+                registration_id
+            );
         } else {
             log::warn!(
-                    "language server {}: failed to unregister workspace/DidChangeWatchedFiles capability with id {}. not registered.",
-                    language_server_id,
-                    registration_id
-                );
+                "language server {}: failed to unregister workspace/DidChangeWatchedFiles capability with id {}. not registered.",
+                language_server_id,
+                registration_id
+            );
         }
 
         self.rebuild_watched_paths(language_server_id, cx);
@@ -3558,7 +3561,7 @@ impl LspStore {
             toolchain_store: Some(toolchain_store),
             languages: languages.clone(),
             language_server_statuses: Default::default(),
-            nonce: StdRng::from_entropy().gen(),
+            nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: Default::default(),
             active_entry: None,
 
@@ -3614,7 +3617,7 @@ impl LspStore {
             worktree_store,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
-            nonce: StdRng::from_entropy().gen(),
+            nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: Default::default(),
             active_entry: None,
             toolchain_store,

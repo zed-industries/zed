@@ -526,9 +526,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             .max_w_full()
                             .with_fallback({
                                 let alt_text = image.alt_text.clone();
-                                {
-                                    move || div().children(alt_text.clone()).into_any_element()
-                                }
+                                move || div().children(alt_text.clone()).into_any_element()
                             }),
                     )
                     .tooltip({

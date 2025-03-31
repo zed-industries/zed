@@ -105,8 +105,8 @@ impl JsonSchema for AssistantSettingsContent {
         VersionedAssistantSettingsContent::schema_name()
     }
 
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema {
-        VersionedAssistantSettingsContent::json_schema(gen)
+    fn json_schema(r#gen: &mut schemars::r#gen::SchemaGenerator) -> Schema {
+        VersionedAssistantSettingsContent::json_schema(r#gen)
     }
 
     fn is_referenceable() -> bool {
@@ -416,7 +416,7 @@ pub struct LanguageModelSelection {
     pub model: String,
 }
 
-fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+fn providers_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
     schemars::schema::SchemaObject {
         enum_values: Some(vec![
             "anthropic".into(),

@@ -437,7 +437,9 @@ impl VariableList {
         });
 
         if res.is_none() {
-            log::error!("Couldn't confirm variable edit because variable doesn't have a leaf name or a parent reference id");
+            log::error!(
+                "Couldn't confirm variable edit because variable doesn't have a leaf name or a parent reference id"
+            );
         }
     }
 
