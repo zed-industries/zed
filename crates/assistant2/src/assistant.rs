@@ -79,6 +79,8 @@ pub struct NewThread {
     from_thread_id: Option<ThreadId>,
 }
 
+impl_actions!(assistant2, [NewThread]);
+
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 pub struct ManageProfiles {
     #[serde(default)]
@@ -93,7 +95,7 @@ impl ManageProfiles {
     }
 }
 
-impl_actions!(assistant, [NewThread, ManageProfiles]);
+impl_actions!(assistant, [ManageProfiles]);
 
 const NAMESPACE: &str = "assistant2";
 
