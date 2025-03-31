@@ -156,7 +156,7 @@ impl AssistantContext {
 impl FileContext {
     pub fn snapshot(&self, cx: &App) -> Option<ContextSnapshot> {
         let buffer = self.context_buffer.buffer.read(cx);
-        let path = buffer_path_log_err(buffer)?;
+        let path = buffer_path_log_err(buffer, cx)?;
         let full_path: SharedString = path.to_string_lossy().into_owned().into();
         let name = match path.file_name() {
             Some(name) => name.to_string_lossy().into_owned().into(),
@@ -231,7 +231,7 @@ impl SymbolContext {
     pub fn snapshot(&self, cx: &App) -> Option<ContextSnapshot> {
         let buffer = self.context_symbol.buffer.read(cx);
         let name = self.context_symbol.id.name.clone();
-        let path = buffer_path_log_err(buffer)?
+        let path = buffer_path_log_err(buffer, cx)?
             .to_string_lossy()
             .into_owned()
             .into();
