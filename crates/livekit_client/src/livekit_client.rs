@@ -112,33 +112,6 @@ impl Room {
         Ok((publication, stream))
     }
 
-    // pub async fn publish_local_wav_track(
-    //     &self,
-    //     cx: &mut AsyncApp,
-    // ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
-    //     let apm = self.apm.clone();
-    //     let executor = cx.background_executor().clone();
-    //     let (track, stream) =
-    //         Tokio::spawn(
-    //             cx,
-    //             async move { capture_local_wav_track(apm, &executor).await },
-    //         )?
-    //         .await??;
-    //     let publication = self
-    //         .local_participant()
-    //         .publish_track(
-    //             livekit::track::LocalTrack::Audio(track.0),
-    //             livekit::options::TrackPublishOptions {
-    //                 source: livekit::track::TrackSource::Microphone,
-    //                 ..Default::default()
-    //             },
-    //             cx,
-    //         )
-    //         .await?;
-
-    //     Ok((publication, stream))
-    // }
-
     pub async fn unpublish_local_track(
         &self,
         sid: TrackSid,
