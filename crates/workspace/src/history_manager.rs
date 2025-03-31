@@ -14,6 +14,8 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct HistoryManager {
+    /// The history of workspaces that have been opened in the past, in reverse order.
+    /// The most recent workspace is at the end of the vector.
     history: Vec<HistoryManagerEntry>,
 }
 
@@ -41,6 +43,7 @@ impl HistoryManager {
                 .await
                 .unwrap_or_default()
                 .into_iter()
+                .rev()
                 .map(|(id, location)| HistoryManagerEntry::new(id, &location))
                 .collect::<Vec<_>>();
             this.update(cx, |this, cx| {
@@ -64,7 +67,7 @@ impl HistoryManager {
         if let Some(pos) = self.history.iter().position(|e| e.id == id) {
             self.history.remove(pos);
         }
-        self.history.insert(0, entry);
+        self.history.push(entry);
         self.update_jump_list(cx);
     }
 
@@ -80,6 +83,7 @@ impl HistoryManager {
         let entries = self
             .history
             .iter()
+            .rev()
             .map(|entry| &entry.path)
             .collect::<Vec<_>>();
         let user_removed = cx.update_jump_list(entries.as_slice());
