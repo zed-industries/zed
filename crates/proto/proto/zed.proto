@@ -3266,6 +3266,7 @@ message ListToolchains {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     string language_name = 3;
+    optional string path = 4;
 }
 
 message Toolchain {
@@ -3290,14 +3291,14 @@ message ActivateToolchain {
     uint64 worktree_id = 2;
     Toolchain toolchain = 3;
     string language_name = 4;
-    string path = 5;
+    optional string path = 5;
 }
 
 message ActiveToolchain {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     string language_name = 3;
-    string path = 4;
+    optional string path = 4;
 }
 
 message ActiveToolchainResponse {

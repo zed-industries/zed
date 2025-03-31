@@ -169,7 +169,14 @@ impl ToolchainSelectorDelegate {
                 });
                 let available_toolchains = project
                     .update(cx, |this, cx| {
-                        this.available_toolchains(worktree_id, language_name, cx)
+                        this.available_toolchains(
+                            ProjectPath {
+                                worktree_id,
+                                path: Arc::from("".as_ref()),
+                            },
+                            language_name,
+                            cx,
+                        )
                     })
                     .ok()?
                     .await?;

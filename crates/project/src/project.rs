@@ -3065,7 +3065,7 @@ impl Project {
 
     pub fn available_toolchains(
         &self,
-        worktree_id: WorktreeId,
+        path: ProjectPath,
         language_name: LanguageName,
         cx: &App,
     ) -> Task<Option<ToolchainList>> {
@@ -3074,7 +3074,7 @@ impl Project {
                 cx.update(|cx| {
                     toolchain_store
                         .read(cx)
-                        .list_toolchains(worktree_id, language_name, cx)
+                        .list_toolchains(path, language_name, cx)
                 })
                 .ok()?
                 .await

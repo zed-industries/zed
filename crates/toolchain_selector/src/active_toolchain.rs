@@ -130,9 +130,14 @@ impl ActiveToolchain {
                     .ok()?;
                 let toolchains = cx
                     .update(|_, cx| {
-                        project
-                            .read(cx)
-                            .available_toolchains(worktree_id, language_name, cx)
+                        project.read(cx).available_toolchains(
+                            ProjectPath {
+                                worktree_id,
+                                path: Arc::from("".as_ref()),
+                            },
+                            language_name,
+                            cx,
+                        )
                     })
                     .ok()?
                     .await?;
