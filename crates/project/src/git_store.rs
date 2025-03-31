@@ -4225,7 +4225,9 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let statuses = backend.status_blocking(&paths.iter().cloned().collect::<Vec<_>>())?;
+    let statuses = backend
+        .status(None, &paths.iter().cloned().collect::<Vec<_>>())
+        .await?;
     let merge_message = backend
         .merge_message()
         .await

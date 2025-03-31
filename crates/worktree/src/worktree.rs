@@ -1308,7 +1308,7 @@ impl LocalWorktree {
             cx.emit(Event::UpdatedEntries(entry_changes));
         }
         if !repo_changes.is_empty() {
-            cx.emit(Event::UpdatedGitRepositories(dbg!(repo_changes)));
+            cx.emit(Event::UpdatedGitRepositories(repo_changes));
         }
     }
 
@@ -1422,7 +1422,7 @@ impl LocalWorktree {
             (value.0.clone(), value.1.clone())
         }
 
-        dbg!(changes.into())
+        changes.into()
     }
 
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
@@ -4175,8 +4175,6 @@ impl BackgroundScanner {
 
         self.update_ignore_statuses(scan_job_tx).await;
         self.scan_dirs(false, scan_job_rx).await;
-
-        dbg!(&dot_git_abs_paths);
 
         let status_update = if !dot_git_abs_paths.is_empty() {
             Some(self.update_git_repositories(dot_git_abs_paths))
