@@ -680,6 +680,7 @@ impl Thread {
                     .collect(),
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage.clone(),
+                detailed_summary: this.detailed_summary(),
             })
         })
     }
@@ -1288,6 +1289,7 @@ impl Thread {
                     message_id: last_message_id,
                 };
 
+                this.touch_updated_at();
                 cx.emit(ThreadEvent::DetailedSummaryChanged);
             })
             .log_err();
