@@ -367,11 +367,7 @@ impl Focusable for ContextStrip {
 impl Render for ContextStrip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let context_store = self.context_store.read(cx);
-        let context = context_store
-            .context()
-            .iter()
-            .flat_map(|context| context.snapshot(cx))
-            .collect::<Vec<_>>();
+        let context = context_store.context();
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
@@ -379,7 +375,7 @@ impl Render for ContextStrip {
 
         let dupe_names = context
             .iter()
-            .map(|context| context.name.clone())
+            .map(|context| context.name(cx))
             .sorted()
             .tuple_windows()
             .filter(|(a, b)| a == b)
@@ -466,13 +462,13 @@ impl Render for ContextStrip {
                 }
             })
             .children(context.iter().enumerate().map(|(i, context)| {
-                let id = context.id;
+                let id = context.id();
                 ContextPill::added(
                     context.clone(),
-                    dupe_names.contains(&context.name),
+                    dupe_names.contains(&context.name(cx)),
                     self.focused_index == Some(i),
                     Some({
-                        let id = context.id;
+                        let id = context.id();
                         let context_store = self.context_store.clone();
                         Rc::new(cx.listener(move |_this, _event, _window, cx| {
                             context_store.update(cx, |this, _cx| {

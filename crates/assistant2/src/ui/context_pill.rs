@@ -3,12 +3,12 @@ use std::rc::Rc;
 use gpui::ClickEvent;
 use ui::{prelude::*, IconButtonShape, Tooltip};
 
-use crate::context::{ContextKind, ContextSnapshot};
+use crate::context::{AssistantContext, ContextKind};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
     Added {
-        context: ContextSnapshot,
+        context: AssistantContext,
         dupe_name: bool,
         focused: bool,
         on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
@@ -25,7 +25,7 @@ pub enum ContextPill {
 
 impl ContextPill {
     pub fn added(
-        context: ContextSnapshot,
+        context: AssistantContext,
         dupe_name: bool,
         focused: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
@@ -69,18 +69,15 @@ impl ContextPill {
     pub fn id(&self) -> ElementId {
         match self {
             Self::Added { context, .. } => {
-                ElementId::NamedInteger("context-pill".into(), context.id.0)
+                ElementId::NamedInteger("context-pill".into(), context.id().0)
             }
             Self::Suggested { .. } => "suggested-context-pill".into(),
         }
     }
 
-    pub fn icon(&self) -> Icon {
+    pub fn icon(&self, cx: &App) -> Icon {
         match self {
-            Self::Added { context, .. } => match &context.icon_path {
-                Some(icon_path) => Icon::from_path(icon_path),
-                None => Icon::new(context.kind.icon()),
-            },
+            Self::Added { context, .. } => context.icon(cx),
             Self::Suggested {
                 icon_path: Some(icon_path),
                 ..
@@ -105,7 +102,7 @@ impl RenderOnce for ContextPill {
             .border_1()
             .rounded_sm()
             .gap_1()
-            .child(self.icon().size(IconSize::XSmall).color(Color::Muted));
+            .child(self.icon(cx).size(IconSize::XSmall).color(Color::Muted));
 
         match &self {
             ContextPill::Added {
@@ -128,12 +125,12 @@ impl RenderOnce for ContextPill {
                         .gap_1()
                         .child(
                             div().max_w_64().child(
-                                Label::new(context.name.clone())
+                                Label::new(context.name(cx).clone())
                                     .size(LabelSize::Small)
                                     .truncate(),
                             ),
                         )
-                        .when_some(context.parent.as_ref(), |element, parent_name| {
+                        .when_some(context.parent(), |element, parent_name| {
                             if *dupe_name {
                                 element.child(
                                     Label::new(parent_name.clone())
@@ -144,13 +141,13 @@ impl RenderOnce for ContextPill {
                                 element
                             }
                         })
-                        .when_some(context.tooltip.clone(), |element, tooltip| {
+                        .when_some(context.tooltip(), |element, tooltip| {
                             element.tooltip(Tooltip::text(tooltip.clone()))
                         }),
                 )
                 .when_some(on_remove.as_ref(), |element, on_remove| {
                     element.child(
-                        IconButton::new(("remove", context.id.0), IconName::Close)
+                        IconButton::new(("remove", context.id().0), IconName::Close)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
                             .tooltip(Tooltip::text("Remove Context"))

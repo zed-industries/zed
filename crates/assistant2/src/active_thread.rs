@@ -487,14 +487,14 @@ impl ActiveThread {
                             let updated_context_ids = refresh_task.await;
 
                             this.update(cx, |this, cx| {
-                                this.context_store.read_with(cx, |context_store, cx| {
+                                this.context_store.read_with(cx, |context_store, _cx| {
                                     context_store
                                         .context()
                                         .iter()
                                         .filter(|context| {
                                             updated_context_ids.contains(&context.id())
                                         })
-                                        .flat_map(|context| context.snapshot(cx))
+                                        .cloned()
                                         .collect()
                                 })
                             })
@@ -948,7 +948,7 @@ impl ActiveThread {
                     if !context.is_empty() {
                         parent.child(h_flex().flex_wrap().gap_1().children(
                             context.into_iter().map(|context| {
-                                let context_id = context.id;
+                                let context_id = context.id();
                                 ContextPill::added(context, false, false, None).on_click(Rc::new(
                                     cx.listener({
                                         let workspace = workspace.clone();
@@ -1967,7 +1967,7 @@ pub(crate) fn open_context(
             }
         }
         AssistantContext::Directory(directory_context) => {
-            let path = directory_context.path.clone();
+            let path = directory_context.project_path.clone();
             workspace.update(cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
                     if let Some(entry) = project.entry_for_path(&path, cx) {

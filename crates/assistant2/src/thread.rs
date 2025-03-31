@@ -29,7 +29,7 @@ use settings::Settings;
 use util::{maybe, post_inc, ResultExt as _, TryFutureExt as _};
 use uuid::Uuid;
 
-use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
+use crate::context::{attach_context_to_message, AssistantContext, ContextId};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse,
@@ -175,7 +175,7 @@ pub struct Thread {
     pending_summary: Task<Option<()>>,
     messages: Vec<Message>,
     next_message_id: MessageId,
-    context: BTreeMap<ContextId, ContextSnapshot>,
+    context: BTreeMap<ContextId, AssistantContext>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     system_prompt_context: Option<AssistantSystemPromptContext>,
     checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
@@ -473,7 +473,7 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
+    pub fn context_for_message(&self, id: MessageId) -> Option<Vec<AssistantContext>> {
         let context = self.context_by_message.get(&id)?;
         Some(
             context
@@ -513,15 +513,18 @@ impl Thread {
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
-        context: Vec<ContextSnapshot>,
+        context: Vec<AssistantContext>,
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let message_id =
             self.insert_message(Role::User, vec![MessageSegment::Text(text.into())], cx);
-        let context_ids = context.iter().map(|context| context.id).collect::<Vec<_>>();
+        let context_ids = context
+            .iter()
+            .map(|context| context.id())
+            .collect::<Vec<_>>();
         self.context
-            .extend(context.into_iter().map(|context| (context.id, context)));
+            .extend(context.into_iter().map(|context| (context.id(), context)));
         self.context_by_message.insert(message_id, context_ids);
         if let Some(git_checkpoint) = git_checkpoint {
             self.pending_checkpoint = Some(ThreadCheckpoint {
@@ -1288,13 +1291,13 @@ impl Thread {
 
     pub fn attach_tool_results(
         &mut self,
-        updated_context: Vec<ContextSnapshot>,
+        updated_context: Vec<AssistantContext>,
         cx: &mut Context<Self>,
     ) {
         self.context.extend(
             updated_context
                 .into_iter()
-                .map(|context| (context.id, context)),
+                .map(|context| (context.id(), context)),
         );
 
         // Insert a user message to contain the tool results.
