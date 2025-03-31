@@ -248,7 +248,7 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
     )
 }
 
-unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class {
+unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class { unsafe {
     let mut decl = ClassDecl::new(name, superclass).unwrap();
     decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
     decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(&Object, Sel));
@@ -321,7 +321,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     );
 
     decl.register()
-}
+}}
 
 struct MacWindowState {
     handle: AnyWindowHandle,
@@ -1195,18 +1195,18 @@ fn get_scale_factor(native_window: id) -> f32 {
     if factor == 0.0 { 2. } else { factor }
 }
 
-unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> {
+unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> { unsafe {
     let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
     let rc1 = Arc::from_raw(raw as *mut Mutex<MacWindowState>);
     let rc2 = rc1.clone();
     mem::forget(rc1);
     rc2
-}
+}}
 
-unsafe fn drop_window_state(object: &Object) {
+unsafe fn drop_window_state(object: &Object) { unsafe {
     let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
     Arc::from_raw(raw as *mut Mutex<MacWindowState>);
-}
+}}
 
 extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
     YES
@@ -2064,10 +2064,10 @@ where
     }
 }
 
-unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
+unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID { unsafe {
     let device_description = NSScreen::deviceDescription(screen);
     let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
     let screen_number = device_description.objectForKey_(screen_number_key);
     let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
     screen_number as CGDirectDisplayID
-}
+}}

@@ -79,7 +79,7 @@ pub fn key_to_native(key: &str) -> Cow<str> {
     Cow::Owned(String::from_utf16(&[code]).unwrap())
 }
 
-unsafe fn read_modifiers(native_event: id) -> Modifiers {
+unsafe fn read_modifiers(native_event: id) -> Modifiers { unsafe {
     let modifiers = native_event.modifierFlags();
     let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
     let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
@@ -94,13 +94,13 @@ unsafe fn read_modifiers(native_event: id) -> Modifiers {
         platform: command,
         function,
     }
-}
+}}
 
 impl PlatformInput {
     pub(crate) unsafe fn from_native(
         native_event: id,
         window_height: Option<Pixels>,
-    ) -> Option<Self> {
+    ) -> Option<Self> { unsafe {
         let event_type = native_event.eventType();
 
         // Filter out event types that aren't in the NSEventType enum.
@@ -278,10 +278,10 @@ impl PlatformInput {
             }),
             _ => None,
         }
-    }
+    }}
 }
 
-unsafe fn parse_keystroke(native_event: id) -> Keystroke {
+unsafe fn parse_keystroke(native_event: id) -> Keystroke { unsafe {
     use cocoa::appkit::*;
 
     let mut characters = native_event
@@ -440,7 +440,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         key,
         key_char,
     }
-}
+}}
 
 fn always_use_command_layout() -> bool {
     if chars_for_modified_key(0, NO_MOD).is_ascii() {

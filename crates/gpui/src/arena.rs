@@ -65,13 +65,13 @@ impl Arena {
         unsafe fn inner_writer<T, F>(ptr: *mut T, f: F)
         where
             F: FnOnce() -> T,
-        {
+        { unsafe {
             ptr::write(ptr, f());
-        }
+        }}
 
-        unsafe fn drop<T>(ptr: *mut u8) {
+        unsafe fn drop<T>(ptr: *mut u8) { unsafe {
             std::ptr::drop_in_place(ptr.cast::<T>());
-        }
+        }}
 
         unsafe {
             let layout = alloc::Layout::new::<T>();

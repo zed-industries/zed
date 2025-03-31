@@ -206,7 +206,7 @@ impl MacPlatform {
         }))
     }
 
-    unsafe fn read_from_pasteboard(&self, pasteboard: *mut Object, kind: id) -> Option<&[u8]> {
+    unsafe fn read_from_pasteboard(&self, pasteboard: *mut Object, kind: id) -> Option<&[u8]> { unsafe {
         let data = pasteboard.dataForType(kind);
         if data == nil {
             None
@@ -216,7 +216,7 @@ impl MacPlatform {
                 data.length() as usize,
             ))
         }
-    }
+    }}
 
     unsafe fn create_menu_bar(
         &self,
@@ -224,7 +224,7 @@ impl MacPlatform {
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
-    ) -> id {
+    ) -> id { unsafe {
         let application_menu = NSMenu::new(nil).autorelease();
         application_menu.setDelegate_(delegate);
 
@@ -255,7 +255,7 @@ impl MacPlatform {
         }
 
         application_menu
-    }
+    }}
 
     unsafe fn create_dock_menu(
         &self,
@@ -263,7 +263,7 @@ impl MacPlatform {
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
-    ) -> id {
+    ) -> id { unsafe {
         let dock_menu = NSMenu::new(nil);
         dock_menu.setDelegate_(delegate);
         for item_config in menu_items {
@@ -276,14 +276,14 @@ impl MacPlatform {
         }
 
         dock_menu
-    }
+    }}
 
     unsafe fn create_menu_item(
         item: MenuItem,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
-    ) -> id {
+    ) -> id { unsafe {
         match item {
             MenuItem::Separator => NSMenuItem::separatorItem(nil),
             MenuItem::Action {
@@ -389,7 +389,7 @@ impl MacPlatform {
                 item
             }
         }
-    }
+    }}
 
     fn os_version() -> Result<SemanticVersion> {
         unsafe {
@@ -460,10 +460,10 @@ impl Platform for MacPlatform {
             dispatch_async_f(dispatch_get_main_queue(), ptr::null_mut(), Some(quit));
         }
 
-        unsafe extern "C" fn quit(_: *mut c_void) {
+        unsafe extern "C" fn quit(_: *mut c_void) { unsafe {
             let app = NSApplication::sharedApplication(nil);
             let _: () = msg_send![app, terminate: nil];
-        }
+        }}
     }
 
     fn restart(&self, _binary_path: Option<PathBuf>) {
@@ -1180,7 +1180,7 @@ impl MacPlatform {
         &self,
         state: &MacPlatformState,
         text_bytes: &[u8],
-    ) -> ClipboardItem {
+    ) -> ClipboardItem { unsafe {
         let text = String::from_utf8_lossy(text_bytes).to_string();
         let metadata = self
             .read_from_pasteboard(state.pasteboard, state.text_hash_pasteboard_type)
@@ -1200,9 +1200,9 @@ impl MacPlatform {
         ClipboardItem {
             entries: vec![ClipboardEntry::String(ClipboardString { text, metadata })],
         }
-    }
+    }}
 
-    unsafe fn write_plaintext_to_clipboard(&self, string: &ClipboardString) {
+    unsafe fn write_plaintext_to_clipboard(&self, string: &ClipboardString) { unsafe {
         let state = self.0.lock();
         state.pasteboard.clearContents();
 
@@ -1235,9 +1235,9 @@ impl MacPlatform {
                 .pasteboard
                 .setData_forType(metadata_bytes, state.metadata_pasteboard_type);
         }
-    }
+    }}
 
-    unsafe fn write_image_to_clipboard(&self, image: &Image) {
+    unsafe fn write_image_to_clipboard(&self, image: &Image) { unsafe {
         let state = self.0.lock();
         state.pasteboard.clearContents();
 
@@ -1250,7 +1250,7 @@ impl MacPlatform {
         state
             .pasteboard
             .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
-    }
+    }}
 }
 
 fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardItem> {
@@ -1286,11 +1286,11 @@ unsafe fn path_from_objc(path: id) -> PathBuf {
     PathBuf::from(path)
 }
 
-unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
+unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform { unsafe {
     let platform_ptr: *mut c_void = *object.get_ivar(MAC_PLATFORM_IVAR);
     assert!(!platform_ptr.is_null());
     &*(platform_ptr as *const MacPlatform)
-}
+}}
 
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
@@ -1438,9 +1438,9 @@ extern "C" fn handle_dock_menu(this: &mut Object, _: Sel, _: id) -> id {
     }
 }
 
-unsafe fn ns_string(string: &str) -> id {
+unsafe fn ns_string(string: &str) -> id { unsafe {
     NSString::alloc(nil).init_str(string).autorelease()
-}
+}}
 
 unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
     let path: *mut c_char = msg_send![url, fileSystemRepresentation];
