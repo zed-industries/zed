@@ -7,15 +7,15 @@ use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::AssistantPanel;
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton, ScrollHandle, Stateful,
-    StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle,
-    WeakEntity, WindowHandle,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton, PlatformDisplay,
+    ScrollHandle, Stateful, StyleRefinement, Subscription, Task, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity, WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -532,14 +532,9 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<ActiveThread>,
     ) {
-        if window.is_window_active()
-            || !self.notifications.is_empty()
-            || !AssistantSettings::get_global(cx).notify_when_agent_waiting
-        {
+        if window.is_window_active() || !self.notifications.is_empty() {
             return;
         }
-
-        let caption = caption.into();
 
         let title = self
             .thread
@@ -547,73 +542,96 @@ impl ActiveThread {
             .summary()
             .unwrap_or("Agent Panel".into());
 
-        for screen in cx.displays() {
-            let options = AgentNotification::window_options(screen, cx);
+        match AssistantSettings::get_global(cx).notify_when_agent_waiting {
+            NotifyWhenAgentWaiting::PrimaryScreen => {
+                if let Some(primary) = cx.primary_display() {
+                    self.pop_up(icon, caption.into(), title.clone(), window, primary, cx);
+                }
+            }
+            NotifyWhenAgentWaiting::AllScreens => {
+                let caption = caption.into();
+                for screen in cx.displays() {
+                    self.pop_up(icon, caption.clone(), title.clone(), window, screen, cx);
+                }
+            }
+            NotifyWhenAgentWaiting::Never => {
+                // Don't show anything
+            }
+        }
+    }
 
-            if let Some(screen_window) = cx
-                .open_window(options, |_, cx| {
-                    cx.new(|_| AgentNotification::new(title.clone(), caption.clone(), icon))
-                })
-                .log_err()
-            {
-                if let Some(pop_up) = screen_window.entity(cx).log_err() {
-                    self.notification_subscriptions
-                        .entry(screen_window)
-                        .or_insert_with(Vec::new)
-                        .push(cx.subscribe_in(&pop_up, window, {
-                            |this, _, event, window, cx| match event {
-                                AgentNotificationEvent::Accepted => {
-                                    let handle = window.window_handle();
-                                    cx.activate(true); // Switch back to the Zed application
+    fn pop_up(
+        &mut self,
+        icon: IconName,
+        caption: SharedString,
+        title: SharedString,
+        window: &mut Window,
+        screen: Rc<dyn PlatformDisplay>,
+        cx: &mut Context<'_, ActiveThread>,
+    ) {
+        let options = AgentNotification::window_options(screen, cx);
 
-                                    let workspace_handle = this.workspace.clone();
+        if let Some(screen_window) = cx
+            .open_window(options, |_, cx| {
+                cx.new(|_| AgentNotification::new(title.clone(), caption.clone(), icon))
+            })
+            .log_err()
+        {
+            if let Some(pop_up) = screen_window.entity(cx).log_err() {
+                self.notification_subscriptions
+                    .entry(screen_window)
+                    .or_insert_with(Vec::new)
+                    .push(cx.subscribe_in(&pop_up, window, {
+                        |this, _, event, window, cx| match event {
+                            AgentNotificationEvent::Accepted => {
+                                let handle = window.window_handle();
+                                cx.activate(true); // Switch back to the Zed application
 
-                                    // If there are multiple Zed windows, activate the correct one.
-                                    cx.defer(move |cx| {
-                                        handle
-                                            .update(cx, |_view, window, _cx| {
-                                                window.activate_window();
+                                let workspace_handle = this.workspace.clone();
 
-                                                if let Some(workspace) = workspace_handle.upgrade()
-                                                {
-                                                    workspace.update(_cx, |workspace, cx| {
-                                                        workspace.focus_panel::<AssistantPanel>(
-                                                            window, cx,
-                                                        );
-                                                    });
-                                                }
-                                            })
-                                            .log_err();
+                                // If there are multiple Zed windows, activate the correct one.
+                                cx.defer(move |cx| {
+                                    handle
+                                        .update(cx, |_view, window, _cx| {
+                                            window.activate_window();
+
+                                            if let Some(workspace) = workspace_handle.upgrade() {
+                                                workspace.update(_cx, |workspace, cx| {
+                                                    workspace
+                                                        .focus_panel::<AssistantPanel>(window, cx);
+                                                });
+                                            }
+                                        })
+                                        .log_err();
+                                });
+
+                                this.dismiss_notifications(cx);
+                            }
+                            AgentNotificationEvent::Dismissed => {
+                                this.dismiss_notifications(cx);
+                            }
+                        }
+                    }));
+
+                self.notifications.push(screen_window);
+
+                // If the user manually refocuses the original window, dismiss the popup.
+                self.notification_subscriptions
+                    .entry(screen_window)
+                    .or_insert_with(Vec::new)
+                    .push({
+                        let pop_up_weak = pop_up.downgrade();
+
+                        cx.observe_window_activation(window, move |_, window, cx| {
+                            if window.is_window_active() {
+                                if let Some(pop_up) = pop_up_weak.upgrade() {
+                                    pop_up.update(cx, |_, cx| {
+                                        cx.emit(AgentNotificationEvent::Dismissed);
                                     });
-
-                                    this.dismiss_notifications(cx);
-                                }
-                                AgentNotificationEvent::Dismissed => {
-                                    this.dismiss_notifications(cx);
                                 }
                             }
-                        }));
-
-                    self.notifications.push(screen_window);
-
-                    // If the user manually refocuses the original window, dismiss the popup.
-                    self.notification_subscriptions
-                        .entry(screen_window)
-                        .or_insert_with(Vec::new)
-                        .push({
-                            let pop_up_weak = pop_up.downgrade();
-
-                            cx.observe_window_activation(window, move |_, window, cx| {
-                                if window.is_window_active() {
-                                    if let Some(pop_up) = pop_up_weak.upgrade() {
-                                        pop_up.update(cx, |_, cx| {
-                                            cx.emit(AgentNotificationEvent::Dismissed);
-                                        });
-                                    }
-                                }
-                            })
-                        });
-                }
+                        })
+                    });
             }
         }
     }
@@ -1250,7 +1268,7 @@ impl ActiveThread {
 
         let editor_bg = cx.theme().colors().editor_background;
 
-        div().py_2().child(
+        div().pt_0p5().pb_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()

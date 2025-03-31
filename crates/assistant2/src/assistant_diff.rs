@@ -471,6 +471,7 @@ impl Item for AssistantDiff {
 impl Render for AssistantDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
+
         div()
             .track_focus(&self.focus_handle)
             .key_context(if is_empty {
@@ -503,16 +504,17 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = assistant_diff.read(cx).editor.clone();
+
     h_flex()
         .h(line_height)
-        .mr_1()
+        .mr_0p5()
         .gap_1()
         .px_0p5()
         .pb_1()
         .border_x_1()
         .border_b_1()
-        .border_color(cx.theme().colors().border_variant)
-        .rounded_b_lg()
+        .border_color(cx.theme().colors().border)
+        .rounded_b_md()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .occlude()
@@ -520,24 +522,16 @@ fn render_diff_hunk_controls(
         .children(if status.has_secondary_hunk() {
             vec![
                 Button::new("reject", "Reject")
-                    .key_binding(KeyBinding::for_action_in(
-                        &crate::Reject,
-                        &editor.read(cx).focus_handle(cx),
-                        window,
-                        cx,
-                    ))
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Reject Hunk",
-                                &crate::Reject,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    })
+                    .disabled(is_created_file)
+                    .key_binding(
+                        KeyBinding::for_action_in(
+                            &crate::Reject,
+                            &editor.read(cx).focus_handle(cx),
+                            window,
+                            cx,
+                        )
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                    )
                     .on_click({
                         let editor = editor.clone();
                         move |_event, window, cx| {
@@ -547,27 +541,17 @@ fn render_diff_hunk_controls(
                                 editor.restore_hunks_in_ranges(vec![point..point], window, cx);
                             });
                         }
-                    })
-                    .disabled(is_created_file),
+                    }),
                 Button::new(("keep", row as u64), "Keep")
-                    .key_binding(KeyBinding::for_action_in(
-                        &crate::ToggleKeep,
-                        &editor.read(cx).focus_handle(cx),
-                        window,
-                        cx,
-                    ))
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Keep Hunk",
-                                &crate::ToggleKeep,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    })
+                    .key_binding(
+                        KeyBinding::for_action_in(
+                            &crate::ToggleKeep,
+                            &editor.read(cx).focus_handle(cx),
+                            window,
+                            cx,
+                        )
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                    )
                     .on_click({
                         let assistant_diff = assistant_diff.clone();
                         move |_event, _window, cx| {
@@ -583,12 +567,12 @@ fn render_diff_hunk_controls(
             ]
         } else {
             vec![Button::new(("review", row as u64), "Review")
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
-                        Tooltip::for_action_in("Review", &ToggleKeep, &focus_handle, window, cx)
-                    }
-                })
+                .key_binding(KeyBinding::for_action_in(
+                    &ToggleKeep,
+                    &editor.read(cx).focus_handle(cx),
+                    window,
+                    cx,
+                ))
                 .on_click({
                     let assistant_diff = assistant_diff.clone();
                     move |_event, _window, cx| {
@@ -752,16 +736,21 @@ impl ToolbarItemView for AssistantDiffToolbar {
 
 impl Render for AssistantDiffToolbar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.assistant_diff(cx).is_none() {
+        let assistant_diff = match self.assistant_diff(cx) {
+            Some(ad) => ad,
+            None => return div(),
+        };
+
+        let is_empty = assistant_diff.read(cx).multibuffer.read(cx).is_empty();
+
+        if is_empty {
             return div();
         }
 
         h_group_xl()
             .my_neg_1()
             .items_center()
-            .py_1()
-            .pl_2()
-            .pr_1()
+            .p_1()
             .flex_wrap()
             .justify_between()
             .child(

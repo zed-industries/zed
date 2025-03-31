@@ -76,6 +76,19 @@ impl Render for AgentNotification {
         let line_height = window.line_height();
 
         let bg = cx.theme().colors().elevated_surface_background;
+        let gradient_overflow = || {
+            div()
+                .h_full()
+                .absolute()
+                .w_8()
+                .bottom_0()
+                .right_0()
+                .bg(linear_gradient(
+                    90.,
+                    linear_color_stop(bg, 1.),
+                    linear_color_stop(bg.opacity(0.2), 0.),
+                ))
+        };
 
         h_flex()
             .id("agent-notification")
@@ -107,27 +120,23 @@ impl Render for AgentNotification {
                         v_flex()
                             .child(
                                 div()
+                                    .relative()
                                     .text_size(px(14.))
                                     .text_color(cx.theme().colors().text)
-                                    .child(self.title.clone()),
+                                    .max_w(px(300.))
+                                    .truncate()
+                                    .child(self.title.clone())
+                                    .child(gradient_overflow()),
                             )
                             .child(
                                 div()
+                                    .relative()
                                     .text_size(px(12.))
                                     .text_color(cx.theme().colors().text_muted)
                                     .max_w(px(340.))
                                     .truncate()
                                     .child(self.caption.clone())
-                                    .relative()
-                                    .child(
-                                        div().h_full().absolute().w_8().bottom_0().right_0().bg(
-                                            linear_gradient(
-                                                90.,
-                                                linear_color_stop(bg, 1.),
-                                                linear_color_stop(bg.opacity(0.2), 0.),
-                                            ),
-                                        ),
-                                    ),
+                                    .child(gradient_overflow()),
                             ),
                     ),
             )
