@@ -13,9 +13,11 @@ use gpui::{
     WeakEntity,
 };
 use http_client::HttpClient;
-use language::language_settings::CopilotSettings;
 use language::{
-    language_settings::{all_language_settings, language_settings, EditPredictionProvider},
+    language_settings::{
+        all_language_settings, language_settings, CopilotPredictionModel, CopilotSettings,
+        EditPredictionProvider,
+    },
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
     ToPointUtf16,
 };
@@ -23,10 +25,10 @@ use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServer
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
+use serde_json::json;
 use settings::SettingsStore;
 use std::{
     any::TypeId,
-    env,
     ffi::OsString,
     mem,
     ops::Range,
@@ -342,9 +344,22 @@ impl Copilot {
             buffers: Default::default(),
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
         };
+
+        let language_settings = all_language_settings(None, cx);
+        let mut prev_prediction_model = language_settings.edit_prediction_model();
+
         this.start_copilot(true, false, cx);
-        cx.observe_global::<SettingsStore>(move |this, cx| this.start_copilot(true, false, cx))
-            .detach();
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.start_copilot(true, false, cx);
+
+            let language_settings = all_language_settings(None, cx);
+            let current_prediction_model = language_settings.edit_prediction_model();
+            if prev_prediction_model != current_prediction_model {
+                prev_prediction_model = current_prediction_model;
+                this.update_prediction_model(cx);
+            }
+        })
+        .detach();
         this
     }
 
@@ -370,21 +385,29 @@ impl Copilot {
         if !matches!(self.server, CopilotServer::Disabled) {
             return;
         }
+
         let language_settings = all_language_settings(None, cx);
         if check_edit_prediction_provider
             && language_settings.edit_predictions.provider != EditPredictionProvider::Copilot
         {
             return;
         }
+
         let server_id = self.server_id;
         let node_runtime = self.node_runtime.clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
+        let prediction_model = language_settings
+            .edit_predictions
+            .copilot
+            .prediction_model
+            .clone();
         let start_task = cx
             .spawn(async move |this, cx| {
                 Self::start_language_server(
                     server_id,
                     node_runtime,
                     env,
+                    prediction_model,
                     this,
                     awaiting_sign_in_after_start,
                     cx,
@@ -455,6 +478,7 @@ impl Copilot {
         new_server_id: LanguageServerId,
         node_runtime: NodeRuntime,
         env: Option<HashMap<String, String>>,
+        prediction_model: CopilotPredictionModel,
         this: WeakEntity<Self>,
         awaiting_sign_in_after_start: bool,
         cx: &mut AsyncApp,
@@ -491,9 +515,7 @@ impl Copilot {
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
 
-            let configuration = lsp::DidChangeConfigurationParams {
-                settings: Default::default(),
-            };
+            let configuration = get_set_prediction_model_notification(prediction_model);
 
             let editor_info = request::SetEditorInfoParams {
                 editor_info: request::EditorInfo {
@@ -519,10 +541,6 @@ impl Copilot {
                 .request::<request::CheckStatus>(request::CheckStatusParams {
                     local_checks_only: false,
                 })
-                .await?;
-
-            server
-                .request::<request::SetEditorInfo>(editor_info)
                 .await?;
 
             anyhow::Ok((server, status))
@@ -658,6 +676,11 @@ impl Copilot {
 
     pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let language_settings = all_language_settings(None, cx);
+        let prediction_model = language_settings
+            .edit_predictions
+            .copilot
+            .prediction_model
+            .clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn({
@@ -665,7 +688,16 @@ impl Copilot {
                 let server_id = self.server_id;
                 async move |this, cx| {
                     clear_copilot_dir().await;
-                    Self::start_language_server(server_id, node_runtime, env, this, false, cx).await
+                    Self::start_language_server(
+                        server_id,
+                        node_runtime,
+                        env,
+                        prediction_model,
+                        this,
+                        false,
+                        cx,
+                    )
+                    .await
                 }
             })
             .shared();
@@ -677,6 +709,28 @@ impl Copilot {
         cx.notify();
 
         cx.background_spawn(start_task)
+    }
+
+    pub fn update_prediction_model(&mut self, cx: &mut Context<Self>) {
+        let language_settings = all_language_settings(None, cx);
+        if language_settings.edit_predictions.provider != EditPredictionProvider::Copilot {
+            return;
+        }
+
+        if let Ok(server) = self.server.as_authenticated() {
+            let prediction_model = language_settings
+                .edit_predictions
+                .copilot
+                .prediction_model
+                .clone();
+
+            server
+                .lsp
+                .notify::<lsp::notification::DidChangeConfiguration>(
+                    &get_set_prediction_model_notification(prediction_model),
+                )
+                .ok();
+        }
     }
 
     pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
@@ -1072,6 +1126,20 @@ async fn get_copilot_lsp(node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
     }
 
     Ok(server_path)
+}
+
+fn get_set_prediction_model_notification(
+    prediction_model: CopilotPredictionModel,
+) -> lsp::DidChangeConfigurationParams {
+    lsp::DidChangeConfigurationParams {
+        settings: json!({
+            "github": {
+                "copilot": {
+                    "selectedCompletionModel": prediction_model,
+                }
+            }
+        }),
+    }
 }
 
 #[cfg(test)]

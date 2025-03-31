@@ -825,6 +825,7 @@ impl LanguageServer {
             self.configuration = configuration;
 
             self.notify::<notification::Initialized>(&InitializedParams {})?;
+            self.notify::<notification::DidChangeConfiguration>(&self.configuration)?;
             Ok(Arc::new(self))
         })
     }

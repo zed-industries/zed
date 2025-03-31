@@ -223,3 +223,8 @@ impl lsp::request::Request for NotifyRejected {
     type Result = String;
     const METHOD: &'static str = "notifyRejected";
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DisabledLanguage {
+    pub language_id: String,
+}
