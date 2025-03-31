@@ -2,9 +2,13 @@ use std::{fs, path::Path};
 
 use anyhow::Context as _;
 use gpui::{App, AppContext as _, Context, Entity, Window};
-use language::{Capability, Language};
+use language::{proto::serialize_anchor, Capability, Language};
 use multi_buffer::MultiBuffer;
-use project::lsp_store::{lsp_ext_command::ExpandMacro, rust_analyzer_ext::RUST_ANALYZER_NAME};
+use project::lsp_store::{
+    lsp_ext_command::{ExpandMacro, ExpandedMacro},
+    rust_analyzer_ext::RUST_ANALYZER_NAME,
+};
+use rpc::proto;
 use text::ToPointUtf16;
 
 use crate::{
@@ -55,25 +59,50 @@ pub fn expand_macro_recursively(
     );
 
     let project = project.clone();
+    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
     cx.spawn_in(window, async move |_editor, cx| {
         let Some((trigger_anchor, rust_language, server_to_query, buffer)) = server_lookup.await
         else {
             return Ok(());
         };
-        let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
-        let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
-        let expand_macro_task = project.update(cx, |project, cx| {
-            project.request_lsp(
-                buffer,
-                project::LanguageServerToQuery::Other(server_to_query),
-                ExpandMacro { position },
-                cx,
-            )
-        })?;
+        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id())?;
 
-        let macro_expansion = expand_macro_task.await.context("expand macro")?;
+        // TODO kb this should be done for every other ext method
+        let macro_expansion = if let Some((client, project_id)) = upstream_client {
+            let request = proto::LspExtExpandMacro {
+                project_id,
+                buffer_id: buffer_id.to_proto(),
+                position: Some(serialize_anchor(&trigger_anchor.text_anchor)),
+            };
+            let response = client
+                .request(request)
+                .await
+                .context("lsp ext expand macro proto request")?;
+            ExpandedMacro {
+                name: response.name,
+                expansion: response.expansion,
+            }
+        } else {
+            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
+            project
+                .update(cx, |project, cx| {
+                    project.request_lsp(
+                        buffer,
+                        project::LanguageServerToQuery::Other(server_to_query),
+                        ExpandMacro { position },
+                        cx,
+                    )
+                })?
+                .await
+                .context("expand macro")?
+        };
+
         if macro_expansion.is_empty() {
-            log::info!("Empty macro expansion for position {position:?}");
+            log::info!(
+                "Empty macro expansion for position {:?}",
+                &trigger_anchor.text_anchor
+            );
             return Ok(());
         }
 
