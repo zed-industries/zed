@@ -2,7 +2,7 @@ mod edit_action;
 pub mod log;
 
 use crate::replace::{replace_exact, replace_with_flexible_indent};
-use crate::schema::schema_for;
+use crate::schema::json_schema_for;
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
@@ -94,8 +94,7 @@ impl Tool for EditFilesTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        let schema = schema_for::<EditFilesToolInput>(format);
-        serde_json::to_value(&schema).unwrap()
+        json_schema_for::<EditFilesToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

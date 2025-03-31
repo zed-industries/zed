@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::schema::schema_for;
+use crate::schema::json_schema_for;
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use chrono::{Local, Utc};
@@ -46,8 +46,7 @@ impl Tool for NowTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        let schema = schema_for::<NowToolInput>(format);
-        serde_json::to_value(&schema).unwrap()
+        json_schema_for::<NowToolInput>(format)
     }
 
     fn ui_text(&self, _input: &serde_json::Value) -> String {

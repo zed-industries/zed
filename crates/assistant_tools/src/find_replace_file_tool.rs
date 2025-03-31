@@ -1,4 +1,4 @@
-use crate::schema::schema_for;
+use crate::schema::json_schema_for;
 use anyhow::{anyhow, Context as _, Result};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, AppContext, Entity, Task};
@@ -142,8 +142,7 @@ impl Tool for FindReplaceFileTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        let schema = schema_for::<FindReplaceFileToolInput>(format);
-        serde_json::to_value(&schema).unwrap()
+        json_schema_for::<FindReplaceFileToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

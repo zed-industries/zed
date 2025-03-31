@@ -1,4 +1,4 @@
-use crate::schema::schema_for;
+use crate::schema::json_schema_for;
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
@@ -46,8 +46,7 @@ impl Tool for CreateDirectoryTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        let schema = schema_for::<CreateDirectoryToolInput>(format);
-        serde_json::to_value(&schema).unwrap()
+        json_schema_for::<CreateDirectoryToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

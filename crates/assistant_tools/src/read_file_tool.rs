@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::schema::schema_for;
+use crate::schema::json_schema_for;
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
@@ -60,8 +60,7 @@ impl Tool for ReadFileTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        let schema = schema_for::<ReadFileToolInput>(format);
-        serde_json::to_value(&schema).unwrap()
+        json_schema_for::<ReadFileToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

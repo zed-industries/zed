@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::schema::schema_for;
+use crate::schema::json_schema_for;
 use anyhow::{anyhow, bail, Context as _, Result};
 use assistant_tool::{ActionLog, Tool};
 use futures::AsyncReadExt as _;
@@ -129,8 +129,7 @@ impl Tool for FetchTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        let schema = schema_for::<FetchToolInput>(format);
-        serde_json::to_value(&schema).unwrap()
+        json_schema_for::<FetchToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
