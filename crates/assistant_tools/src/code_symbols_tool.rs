@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use collections::HashMap;
+use collections::IndexMap;
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{CodeLabel, Language, LanguageRegistry};
 use language_model::LanguageModelRequestMessage;
@@ -214,130 +214,81 @@ async fn project_symbols(
         return Err(anyhow!("No symbols found in project."));
     }
 
-    // Group symbols by file path
-    let mut symbols_by_file: HashMap<PathBuf, Vec<&Symbol>> = HashMap::default();
+    let mut symbols_by_path: IndexMap<PathBuf, Vec<&Symbol>> = IndexMap::default();
 
-    for symbol in symbols.iter().filter(|symbol| {
-        if let Some(regex) = &regex {
-            regex.is_match(&symbol.name)
-        } else {
-            true
-        }
-    }) {
+    for symbol in symbols
+        .iter()
+        .filter(|symbol| {
+            if let Some(regex) = &regex {
+                regex.is_match(&symbol.name)
+            } else {
+                true
+            }
+        })
+        .skip(offset as usize)
+        // Take 1 more than RESULTS_PER_PAGE so we can tell if there are more results.
+        .take((RESULTS_PER_PAGE as usize).saturating_add(1))
+    {
         if let Some(worktree_path) = project.read_with(cx, |project, cx| {
             project
                 .worktree_for_id(symbol.path.worktree_id, cx)
                 .map(|worktree| PathBuf::from(worktree.read(cx).root_name()))
         })? {
             let path = worktree_path.join(&symbol.path.path);
-            symbols_by_file.entry(path).or_default().push(symbol);
+            symbols_by_path.entry(path).or_default().push(symbol);
         }
     }
 
     // If no symbols matched the filter, return early
-    if symbols_by_file.is_empty() {
+    if symbols_by_path.is_empty() {
         return Err(anyhow!("No symbols found matching the criteria."));
     }
 
-    let mut skips_remaining = offset;
     let mut symbols_rendered = 0;
     let mut has_more_symbols = false;
     let mut output = String::new();
 
-    for (file_path, file_symbols) in symbols_by_file {
-        // Track symbols in this file
-        let mut file_symbols_rendered = 0;
-        let mut file_header_written = false;
+    'outer: for (file_path, file_symbols) in symbols_by_path {
+        if symbols_rendered > 0 {
+            output.push('\n');
+        }
 
-        // Process symbols for this file
+        writeln!(&mut output, "{}", file_path.display()).ok();
+
         for symbol in file_symbols {
-            if skips_remaining > 0 {
-                skips_remaining -= 1;
-                continue;
-            }
-
-            // Check if we've already rendered a full page
             if symbols_rendered >= RESULTS_PER_PAGE {
                 has_more_symbols = true;
-                break;
+                break 'outer;
             }
 
-            // Write file header only when we're going to include symbols from this file
-            if !file_header_written {
-                // Extract the filename from the path for the heading
-                let filename = symbol
-                    .path
-                    .path
-                    .file_name()
-                    .map(|f| f.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-
-                // Add a heading for the file
-                writeln!(
-                    &mut output,
-                    "# File: {} ({})",
-                    filename,
-                    file_path.display()
-                )
-                .ok();
-                file_header_written = true;
-            }
-
-            // Use the symbol's existing label instead of debug formatting the kind
-            let kind_str = format!("{} ", symbol.label.text());
+            write!(&mut output, "  {} ", symbol.label.text()).ok();
 
             // Convert to 1-based line numbers for display
             let start_line = symbol.range.start.0.row as usize + 1;
             let end_line = symbol.range.end.0.row as usize + 1;
 
-            // Write the symbol with indentation
             if start_line == end_line {
-                writeln!(
-                    &mut output,
-                    "## {}{} [L{}]",
-                    kind_str, symbol.name, start_line
-                )
-                .ok();
+                writeln!(&mut output, "[L{}]", start_line).ok();
             } else {
-                writeln!(
-                    &mut output,
-                    "## {}{} [L{}-{}]",
-                    kind_str, symbol.name, start_line, end_line
-                )
-                .ok();
+                writeln!(&mut output, "[L{}-{}]", start_line, end_line).ok();
             }
 
             symbols_rendered += 1;
-            file_symbols_rendered += 1;
-        }
-
-        // Add a blank line between files for readability if we rendered symbols from this file
-        if file_symbols_rendered > 0 {
-            writeln!(&mut output).ok();
-        }
-
-        // Check if we need to stop after this file
-        if has_more_symbols {
-            break;
         }
     }
 
-    if symbols_rendered == 0 {
-        Ok("No symbols found in the requested page.".to_string())
+    Ok(if symbols_rendered == 0 {
+        "No symbols found in the requested page.".to_string()
     } else if has_more_symbols {
-        let result = format!(
-                "{}Showing symbols {}-{} (there were more symbols found; use offset: {} to see next page)",
-                output,
-                offset + 1,
-                offset + symbols_rendered,
-                offset + RESULTS_PER_PAGE,
-            );
-        Ok(result)
+        format!(
+            "{output}\nShowing symbols {}-{} (more symbols were found; use offset: {} to see next page)",
+            offset + 1,
+            offset + symbols_rendered,
+            offset + RESULTS_PER_PAGE,
+        )
     } else {
-        let total = offset + symbols_rendered;
-        let result = format!("{}Found {} total symbols", output, total);
-        Ok(result)
-    }
+        output
+    })
 }
 
 async fn render_outline(
@@ -350,7 +301,7 @@ async fn render_outline(
     const RESULTS_PER_PAGE_USIZE: usize = RESULTS_PER_PAGE as usize;
     let entries = CodeSymbolIterator::new(symbols, regex.clone())
         .skip(offset as usize)
-        // Get 1 more than RESULTS_PER_PAGE so we can tell if there are more results.
+        // Take 1 more than RESULTS_PER_PAGE so we can tell if there are more results.
         .take(RESULTS_PER_PAGE_USIZE.saturating_add(1))
         .collect::<Vec<Entry>>();
     let has_more = entries.len() > RESULTS_PER_PAGE_USIZE;
