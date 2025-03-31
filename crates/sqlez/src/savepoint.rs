@@ -76,23 +76,25 @@ mod tests {
         connection.with_savepoint("first", || {
             connection.exec_bound("INSERT INTO text(text, idx) VALUES (?, ?)")?((save1_text, 1))?;
 
-            assert!(connection
-                .with_savepoint("second", || -> Result<Option<()>, anyhow::Error> {
-                    connection.exec_bound("INSERT INTO text(text, idx) VALUES (?, ?)")?((
-                        save2_text, 2,
-                    ))?;
+            assert!(
+                connection
+                    .with_savepoint("second", || -> Result<Option<()>, anyhow::Error> {
+                        connection.exec_bound("INSERT INTO text(text, idx) VALUES (?, ?)")?((
+                            save2_text, 2,
+                        ))?;
 
-                    assert_eq!(
-                        connection
-                            .select::<String>("SELECT text FROM text ORDER BY text.idx ASC")?(
-                        )?,
-                        vec![save1_text, save2_text],
-                    );
+                        assert_eq!(
+                            connection
+                                .select::<String>("SELECT text FROM text ORDER BY text.idx ASC")?(
+                            )?,
+                            vec![save1_text, save2_text],
+                        );
 
-                    anyhow::bail!("Failed second save point :(")
-                })
-                .err()
-                .is_some());
+                        anyhow::bail!("Failed second save point :(")
+                    })
+                    .err()
+                    .is_some()
+            );
 
             assert_eq!(
                 connection.select::<String>("SELECT text FROM text ORDER BY text.idx ASC")?()?,

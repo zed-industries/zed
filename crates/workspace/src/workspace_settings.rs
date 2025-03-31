@@ -17,6 +17,7 @@ pub struct WorkspaceSettings {
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
     pub restore_on_startup: RestoreOnStartupBehavior,
+    pub restore_on_file_reopen: bool,
     pub drop_target_size: f32,
     pub use_system_path_prompts: bool,
     pub use_system_prompts: bool,
@@ -134,6 +135,15 @@ pub struct WorkspaceSettingsContent {
     /// Values: none, last_workspace, last_session
     /// Default: last_session
     pub restore_on_startup: Option<RestoreOnStartupBehavior>,
+    /// Whether to attempt to restore previous file's state when opening it again.
+    /// The state is stored per pane.
+    /// When disabled, defaults are applied instead of the state restoration.
+    ///
+    /// E.g. for editors, selections, folds and scroll positions are restored, if the same file is closed and, later, opened again in the same pane.
+    /// When disabled, a single selection in the very beginning of the file, zero scroll position and no folds state is used as a default.
+    ///
+    /// Default: true
+    pub restore_on_file_reopen: Option<bool>,
     /// The size of the workspace split drop targets on the outer edges.
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     ///

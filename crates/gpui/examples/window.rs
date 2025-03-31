@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, SharedString, Timer, Window,
-    WindowBounds, WindowKind, WindowOptions,
+    App, Application, Bounds, Context, SharedString, Timer, Window, WindowBounds, WindowKind,
+    WindowOptions, div, prelude::*, px, rgb, size,
 };
 
 struct SubWindow {
@@ -75,7 +75,7 @@ impl Render for WindowDemo {
             .bg(rgb(0xffffff))
             .size_full()
             .justify_center()
-            .items_center()
+            .content_center()
             .gap_2()
             .child(button("Normal", move |_, cx| {
                 cx.open_window(
@@ -165,18 +165,32 @@ impl Render for WindowDemo {
                     })
                     .detach();
             }))
+            .child(button("Resize", |window, _| {
+                let content_size = window.bounds().size;
+                window.resize(size(content_size.height, content_size.width));
+            }))
     }
 }
 
 fn main() {
     Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
+
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| WindowDemo {}),
+            |window, cx| {
+                cx.new(|cx| {
+                    cx.observe_window_bounds(window, move |_, window, _| {
+                        println!("Window bounds changed: {:?}", window.bounds());
+                    })
+                    .detach();
+
+                    WindowDemo {}
+                })
+            },
         )
         .unwrap();
     });

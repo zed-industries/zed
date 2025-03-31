@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
@@ -11,19 +11,19 @@ use livekit::track;
 
 use livekit::webrtc::{
     audio_frame::AudioFrame,
-    audio_source::{native::NativeAudioSource, AudioSourceOptions, RtcAudioSource},
+    audio_source::{AudioSourceOptions, RtcAudioSource, native::NativeAudioSource},
     audio_stream::native::NativeAudioStream,
     video_frame::{VideoBuffer, VideoFrame, VideoRotation},
-    video_source::{native::NativeVideoSource, RtcVideoSource, VideoResolution},
+    video_source::{RtcVideoSource, VideoResolution, native::NativeVideoSource},
     video_stream::native::NativeVideoStream,
 };
 use parking_lot::Mutex;
 use std::cell::RefCell;
-use std::sync::atomic::{self, AtomicI32};
 use std::sync::Weak;
+use std::sync::atomic::{self, AtomicI32};
 use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
-use util::{maybe, ResultExt as _};
+use util::{ResultExt as _, maybe};
 
 pub(crate) struct AudioStack {
     executor: BackgroundExecutor,
@@ -427,7 +427,7 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
 
 pub fn play_remote_video_track(
     track: &crate::RemoteVideoTrack,
-) -> impl Stream<Item = RemoteVideoFrame> {
+) -> impl Stream<Item = RemoteVideoFrame> + use<> {
     #[cfg(target_os = "macos")]
     {
         let mut pool = None;
@@ -576,7 +576,7 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
     use image::{Frame, RgbaImage};
     use livekit::webrtc::prelude::VideoFormatType;
     use smallvec::SmallVec;
-    use std::alloc::{alloc, Layout};
+    use std::alloc::{Layout, alloc};
 
     let width = buffer.width();
     let height = buffer.height();
@@ -634,12 +634,12 @@ trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {
 mod macos {
 
     use coreaudio::sys::{
-        kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice,
-        kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeGlobal,
-        kAudioObjectSystemObject, AudioObjectAddPropertyListener, AudioObjectID,
-        AudioObjectPropertyAddress, AudioObjectRemovePropertyListener, OSStatus,
+        AudioObjectAddPropertyListener, AudioObjectID, AudioObjectPropertyAddress,
+        AudioObjectRemovePropertyListener, OSStatus, kAudioHardwarePropertyDefaultInputDevice,
+        kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyElementMaster,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
     };
-    use futures::{channel::mpsc::UnboundedReceiver, StreamExt};
+    use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
 
     /// Implementation from: https://github.com/zed-industries/cpal/blob/fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50/src/host/coreaudio/macos/property_listener.rs#L15
     pub struct CoreAudioDefaultDeviceChangeListener {
@@ -660,7 +660,7 @@ mod macos {
         callback: *mut ::std::os::raw::c_void,
     ) -> OSStatus {
         let wrapper = callback as *mut PropertyListenerCallbackWrapper;
-        (*wrapper).0();
+        unsafe { (*wrapper).0() };
         0
     }
 

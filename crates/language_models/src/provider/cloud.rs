@@ -1,47 +1,47 @@
 use anthropic::{AnthropicError, AnthropicModelMode};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use client::{
-    zed_urls, Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME,
-    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
+    Client, EXPIRED_LLM_TOKEN_HEADER_NAME, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
+    PerformCompletionParams, UserStore, zed_urls,
 };
 use collections::BTreeMap;
 use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
 use futures::{
-    future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, Stream, StreamExt,
-    TryStreamExt as _,
+    AsyncBufReadExt, FutureExt, Stream, StreamExt, TryStreamExt as _, future::BoxFuture,
+    stream::BoxStream,
 };
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
     LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest, RateLimiter,
-    ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
+    LanguageModelToolSchemaFormat, RateLimiter, ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
     MaxMonthlySpendReachedError, PaymentRequiredError, RefreshLlmTokenListener,
 };
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::value::RawValue;
 use settings::{Settings, SettingsStore};
-use smol::io::{AsyncReadExt, BufReader};
 use smol::Timer;
+use smol::io::{AsyncReadExt, BufReader};
 use std::{
     future,
     sync::{Arc, LazyLock},
     time::Duration,
 };
 use strum::IntoEnumIterator;
-use ui::{prelude::*, TintColor};
+use ui::{TintColor, prelude::*};
 
+use crate::AllLanguageModelSettings;
 use crate::provider::anthropic::{
     count_anthropic_tokens, into_anthropic, map_to_language_model_completion_events,
 };
 use crate::provider::google::into_google;
 use crate::provider::open_ai::{count_open_ai_tokens, into_open_ai};
-use crate::AllLanguageModelSettings;
 
 pub const PROVIDER_NAME: &str = "Zed";
 
@@ -557,6 +557,10 @@ impl LanguageModel for CloudLanguageModel {
 
     fn availability(&self) -> LanguageModelAvailability {
         self.model.availability()
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        self.model.tool_input_format()
     }
 
     fn max_token_count(&self) -> usize {

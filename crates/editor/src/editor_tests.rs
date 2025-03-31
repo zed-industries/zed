@@ -1,30 +1,30 @@
 use super::*;
 use crate::{
+    JoinLines,
     scroll::scroll_amount::ScrollAmount,
     test::{
         assert_text_with_selections, build_editor,
-        editor_lsp_test_context::{git_commit_lang, EditorLspTestContext},
+        editor_lsp_test_context::{EditorLspTestContext, git_commit_lang},
         editor_test_context::EditorTestContext,
         select_ranges,
     },
-    JoinLines,
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
-    div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions,
+    BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
+    WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
-    language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
-        LanguageSettingsContent, PrettierSettings,
-    },
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
     Override, Point,
+    language_settings::{
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+        LanguageSettingsContent, PrettierSettings,
+    },
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use lsp::CompletionParams;
@@ -32,9 +32,9 @@ use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint},
-    project_settings::{LspSettings, ProjectSettings},
     FakeFs,
+    debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
+    project_settings::{LspSettings, ProjectSettings},
 };
 use serde_json::{self, json};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -47,12 +47,12 @@ use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
-    test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
+    test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
     uri,
 };
 use workspace::{
+    CloseAllItems, CloseInactiveItems, NavigationEntry, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle},
-    NavigationEntry, ViewId,
 };
 
 #[gpui::test]
@@ -3269,18 +3269,6 @@ async fn test_backspace(cx: &mut TestAppContext) {
             ˇtwo
         ˇ  threeˇ  four
     "});
-
-    // Test backspace with line_mode set to true
-    cx.update_editor(|e, _, _| e.selections.line_mode = true);
-    cx.set_state(indoc! {"
-        The ˇquick ˇbrown
-        fox jumps over
-        the lazy dog
-        ˇThe qu«ick bˇ»rown"});
-    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
-    cx.assert_editor_state(indoc! {"
-        ˇfox jumps over
-        the lazy dogˇ"});
 }
 
 #[gpui::test]
@@ -3300,16 +3288,6 @@ async fn test_delete(cx: &mut TestAppContext) {
         fouˇ five six
         seven ˇten
     "});
-
-    // Test backspace with line_mode set to true
-    cx.update_editor(|e, _, _| e.selections.line_mode = true);
-    cx.set_state(indoc! {"
-        The ˇquick ˇbrown
-        fox «ˇjum»ps over
-        the lazy dog
-        ˇThe qu«ick bˇ»rown"});
-    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
-    cx.assert_editor_state("ˇthe lazy dogˇ");
 }
 
 #[gpui::test]
@@ -4928,7 +4906,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
         r#"            «for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -4943,7 +4921,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             "for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -4958,7 +4936,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -4970,7 +4948,7 @@ if is_entire_line {
         r#"       «     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -4985,7 +4963,7 @@ if is_entire_line {
             "     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5000,7 +4978,7 @@ if is_entire_line {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -5012,7 +4990,7 @@ if is_entire_line {
         r#"       «ˇ     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -5027,7 +5005,7 @@ if is_entire_line {
             "     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5042,7 +5020,7 @@ if is_entire_line {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -5054,7 +5032,7 @@ if is_entire_line {
         r#"            for selection «in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -5069,7 +5047,7 @@ if is_entire_line {
             "in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5084,7 +5062,7 @@ if is_entire_line {
             "in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -8007,7 +7985,9 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| !multi_buffer_editor.is_dirty(cx)));
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.text(cx)),
-        uri!("a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"),
+        uri!(
+            "a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"
+        ),
     );
     buffer_1.update(cx, |buffer, _| {
         assert!(!buffer.is_dirty());
@@ -17390,12 +17370,12 @@ async fn assert_highlighted_edits(
 
 #[track_caller]
 fn assert_breakpoint(
-    breakpoints: &BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
+    breakpoints: &BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     path: &Arc<Path>,
     expected: Vec<(u32, Breakpoint)>,
 ) {
     if expected.len() == 0usize {
-        assert!(!breakpoints.contains_key(path));
+        assert!(!breakpoints.contains_key(path), "{}", path.display());
     } else {
         let mut breakpoint = breakpoints
             .get(path)
@@ -17403,9 +17383,9 @@ fn assert_breakpoint(
             .into_iter()
             .map(|breakpoint| {
                 (
-                    breakpoint.position,
+                    breakpoint.row,
                     Breakpoint {
-                        kind: breakpoint.kind.clone(),
+                        message: breakpoint.message.clone(),
                         state: breakpoint.state,
                     },
                 )
@@ -17435,12 +17415,10 @@ fn add_log_breakpoint_at_cursor(
                 .buffer_snapshot
                 .anchor_before(Point::new(cursor_position.row, 0));
 
-            let kind = BreakpointKind::Log(Arc::from(log_message));
-
             (
                 breakpoint_position,
                 Breakpoint {
-                    kind,
+                    message: Some(Arc::from(log_message)),
                     state: BreakpointState::Enabled,
                 },
             )
@@ -17738,7 +17716,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         &abs_path,
         vec![
             (0, Breakpoint::new_standard()),
-            (3, Breakpoint::new_log("hello Earth !!")),
+            (3, Breakpoint::new_log("hello Earth!!")),
         ],
     );
 }
@@ -17841,6 +17819,10 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
         editor.move_to_beginning(&MoveToBeginning, window, cx);
         editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
         editor.move_to_end(&MoveToEnd, window, cx);
+        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
+        // Disabling a breakpoint that doesn't exist should do nothing
+        editor.move_up(&MoveUp, window, cx);
+        editor.move_up(&MoveUp, window, cx);
         editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
     });
 
@@ -18280,6 +18262,396 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     });
 }
 
+#[gpui::test]
+async fn test_editor_restore_data_different_in_panes(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let main_text = r#"fn main() {
+println!("1");
+println!("2");
+println!("3");
+println!("4");
+println!("5");
+}"#;
+    let lib_text = "mod foo {}";
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "lib.rs": lib_text,
+            "main.rs": main_text,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let expected_ranges = vec![
+        Point::new(0, 0)..Point::new(0, 0),
+        Point::new(1, 0)..Point::new(1, 1),
+        Point::new(2, 0)..Point::new(2, 2),
+        Point::new(3, 0)..Point::new(3, 3),
+    ];
+
+    let pane_1 = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let editor_1 = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane_1.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane_1.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                main_text,
+                "Original main.rs text on initial open",
+            );
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(cx)
+                    .into_iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+                vec![Point::zero()..Point::zero()],
+                "Default selections on initial open",
+            );
+        })
+    });
+    editor_1.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges(expected_ranges.clone());
+        });
+    });
+
+    let pane_2 = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.split_pane(pane_1.clone(), SplitDirection::Right, window, cx)
+    });
+    let editor_2 = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane_2.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane_2.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                main_text,
+                "Original main.rs text on initial open in another panel",
+            );
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(cx)
+                    .into_iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+                vec![Point::zero()..Point::zero()],
+                "Default selections on initial open in another panel",
+            );
+        })
+    });
+
+    editor_2.update_in(cx, |editor, window, cx| {
+        editor.fold_ranges(expected_ranges.clone(), false, window, cx);
+    });
+
+    let _other_editor_1 = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "lib.rs"),
+                Some(pane_1.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane_1
+        .update_in(cx, |pane, window, cx| {
+            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    drop(editor_1);
+    pane_1.update(cx, |pane, cx| {
+        pane.active_item()
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap()
+            .update(cx, |editor, cx| {
+                assert_eq!(
+                    editor.display_text(cx),
+                    lib_text,
+                    "Other file should be open and active",
+                );
+            });
+        assert_eq!(pane.items().count(), 1, "No other editors should be open");
+    });
+
+    let _other_editor_2 = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "lib.rs"),
+                Some(pane_2.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane_2
+        .update_in(cx, |pane, window, cx| {
+            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    drop(editor_2);
+    pane_2.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                lib_text,
+                "Other file should be open and active in another panel too",
+            );
+        });
+        assert_eq!(
+            pane.items().count(),
+            1,
+            "No other editors should be open in another pane",
+        );
+    });
+
+    let _editor_1_reopened = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane_1.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    let _editor_2_reopened = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane_2.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane_1.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                main_text,
+                "Previous editor in the 1st panel had no extra text manipulations and should get none on reopen",
+            );
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(cx)
+                    .into_iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+                expected_ranges,
+                "Previous editor in the 1st panel had selections and should get them restored on reopen",
+            );
+        })
+    });
+    pane_2.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                r#"fn main() {
+⋯rintln!("1");
+⋯intln!("2");
+⋯ntln!("3");
+println!("4");
+println!("5");
+}"#,
+                "Previous editor in the 2nd pane had folds and should restore those on reopen in the same pane",
+            );
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(cx)
+                    .into_iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+                vec![Point::zero()..Point::zero()],
+                "Previous editor in the 2nd pane had no selections changed hence should restore none",
+            );
+        })
+    });
+}
+
+#[gpui::test]
+async fn test_editor_does_not_restore_data_when_turned_off(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let main_text = r#"fn main() {
+println!("1");
+println!("2");
+println!("3");
+println!("4");
+println!("5");
+}"#;
+    let lib_text = "mod foo {}";
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "lib.rs": lib_text,
+            "main.rs": main_text,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                main_text,
+                "Original main.rs text on initial open",
+            );
+        })
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.fold_ranges(vec![Point::new(0, 0)..Point::new(0, 0)], false, window, cx);
+    });
+
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
+            s.restore_on_file_reopen = Some(false);
+        });
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.fold_ranges(
+            vec![
+                Point::new(1, 0)..Point::new(1, 1),
+                Point::new(2, 0)..Point::new(2, 2),
+                Point::new(3, 0)..Point::new(3, 3),
+            ],
+            false,
+            window,
+            cx,
+        );
+    });
+    pane.update_in(cx, |pane, window, cx| {
+        pane.close_all_items(&CloseAllItems::default(), window, cx)
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    pane.update(cx, |pane, _| {
+        assert!(pane.active_item().is_none());
+    });
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
+            s.restore_on_file_reopen = Some(true);
+        });
+    });
+
+    let _editor_reopened = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                main_text,
+                "No folds: even after enabling the restoration, previous editor's data should not be saved to be used for the restoration"
+            );
+        })
+    });
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point
@@ -18299,7 +18671,7 @@ fn assert_selection_ranges(marked_text: &str, editor: &mut Editor, cx: &mut Cont
 pub fn handle_signature_help_request(
     cx: &mut EditorLspTestContext,
     mocked_response: lsp::SignatureHelp,
-) -> impl Future<Output = ()> {
+) -> impl Future<Output = ()> + use<> {
     let mut request =
         cx.set_request_handler::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
             let mocked_response = mocked_response.clone();

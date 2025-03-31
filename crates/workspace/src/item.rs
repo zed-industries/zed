@@ -1,17 +1,17 @@
 use crate::{
+    DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory, SerializableItemRegistry,
+    ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
-    DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory, SerializableItemRegistry,
-    ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
 use anyhow::Result;
 use client::{
-    proto::{self, PeerId},
     Client,
+    proto::{self, PeerId},
 };
-use futures::{channel::mpsc, StreamExt};
+use futures::{StreamExt, channel::mpsc};
 use gpui::{
     Action, AnyElement, AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,
@@ -1031,11 +1031,19 @@ impl<T: Item> WeakItemHandle for WeakEntity<T> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProjectItemKind(pub &'static str);
+
 pub trait ProjectItem: Item {
     type Item: project::ProjectItem;
 
+    fn project_item_kind() -> Option<ProjectItemKind> {
+        None
+    }
+
     fn for_project_item(
         project: Entity<Project>,
+        pane: &Pane,
         item: Entity<Self::Item>,
         window: &mut Window,
         cx: &mut Context<Self>,

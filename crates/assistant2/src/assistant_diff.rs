@@ -3,14 +3,14 @@ use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
 use editor::{
-    actions::{GoToHunk, GoToPreviousHunk},
     Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
+    actions::{GoToHunk, GoToPreviousHunk},
 };
 use gpui::{
-    prelude::*, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
-    SharedString, Subscription, Task, WeakEntity, Window,
+    Action, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
+    Subscription, Task, WeakEntity, Window, prelude::*,
 };
-use language::{Capability, DiskState, OffsetRangeExt};
+use language::{Capability, DiskState, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
 use project::{Project, ProjectPath};
 use std::{
@@ -18,11 +18,12 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*};
 use workspace::{
+    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
-    Item, ItemHandle, ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
 pub struct AssistantDiff {
@@ -78,6 +79,7 @@ impl AssistantDiff {
                   is_created_file,
                   line_height,
                   _editor: &Entity<Editor>,
+                  window: &mut Window,
                   cx: &mut App| {
                 render_diff_hunk_controls(
                     row,
@@ -86,6 +88,7 @@ impl AssistantDiff {
                     is_created_file,
                     line_height,
                     &assistant_diff,
+                    window,
                     cx,
                 )
             }
@@ -251,6 +254,18 @@ impl AssistantDiff {
         self.editor.update(cx, |editor, cx| {
             editor.restore_hunks_in_ranges(ranges, window, cx)
         })
+    }
+
+    fn reject_all(&mut self, _: &crate::RejectAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            let max_point = editor.buffer().read(cx).read(cx).max_point();
+            editor.restore_hunks_in_ranges(vec![Point::zero()..max_point], window, cx)
+        })
+    }
+
+    fn keep_all(&mut self, _: &crate::KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
+        self.thread
+            .update(cx, |thread, cx| thread.keep_all_edits(cx));
     }
 
     fn review_diff_hunks(
@@ -456,6 +471,7 @@ impl Item for AssistantDiff {
 impl Render for AssistantDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
+
         div()
             .track_focus(&self.focus_handle)
             .key_context(if is_empty {
@@ -465,6 +481,8 @@ impl Render for AssistantDiff {
             })
             .on_action(cx.listener(Self::toggle_keep))
             .on_action(cx.listener(Self::reject))
+            .on_action(cx.listener(Self::reject_all))
+            .on_action(cx.listener(Self::keep_all))
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()
@@ -482,38 +500,58 @@ fn render_diff_hunk_controls(
     is_created_file: bool,
     line_height: Pixels,
     assistant_diff: &Entity<AssistantDiff>,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let editor = assistant_diff.read(cx).editor.clone();
+
     h_flex()
         .h(line_height)
-        .mr_1()
+        .mr_0p5()
         .gap_1()
         .px_0p5()
         .pb_1()
         .border_x_1()
         .border_b_1()
-        .border_color(cx.theme().colors().border_variant)
-        .rounded_b_lg()
+        .border_color(cx.theme().colors().border)
+        .rounded_b_md()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .occlude()
         .shadow_md()
         .children(if status.has_secondary_hunk() {
             vec![
-                Button::new(("keep", row as u64), "Keep")
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Keep Hunk",
-                                &crate::ToggleKeep,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
+                Button::new("reject", "Reject")
+                    .disabled(is_created_file)
+                    .key_binding(
+                        KeyBinding::for_action_in(
+                            &crate::Reject,
+                            &editor.read(cx).focus_handle(cx),
+                            window,
+                            cx,
+                        )
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                    )
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                let snapshot = editor.snapshot(window, cx);
+                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                                editor.restore_hunks_in_ranges(vec![point..point], window, cx);
+                            });
                         }
-                    })
+                    }),
+                Button::new(("keep", row as u64), "Keep")
+                    .key_binding(
+                        KeyBinding::for_action_in(
+                            &crate::ToggleKeep,
+                            &editor.read(cx).focus_handle(cx),
+                            window,
+                            cx,
+                        )
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                    )
                     .on_click({
                         let assistant_diff = assistant_diff.clone();
                         move |_event, _window, cx| {
@@ -526,51 +564,29 @@ fn render_diff_hunk_controls(
                             });
                         }
                     }),
-                Button::new("reject", "Reject")
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Reject Hunk",
-                                &crate::Reject,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                let snapshot = editor.snapshot(window, cx);
-                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                                editor.restore_hunks_in_ranges(vec![point..point], window, cx);
-                            });
-                        }
-                    })
-                    .disabled(is_created_file),
             ]
         } else {
-            vec![Button::new(("review", row as u64), "Review")
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
-                        Tooltip::for_action_in("Review", &ToggleKeep, &focus_handle, window, cx)
-                    }
-                })
-                .on_click({
-                    let assistant_diff = assistant_diff.clone();
-                    move |_event, _window, cx| {
-                        assistant_diff.update(cx, |diff, cx| {
-                            diff.review_diff_hunks(
-                                vec![hunk_range.start..hunk_range.start],
-                                false,
-                                cx,
-                            );
-                        });
-                    }
-                })]
+            vec![
+                Button::new(("review", row as u64), "Review")
+                    .key_binding(KeyBinding::for_action_in(
+                        &ToggleKeep,
+                        &editor.read(cx).focus_handle(cx),
+                        window,
+                        cx,
+                    ))
+                    .on_click({
+                        let assistant_diff = assistant_diff.clone();
+                        move |_event, _window, cx| {
+                            assistant_diff.update(cx, |diff, cx| {
+                                diff.review_diff_hunks(
+                                    vec![hunk_range.start..hunk_range.start],
+                                    false,
+                                    cx,
+                                );
+                            });
+                        }
+                    }),
+            ]
         })
         .when(
             !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),
@@ -661,5 +677,96 @@ impl editor::Addon for AssistantDiffAddon {
 
     fn extend_key_context(&self, key_context: &mut gpui::KeyContext, _: &App) {
         key_context.add("assistant_diff");
+    }
+}
+
+pub struct AssistantDiffToolbar {
+    assistant_diff: Option<WeakEntity<AssistantDiff>>,
+    _workspace: WeakEntity<Workspace>,
+}
+
+impl AssistantDiffToolbar {
+    pub fn new(workspace: &Workspace, _: &mut Context<Self>) -> Self {
+        Self {
+            assistant_diff: None,
+            _workspace: workspace.weak_handle(),
+        }
+    }
+
+    fn assistant_diff(&self, _: &App) -> Option<Entity<AssistantDiff>> {
+        self.assistant_diff.as_ref()?.upgrade()
+    }
+
+    fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(assistant_diff) = self.assistant_diff(cx) {
+            assistant_diff.focus_handle(cx).focus(window);
+        }
+        let action = action.boxed_clone();
+        cx.defer(move |cx| {
+            cx.dispatch_action(action.as_ref());
+        })
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for AssistantDiffToolbar {}
+
+impl ToolbarItemView for AssistantDiffToolbar {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        self.assistant_diff = active_pane_item
+            .and_then(|item| item.act_as::<AssistantDiff>(cx))
+            .map(|entity| entity.downgrade());
+        if self.assistant_diff.is_some() {
+            ToolbarItemLocation::PrimaryRight
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+
+    fn pane_focus_update(
+        &mut self,
+        _pane_focused: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+}
+
+impl Render for AssistantDiffToolbar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let assistant_diff = match self.assistant_diff(cx) {
+            Some(ad) => ad,
+            None => return div(),
+        };
+
+        let is_empty = assistant_diff.read(cx).multibuffer.read(cx).is_empty();
+
+        if is_empty {
+            return div();
+        }
+
+        h_group_xl()
+            .my_neg_1()
+            .items_center()
+            .p_1()
+            .flex_wrap()
+            .justify_between()
+            .child(
+                h_group_sm()
+                    .child(
+                        Button::new("reject-all", "Reject All").on_click(cx.listener(
+                            |this, _, window, cx| {
+                                this.dispatch_action(&crate::RejectAll, window, cx)
+                            },
+                        )),
+                    )
+                    .child(Button::new("keep-all", "Keep All").on_click(cx.listener(
+                        |this, _, window, cx| this.dispatch_action(&crate::KeepAll, window, cx),
+                    ))),
+            )
     }
 }

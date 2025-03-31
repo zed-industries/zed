@@ -1,7 +1,7 @@
 mod supported_countries;
 
-use anyhow::{anyhow, bail, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
+use anyhow::{Result, anyhow, bail};
+use futures::{AsyncBufReadExt, AsyncReadExt, Stream, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 
@@ -127,6 +127,10 @@ pub struct GenerateContentRequest {
     pub contents: Vec<Content>,
     pub generation_config: Option<GenerationConfig>,
     pub safety_settings: Option<Vec<SafetySetting>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_config: Option<ToolConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -134,6 +138,7 @@ pub struct GenerateContentRequest {
 pub struct GenerateContentResponse {
     pub candidates: Option<Vec<GenerateContentCandidate>>,
     pub prompt_feedback: Option<PromptFeedback>,
+    pub usage_metadata: Option<UsageMetadata>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -166,6 +171,8 @@ pub enum Role {
 pub enum Part {
     TextPart(TextPart),
     InlineDataPart(InlineDataPart),
+    FunctionCallPart(FunctionCallPart),
+    FunctionResponsePart(FunctionResponsePart),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -189,6 +196,18 @@ pub struct GenerativeContentBlob {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FunctionCallPart {
+    pub function_call: FunctionCall,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionResponsePart {
+    pub function_response: FunctionResponse,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CitationSource {
     pub start_index: Option<usize>,
     pub end_index: Option<usize>,
@@ -208,6 +227,17 @@ pub struct PromptFeedback {
     pub block_reason: Option<String>,
     pub safety_ratings: Vec<SafetyRating>,
     pub block_reason_message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageMetadata {
+    pub prompt_token_count: Option<usize>,
+    pub cached_content_token_count: Option<usize>,
+    pub candidates_token_count: Option<usize>,
+    pub tool_use_prompt_token_count: Option<usize>,
+    pub thoughts_token_count: Option<usize>,
+    pub total_token_count: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -296,6 +326,53 @@ pub struct CountTokensRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CountTokensResponse {
     pub total_tokens: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionCall {
+    pub name: String,
+    pub args: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionResponse {
+    pub name: String,
+    pub response: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tool {
+    pub function_declarations: Vec<FunctionDeclaration>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolConfig {
+    pub function_calling_config: FunctionCallingConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionCallingConfig {
+    pub mode: FunctionCallingMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_function_names: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FunctionCallingMode {
+    Auto,
+    Any,
+    None,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionDeclaration {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]

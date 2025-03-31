@@ -1,7 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,9 +39,8 @@ impl Tool for BashTool {
         IconName::Terminal
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(BashToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<BashToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
@@ -81,7 +81,9 @@ impl Tool for BashTool {
             };
 
             if worktrees.next().is_some() {
-                return Task::ready(Err(anyhow!("'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.")));
+                return Task::ready(Err(anyhow!(
+                    "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly."
+                )));
             }
 
             only_worktree.read(cx).abs_path()

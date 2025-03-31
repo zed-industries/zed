@@ -1,5 +1,4 @@
 use adapters::latest_github_release;
-use anyhow::bail;
 use dap::adapters::TcpArguments;
 use gpui::AsyncApp;
 use std::path::PathBuf;
@@ -69,9 +68,7 @@ impl DebugAdapter for PhpDebugAdapter {
             .ok_or_else(|| anyhow!("Couldn't find PHP dap directory"))?
         };
 
-        let Some(tcp_connection) = config.tcp_connection.clone() else {
-            bail!("PHP Debug Adapter expects tcp connection arguments to be provided");
-        };
+        let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {

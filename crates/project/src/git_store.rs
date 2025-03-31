@@ -1,22 +1,23 @@
 pub mod git_traversal;
 
 use crate::{
+    ProjectEnvironment, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    ProjectEnvironment, ProjectItem, ProjectPath,
 };
-use anyhow::{anyhow, bail, Context as _, Result};
-use askpass::{AskPassDelegate, AskPassSession};
+use anyhow::{Context as _, Result, anyhow, bail};
+use askpass::AskPassDelegate;
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
 use fs::Fs;
 use futures::{
+    FutureExt as _, StreamExt as _,
     channel::{mpsc, oneshot},
     future::{self, OptionFuture, Shared},
-    FutureExt as _, StreamExt as _,
 };
 use git::{
+    BuildPermalinkParams, GitHostingProviderRegistry,
     blame::Blame,
     parse_git_remote_url,
     repository::{
@@ -24,25 +25,24 @@ use git::{
         Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
     status::FileStatus,
-    BuildPermalinkParams, GitHostingProviderRegistry,
 };
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     WeakEntity,
 };
 use language::{
-    proto::{deserialize_version, serialize_version},
     Buffer, BufferEvent, Language, LanguageRegistry,
+    proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
 use rpc::{
-    proto::{self, git_reset, FromProto, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
+    proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset},
 };
 use serde::Deserialize;
 use settings::WorktreeId;
 use std::{
-    collections::{hash_map, VecDeque},
+    collections::{VecDeque, hash_map},
     future::Future,
     ops::Range,
     path::{Path, PathBuf},
@@ -50,10 +50,10 @@ use std::{
 };
 use sum_tree::TreeSet;
 use text::BufferId;
-use util::{debug_panic, maybe, ResultExt};
+use util::{ResultExt, debug_panic, maybe};
 use worktree::{
-    proto_to_branch, File, PathKey, ProjectEntryId, RepositoryEntry, StatusEntry,
-    UpdatedGitRepositoriesSet, Worktree,
+    File, PathKey, ProjectEntryId, RepositoryEntry, StatusEntry, UpdatedGitRepositoriesSet,
+    Worktree, proto_to_branch,
 };
 
 pub struct GitStore {
@@ -1136,7 +1136,7 @@ impl GitStore {
         &mut self,
         buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let mut futures = Vec::new();
         for buffer in buffers {
             if let Some(diff_state) = self.diffs.get_mut(&buffer.read(cx).remote_id()) {
@@ -3098,7 +3098,6 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
@@ -3106,7 +3105,6 @@ impl Repository {
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
-                    let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository.fetch(askpass, env, cx).await
                 }
@@ -3147,7 +3145,6 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
@@ -3156,7 +3153,7 @@ impl Repository {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
                     let env = env.await;
-                    let askpass = AskPassSession::new(&executor, askpass).await?;
+                    // let askpass = AskPassSession::new(&executor, askpass).await?;
                     git_repository
                         .push(
                             branch.to_string(),
@@ -3209,7 +3206,6 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
@@ -3217,7 +3213,6 @@ impl Repository {
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
-                    let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository
                         .pull(branch.to_string(), remote.to_string(), askpass, env, cx)

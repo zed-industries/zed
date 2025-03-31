@@ -1,6 +1,6 @@
 use crate::{attach_modal::Candidate, *};
 use attach_modal::AttachModal;
-use dap::{client::SessionId, FakeAdapter};
+use dap::{FakeAdapter, client::SessionId};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
@@ -89,6 +89,8 @@ async fn test_show_attach_modal_and_select_process(
                         label: "attach example".into(),
                         initialize_args: None,
                         tcp_connection: Some(TCPHost::default()),
+                        locator: None,
+                        args: Default::default(),
                     },
                     vec![
                         Candidate {

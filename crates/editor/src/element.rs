@@ -1,6 +1,15 @@
 use crate::{
+    BlockId, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, ChunkReplacement,
+    ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow,
+    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
+    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
+    HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
+    LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
+    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
-    commit_tooltip::{blame_entry_relative_timestamp, CommitTooltip, ParsedCommitMessage},
+    commit_tooltip::{CommitTooltip, ParsedCommitMessage, blame_entry_relative_timestamp},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -10,46 +19,37 @@ use crate::{
     },
     git::blame::GitBlame,
     hover_popover::{
-        self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
+        self, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT, hover_at,
     },
     inlay_hint_settings,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, ChunkReplacement, ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk,
-    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
-    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock,
-    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
-    InlineCompletion, JumpData, LineDown, LineHighlight, LineUp, OpenExcerpts, PageDown, PageUp,
-    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
-    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use feature_flags::{Debugger, FeatureFlagAppExt};
 use file_icons::FileIcons;
-use git::{blame::BlameEntry, status::FileStatus, Oid};
+use git::{Oid, blame::BlameEntry, status::FileStatus};
 use gpui::{
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
-    relative, size, solid_background, transparent_black, Action, Along, AnyElement, App,
-    AvailableSpace, Axis as ScrollbarAxis, BorderStyle, Bounds, ClickEvent, ClipboardItem,
-    ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
-    InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
+    Action, Along, AnyElement, App, AvailableSpace, Axis as ScrollbarAxis, BorderStyle, Bounds,
+    ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
+    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
+    Hsla, InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, Window,
+    Subscription, TextRun, TextStyleRefinement, Window, anchored, deferred, div, fill,
+    linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
+    transparent_black,
 };
 use itertools::Itertools;
 use language::{
+    ChunkRendererContext,
     language_settings::{
         IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
         ShowWhitespaceSetting,
     },
-    ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -61,7 +61,7 @@ use project::{
     project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
 };
 use settings::Settings;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -71,13 +71,14 @@ use std::{
     ops::{Deref, Range},
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 use sum_tree::Bias;
 use text::BufferId;
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
-use ui::{h_flex, prelude::*, ButtonLike, ContextMenu, KeyBinding, Tooltip, POPOVER_Y_PADDING};
+use ui::{ButtonLike, ContextMenu, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*};
 use unicode_segmentation::UnicodeSegmentation;
-use util::{debug_panic, RangeExt, ResultExt};
+use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -186,6 +187,7 @@ impl EditorElement {
 
         crate::rust_analyzer_ext::apply_related_actions(editor, window, cx);
         crate::clangd_ext::apply_related_actions(editor, window, cx);
+
         register_action(editor, window, Editor::open_context_menu);
         register_action(editor, window, Editor::move_left);
         register_action(editor, window, Editor::move_right);
@@ -713,9 +715,27 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        if position_map.gutter_hitbox.is_hovered(window) {
+            let gutter_right_padding = editor.gutter_dimensions.right_padding;
+            let hitbox = &position_map.gutter_hitbox;
+
+            if event.position.x <= hitbox.bounds.right() - gutter_right_padding {
+                let point_for_position = position_map.point_for_position(event.position);
+                editor.set_breakpoint_context_menu(
+                    point_for_position.previous_valid.row(),
+                    None,
+                    event.position,
+                    window,
+                    cx,
+                );
+            }
+            return;
+        }
+
         if !position_map.text_hitbox.is_hovered(window) {
             return;
         }
+
         let point_for_position = position_map.point_for_position(event.position);
         mouse_context_menu::deploy_context_menu(
             editor,
@@ -889,7 +909,6 @@ impl EditorElement {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
-        editor.gutter_breakpoint_indicator = None;
         editor.mouse_cursor_hidden = false;
 
         if gutter_hovered {
@@ -906,8 +925,38 @@ impl EditorElement {
                 .buffer_for_excerpt(buffer_anchor.excerpt_id)
                 .is_some_and(|buffer| buffer.file().is_some())
             {
-                editor.gutter_breakpoint_indicator = Some(new_point);
+                let was_hovered = editor.gutter_breakpoint_indicator.0.is_some();
+                let is_visible = editor
+                    .gutter_breakpoint_indicator
+                    .0
+                    .map_or(false, |(_, is_active)| is_active);
+                editor.gutter_breakpoint_indicator.0 = Some((new_point, is_visible));
+
+                editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
+                    cx.spawn(async move |this, cx| {
+                        if !was_hovered {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(200))
+                                .await;
+                        }
+
+                        this.update(cx, |this, cx| {
+                            if let Some((_, is_active)) =
+                                this.gutter_breakpoint_indicator.0.as_mut()
+                            {
+                                *is_active = true;
+                            }
+
+                            cx.notify();
+                        })
+                        .ok();
+                    })
+                });
+            } else {
+                editor.gutter_breakpoint_indicator = (None, None);
             }
+        } else {
+            editor.gutter_breakpoint_indicator = (None, None);
         }
 
         cx.notify();
@@ -3965,6 +4014,7 @@ impl EditorElement {
                         *is_created_file,
                         line_height,
                         &editor,
+                        window,
                         cx,
                     );
                     let size =
@@ -4140,8 +4190,7 @@ impl EditorElement {
                     None;
                 for (&new_row, &new_background) in &layout.highlighted_rows {
                     match &mut current_paint {
-                        Some((current_background, current_range, mut edges)) => {
-                            let current_background = *current_background;
+                        &mut Some((current_background, ref mut current_range, mut edges)) => {
                             let new_range_started = current_background != new_background
                                 || current_range.end.next_row() != new_row;
                             if new_range_started {
@@ -6833,14 +6882,16 @@ impl Element for EditorElement {
                     // has their mouse over that line when a breakpoint isn't there
                     if cx.has_flag::<Debugger>() {
                         let gutter_breakpoint_indicator =
-                            self.editor.read(cx).gutter_breakpoint_indicator;
-                        if let Some(gutter_breakpoint_point) = gutter_breakpoint_indicator {
+                            self.editor.read(cx).gutter_breakpoint_indicator.0;
+                        if let Some((gutter_breakpoint_point, _)) =
+                            gutter_breakpoint_indicator.filter(|(_, is_active)| *is_active)
+                        {
                             breakpoint_rows
                                 .entry(gutter_breakpoint_point.row())
                                 .or_insert_with(|| {
                                     let position = snapshot.display_point_to_anchor(
                                         gutter_breakpoint_point,
-                                        Bias::Left,
+                                        Bias::Right,
                                     );
                                     let breakpoint = Breakpoint::new_standard();
 
@@ -8439,9 +8490,9 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
+        Editor, MultiBuffer,
         display_map::{BlockPlacement, BlockProperties},
         editor_tests::{init_test, update_test_language_settings},
-        Editor, MultiBuffer,
     };
     use gpui::{TestAppContext, VisualTestContext};
     use language::language_settings;
@@ -8741,8 +8792,10 @@ mod tests {
                     px(500.0),
                     show_line_numbers,
                 );
-                assert!(invisibles.is_empty(),
-                    "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
+                assert!(
+                    invisibles.is_empty(),
+                    "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}"
+                );
             }
         }
     }
@@ -8820,7 +8873,9 @@ mod tests {
                             (Invisible::Whitespace { .. }, Invisible::Whitespace { .. })
                             | (Invisible::Tab { .. }, Invisible::Tab { .. }) => {}
                             _ => {
-                                panic!("At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}")
+                                panic!(
+                                    "At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}"
+                                )
                             }
                         },
                         None => {

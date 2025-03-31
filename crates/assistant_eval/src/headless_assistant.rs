@@ -1,11 +1,11 @@
 use anyhow::anyhow;
-use assistant2::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use assistant_tool::ToolWorkingSet;
+use assistant2::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use client::{Client, UserStore};
 use collections::HashMap;
 use dap::DapRegistry;
 use futures::StreamExt;
-use gpui::{prelude::*, App, AsyncApp, Entity, SemanticVersion, Subscription, Task};
+use gpui::{App, AsyncApp, Entity, SemanticVersion, Subscription, Task, prelude::*};
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,

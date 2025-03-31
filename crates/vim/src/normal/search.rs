@@ -1,18 +1,18 @@
 use editor::Editor;
-use gpui::{actions, impl_actions, impl_internal_actions, Context, Window};
+use gpui::{Context, Window, actions, impl_actions, impl_internal_actions};
 use language::Point;
 use schemars::JsonSchema;
-use search::{buffer_search, BufferSearchBar, SearchOptions};
+use search::{BufferSearchBar, SearchOptions, buffer_search};
 use serde_derive::Deserialize;
 use std::{iter::Peekable, str::Chars, time::Duration};
 use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
+    Vim,
     command::CommandRange,
     motion::Motion,
     state::{Mode, SearchState},
-    Vim,
 };
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
@@ -590,7 +590,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::EditorSettings;
-    use editor::{display_map::DisplayRow, DisplayPoint};
+    use editor::{DisplayPoint, display_map::DisplayRow};
 
     use indoc::indoc;
     use search::BufferSearchBar;

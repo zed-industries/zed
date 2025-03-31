@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
@@ -24,7 +24,7 @@ use crate::thread_store::ThreadStore;
 
 use super::fetch_context_picker::fetch_url_content;
 use super::thread_context_picker::ThreadContextEntry;
-use super::{recent_context_picker_entries, supported_context_picker_modes, ContextPickerMode};
+use super::{ContextPickerMode, recent_context_picker_entries, supported_context_picker_modes};
 
 pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
@@ -152,7 +152,7 @@ impl ContextPickerCompletionProvider {
         let icon_for_completion = if recent {
             IconName::HistoryRerun
         } else {
-            IconName::MessageCircle
+            IconName::MessageBubbles
         };
         let new_text = format!("@thread {}", thread_entry.summary);
         let new_text_len = new_text.len();
@@ -164,7 +164,7 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_for_completion.path().into()),
             confirm: Some(confirm_completion_callback(
-                IconName::MessageCircle.path().into(),
+                IconName::MessageBubbles.path().into(),
                 thread_entry.summary.clone(),
                 excerpt_id,
                 source_range.start,

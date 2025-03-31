@@ -9,8 +9,8 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::Buffer;
-use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
-use workspace::{notifications::NotifyResultExt, Workspace};
+use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::context::{ContextId, ContextKind};
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
@@ -239,11 +239,7 @@ impl ContextStrip {
         let eraser = if bounds.len() < 3 { 0 } else { 1 };
         let pills = &bounds[1..bounds.len() - eraser];
 
-        if pills.is_empty() {
-            None
-        } else {
-            Some(pills)
-        }
+        if pills.is_empty() { None } else { Some(pills) }
     }
 
     fn last_pill_index(&self) -> Option<usize> {

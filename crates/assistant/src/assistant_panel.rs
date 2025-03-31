@@ -1,43 +1,44 @@
-use crate::assistant_configuration::{ConfigurationView, ConfigurationViewEvent};
 use crate::Assistant;
+use crate::assistant_configuration::{ConfigurationView, ConfigurationViewEvent};
 use crate::{
-    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, InlineAssistant, NewChat,
+    DeployHistory, InlineAssistant, NewChat, terminal_inline_assistant::TerminalInlineAssistant,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_context_editor::{
-    make_lsp_adapter_delegate, AssistantContext, AssistantPanelDelegate, ContextEditor,
-    ContextEditorToolbarItem, ContextEditorToolbarItemEvent, ContextHistory, ContextId,
-    ContextStore, ContextStoreEvent, InsertDraggedFiles, SlashCommandCompletionProvider,
-    DEFAULT_TAB_TITLE,
+    AssistantContext, AssistantPanelDelegate, ContextEditor, ContextEditorToolbarItem,
+    ContextEditorToolbarItemEvent, ContextHistory, ContextId, ContextStore, ContextStoreEvent,
+    DEFAULT_TAB_TITLE, InsertDraggedFiles, SlashCommandCompletionProvider,
+    make_lsp_adapter_delegate,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
-use client::{proto, Client, Status};
+use client::{Client, Status, proto};
 use editor::{Editor, EditorEvent};
 use fs::Fs;
 use gpui::{
-    prelude::*, Action, App, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, ParentElement, Pixels, Render, Styled,
-    Subscription, Task, UpdateGlobal, WeakEntity,
+    Action, App, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task,
+    UpdateGlobal, WeakEntity, prelude::*,
 };
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
-use prompt_library::{open_prompt_library, PromptLibrary};
+use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
-use search::{buffer_search::DivRegistrar, BufferSearchBar};
-use settings::{update_settings_file, Settings};
+use search::{BufferSearchBar, buffer_search::DivRegistrar};
+use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
-use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
-use util::{maybe, ResultExt};
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
+use util::{ResultExt, maybe};
 use workspace::DraggedTab;
 use workspace::{
+    DraggedSelection, Pane, ShowConfiguration, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    pane, DraggedSelection, Pane, ShowConfiguration, ToggleZoom, Workspace,
+    pane,
 };
 use zed_actions::assistant::{InlineAssist, OpenPromptLibrary, ToggleFocus};
 

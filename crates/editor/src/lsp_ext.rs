@@ -1,9 +1,8 @@
-use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
 use crate::Editor;
-use collections::HashMap;
-use gpui::{App, Entity};
+use gpui::{App, AppContext as _, Entity, Task};
+use itertools::Itertools;
 use language::Buffer;
 use language::Language;
 use lsp::LanguageServerId;
@@ -14,44 +13,50 @@ pub(crate) fn find_specific_language_server_in_selection<F>(
     cx: &mut App,
     filter_language: F,
     language_server_name: &str,
-) -> Option<(Anchor, Arc<Language>, LanguageServerId, Entity<Buffer>)>
+) -> Task<Option<(Anchor, Arc<Language>, LanguageServerId, Entity<Buffer>)>>
 where
     F: Fn(&Language) -> bool,
 {
     let Some(project) = &editor.project else {
-        return None;
+        return Task::ready(None);
     };
-    let mut language_servers_for = HashMap::default();
-    editor
+
+    let applicable_buffers = editor
         .selections
         .disjoint_anchors()
         .iter()
         .filter(|selection| selection.start == selection.end)
-        .filter_map(|selection| Some((selection.start.buffer_id?, selection.start)))
-        .find_map(|(buffer_id, trigger_anchor)| {
+        .filter_map(|selection| Some((selection.start, selection.start.buffer_id?)))
+        .filter_map(|(trigger_anchor, buffer_id)| {
             let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
-            let server_id = *match language_servers_for.entry(buffer_id) {
-                Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
-                Entry::Vacant(vacant_entry) => {
-                    let language_server_id = buffer.update(cx, |buffer, cx| {
-                        project.update(cx, |project, cx| {
-                            project.language_server_id_for_name(buffer, language_server_name, cx)
-                        })
-                    });
-                    vacant_entry.insert(language_server_id)
-                }
-            }
-            .as_ref()?;
-
             let language = buffer.read(cx).language_at(trigger_anchor.text_anchor)?;
-            if !filter_language(&language) {
-                return None;
+            if filter_language(&language) {
+                Some((trigger_anchor, buffer, language))
+            } else {
+                None
             }
-            Some((
-                trigger_anchor,
-                Arc::clone(&language),
-                server_id,
-                buffer.clone(),
-            ))
         })
+        .unique_by(|(_, buffer, _)| buffer.read(cx).remote_id())
+        .collect::<Vec<_>>();
+
+    let applicable_buffer_tasks = applicable_buffers
+        .into_iter()
+        .map(|(trigger_anchor, buffer, language)| {
+            let task = buffer.update(cx, |buffer, cx| {
+                project.update(cx, |project, cx| {
+                    project.language_server_id_for_name(buffer, language_server_name, cx)
+                })
+            });
+            (trigger_anchor, buffer, language, task)
+        })
+        .collect::<Vec<_>>();
+    cx.background_spawn(async move {
+        for (trigger_anchor, buffer, language, task) in applicable_buffer_tasks {
+            if let Some(server_id) = task.await {
+                return Some((trigger_anchor, language, server_id, buffer));
+            }
+        }
+
+        None
+    })
 }

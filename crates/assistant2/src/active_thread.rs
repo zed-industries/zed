@@ -1,3 +1,4 @@
+use crate::AssistantPanel;
 use crate::context::{AssistantContext, ContextId};
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
@@ -6,16 +7,15 @@ use crate::thread::{
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AgentNotification, AgentNotificationEvent, ContextPill};
-use crate::AssistantPanel;
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
-    Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton, ScrollHandle, Stateful,
-    StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle,
-    WeakEntity, WindowHandle,
+    AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength,
+    EdgesRefinement, Empty, Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton,
+    PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription, Task,
+    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
+    linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -27,11 +27,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
-use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip};
+use ui::{Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
-use crate::context_store::{refresh_context_store_text, ContextStore};
+use crate::context_store::{ContextStore, refresh_context_store_text};
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
@@ -532,14 +532,9 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<ActiveThread>,
     ) {
-        if window.is_window_active()
-            || !self.notifications.is_empty()
-            || !AssistantSettings::get_global(cx).notify_when_agent_waiting
-        {
+        if window.is_window_active() || !self.notifications.is_empty() {
             return;
         }
-
-        let caption = caption.into();
 
         let title = self
             .thread
@@ -547,73 +542,96 @@ impl ActiveThread {
             .summary()
             .unwrap_or("Agent Panel".into());
 
-        for screen in cx.displays() {
-            let options = AgentNotification::window_options(screen, cx);
+        match AssistantSettings::get_global(cx).notify_when_agent_waiting {
+            NotifyWhenAgentWaiting::PrimaryScreen => {
+                if let Some(primary) = cx.primary_display() {
+                    self.pop_up(icon, caption.into(), title.clone(), window, primary, cx);
+                }
+            }
+            NotifyWhenAgentWaiting::AllScreens => {
+                let caption = caption.into();
+                for screen in cx.displays() {
+                    self.pop_up(icon, caption.clone(), title.clone(), window, screen, cx);
+                }
+            }
+            NotifyWhenAgentWaiting::Never => {
+                // Don't show anything
+            }
+        }
+    }
 
-            if let Some(screen_window) = cx
-                .open_window(options, |_, cx| {
-                    cx.new(|_| AgentNotification::new(title.clone(), caption.clone(), icon))
-                })
-                .log_err()
-            {
-                if let Some(pop_up) = screen_window.entity(cx).log_err() {
-                    self.notification_subscriptions
-                        .entry(screen_window)
-                        .or_insert_with(Vec::new)
-                        .push(cx.subscribe_in(&pop_up, window, {
-                            |this, _, event, window, cx| match event {
-                                AgentNotificationEvent::Accepted => {
-                                    let handle = window.window_handle();
-                                    cx.activate(true); // Switch back to the Zed application
+    fn pop_up(
+        &mut self,
+        icon: IconName,
+        caption: SharedString,
+        title: SharedString,
+        window: &mut Window,
+        screen: Rc<dyn PlatformDisplay>,
+        cx: &mut Context<'_, ActiveThread>,
+    ) {
+        let options = AgentNotification::window_options(screen, cx);
 
-                                    let workspace_handle = this.workspace.clone();
+        if let Some(screen_window) = cx
+            .open_window(options, |_, cx| {
+                cx.new(|_| AgentNotification::new(title.clone(), caption.clone(), icon))
+            })
+            .log_err()
+        {
+            if let Some(pop_up) = screen_window.entity(cx).log_err() {
+                self.notification_subscriptions
+                    .entry(screen_window)
+                    .or_insert_with(Vec::new)
+                    .push(cx.subscribe_in(&pop_up, window, {
+                        |this, _, event, window, cx| match event {
+                            AgentNotificationEvent::Accepted => {
+                                let handle = window.window_handle();
+                                cx.activate(true); // Switch back to the Zed application
 
-                                    // If there are multiple Zed windows, activate the correct one.
-                                    cx.defer(move |cx| {
-                                        handle
-                                            .update(cx, |_view, window, _cx| {
-                                                window.activate_window();
+                                let workspace_handle = this.workspace.clone();
 
-                                                if let Some(workspace) = workspace_handle.upgrade()
-                                                {
-                                                    workspace.update(_cx, |workspace, cx| {
-                                                        workspace.focus_panel::<AssistantPanel>(
-                                                            window, cx,
-                                                        );
-                                                    });
-                                                }
-                                            })
-                                            .log_err();
+                                // If there are multiple Zed windows, activate the correct one.
+                                cx.defer(move |cx| {
+                                    handle
+                                        .update(cx, |_view, window, _cx| {
+                                            window.activate_window();
+
+                                            if let Some(workspace) = workspace_handle.upgrade() {
+                                                workspace.update(_cx, |workspace, cx| {
+                                                    workspace
+                                                        .focus_panel::<AssistantPanel>(window, cx);
+                                                });
+                                            }
+                                        })
+                                        .log_err();
+                                });
+
+                                this.dismiss_notifications(cx);
+                            }
+                            AgentNotificationEvent::Dismissed => {
+                                this.dismiss_notifications(cx);
+                            }
+                        }
+                    }));
+
+                self.notifications.push(screen_window);
+
+                // If the user manually refocuses the original window, dismiss the popup.
+                self.notification_subscriptions
+                    .entry(screen_window)
+                    .or_insert_with(Vec::new)
+                    .push({
+                        let pop_up_weak = pop_up.downgrade();
+
+                        cx.observe_window_activation(window, move |_, window, cx| {
+                            if window.is_window_active() {
+                                if let Some(pop_up) = pop_up_weak.upgrade() {
+                                    pop_up.update(cx, |_, cx| {
+                                        cx.emit(AgentNotificationEvent::Dismissed);
                                     });
-
-                                    this.dismiss_notifications(cx);
-                                }
-                                AgentNotificationEvent::Dismissed => {
-                                    this.dismiss_notifications(cx);
                                 }
                             }
-                        }));
-
-                    self.notifications.push(screen_window);
-
-                    // If the user manually refocuses the original window, dismiss the popup.
-                    self.notification_subscriptions
-                        .entry(screen_window)
-                        .or_insert_with(Vec::new)
-                        .push({
-                            let pop_up_weak = pop_up.downgrade();
-
-                            cx.observe_window_activation(window, move |_, window, cx| {
-                                if window.is_window_active() {
-                                    if let Some(pop_up) = pop_up_weak.upgrade() {
-                                        pop_up.update(cx, |_, cx| {
-                                            cx.emit(AgentNotificationEvent::Dismissed);
-                                        });
-                                    }
-                                }
-                            })
-                        });
-                }
+                        })
+                    });
             }
         }
     }
@@ -1250,7 +1268,7 @@ impl ActiveThread {
 
         let editor_bg = cx.theme().colors().editor_background;
 
-        div().py_2().child(
+        div().pt_0p5().pb_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
@@ -1394,216 +1412,298 @@ impl ActiveThread {
         )
     }
 
-    fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_tool_use(
+        &self,
+        tool_use: ToolUse,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let is_open = self
             .expanded_tool_uses
             .get(&tool_use.id)
             .copied()
             .unwrap_or_default();
 
-        div().py_2().child(
-            v_flex()
-                .rounded_lg()
-                .border_1()
-                .border_color(self.tool_card_border_color(cx))
-                .overflow_hidden()
-                .child(
-                    h_flex()
-                        .group("disclosure-header")
-                        .relative()
-                        .gap_1p5()
-                        .justify_between()
-                        .py_1()
-                        .px_2()
-                        .bg(self.tool_card_header_bg(cx))
-                        .map(|element| {
-                            if is_open {
-                                element.border_b_1().rounded_t_md()
-                            } else {
-                                element.rounded_md()
-                            }
-                        })
+        let status_icons = div().child({
+            let (icon_name, color, animated) = match &tool_use.status {
+                ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
+                    (IconName::Warning, Color::Warning, false)
+                }
+                ToolUseStatus::Running => (IconName::ArrowCircle, Color::Accent, true),
+                ToolUseStatus::Finished(_) => (IconName::Check, Color::Success, false),
+                ToolUseStatus::Error(_) => (IconName::Close, Color::Error, false),
+            };
+
+            let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
+
+            if animated {
+                icon.with_animation(
+                    "arrow-circle",
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                )
+                .into_any_element()
+            } else {
+                icon.into_any_element()
+            }
+        });
+
+        let content_container = || v_flex().py_1().gap_0p5().px_2p5();
+        let results_content = v_flex()
+            .gap_1()
+            .child(
+                content_container()
+                    .child(
+                        Label::new("Input")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    )
+                    .child(
+                        Label::new(
+                            serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
+                        )
+                        .size(LabelSize::Small)
+                        .buffer_font(cx),
+                    ),
+            )
+            .map(|container| match tool_use.status {
+                ToolUseStatus::Finished(output) => container.child(
+                    content_container()
+                        .border_t_1()
                         .border_color(self.tool_card_border_color(cx))
                         .child(
-                            h_flex()
-                                .id("tool-label-container")
-                                .relative()
-                                .gap_1p5()
-                                .max_w_full()
-                                .overflow_x_scroll()
-                                .child(
-                                    Icon::new(tool_use.icon)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .child(h_flex().pr_8().text_ui_sm(cx).children(
-                                    self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
-                                )),
+                            Label::new("Result")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx),
                         )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    div().visible_on_hover("disclosure-header").child(
-                                        Disclosure::new("tool-use-disclosure", is_open)
-                                            .opened_icon(IconName::ChevronUp)
-                                            .closed_icon(IconName::ChevronDown)
-                                            .on_click(cx.listener({
-                                                let tool_use_id = tool_use.id.clone();
-                                                move |this, _event, _window, _cx| {
-                                                    let is_open = this
-                                                        .expanded_tool_uses
-                                                        .entry(tool_use_id.clone())
-                                                        .or_insert(false);
-
-                                                    *is_open = !*is_open;
-                                                }
-                                            })),
-                                    ),
-                                )
-                                .child({
-                                    let (icon_name, color, animated) = match &tool_use.status {
-                                        ToolUseStatus::Pending
-                                        | ToolUseStatus::NeedsConfirmation => {
-                                            (IconName::Warning, Color::Warning, false)
-                                        }
-                                        ToolUseStatus::Running => {
-                                            (IconName::ArrowCircle, Color::Accent, true)
-                                        }
-                                        ToolUseStatus::Finished(_) => {
-                                            (IconName::Check, Color::Success, false)
-                                        }
-                                        ToolUseStatus::Error(_) => {
-                                            (IconName::Close, Color::Error, false)
-                                        }
-                                    };
-
-                                    let icon =
-                                        Icon::new(icon_name).color(color).size(IconSize::Small);
-
-                                    if animated {
-                                        icon.with_animation(
-                                            "arrow-circle",
-                                            Animation::new(Duration::from_secs(2)).repeat(),
-                                            |icon, delta| {
-                                                icon.transform(Transformation::rotate(percentage(
-                                                    delta,
-                                                )))
-                                            },
-                                        )
-                                        .into_any_element()
-                                    } else {
-                                        icon.into_any_element()
-                                    }
-                                }),
-                        )
-                        .child(div().h_full().absolute().w_8().bottom_0().right_12().bg(
-                            linear_gradient(
-                                90.,
-                                linear_color_stop(self.tool_card_header_bg(cx), 1.),
-                                linear_color_stop(self.tool_card_header_bg(cx).opacity(0.2), 0.),
-                            ),
-                        )),
-                )
-                .map(|parent| {
-                    if !is_open {
-                        return parent;
-                    }
-
-                    let content_container = || v_flex().py_1().gap_0p5().px_2p5();
-
-                    parent.child(
-                        v_flex()
+                        .child(Label::new(output).size(LabelSize::Small).buffer_font(cx)),
+                ),
+                ToolUseStatus::Running => container.child(
+                    content_container().child(
+                        h_flex()
                             .gap_1()
-                            .bg(cx.theme().colors().editor_background)
-                            .rounded_b_lg()
+                            .pb_1()
+                            .border_t_1()
+                            .border_color(self.tool_card_border_color(cx))
                             .child(
-                                content_container()
-                                    .border_b_1()
-                                    .border_color(self.tool_card_border_color(cx))
-                                    .child(
-                                        Label::new("Input")
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted)
-                                            .buffer_font(cx),
-                                    )
-                                    .child(
-                                        Label::new(
-                                            serde_json::to_string_pretty(&tool_use.input)
-                                                .unwrap_or_default(),
-                                        )
-                                        .size(LabelSize::Small)
-                                        .buffer_font(cx),
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Accent)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
                                     ),
                             )
-                            .map(|container| match tool_use.status {
-                                ToolUseStatus::Finished(output) => container.child(
-                                    content_container()
+                            .child(
+                                Label::new("Running…")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .buffer_font(cx),
+                            ),
+                    ),
+                ),
+                ToolUseStatus::Error(err) => container.child(
+                    content_container()
+                        .border_t_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .child(
+                            Label::new("Error")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx),
+                        )
+                        .child(Label::new(err).size(LabelSize::Small).buffer_font(cx)),
+                ),
+                ToolUseStatus::Pending => container,
+                ToolUseStatus::NeedsConfirmation => container.child(
+                    content_container()
+                        .border_t_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .child(
+                            Label::new("Asking Permission")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .buffer_font(cx),
+                        ),
+                ),
+            });
+
+        fn gradient_overlay(color: Hsla) -> impl IntoElement {
+            div()
+                .h_full()
+                .absolute()
+                .w_8()
+                .bottom_0()
+                .right_12()
+                .bg(linear_gradient(
+                    90.,
+                    linear_color_stop(color, 1.),
+                    linear_color_stop(color.opacity(0.2), 0.),
+                ))
+        }
+
+        div().map(|this| {
+            if !tool_use.needs_confirmation {
+                this.py_2p5().child(
+                    v_flex()
+                        .child(
+                            h_flex()
+                                .group("disclosure-header")
+                                .relative()
+                                .gap_1p5()
+                                .justify_between()
+                                .opacity(0.8)
+                                .hover(|style| style.opacity(1.))
+                                .pr_2()
+                                .child(
+                                    h_flex()
+                                        .id("tool-label-container")
+                                        .gap_1p5()
+                                        .max_w_full()
+                                        .overflow_x_scroll()
                                         .child(
-                                            Label::new("Result")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted)
-                                                .buffer_font(cx),
+                                            Icon::new(tool_use.icon)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
                                         )
                                         .child(
-                                            Label::new(output)
-                                                .size(LabelSize::Small)
-                                                .buffer_font(cx),
-                                        ),
-                                ),
-                                ToolUseStatus::Running => container.child(
-                                    content_container().child(
-                                        h_flex()
-                                            .gap_1()
-                                            .pb_1()
-                                            .child(
-                                                Icon::new(IconName::ArrowCircle)
-                                                    .size(IconSize::Small)
-                                                    .color(Color::Accent)
-                                                    .with_animation(
-                                                        "arrow-circle",
-                                                        Animation::new(Duration::from_secs(2))
-                                                            .repeat(),
-                                                        |icon, delta| {
-                                                            icon.transform(Transformation::rotate(
-                                                                percentage(delta),
-                                                            ))
-                                                        },
-                                                    ),
-                                            )
-                                            .child(
-                                                Label::new("Running…")
-                                                    .size(LabelSize::XSmall)
-                                                    .color(Color::Muted)
-                                                    .buffer_font(cx),
+                                            h_flex().pr_8().text_ui_sm(cx).children(
+                                                self.rendered_tool_use_labels
+                                                    .get(&tool_use.id)
+                                                    .cloned(),
                                             ),
-                                    ),
-                                ),
-                                ToolUseStatus::Error(err) => container.child(
-                                    content_container()
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_1()
                                         .child(
-                                            Label::new("Error")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted)
-                                                .buffer_font(cx),
+                                            div().visible_on_hover("disclosure-header").child(
+                                                Disclosure::new("tool-use-disclosure", is_open)
+                                                    .opened_icon(IconName::ChevronUp)
+                                                    .closed_icon(IconName::ChevronDown)
+                                                    .on_click(cx.listener({
+                                                        let tool_use_id = tool_use.id.clone();
+                                                        move |this, _event, _window, _cx| {
+                                                            let is_open = this
+                                                                .expanded_tool_uses
+                                                                .entry(tool_use_id.clone())
+                                                                .or_insert(false);
+
+                                                            *is_open = !*is_open;
+                                                        }
+                                                    })),
+                                            ),
+                                        )
+                                        .child(status_icons),
+                                )
+                                .child(gradient_overlay(cx.theme().colors().panel_background)),
+                        )
+                        .map(|parent| {
+                            if !is_open {
+                                return parent;
+                            }
+
+                            parent.child(
+                                v_flex()
+                                    .mt_1()
+                                    .border_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .bg(cx.theme().colors().editor_background)
+                                    .rounded_lg()
+                                    .child(results_content),
+                            )
+                        }),
+                )
+            } else {
+                this.py_2().child(
+                    v_flex()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .overflow_hidden()
+                        .child(
+                            h_flex()
+                                .group("disclosure-header")
+                                .relative()
+                                .gap_1p5()
+                                .justify_between()
+                                .py_1()
+                                .px_2()
+                                .bg(self.tool_card_header_bg(cx))
+                                .map(|element| {
+                                    if is_open {
+                                        element.border_b_1().rounded_t_md()
+                                    } else {
+                                        element.rounded_md()
+                                    }
+                                })
+                                .border_color(self.tool_card_border_color(cx))
+                                .child(
+                                    h_flex()
+                                        .id("tool-label-container")
+                                        .gap_1p5()
+                                        .max_w_full()
+                                        .overflow_x_scroll()
+                                        .child(
+                                            Icon::new(tool_use.icon)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
                                         )
                                         .child(
-                                            Label::new(err).size(LabelSize::Small).buffer_font(cx),
+                                            h_flex().pr_8().text_ui_sm(cx).children(
+                                                self.rendered_tool_use_labels
+                                                    .get(&tool_use.id)
+                                                    .cloned(),
+                                            ),
                                         ),
-                                ),
-                                ToolUseStatus::Pending => container,
-                                ToolUseStatus::NeedsConfirmation => container.child(
-                                    content_container().child(
-                                        Label::new("Asking Permission")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .buffer_font(cx),
-                                    ),
-                                ),
-                            }),
-                    )
-                }),
-        )
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            div().visible_on_hover("disclosure-header").child(
+                                                Disclosure::new("tool-use-disclosure", is_open)
+                                                    .opened_icon(IconName::ChevronUp)
+                                                    .closed_icon(IconName::ChevronDown)
+                                                    .on_click(cx.listener({
+                                                        let tool_use_id = tool_use.id.clone();
+                                                        move |this, _event, _window, _cx| {
+                                                            let is_open = this
+                                                                .expanded_tool_uses
+                                                                .entry(tool_use_id.clone())
+                                                                .or_insert(false);
+
+                                                            *is_open = !*is_open;
+                                                        }
+                                                    })),
+                                            ),
+                                        )
+                                        .child(status_icons),
+                                )
+                                .child(gradient_overlay(self.tool_card_header_bg(cx))),
+                        )
+                        .map(|parent| {
+                            if !is_open {
+                                return parent;
+                            }
+
+                            parent.child(
+                                v_flex()
+                                    .bg(cx.theme().colors().editor_background)
+                                    .rounded_b_lg()
+                                    .child(results_content),
+                            )
+                        }),
+                )
+            }
+        })
     }
 
     fn render_rules_item(&self, cx: &Context<Self>) -> AnyElement {
@@ -1691,12 +1791,13 @@ impl ActiveThread {
     fn handle_deny_tool(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
         _: &ClickEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.thread.update(cx, |thread, cx| {
-            thread.deny_tool_use(tool_use_id, cx);
+            thread.deny_tool_use(tool_use_id, tool_name, cx);
         });
     }
 
@@ -1769,10 +1870,12 @@ impl ActiveThread {
                                     })
                                     .child({
                                         let tool_id = tool.id.clone();
+                                        let tool_name = tool.name.clone();
                                         Button::new("deny-tool", "Deny").on_click(cx.listener(
                                             move |this, event, window, cx| {
                                                 this.handle_deny_tool(
                                                     tool_id.clone(),
+                                                    tool_name.clone(),
                                                     event,
                                                     window,
                                                     cx,

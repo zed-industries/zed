@@ -5,11 +5,11 @@ use language::{Bias, Point, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 
 use crate::{
+    Vim,
     motion::Motion,
     normal::{ChangeCase, ConvertToLowerCase, ConvertToUpperCase},
     object::Object,
     state::Mode,
-    Vim,
 };
 
 pub enum CaseTarget {
@@ -37,7 +37,7 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Left);
                         selection_starts.insert(selection.id, anchor);
-                        motion.expand_selection(map, selection, times, false, &text_layout_details);
+                        motion.expand_selection(map, selection, times, &text_layout_details);
                     });
                 });
                 match mode {
@@ -146,18 +146,9 @@ impl Vim {
             let mut ranges = Vec::new();
             let mut cursor_positions = Vec::new();
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            for selection in editor.selections.all::<Point>(cx) {
+            for selection in editor.selections.all_adjusted(cx) {
                 match vim.mode {
-                    Mode::VisualLine => {
-                        let start = Point::new(selection.start.row, 0);
-                        let end = Point::new(
-                            selection.end.row,
-                            snapshot.line_len(MultiBufferRow(selection.end.row)),
-                        );
-                        ranges.push(start..end);
-                        cursor_positions.push(start..start);
-                    }
-                    Mode::Visual => {
+                    Mode::Visual | Mode::VisualLine => {
                         ranges.push(selection.start..selection.end);
                         cursor_positions.push(selection.start..selection.start);
                     }

@@ -50,7 +50,7 @@ impl ContextKind {
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
             ContextKind::FetchedUrl => IconName::Globe,
-            ContextKind::Thread => IconName::MessageCircle,
+            ContextKind::Thread => IconName::MessageBubbles,
         }
     }
 }

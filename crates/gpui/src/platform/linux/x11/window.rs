@@ -1,17 +1,17 @@
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 
 use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs,
-    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowKind, WindowParams, X11ClientStatePtr,
+    AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    WindowParams, X11ClientStatePtr, px, size,
 };
 
 use blade_graphics as gpu;
 use raw_window_handle as rwh;
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},
@@ -31,7 +31,7 @@ use std::{
     sync::Arc,
 };
 
-use super::{X11Display, XINPUT_ALL_DEVICES, XINPUT_ALL_DEVICE_GROUPS};
+use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
         XA_ATOM,
@@ -186,12 +186,15 @@ fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> VisualSet {
                 colormap: 0,
                 depth: depth_info.depth,
             };
-            log::debug!("Visual id: {}, class: {:?}, depth: {}, bits_per_value: {}, masks: 0x{:x} 0x{:x} 0x{:x}",
+            log::debug!(
+                "Visual id: {}, class: {:?}, depth: {}, bits_per_value: {}, masks: 0x{:x} 0x{:x} 0x{:x}",
                 visual_type.visual_id,
                 visual_type.class,
                 depth_info.depth,
                 visual_type.bits_per_rgb_value,
-                visual_type.red_mask, visual_type.green_mask, visual_type.blue_mask,
+                visual_type.red_mask,
+                visual_type.green_mask,
+                visual_type.blue_mask,
             );
 
             if (
@@ -409,15 +412,27 @@ impl X11WindowState {
 
         let mut bounds = params.bounds.to_device_pixels(scale_factor);
         if bounds.size.width.0 == 0 || bounds.size.height.0 == 0 {
-            log::warn!("Window bounds contain a zero value. height={}, width={}. Falling back to defaults.", bounds.size.height.0, bounds.size.width.0);
+            log::warn!(
+                "Window bounds contain a zero value. height={}, width={}. Falling back to defaults.",
+                bounds.size.height.0,
+                bounds.size.width.0
+            );
             bounds.size.width = 800.into();
             bounds.size.height = 600.into();
         }
 
         check_reply(
             || {
-                format!("X11 CreateWindow failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x.0: {}, bounds.origin.y.0: {}, bounds.size.width.0: {}, bounds.size.height.0: {}",
-                                visual.depth, x_window, visual_set.root, bounds.origin.x.0 + 2, bounds.origin.y.0, bounds.size.width.0, bounds.size.height.0)
+                format!(
+                    "X11 CreateWindow failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x.0: {}, bounds.origin.y.0: {}, bounds.size.width.0: {}, bounds.size.height.0: {}",
+                    visual.depth,
+                    x_window,
+                    visual_set.root,
+                    bounds.origin.x.0 + 2,
+                    bounds.origin.y.0,
+                    bounds.size.width.0,
+                    bounds.size.height.0
+                )
             },
             xcb.create_window(
                 visual.depth,
@@ -1141,6 +1156,30 @@ impl PlatformWindow for X11Window {
         state
             .content_size()
             .map(|size| size.div(state.scale_factor))
+    }
+
+    fn resize(&mut self, size: Size<Pixels>) {
+        let state = self.0.state.borrow();
+        let size = size.to_device_pixels(state.scale_factor);
+        let width = size.width.0 as u32;
+        let height = size.height.0 as u32;
+
+        check_reply(
+            || {
+                format!(
+                    "X11 ConfigureWindow failed. width: {}, height: {}",
+                    width, height
+                )
+            },
+            self.0.xcb.configure_window(
+                self.0.x_window,
+                &xproto::ConfigureWindowAux::new()
+                    .width(width)
+                    .height(height),
+            ),
+        )
+        .log_err();
+        self.flush().log_err();
     }
 
     fn scale_factor(&self) -> f32 {

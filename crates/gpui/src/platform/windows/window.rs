@@ -17,13 +17,13 @@ use futures::channel::oneshot::{self, Receiver};
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use windows::{
-    core::*,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
+    core::*,
 };
 
 use crate::platform::blade::{BladeContext, BladeRenderer};
@@ -518,6 +518,32 @@ impl PlatformWindow for WindowsWindow {
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.0.state.borrow().content_size()
+    }
+
+    fn resize(&mut self, size: Size<Pixels>) {
+        let hwnd = self.0.hwnd;
+        let bounds =
+            crate::bounds(self.bounds().origin, size).to_device_pixels(self.scale_factor());
+        let rect = calculate_window_rect(bounds, self.0.state.borrow().border_offset);
+
+        self.0
+            .executor
+            .spawn(async move {
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        bounds.origin.x.0,
+                        bounds.origin.y.0,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                        SWP_NOMOVE,
+                    )
+                    .context("unable to set window content size")
+                    .log_err();
+                }
+            })
+            .detach();
     }
 
     fn scale_factor(&self) -> f32 {
@@ -1300,7 +1326,7 @@ mod windows_renderer {
 #[cfg(test)]
 mod tests {
     use super::ClickState;
-    use crate::{point, DevicePixels, MouseButton};
+    use crate::{DevicePixels, MouseButton, point};
     use std::time::Duration;
 
     #[test]
