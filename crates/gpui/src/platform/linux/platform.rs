@@ -632,7 +632,7 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) unsafe fn read_fd(mut fd: filedescriptor::FileDescriptor) -> Result<Vec<u8>> {
-    let mut file = File::from_raw_fd(fd.as_raw_fd());
+    let mut file = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
     Ok(buffer)
