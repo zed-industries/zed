@@ -653,6 +653,7 @@
         "tools": {
           "bash": true,
           "batch-tool": true,
+          "code-symbols": true,
           "copy-path": true,
           "create-file": true,
           "delete-path": true,
