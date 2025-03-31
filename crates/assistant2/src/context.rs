@@ -10,7 +10,7 @@ use text::{Anchor, BufferId};
 use ui::{Icon, IconName};
 use util::post_inc;
 
-use crate::{context_store::buffer_path_log_err, thread::Thread};
+use crate::thread::Thread;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextId(pub(crate) usize);
@@ -266,44 +266,24 @@ pub fn attach_context_to_message(
     message: &mut LanguageModelRequestMessage,
     contexts: impl Iterator<Item = AssistantContext>,
 ) {
-    todo!()
-    //     let mut file_context = Vec::new();
-    //     let mut directory_context = Vec::new();
-    //     let mut symbol_context = Vec::new();
-    //     let mut fetch_context = Vec::new();
-    //     let mut thread_context = Vec::new();
+    let mut file_context = Vec::new();
+    let mut directory_context = Vec::new();
+    let mut symbol_context = Vec::new();
+    let mut fetch_context = Vec::new();
+    let mut thread_context = Vec::new();
 
-    //     let mut capacity = 0;
-    //     for context in contexts {
-    //         capacity += context.text.len();
-    //         match context.kind {
-    //             ContextKind::File => file_context.push(context),
-    //             ContextKind::Directory => directory_context.push(context),
-    //             ContextKind::Symbol => symbol_context.push(context),
-    //             ContextKind::FetchedUrl => fetch_context.push(context),
-    //             ContextKind::Thread => thread_context.push(context),
-    //         }
-    //     }
-    //     if !file_context.is_empty() {
-    //         capacity += 1;
-    //     }
-    //     if !directory_context.is_empty() {
-    //         capacity += 1;
-    //     }
-    //     if !symbol_context.is_empty() {
-    //         capacity += 1;
-    //     }
-    //     if !fetch_context.is_empty() {
-    //         capacity += 1 + fetch_context.len();
-    //     }
-    //     if !thread_context.is_empty() {
-    //         capacity += 1 + thread_context.len();
-    //     }
-    //     if capacity == 0 {
-    //         return;
-    //     }
+    let mut capacity = 0;
+    for context in contexts {
+        match context {
+            AssistantContext::File(context) => file_context.push(context.text()),
+            AssistantContext::Directory(context) => directory_context.push(context.text()),
+            AssistantContext::Symbol(context) => symbol_context.push(context.text()),
+            AssistantContext::FetchedUrl(context) => fetch_context.push(context.text()),
+            AssistantContext::Thread(context) => thread_context.push(context.text()),
+        }
+    }
 
-    //     let mut context_chunks = Vec::with_capacity(capacity);
+    let mut context_chunks = Vec::new();
 
     //     if !file_context.is_empty() {
     //         context_chunks.push("The following files are available:\n");
