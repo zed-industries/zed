@@ -6,11 +6,11 @@ use assistant_settings::{
 };
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use fs::Fs;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};
-use settings::{update_settings_file, Settings as _};
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use settings::{Settings as _, update_settings_file};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt as _;
 
 use crate::ThreadStore;

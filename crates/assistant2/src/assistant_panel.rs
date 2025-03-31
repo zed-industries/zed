@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_context_editor::{
-    make_lsp_adapter_delegate, render_remaining_tokens, AssistantPanelDelegate, ConfigurationError,
-    ContextEditor, SlashCommandCompletionProvider,
+    AssistantPanelDelegate, ConfigurationError, ContextEditor, SlashCommandCompletionProvider,
+    make_lsp_adapter_delegate, render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -14,21 +14,21 @@ use client::zed_urls;
 use editor::{Editor, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    action_with_deprecated_aliases, prelude::*, Action, AnyElement, App, AsyncWindowContext,
-    Corner, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
-    Subscription, Task, UpdateGlobal, WeakEntity,
+    Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle,
+    Focusable, FontWeight, KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
+    action_with_deprecated_aliases, prelude::*,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use project::Project;
-use prompt_library::{open_prompt_library, PromptLibrary};
+use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
-use settings::{update_settings_file, Settings};
+use settings::{Settings, update_settings_file};
 use time::UtcOffset;
-use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip};
+use ui::{ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*};
 use util::ResultExt as _;
-use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
+use workspace::dock::{DockPosition, Panel, PanelEvent};
 use zed_actions::assistant::ToggleFocus;
 
 use crate::active_thread::ActiveThread;

@@ -1,18 +1,18 @@
-use anyhow::{anyhow, Context as _, Result};
-use collections::{btree_map, hash_map, BTreeMap, HashMap};
+use anyhow::{Context as _, Result, anyhow};
+use collections::{BTreeMap, HashMap, btree_map, hash_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
-use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, channel::mpsc, future::LocalBoxFuture};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
 use paths::{
-    debug_task_file_name, local_settings_file_relative_path, task_file_name, EDITORCONFIG_NAME,
+    EDITORCONFIG_NAME, debug_task_file_name, local_settings_file_relative_path, task_file_name,
 };
-use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::RootSchema};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use smallvec::SmallVec;
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{Any, TypeId, type_name},
     fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
@@ -23,7 +23,7 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::Query;
 use util::RangeExt;
 
-use util::{merge_non_null_json_value_into, ResultExt as _};
+use util::{ResultExt as _, merge_non_null_json_value_into};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
@@ -760,7 +760,7 @@ impl SettingsStore {
         cx: &App,
     ) -> serde_json::Value {
         use schemars::{
-            gen::SchemaSettings,
+            r#gen::SchemaSettings,
             schema::{Schema, SchemaObject},
         };
 

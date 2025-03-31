@@ -10,7 +10,7 @@ mod session;
 
 use std::{sync::Arc, time::Duration};
 
-use async_dispatcher::{set_dispatcher, Dispatcher, Runnable};
+use async_dispatcher::{Dispatcher, Runnable, set_dispatcher};
 use gpui::{App, PlatformDispatcher};
 use project::Fs;
 pub use runtimelib::ExecutionState;

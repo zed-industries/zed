@@ -1,8 +1,8 @@
 use gpui::Render;
 use story::Story;
 
-use crate::{prelude::*, ListHeader, ListSeparator, ListSubHeader};
 use crate::{List, ListItem};
+use crate::{ListHeader, ListSeparator, ListSubHeader, prelude::*};
 
 pub struct ListStory;
 

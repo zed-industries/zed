@@ -1,14 +1,14 @@
 use super::ips_file::IpsFile;
 use crate::api::CloudflareIpCountryHeader;
-use crate::{api::slack, AppState, Error, Result};
+use crate::{AppState, Error, Result, api::slack};
 use anyhow::anyhow;
 use aws_sdk_s3::primitives::ByteStream;
 use axum::{
+    Extension, Router, TypedHeader,
     body::Bytes,
     headers::Header,
     http::{HeaderMap, HeaderName, StatusCode},
     routing::post,
-    Extension, Router, TypedHeader,
 };
 use chrono::Duration;
 use semantic_version::SemanticVersion;

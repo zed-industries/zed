@@ -1,4 +1,4 @@
-use futures::{channel::mpsc, SinkExt as _};
+use futures::{SinkExt as _, channel::mpsc};
 use gpui::{App, AppContext as _, Entity, Task, Window};
 use http_client::{AsyncBody, HttpClient, Request};
 use jupyter_protocol::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};

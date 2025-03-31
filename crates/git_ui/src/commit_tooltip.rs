@@ -3,10 +3,10 @@ use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
 use git::repository::CommitSummary;
-use git::{blame::ParsedCommitMessage, GitRemote};
+use git::{GitRemote, blame::ParsedCommitMessage};
 use gpui::{
-    prelude::*, App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render,
-    ScrollHandle, StatefulInteractiveElement, WeakEntity,
+    App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
+    StatefulInteractiveElement, WeakEntity, prelude::*,
 };
 use markdown::Markdown;
 use project::git_store::Repository;
@@ -15,7 +15,7 @@ use std::hash::Hash;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
 use time_format::format_local_timestamp;
-use ui::{prelude::*, tooltip_container, Avatar, Divider, IconButtonShape};
+use ui::{Avatar, Divider, IconButtonShape, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 #[derive(Clone, Debug)]
@@ -42,7 +42,7 @@ impl<'a> CommitAvatar<'a> {
         &'a self,
         window: &mut Window,
         cx: &mut Context<CommitTooltip>,
-    ) -> Option<impl IntoElement> {
+    ) -> Option<impl IntoElement + use<>> {
         let remote = self
             .commit
             .message

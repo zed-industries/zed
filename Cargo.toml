@@ -198,7 +198,7 @@ default-members = ["crates/zed"]
 
 [workspace.package]
 publish = false
-edition = "2021"
+edition = "2024"
 
 [workspace.dependencies]
 

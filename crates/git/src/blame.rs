@@ -1,6 +1,6 @@
 use crate::commit::get_messages;
 use crate::{GitRemote, Oid};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use futures::AsyncWriteExt;
 use gpui::SharedString;
@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use std::{ops::Range, path::Path};
 use text::Rope;
-use time::macros::format_description;
 use time::OffsetDateTime;
 use time::UtcOffset;
+use time::macros::format_description;
 
 pub use git2 as libgit;
 
@@ -310,8 +310,8 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::parse_git_blame;
     use super::BlameEntry;
+    use super::parse_git_blame;
 
     fn read_test_data(filename: &str) -> String {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

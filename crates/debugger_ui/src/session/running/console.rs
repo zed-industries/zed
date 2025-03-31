@@ -11,8 +11,8 @@ use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel};
 use menu::Confirm;
 use project::{
-    debugger::session::{CompletionsQuery, OutputToken, Session},
     Completion,
+    debugger::session::{CompletionsQuery, OutputToken, Session},
 };
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc, usize};
