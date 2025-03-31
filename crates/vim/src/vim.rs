@@ -22,12 +22,12 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    movement::{self, FindRange},
     Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
+    movement::{self, FindRange},
 };
 use gpui::{
-    actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
-    KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
+    Render, Subscription, Task, WeakEntity, Window, actions, impl_actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -38,12 +38,12 @@ use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
+use settings::{Settings, SettingsSources, SettingsStore, update_settings_file};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{px, IntoElement, SharedString};
+use ui::{IntoElement, SharedString, px};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
@@ -144,6 +144,7 @@ actions!(
         PushReplace,
         PushDeleteSurrounds,
         PushMark,
+        ToggleMarksView,
         PushIndent,
         PushOutdent,
         PushAutoIndent,
@@ -821,6 +822,19 @@ impl Vim {
             EditorEvent::Edited { .. } => self.push_to_change_list(window, cx),
             EditorEvent::FocusedIn => self.sync_vim_settings(window, cx),
             EditorEvent::CursorShapeChanged => self.cursor_shape_changed(window, cx),
+            EditorEvent::PushedToNavHistory {
+                anchor,
+                is_deactivate,
+            } => {
+                self.update_editor(window, cx, |vim, editor, window, cx| {
+                    let mark = if *is_deactivate {
+                        "\"".to_string()
+                    } else {
+                        "'".to_string()
+                    };
+                    vim.set_mark(mark, vec![*anchor], editor.buffer(), window, cx);
+                });
+            }
             _ => {}
         }
     }
@@ -1599,7 +1613,7 @@ impl Vim {
                     self.select_register(text, window, cx);
                 }
             },
-            Some(Operator::Jump { line }) => self.jump(text, line, window, cx),
+            Some(Operator::Jump { line }) => self.jump(text, line, true, window, cx),
             _ => {
                 if self.mode == Mode::Replace {
                     self.multi_replace(text, window, cx)

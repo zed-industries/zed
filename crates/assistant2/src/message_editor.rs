@@ -2,48 +2,52 @@ use std::sync::Arc;
 
 use collections::HashSet;
 use editor::actions::MoveUp;
-use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
+use editor::{ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorStyle};
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
-    WeakEntity,
+    WeakEntity, linear_color_stop, linear_gradient, point,
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
-use rope::Point;
+use project::Project;
 use settings::Settings;
 use std::time::Duration;
-use text::Bias;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle,
-    Tooltip,
+    ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
 };
+use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
-use workspace::notifications::{NotificationId, NotifyTaskExt};
-use workspace::{Toast, Workspace};
+use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
-use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::{refresh_context_store_text, ContextStore};
+use crate::context_picker::{ConfirmBehavior, ContextPicker, ContextPickerCompletionProvider};
+use crate::context_store::{ContextStore, refresh_context_store_text};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::tool_selector::ToolSelector;
-use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
+use crate::{
+    AssistantDiff, Chat, ChatMode, OpenAssistantDiff, RemoveAllContext, ThreadEvent,
+    ToggleContextPicker, ToggleProfileSelector,
+};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
     editor: Entity<Editor>,
+    #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     context_store: Entity<ContextStore>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    tool_selector: Entity<ToolSelector>,
+    profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -58,7 +62,6 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let tools = thread.read(cx).tools().clone();
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
@@ -67,8 +70,23 @@ impl MessageEditor {
             let mut editor = Editor::auto_height(10, window, cx);
             editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: Some(ContextMenuPlacement::Above),
+            });
 
             editor
+        });
+
+        let editor_entity = editor.downgrade();
+        editor.update(cx, |editor, _| {
+            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+                workspace.clone(),
+                context_store.downgrade(),
+                Some(thread_store.clone()),
+                editor_entity,
+            ))));
         });
 
         let inline_context_picker = cx.new(|cx| {
@@ -76,7 +94,6 @@ impl MessageEditor {
                 workspace.clone(),
                 Some(thread_store.clone()),
                 context_store.downgrade(),
-                editor.downgrade(),
                 ConfirmBehavior::Close,
                 window,
                 cx,
@@ -87,7 +104,6 @@ impl MessageEditor {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
-                editor.downgrade(),
                 Some(thread_store.clone()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
@@ -97,7 +113,6 @@ impl MessageEditor {
         });
 
         let subscriptions = vec![
-            cx.subscribe_in(&editor, window, Self::handle_editor_event),
             cx.subscribe_in(
                 &inline_context_picker,
                 window,
@@ -107,8 +122,9 @@ impl MessageEditor {
         ];
 
         Self {
-            thread,
             editor: editor.clone(),
+            project: thread.read(cx).project().clone(),
+            thread,
             workspace,
             context_store,
             context_strip,
@@ -117,15 +133,16 @@ impl MessageEditor {
             inline_context_picker_menu_handle,
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
-                    fs,
+                    fs.clone(),
                     model_selector_menu_handle,
                     editor.focus_handle(cx),
                     window,
                     cx,
                 )
             }),
-            tool_selector: cx.new(|cx| ToolSelector::new(tools, cx)),
             edits_expanded: false,
+            profile_selector: cx
+                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
             _subscriptions: subscriptions,
         }
     }
@@ -142,7 +159,6 @@ impl MessageEditor {
     ) {
         self.context_picker_menu_handle.toggle(window, cx);
     }
-
     pub fn remove_all_context(
         &mut self,
         _: &RemoveAllContext,
@@ -204,47 +220,35 @@ impl MessageEditor {
         let refresh_task =
             refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
 
+        let system_prompt_context_task = self.thread.read(cx).load_system_prompt_context(cx);
+
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
-        cx.spawn(move |_, mut cx| async move {
+        let checkpoint = self.project.read(cx).git_store().read(cx).checkpoint(cx);
+        cx.spawn(async move |_, cx| {
+            let checkpoint = checkpoint.await.ok();
             refresh_task.await;
+            let (system_prompt_context, load_error) = system_prompt_context_task.await;
             thread
-                .update(&mut cx, |thread, cx| {
+                .update(cx, |thread, cx| {
+                    thread.set_system_prompt_context(system_prompt_context);
+                    if let Some(load_error) = load_error {
+                        cx.emit(ThreadEvent::ShowError(load_error));
+                    }
+                })
+                .ok();
+            thread
+                .update(cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
-                    thread.insert_user_message(user_message, context, cx);
+                    thread.action_log().update(cx, |action_log, cx| {
+                        action_log.clear_reviewed_changes(cx);
+                    });
+                    thread.insert_user_message(user_message, context, checkpoint, cx);
                     thread.send_to_model(model, request_kind, cx);
                 })
                 .ok();
         })
         .detach();
-    }
-
-    fn handle_editor_event(
-        &mut self,
-        editor: &Entity<Editor>,
-        event: &EditorEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            EditorEvent::SelectionsChanged { .. } => {
-                editor.update(cx, |editor, cx| {
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    let newest_cursor = editor.selections.newest::<Point>(cx).head();
-                    if newest_cursor.column > 0 {
-                        let behind_cursor = snapshot.clip_point(
-                            Point::new(newest_cursor.row, newest_cursor.column - 1),
-                            Bias::Left,
-                        );
-                        let char_behind_cursor = snapshot.chars_at(behind_cursor).next();
-                        if char_behind_cursor == Some('@') {
-                            self.inline_context_picker_menu_handle.show(window, cx);
-                        }
-                    }
-                });
-            }
-            _ => {}
-        }
     }
 
     fn handle_inline_context_picker_event(
@@ -286,32 +290,8 @@ impl MessageEditor {
         }
     }
 
-    fn handle_feedback_click(
-        &mut self,
-        is_positive: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let workspace = self.workspace.clone();
-        let report = self
-            .thread
-            .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
-
-        cx.spawn(|_, mut cx| async move {
-            report.await?;
-            workspace.update(&mut cx, |workspace, cx| {
-                let message = if is_positive {
-                    "Positive feedback recorded. Thank you!"
-                } else {
-                    "Negative feedback recorded. Thank you for helping us improve!"
-                };
-
-                struct ThreadFeedback;
-                let id = NotificationId::unique::<ThreadFeedback>();
-                workspace.show_toast(Toast::new(id, message).autohide(), cx)
-            })
-        })
-        .detach_and_notify_err(window, cx);
+    fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
+        AssistantDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
     }
 }
 
@@ -325,9 +305,10 @@ impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
+
         let focus_handle = self.editor.focus_handle(cx);
         let inline_context_picker = self.inline_context_picker.clone();
-        let bg_color = cx.theme().colors().editor_background;
+
         let is_generating = self.thread.read(cx).is_generating();
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
@@ -347,8 +328,14 @@ impl Render for MessageEditor {
             px(64.)
         };
 
-        let changed_buffers = self.thread.read(cx).scripting_changed_buffers(cx);
+        let action_log = self.thread.read(cx).action_log();
+        let changed_buffers = action_log.read(cx).changed_buffers(cx);
         let changed_buffers_count = changed_buffers.len();
+
+        let editor_bg_color = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border;
+        let active_color = cx.theme().colors().element_selected;
+        let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
 
         v_flex()
             .size_full()
@@ -361,7 +348,7 @@ impl Render for MessageEditor {
                             .pl_2()
                             .pr_1()
                             .py_1()
-                            .bg(cx.theme().colors().editor_background)
+                            .bg(editor_bg_color)
                             .border_1()
                             .border_color(cx.theme().colors().border_variant)
                             .rounded_lg()
@@ -414,100 +401,194 @@ impl Render for MessageEditor {
                 parent.child(
                     v_flex()
                         .mx_2()
-                        .bg(cx.theme().colors().element_background)
+                        .bg(bg_edit_files_disclosure)
                         .border_1()
                         .border_b_0()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(border_color)
                         .rounded_t_md()
+                        .shadow(smallvec::smallvec![gpui::BoxShadow {
+                            color: gpui::black().opacity(0.15),
+                            offset: point(px(1.), px(-1.)),
+                            blur_radius: px(3.),
+                            spread_radius: px(0.),
+                        }])
                         .child(
                             h_flex()
-                                .gap_2()
-                                .p_2()
+                                .p_1p5()
+                                .justify_between()
+                                .when(self.edits_expanded, |this| {
+                                    this.border_b_1().border_color(border_color)
+                                })
                                 .child(
-                                    Disclosure::new("edits-disclosure", self.edits_expanded)
-                                        .on_click(cx.listener(|this, _ev, _window, cx| {
-                                            this.edits_expanded = !this.edits_expanded;
-                                            cx.notify();
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Disclosure::new(
+                                                "edits-disclosure",
+                                                self.edits_expanded,
+                                            )
+                                            .on_click(
+                                                cx.listener(|this, _ev, _window, cx| {
+                                                    this.edits_expanded = !this.edits_expanded;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            Label::new("Edits")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("•")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(format!(
+                                                "{} {}",
+                                                changed_buffers_count,
+                                                if changed_buffers_count == 1 {
+                                                    "file"
+                                                } else {
+                                                    "files"
+                                                }
+                                            ))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        ),
+                                )
+                                .child(
+                                    Button::new("review", "Review Changes")
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &OpenAssistantDiff,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.handle_review_click(window, cx)
                                         })),
-                                )
-                                .child(
-                                    Label::new("Edits")
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
-                                .child(
-                                    Label::new(format!(
-                                        "{} {}",
-                                        changed_buffers_count,
-                                        if changed_buffers_count == 1 {
-                                            "file"
-                                        } else {
-                                            "files"
-                                        }
-                                    ))
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
                                 ),
                         )
                         .when(self.edits_expanded, |parent| {
                             parent.child(
                                 v_flex().bg(cx.theme().colors().editor_background).children(
-                                    changed_buffers.enumerate().flat_map(|(index, buffer)| {
-                                        let file = buffer.read(cx).file()?;
-                                        let path = file.path();
+                                    changed_buffers.into_iter().enumerate().flat_map(
+                                        |(index, (buffer, changed))| {
+                                            let file = buffer.read(cx).file()?;
+                                            let path = file.path();
 
-                                        let parent_label = path.parent().and_then(|parent| {
-                                            let parent_str = parent.to_string_lossy();
+                                            let parent_label = path.parent().and_then(|parent| {
+                                                let parent_str = parent.to_string_lossy();
 
-                                            if parent_str.is_empty() {
-                                                None
-                                            } else {
-                                                Some(
-                                                    Label::new(format!(
-                                                        "{}{}",
-                                                        parent_str,
-                                                        std::path::MAIN_SEPARATOR_STR
-                                                    ))
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small),
-                                                )
-                                            }
-                                        });
-
-                                        let name_label = path.file_name().map(|name| {
-                                            Label::new(name.to_string_lossy().to_string())
-                                                .size(LabelSize::Small)
-                                        });
-
-                                        let file_icon = FileIcons::get_icon(&path, cx)
-                                            .map(Icon::from_path)
-                                            .unwrap_or_else(|| Icon::new(IconName::File));
-
-                                        let element = div()
-                                            .p_2()
-                                            .when(index + 1 < changed_buffers_count, |parent| {
-                                                parent
-                                                    .border_color(cx.theme().colors().border)
-                                                    .border_b_1()
-                                            })
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(file_icon)
-                                                    .child(
-                                                        // TODO: handle overflow
-                                                        h_flex()
-                                                            .children(parent_label)
-                                                            .children(name_label),
+                                                if parent_str.is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(
+                                                        Label::new(format!(
+                                                            "{}{}",
+                                                            parent_str,
+                                                            std::path::MAIN_SEPARATOR_STR
+                                                        ))
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::XSmall)
+                                                        .buffer_font(cx),
                                                     )
-                                                    // TODO: show lines changed
-                                                    .child(Label::new("+").color(Color::Created))
-                                                    .child(Label::new("-").color(Color::Deleted)),
-                                            );
+                                                }
+                                            });
 
-                                        Some(element)
-                                    }),
+                                            let name_label = path.file_name().map(|name| {
+                                                Label::new(name.to_string_lossy().to_string())
+                                                    .size(LabelSize::XSmall)
+                                                    .buffer_font(cx)
+                                            });
+
+                                            let file_icon = FileIcons::get_icon(&path, cx)
+                                                .map(Icon::from_path)
+                                                .map(|icon| {
+                                                    icon.color(Color::Muted).size(IconSize::Small)
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    Icon::new(IconName::File)
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::Small)
+                                                });
+
+                                            let element = div()
+                                                .relative()
+                                                .py_1()
+                                                .px_2()
+                                                .when(index + 1 < changed_buffers_count, |parent| {
+                                                    parent.border_color(border_color).border_b_1()
+                                                })
+                                                .child(
+                                                    h_flex()
+                                                        .gap_2()
+                                                        .justify_between()
+                                                        .child(
+                                                            h_flex()
+                                                                .id("file-container")
+                                                                .pr_8()
+                                                                .gap_1p5()
+                                                                .max_w_full()
+                                                                .overflow_x_scroll()
+                                                                .child(file_icon)
+                                                                .child(
+                                                                    h_flex()
+                                                                        .children(parent_label)
+                                                                        .children(name_label),
+                                                                ) // TODO: show lines changed
+                                                                .child(
+                                                                    Label::new("+")
+                                                                        .color(Color::Created),
+                                                                )
+                                                                .child(
+                                                                    Label::new("-")
+                                                                        .color(Color::Deleted),
+                                                                ),
+                                                        )
+                                                        .when(!changed.needs_review, |parent| {
+                                                            parent.child(
+                                                                Icon::new(IconName::Check)
+                                                                    .color(Color::Success),
+                                                            )
+                                                        })
+                                                        .child(
+                                                            div()
+                                                                .h_full()
+                                                                .absolute()
+                                                                .w_8()
+                                                                .bottom_0()
+                                                                .map(|this| {
+                                                                    if !changed.needs_review {
+                                                                        this.right_4()
+                                                                    } else {
+                                                                        this.right_0()
+                                                                    }
+                                                                })
+                                                                .bg(linear_gradient(
+                                                                    90.,
+                                                                    linear_color_stop(
+                                                                        editor_bg_color,
+                                                                        1.,
+                                                                    ),
+                                                                    linear_color_stop(
+                                                                        editor_bg_color
+                                                                            .opacity(0.2),
+                                                                        0.,
+                                                                    ),
+                                                                )),
+                                                        ),
+                                                );
+
+                                            Some(element)
+                                        },
+                                    ),
                                 ),
                             )
                         }),
@@ -517,6 +598,12 @@ impl Render for MessageEditor {
                 v_flex()
                     .key_context("MessageEditor")
                     .on_action(cx.listener(Self::chat))
+                    .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                        this.profile_selector
+                            .read(cx)
+                            .menu_handle()
+                            .toggle(window, cx);
+                    }))
                     .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
                         this.model_selector
                             .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
@@ -527,48 +614,10 @@ impl Render for MessageEditor {
                     .on_action(cx.listener(Self::toggle_chat_mode))
                     .gap_2()
                     .p_2()
-                    .bg(bg_color)
+                    .bg(editor_bg_color)
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(self.context_strip.clone())
-                            .when(!self.thread.read(cx).is_empty(), |this| {
-                                this.child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(
-                                            IconButton::new(
-                                                "feedback-thumbs-up",
-                                                IconName::ThumbsUp,
-                                            )
-                                            .style(ButtonStyle::Subtle)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(Tooltip::text("Helpful"))
-                                            .on_click(
-                                                cx.listener(|this, _, window, cx| {
-                                                    this.handle_feedback_click(true, window, cx);
-                                                }),
-                                            ),
-                                        )
-                                        .child(
-                                            IconButton::new(
-                                                "feedback-thumbs-down",
-                                                IconName::ThumbsDown,
-                                            )
-                                            .style(ButtonStyle::Subtle)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(Tooltip::text("Not Helpful"))
-                                            .on_click(
-                                                cx.listener(|this, _, window, cx| {
-                                                    this.handle_feedback_click(false, window, cx);
-                                                }),
-                                            ),
-                                        ),
-                                )
-                            }),
-                    )
+                    .child(h_flex().justify_between().child(self.context_strip.clone()))
                     .child(
                         v_flex()
                             .gap_5()
@@ -588,9 +637,10 @@ impl Render for MessageEditor {
                                 EditorElement::new(
                                     &self.editor,
                                     EditorStyle {
-                                        background: bg_color,
+                                        background: editor_bg_color,
                                         local_player: cx.theme().players().local(),
                                         text: text_style,
+                                        syntax: cx.theme().syntax().clone(),
                                         ..Default::default()
                                     },
                                 )
@@ -616,7 +666,7 @@ impl Render for MessageEditor {
                             .child(
                                 h_flex()
                                     .justify_between()
-                                    .child(h_flex().gap_2().child(self.tool_selector.clone()))
+                                    .child(h_flex().gap_2().child(self.profile_selector.clone()))
                                     .child(
                                         h_flex().gap_1().child(self.model_selector.clone()).child(
                                             ButtonLike::new("submit-message")

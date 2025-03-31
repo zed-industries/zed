@@ -1,8 +1,8 @@
 use crate::actions::ShowSignatureHelp;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
 use gpui::{
-    combine_highlights, App, Context, HighlightStyle, MouseButton, Size, StyledText, Task,
-    TextStyle, Window,
+    App, Context, HighlightStyle, MouseButton, Size, StyledText, Task, TextStyle, Window,
+    combine_highlights,
 };
 use language::BufferSnapshot;
 use multi_buffer::{Anchor, ToOffset};
@@ -11,8 +11,8 @@ use std::ops::Range;
 use text::Rope;
 use theme::ThemeSettings;
 use ui::{
-    div, relative, ActiveTheme, AnyElement, InteractiveElement, IntoElement, ParentElement, Pixels,
-    SharedString, StatefulInteractiveElement, Styled, StyledExt,
+    ActiveTheme, AnyElement, InteractiveElement, IntoElement, ParentElement, Pixels, SharedString,
+    StatefulInteractiveElement, Styled, StyledExt, div, relative,
 };
 
 // Language-specific settings may define quotes as "brackets", so filter them out separately.
@@ -179,10 +179,10 @@ impl Editor {
         let language = self.language_at(position, cx);
 
         self.signature_help_state
-            .set_task(cx.spawn_in(window, move |editor, mut cx| async move {
+            .set_task(cx.spawn_in(window, async move |editor, cx| {
                 let signature_help = task.await;
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         let Some(mut signature_help) = signature_help.into_iter().next() else {
                             editor
                                 .signature_help_state

@@ -1,9 +1,9 @@
 use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
-use futures::{stream::FuturesUnordered, StreamExt as _};
+use futures::{StreamExt as _, stream::FuturesUnordered};
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
-use project::{terminals::TerminalKind, Project};
+use project::{Project, terminals::TerminalKind};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use ui::{App, Context, Pixels, Window};
@@ -16,9 +16,8 @@ use workspace::{
 };
 
 use crate::{
-    default_working_directory,
-    terminal_panel::{new_terminal_pane, TerminalPanel},
-    TerminalView,
+    TerminalView, default_working_directory,
+    terminal_panel::{TerminalPanel, new_terminal_pane},
 };
 
 pub(crate) fn serialize_pane_group(
@@ -90,8 +89,8 @@ pub(crate) fn deserialize_terminal_panel(
     window: &mut Window,
     cx: &mut App,
 ) -> Task<anyhow::Result<Entity<TerminalPanel>>> {
-    window.spawn(cx, move |mut cx| async move {
-        let terminal_panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+    window.spawn(cx, async move |cx| {
+        let terminal_panel = workspace.update_in(cx, |workspace, window, cx| {
             cx.new(|cx| {
                 let mut panel = TerminalPanel::new(workspace, window, cx);
                 panel.height = serialized_panel.height.map(|h| h.round());
@@ -106,11 +105,11 @@ pub(crate) fn deserialize_terminal_panel(
                     project,
                     workspace,
                     item_ids.as_slice(),
-                    &mut cx,
+                    cx,
                 )
                 .await;
                 let active_item = serialized_panel.active_item_id;
-                terminal_panel.update_in(&mut cx, |terminal_panel, window, cx| {
+                terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                     terminal_panel.active_pane.update(cx, |pane, cx| {
                         populate_pane_items(pane, items, active_item, window, cx);
                     });
@@ -123,11 +122,11 @@ pub(crate) fn deserialize_terminal_panel(
                     terminal_panel.clone(),
                     database_id,
                     serialized_pane_group,
-                    &mut cx,
+                    cx,
                 )
                 .await;
                 if let Some((center_group, active_pane)) = center_pane {
-                    terminal_panel.update(&mut cx, |terminal_panel, _| {
+                    terminal_panel.update(cx, |terminal_panel, _| {
                         terminal_panel.center = PaneGroup::with_root(center_group);
                         terminal_panel.active_pane =
                             active_pane.unwrap_or_else(|| terminal_panel.center.first_pane());
@@ -403,7 +402,12 @@ define_connection! {
             DROP TABLE terminals;
 
             ALTER TABLE terminals2 RENAME TO terminals;
-        )];
+        ),
+        sql! (
+            ALTER TABLE terminals ADD COLUMN working_directory_path TEXT;
+            UPDATE terminals SET working_directory_path = CAST(working_directory AS TEXT);
+        ),
+    ];
 }
 
 impl TerminalDb {
@@ -419,15 +423,30 @@ impl TerminalDb {
         }
     }
 
-    query! {
-        pub async fn save_working_directory(
-            item_id: ItemId,
-            workspace_id: WorkspaceId,
-            working_directory: PathBuf
-        ) -> Result<()> {
-            INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
-            VALUES (?, ?, ?)
-        }
+    pub async fn save_working_directory(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        working_directory: PathBuf,
+    ) -> Result<()> {
+        let query =
+            "INSERT INTO terminals(item_id, workspace_id, working_directory, working_directory_path)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT DO UPDATE SET
+                item_id = ?1,
+                workspace_id = ?2,
+                working_directory = ?3,
+                working_directory_path = ?4"
+        ;
+        self.write(move |conn| {
+            let mut statement = Statement::prepare(conn, query)?;
+            let mut next_index = statement.bind(&item_id, 1)?;
+            next_index = statement.bind(&workspace_id, next_index)?;
+            next_index = statement.bind(&working_directory, next_index)?;
+            statement.bind(&working_directory.to_string_lossy().to_string(), next_index)?;
+            statement.exec()
+        })
+        .await
     }
 
     query! {

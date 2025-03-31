@@ -7,24 +7,23 @@ mod diagnostics_tests;
 use anyhow::Result;
 use collections::{BTreeSet, HashSet};
 use editor::{
-    diagnostic_block_renderer,
+    DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
+    ToOffset, diagnostic_block_renderer,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
     highlight_diagnostic_message,
     scroll::Autoscroll,
-    Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
-    DEFAULT_MULTIBUFFER_CONTEXT,
 };
 use gpui::{
-    actions, div, svg, AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, Global, HighlightStyle, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, StyledText, Subscription, Task, WeakEntity, Window,
+    AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    Global, HighlightStyle, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    Styled, StyledText, Subscription, Task, WeakEntity, Window, actions, div, svg,
 };
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
     Point, Selection, SelectionGoal, ToTreeSitterPoint,
 };
 use lsp::LanguageServerId;
-use project::{project_settings::ProjectSettings, DiagnosticSummary, Project, ProjectPath};
+use project::{DiagnosticSummary, Project, ProjectPath, project_settings::ProjectSettings};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -37,12 +36,12 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_flex, prelude::*, Icon, IconName, Label};
+use ui::{Icon, IconName, Label, h_flex, prelude::*};
 use util::ResultExt;
 use workspace::{
+    ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     searchable::SearchableItemHandle,
-    ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
@@ -252,12 +251,12 @@ impl ProjectDiagnosticsEditor {
             return;
         }
         let project_handle = self.project.clone();
-        self.update_excerpts_task = Some(cx.spawn_in(window, |this, mut cx| async move {
+        self.update_excerpts_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(DIAGNOSTICS_UPDATE_DEBOUNCE)
                 .await;
             loop {
-                let Some((path, language_server_id)) = this.update(&mut cx, |this, _| {
+                let Some((path, language_server_id)) = this.update(cx, |this, _| {
                     let Some((path, language_server_id)) = this.paths_to_update.pop_first() else {
                         this.update_excerpts_task.take();
                         return None;
@@ -269,11 +268,11 @@ impl ProjectDiagnosticsEditor {
                 };
 
                 if let Some(buffer) = project_handle
-                    .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
+                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))?
                     .await
                     .log_err()
                 {
-                    this.update_in(&mut cx, |this, window, cx| {
+                    this.update_in(cx, |this, window, cx| {
                         this.update_excerpts(path, language_server_id, buffer, window, cx)
                     })?
                     .await?;
@@ -388,7 +387,7 @@ impl ProjectDiagnosticsEditor {
         };
         let context = self.context;
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, mut cx| {
             let entries: Vec<_> = snapshot
                 .diagnostics_in_range(0..snapshot.len(), false)
                 .filter(|entry| entry.diagnostic.group_severity <= max_severity)
@@ -401,7 +400,7 @@ impl ProjectDiagnosticsEditor {
                 )
             }
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let (anchor_ranges, _) = this.excerpts.update(cx, |excerpts, cx| {
                     excerpts.set_excerpt_ranges_for_path(
                         multi_buffer::PathKey::namespaced("0", path_to_update.path),
@@ -1096,7 +1095,7 @@ fn excerpt_range_for_entry(
     cx: &mut AsyncApp,
 ) -> Task<ExcerptRange<Point>> {
     let snapshot = snapshot.clone();
-    cx.spawn(move |cx| async move {
+    cx.spawn(async move |cx| {
         if let Some(rows) = heuristic_syntactic_expand(
             range.clone(),
             DIAGNOSTIC_EXPANSION_ROW_LIMIT,
@@ -1132,7 +1131,7 @@ async fn heuristic_syntactic_expand(
     input_range: Range<Point>,
     max_row_count: u32,
     snapshot: BufferSnapshot,
-    cx: AsyncApp,
+    cx: &mut AsyncApp,
 ) -> Option<RangeInclusive<BufferRow>> {
     let input_row_count = input_range.end.row - input_range.start.row;
     if input_row_count > max_row_count {

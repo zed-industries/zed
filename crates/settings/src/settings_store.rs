@@ -1,16 +1,18 @@
-use anyhow::{anyhow, Context as _, Result};
-use collections::{btree_map, hash_map, BTreeMap, HashMap};
+use anyhow::{Context as _, Result, anyhow};
+use collections::{BTreeMap, HashMap, btree_map, hash_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
-use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, channel::mpsc, future::LocalBoxFuture};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
-use paths::{local_settings_file_relative_path, EDITORCONFIG_NAME};
-use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use paths::{
+    EDITORCONFIG_NAME, debug_task_file_name, local_settings_file_relative_path, task_file_name,
+};
+use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::RootSchema};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use smallvec::SmallVec;
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{Any, TypeId, type_name},
     fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
@@ -21,7 +23,7 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::Query;
 use util::RangeExt;
 
-use util::{merge_non_null_json_value_into, ResultExt as _};
+use util::{ResultExt as _, merge_non_null_json_value_into};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
@@ -210,8 +212,14 @@ impl FromStr for Editorconfig {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LocalSettingsKind {
     Settings,
-    Tasks,
+    Tasks(TaskKind),
     Editorconfig,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TaskKind {
+    Debug,
+    Script,
 }
 
 impl Global for SettingsStore {}
@@ -244,6 +252,16 @@ trait AnySettingValue: 'static + Send + Sync {
 
 struct DeserializedSetting(Box<dyn Any>);
 
+impl TaskKind {
+    /// Returns a file path of a task configuration file of this kind within the given directory.
+    pub fn config_in_dir(&self, dir: &Path) -> PathBuf {
+        dir.join(match self {
+            Self::Debug => debug_task_file_name(),
+            Self::Script => task_file_name(),
+        })
+    }
+}
+
 impl SettingsStore {
     pub fn new(cx: &App) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
@@ -257,7 +275,7 @@ impl SettingsStore {
             raw_editorconfig_settings: BTreeMap::default(),
             tab_size_callback: Default::default(),
             setting_file_updates_tx,
-            _setting_file_updates: cx.spawn(|cx| async move {
+            _setting_file_updates: cx.spawn(async move |cx| {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
                     (setting_file_update)(cx.clone()).await.log_err();
                 }
@@ -604,10 +622,11 @@ impl SettingsStore {
                 .map(|content| content.trim())
                 .filter(|content| !content.is_empty()),
         ) {
-            (LocalSettingsKind::Tasks, _) => {
+            (LocalSettingsKind::Tasks(task_kind), _) => {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
-                })
+                    path: task_kind.config_in_dir(&directory_path),
+                });
             }
             (LocalSettingsKind::Settings, None) => {
                 zed_settings_changed = self
@@ -741,7 +760,7 @@ impl SettingsStore {
         cx: &App,
     ) -> serde_json::Value {
         use schemars::{
-            gen::SchemaSettings,
+            r#gen::SchemaSettings,
             schema::{Schema, SchemaObject},
         };
 
@@ -1005,7 +1024,7 @@ pub enum InvalidSettingsError {
     ServerSettings { message: String },
     DefaultSettings { message: String },
     Editorconfig { path: PathBuf, message: String },
-    Tasks { message: String },
+    Tasks { path: PathBuf, message: String },
 }
 
 impl std::fmt::Display for InvalidSettingsError {
@@ -1015,7 +1034,7 @@ impl std::fmt::Display for InvalidSettingsError {
             | InvalidSettingsError::UserSettings { message }
             | InvalidSettingsError::ServerSettings { message }
             | InvalidSettingsError::DefaultSettings { message }
-            | InvalidSettingsError::Tasks { message }
+            | InvalidSettingsError::Tasks { message, .. }
             | InvalidSettingsError::Editorconfig { message, .. } => {
                 write!(f, "{message}")
             }

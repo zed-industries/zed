@@ -5,7 +5,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, Avatar, ListItem, ListItemSpacing};
+use ui::{Avatar, ListItem, ListItemSpacing, prelude::*};
 use util::{ResultExt as _, TryFutureExt};
 use workspace::ModalView;
 
@@ -102,10 +102,10 @@ impl PickerDelegate for ContactFinderDelegate {
             .user_store
             .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
 
-        cx.spawn_in(window, |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             async {
                 let potential_contacts = search_users.await?;
-                picker.update(&mut cx, |picker, cx| {
+                picker.update(cx, |picker, cx| {
                     picker.delegate.potential_contacts = potential_contacts.into();
                     cx.notify();
                 })?;

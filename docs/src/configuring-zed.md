@@ -31,7 +31,19 @@ Extensions that provide language servers may also provide default settings for t
 
 ## Active Pane Modifiers
 
-Styling settings applied to the active pane.
+- Description: Styling settings applied to the active pane.
+- Setting: `active_pane_modifiers`
+- Default:
+
+```json
+{
+  "active_pane_modifiers": {
+    "magnification": 1.0,
+    "border_size": 0.0,
+    "inactive_opacity": 1.0
+  }
+}
+```
 
 ### Magnification
 
@@ -39,11 +51,19 @@ Styling settings applied to the active pane.
 - Setting: `magnification`
 - Default: `1.0`
 
+**Options**
+
+`float` values
+
 ### Border size
 
 - Description: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
 - Setting: `border_size`
 - Default: `0.0`
+
+**Options**
+
+Non-negative `float` values
 
 ### Inactive Opacity
 
@@ -59,7 +79,7 @@ Styling settings applied to the active pane.
 
 - Description: Define extensions to be autoinstalled or never be installed.
 - Setting: `auto_install_extension`
-- Default: `{"html": true}`
+- Default: `{ "html": true }`
 
 **Options**
 
@@ -327,7 +347,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`"standard"`, `"comfortable"` or `{"custom": float}` (`1` is very compact, `2` very loose)
+`"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
 
 ## Confirm Quit
 
@@ -532,6 +552,16 @@ List of `string` values
 ```json
 "cursor_shape": "hollow"
 ```
+
+## Hide Mouse
+
+- Description: Determines when the mouse cursor should be hidden in an editor or input box.
+- Setting: `hide_mouse`
+- Default: `on_typing_and_movement`
+
+**Options**
+
+`boolean` values
 
 ## Editor Scrollbar
 
@@ -1348,7 +1378,8 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "git_gutter": "tracked_files",
     "inline_blame": {
       "enabled": true
-    }
+    },
+    "hunk_style": "staged_hollow"
   }
 }
 ```
@@ -1381,6 +1412,26 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
+### Gutter Debounce
+
+- Description: Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
+- Setting: `gutter_debounce`
+- Default: `null`
+
+**Options**
+
+`integer` values representing milliseconds
+
+Example:
+
+```json
+{
+  "git": {
+    "gutter_debounce": 100
+  }
+}
+```
+
 ### Inline Git Blame
 
 - Description: Whether or not to show git blame information inline, on the currently focused line.
@@ -1393,6 +1444,42 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true
     }
+  }
+}
+```
+
+### Hunk Style
+
+- Description: What styling we should use for the diff hunks.
+- Setting: `hunk_style`
+- Default:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+**Options**
+
+1. Show the staged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+2. Show unstaged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "unstaged_hollow"
   }
 }
 ```
@@ -2047,7 +2134,7 @@ List of `integer` column numbers
 ```json
 {
   "terminal": {
-    "alternate_scroll": "off",
+    "alternate_scroll": "on",
     "blinking": "terminal_controlled",
     "copy_on_select": false,
     "dock": "bottom",
@@ -2090,7 +2177,7 @@ List of `integer` column numbers
 
 - Description: Set whether Alternate Scroll mode (DECSET code: `?1007`) is active by default. Alternate Scroll mode converts mouse scroll events into up / down key presses when in the alternate screen (e.g. when running applications like vim or less). The terminal can still set and unset this mode with ANSI escape codes.
 - Setting: `alternate_scroll`
-- Default: `off`
+- Default: `on`
 
 **Options**
 
@@ -2576,7 +2663,6 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "folder_icons": true,
     "git_status": true,
     "indent_size": 20,
-    "indent_guides": true,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {

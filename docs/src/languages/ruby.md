@@ -23,6 +23,8 @@ They both have an overlapping feature set of autocomplete, diagnostics, code act
 
 In addition to these two language servers, Zed also supports [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
 
+When configuring a language server, it helps to open the LSP Logs window using the 'debug: open language server logs' command. You can then choose the corresponding language instance to see any logged information.
+
 ## Configuring a language server
 
 The [Ruby extension](https://github.com/zed-extensions/ruby) offers both `solargraph` and `ruby-lsp` language server support.
@@ -156,6 +158,21 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
 }
 ```
 
+LSP `settings` and `initialization_options` can also be project-specific. For example to use [standardrb/standard](https://github.com/standardrb/standard) as a formatter and linter for a particular project, add this to a `.zed/settings.json` inside your project repo:
+
+```json
+{
+  "lsp": {
+    "ruby-lsp": {
+      "initialization_options": {
+        "formatter": "standard",
+        "linters": ["standard"]
+      }
+    }
+  }
+}
+```
+
 By default, Ruby LSP does not use `bundle exec` to run in the context of the bundle. To enable that, you can use the `use_bundler` configuration option:
 
 ```json
@@ -269,7 +286,7 @@ end
 
 To run tests in your Ruby project, you can set up custom tasks in your local `.zed/tasks.json` configuration file. These tasks can be defined to work with different test frameworks like Minitest, RSpec, quickdraw, and tldr. Below are some examples of how to set up these tasks to run your tests from within your editor.
 
-### Minitest
+### Minitest with Rails
 
 ```json
 [
@@ -281,6 +298,8 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
   }
 ]
 ```
+
+Note: Plain minitest does not support running tests by line number.
 
 ### RSpec
 

@@ -1,8 +1,8 @@
 use super::*;
+use crate::Buffer;
 use crate::language_settings::{
     AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent,
 };
-use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
@@ -27,7 +27,7 @@ use text::{Point, ToPoint};
 use theme::ActiveTheme;
 use unindent::Unindent as _;
 use util::test::marked_text_offsets;
-use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
+use util::{RandomCharIter, assert_set_eq, post_inc, test::marked_text_ranges};
 
 pub static TRAILING_WHITESPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
     RegexBuilder::new(r"[ \t]+$")
@@ -156,12 +156,14 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         ..Default::default()
     });
 
-    assert!(cx
-        .read(|cx| languages.language_for_file(&file("the/script"), None, cx))
-        .is_none());
-    assert!(cx
-        .read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
-        .is_none());
+    assert!(
+        cx.read(|cx| languages.language_for_file(&file("the/script"), None, cx))
+            .is_none()
+    );
+    assert!(
+        cx.read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
+            .is_none()
+    );
 
     assert_eq!(
         cx.read(|cx| languages.language_for_file(
@@ -374,7 +376,7 @@ async fn test_apply_diff(cx: &mut TestAppContext) {
 
     let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
     buffer.update(cx, |buffer, cx| {
-        buffer.apply_diff(diff, cx).unwrap();
+        buffer.apply_diff(diff, true, cx).unwrap();
         assert_eq!(buffer.text(), text);
         let actual_offsets = anchors
             .iter()
@@ -388,7 +390,7 @@ async fn test_apply_diff(cx: &mut TestAppContext) {
 
     let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
     buffer.update(cx, |buffer, cx| {
-        buffer.apply_diff(diff, cx).unwrap();
+        buffer.apply_diff(diff, true, cx).unwrap();
         assert_eq!(buffer.text(), text);
         let actual_offsets = anchors
             .iter()
@@ -433,7 +435,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     let format_diff = format.await;
     buffer.update(cx, |buffer, cx| {
         let version_before_format = format_diff.base_version.clone();
-        buffer.apply_diff(format_diff, cx);
+        buffer.apply_diff(format_diff, true, cx);
 
         // The outcome depends on the order of concurrent tasks.
         //
@@ -2539,7 +2541,7 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
         assert_eq!(buffer.text(), "one\n1.5\ntwo\nTHREE\n");
     });
 
-    // Convert from branch buffer ranges to the corresoponing ranges in the
+    // Convert from branch buffer ranges to the corresponding ranges in the
     // base buffer.
     branch.read_with(cx, |buffer, cx| {
         assert_eq!(

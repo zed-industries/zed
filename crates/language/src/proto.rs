@@ -1,7 +1,7 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
-use crate::{diagnostic_set::DiagnosticEntry, CursorShape, Diagnostic};
-use anyhow::{anyhow, Context as _, Result};
+use crate::{CursorShape, Diagnostic, diagnostic_set::DiagnosticEntry};
+use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
@@ -207,7 +207,6 @@ pub fn serialize_diagnostics<'a>(
             group_severity: serialize_severity(entry.diagnostic.group_severity),
             group_id: entry.diagnostic.group_id as u64,
             is_primary: entry.diagnostic.is_primary,
-            is_valid: true,
             code: entry.diagnostic.code.as_ref().map(|s| s.to_string()),
             is_disk_based: entry.diagnostic.is_disk_based,
             is_unnecessary: entry.diagnostic.is_unnecessary,

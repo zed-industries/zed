@@ -1,6 +1,6 @@
 use futures::Future;
-use git::blame::BlameEntry;
 use git::PullRequest;
+use git::blame::BlameEntry;
 use gpui::{
     App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement,
@@ -11,7 +11,7 @@ use std::hash::Hash;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
 use time_format::format_local_timestamp;
-use ui::{prelude::*, tooltip_container, Avatar, Divider, IconButtonShape};
+use ui::{Avatar, Divider, IconButtonShape, prelude::*, tooltip_container};
 use url::Url;
 
 use crate::git::blame::GitRemote;
@@ -20,8 +20,8 @@ use crate::hover_popover::hover_markdown_style;
 #[derive(Clone, Debug)]
 pub struct CommitDetails {
     pub sha: SharedString,
-    pub committer_name: SharedString,
-    pub committer_email: SharedString,
+    pub author_name: SharedString,
+    pub author_email: SharedString,
     pub commit_time: OffsetDateTime,
     pub message: Option<ParsedCommitMessage>,
 }
@@ -49,7 +49,7 @@ impl<'a> CommitAvatar<'a> {
         &'a self,
         window: &mut Window,
         cx: &mut Context<CommitTooltip>,
-    ) -> Option<impl IntoElement> {
+    ) -> Option<impl IntoElement + use<>> {
         let remote = self
             .commit
             .message
@@ -133,16 +133,12 @@ impl CommitTooltip {
             CommitDetails {
                 sha: blame.sha.to_string().into(),
                 commit_time,
-                committer_name: blame
-                    .committer_name
+                author_name: blame
+                    .author
                     .clone()
                     .unwrap_or("<no name>".to_string())
                     .into(),
-                committer_email: blame
-                    .committer_email
-                    .clone()
-                    .unwrap_or("".to_string())
-                    .into(),
+                author_email: blame.author_mail.clone().unwrap_or("".to_string()).into(),
                 message: details,
             },
             window,
@@ -180,9 +176,9 @@ impl Render for CommitTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let avatar = CommitAvatar::new(&self.commit).render(window, cx);
 
-        let author = self.commit.committer_name.clone();
+        let author = self.commit.author_name.clone();
 
-        let author_email = self.commit.committer_email.clone();
+        let author_email = self.commit.author_email.clone();
 
         let short_commit_id = self
             .commit

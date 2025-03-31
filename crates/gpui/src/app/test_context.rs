@@ -8,7 +8,7 @@ use crate::{
     WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
-use futures::{channel::oneshot, Stream, StreamExt};
+use futures::{Stream, StreamExt, channel::oneshot};
 use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
@@ -34,7 +34,7 @@ impl AppContext for TestAppContext {
 
     fn new<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         let mut app = self.app.borrow_mut();
         app.new(build_entity)
@@ -48,7 +48,7 @@ impl AppContext for TestAppContext {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: crate::Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         let mut app = self.app.borrow_mut();
         app.insert_entity(reservation, build_entity)
@@ -57,7 +57,7 @@ impl AppContext for TestAppContext {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Self::Result<R> {
         let mut app = self.app.borrow_mut();
         app.update_entity(handle, update)
@@ -399,7 +399,7 @@ impl TestAppContext {
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
         for keystroke in keystrokes
             .split(' ')
-            .map(Keystroke::parse)
+            .map(Keystroke::parse_case_insensitive)
             .map(Result::unwrap)
         {
             self.dispatch_keystroke(window, keystroke);
@@ -413,7 +413,11 @@ impl TestAppContext {
     /// will type abc into your current editor
     /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
-        for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
+        for keystroke in input
+            .split("")
+            .map(Keystroke::parse_case_insensitive)
+            .map(Result::unwrap)
+        {
             self.dispatch_keystroke(window, keystroke);
         }
 
@@ -444,7 +448,10 @@ impl TestAppContext {
     }
 
     /// Returns a stream of notifications whenever the Entity is updated.
-    pub fn notifications<T: 'static>(&mut self, entity: &Entity<T>) -> impl Stream<Item = ()> {
+    pub fn notifications<T: 'static>(
+        &mut self,
+        entity: &Entity<T>,
+    ) -> impl Stream<Item = ()> + use<T> {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         self.update(|cx| {
             cx.observe(entity, {
@@ -872,7 +879,7 @@ impl AppContext for VisualTestContext {
 
     fn new<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.cx.new(build_entity)
     }
@@ -884,7 +891,7 @@ impl AppContext for VisualTestContext {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: crate::Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.cx.insert_entity(reservation, build_entity)
     }
@@ -892,7 +899,7 @@ impl AppContext for VisualTestContext {
     fn update_entity<T, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Self::Result<R>
     where
         T: 'static,
@@ -952,7 +959,7 @@ impl VisualContext for VisualTestContext {
 
     fn new_window_entity<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Window, &mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.window
             .update(&mut self.cx, |_, window, cx| {

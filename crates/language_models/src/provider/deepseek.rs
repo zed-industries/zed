@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
     AnyView, AppContext as _, AsyncApp, Entity, FontStyle, Subscription, Task, TextStyle,
     WhiteSpace,
@@ -18,10 +18,10 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, List};
+use ui::{Icon, IconName, List, prelude::*};
 use util::ResultExt;
 
-use crate::{ui::InstructionListItem, AllLanguageModelSettings};
+use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
 const PROVIDER_ID: &str = "deepseek";
 const PROVIDER_NAME: &str = "DeepSeek";
@@ -63,12 +63,12 @@ impl State {
             .deepseek
             .api_url
             .clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(&api_url, &cx)
                 .await
                 .log_err();
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
                 cx.notify();
@@ -82,11 +82,11 @@ impl State {
             .deepseek
             .api_url
             .clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
                 .await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 cx.notify();
             })
@@ -103,7 +103,7 @@ impl State {
             .deepseek
             .api_url
             .clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(DEEPSEEK_API_KEY_VAR) {
                 (api_key, true)
             } else {
@@ -117,7 +117,7 @@ impl State {
                 )
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 this.api_key_from_env = from_env;
                 cx.notify();
@@ -517,15 +517,15 @@ impl ConfigurationView {
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
-            |this, mut cx| async move {
+            async move |this, cx| {
                 if let Some(task) = state
-                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
                     let _ = task.await;
                 }
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
@@ -547,9 +547,9 @@ impl ConfigurationView {
         }
 
         let state = self.state.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             state
-                .update(&mut cx, |state, cx| state.set_api_key(api_key, cx))?
+                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
                 .await
         })
         .detach_and_log_err(cx);
@@ -562,12 +562,8 @@ impl ConfigurationView {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
-        cx.spawn(|_, mut cx| async move {
-            state
-                .update(&mut cx, |state, cx| state.reset_api_key(cx))?
-                .await
-        })
-        .detach_and_log_err(cx);
+        cx.spawn(async move |_, cx| state.update(cx, |state, cx| state.reset_api_key(cx))?.await)
+            .detach_and_log_err(cx);
 
         cx.notify();
     }

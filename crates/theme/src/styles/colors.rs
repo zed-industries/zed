@@ -43,7 +43,7 @@ pub struct ThemeColors {
     pub element_hover: Hsla,
     /// Background Color. Used for the active state of an element that should have a different background than the surface it's on.
     ///
-    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressed.
     pub element_active: Hsla,
     /// Background Color. Used for the selected state of an element that should have a different background than the surface it's on.
     ///
@@ -69,7 +69,7 @@ pub struct ThemeColors {
     pub ghost_element_hover: Hsla,
     /// Background Color. Used for the active state of a ghost element that should have the same background as the surface it's on.
     ///
-    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressed.
     pub ghost_element_active: Hsla,
     /// Background Color. Used for the selected state of a ghost element that should have the same background as the surface it's on.
     ///
@@ -109,6 +109,9 @@ pub struct ThemeColors {
     ///
     /// This might be used to show when a toggleable icon button is selected.
     pub icon_accent: Hsla,
+    /// Color used to accent some debugger elements
+    /// Is used by breakpoints
+    pub debugger_accent: Hsla,
 
     // ===
     // UI Elements
@@ -148,6 +151,8 @@ pub struct ThemeColors {
     pub editor_subheader_background: Hsla,
     pub editor_active_line_background: Hsla,
     pub editor_highlighted_line_background: Hsla,
+    /// Line color of the line a debugger is currently stopped at
+    pub editor_debugger_active_line_background: Hsla,
     /// Text Color. Used for the text of the line number in the editor gutter.
     pub editor_line_number: Hsla,
     /// Text Color. Used for the text of the line number in the editor gutter when the line is highlighted.

@@ -1,19 +1,19 @@
 mod icon_theme_selector;
 
 use fs::Fs;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal,
-    WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
+    Window, actions,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{update_settings_file, SettingsStore};
+use settings::{SettingsStore, update_settings_file};
 use std::sync::Arc;
 use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
-use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
+use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
-use workspace::{ui::HighlightedLabel, ModalView, Workspace};
-use zed_actions::Extensions;
+use workspace::{ModalView, Workspace, ui::HighlightedLabel};
+use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
 
@@ -266,7 +266,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             .map(|(id, meta)| StringMatchCandidate::new(id, &meta.name))
             .collect::<Vec<_>>();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -290,7 +290,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.delegate.matches = matches;
                 this.delegate.selected_index = this
                     .delegate
@@ -349,7 +349,12 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 .child(
                     Button::new("more-themes", "Install Themes").on_click(cx.listener({
                         move |_, _, window, cx| {
-                            window.dispatch_action(Box::new(Extensions), cx);
+                            window.dispatch_action(
+                                Box::new(Extensions {
+                                    category_filter: Some(ExtensionCategoryFilter::Themes),
+                                }),
+                                cx,
+                            );
                         }
                     })),
                 )

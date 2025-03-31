@@ -1,14 +1,14 @@
 use crate::{
-    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
-    RowExt,
+    AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer, RowExt,
+    display_map::ToDisplayPoint,
 };
 use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
 use futures::Future;
 
 use gpui::{
-    prelude::*, AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
-    VisualTestContext, Window, WindowHandle,
+    AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
+    VisualTestContext, Window, WindowHandle, prelude::*,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
@@ -20,8 +20,8 @@ use std::{
     ops::{Deref, DerefMut, Range},
     path::Path,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 use util::{
@@ -240,7 +240,7 @@ impl EditorTestContext {
     // unlike cx.simulate_keystrokes(), this does not run_until_parked
     // so you can use it to test detailed timing
     pub fn simulate_keystroke(&mut self, keystroke_text: &str) {
-        let keystroke = Keystroke::parse(keystroke_text).unwrap();
+        let keystroke = Keystroke::parse_case_insensitive(keystroke_text).unwrap();
         self.cx.dispatch_keystroke(self.window, keystroke);
     }
 
@@ -339,7 +339,8 @@ impl EditorTestContext {
         let mut found = None;
         fs.with_git_state(&Self::root_path().join(".git"), false, |git_state| {
             found = git_state.index_contents.get(path.as_ref()).cloned();
-        });
+        })
+        .unwrap();
         assert_eq!(expected, found.as_deref());
     }
 

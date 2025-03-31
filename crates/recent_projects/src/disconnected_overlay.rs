@@ -5,11 +5,11 @@ use project::project_settings::ProjectSettings;
 use remote::SshConnectionOptions;
 use settings::Settings;
 use ui::{
-    div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, Context, ElevationIndex,
-    FluentBuilder, Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement,
-    Label, Modal, ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window,
+    Button, ButtonCommon, ButtonStyle, Clickable, Context, ElevationIndex, FluentBuilder, Headline,
+    HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
+    ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window, div, h_flex, rems,
 };
-use workspace::{notifications::DetachAndPromptErr, ModalView, OpenOptions, Workspace};
+use workspace::{ModalView, OpenOptions, Workspace, notifications::DetachAndPromptErr};
 
 use crate::open_ssh_project;
 
@@ -118,7 +118,7 @@ impl DisconnectedOverlay {
 
         let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
-        cx.spawn_in(window, move |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             open_ssh_project(
                 connection_options,
                 paths,
@@ -127,7 +127,7 @@ impl DisconnectedOverlay {
                     replace_window: Some(window_handle),
                     ..Default::default()
                 },
-                &mut cx,
+                cx,
             )
             .await?;
             Ok(())
