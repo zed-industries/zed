@@ -4,7 +4,7 @@ use crate::{
 };
 use collections::BTreeMap;
 use gpui::{prelude::*, App, Context, Entity, EventEmitter, Global};
-use std::{env, sync::Arc};
+use std::sync::Arc;
 
 pub fn init(cx: &mut App) {
     let registry = cx.new(|_cx| LanguageModelRegistry::default());
