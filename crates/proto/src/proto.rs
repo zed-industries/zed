@@ -471,6 +471,7 @@ messages!(
     (GitDiffResponse, Background),
     (GitInit, Background),
     (SemanticTokensFullRequest, Background),
+    (SemanticTokensRangeRequest, Background),
     (SemanticTokensResponse, Background),
     (RefreshSemanticTokens, Background),
 );
@@ -628,6 +629,7 @@ request_messages!(
     (GitInit, Ack),
     (ToggleBreakpoint, Ack),
     (SemanticTokensFullRequest, SemanticTokensResponse),
+    (SemanticTokensRangeRequest, SemanticTokensResponse),
     (RefreshSemanticTokens, Ack),
 );
 

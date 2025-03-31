@@ -366,6 +366,7 @@ message Envelope {
         SemanticTokensFullRequest semantic_tokens_full_request = 332;
         SemanticTokensResponse semantic_tokens_response = 333;
         RefreshSemanticTokens refresh_semantic_tokens = 334;
+        SemanticTokensRangeRequest semantic_tokens_range_request = 335;
     }
 
     reserved 87 to 88;
@@ -3576,6 +3577,14 @@ message GitInit {
     uint64 project_id = 1;
     string abs_path = 2;
     string fallback_branch_name = 3;
+}
+
+message SemanticTokensRangeRequest {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor start = 3;
+    Anchor end = 4;
+    repeated VectorClockEntry version = 5;
 }
 
 message SemanticTokensFullRequest {
