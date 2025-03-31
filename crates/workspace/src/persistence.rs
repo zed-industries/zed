@@ -148,6 +148,8 @@ impl Column for SerializedWindowBounds {
 pub struct Breakpoint {
     pub position: u32,
     pub message: Option<Arc<str>>,
+    pub condition: Option<Arc<str>>,
+    pub hit_condition: Option<Arc<str>>,
     pub state: BreakpointState,
 }
 
@@ -190,7 +192,8 @@ struct Breakpoints(Vec<Breakpoint>);
 
 impl sqlez::bindable::StaticColumnCount for Breakpoint {
     fn column_count() -> usize {
-        2 + BreakpointStateWrapper::column_count()
+        // Position, log message, condition message, and hit condition message
+        4 + BreakpointStateWrapper::column_count()
     }
 }
 
@@ -202,6 +205,8 @@ impl sqlez::bindable::Bind for Breakpoint {
     ) -> anyhow::Result<i32> {
         let next_index = statement.bind(&self.position, start_index)?;
         let next_index = statement.bind(&self.message, next_index)?;
+        let next_index = statement.bind(&self.condition, next_index)?;
+        let next_index = statement.bind(&self.hit_condition, next_index)?;
         statement.bind(
             &BreakpointStateWrapper(Cow::Borrowed(&self.state)),
             next_index,
@@ -216,12 +221,16 @@ impl Column for Breakpoint {
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
             as u32;
         let (message, next_index) = Option::<String>::column(statement, start_index + 1)?;
+        let (condition, next_index) = Option::<String>::column(statement, next_index)?;
+        let (hit_condition, next_index) = Option::<String>::column(statement, next_index)?;
         let (state, next_index) = BreakpointStateWrapper::column(statement, next_index)?;
 
         Ok((
             Breakpoint {
                 position,
                 message: message.map(Arc::from),
+                condition: condition.map(Arc::from),
+                hit_condition: hit_condition.map(Arc::from),
                 state: state.0.into_owned(),
             },
             next_index,
@@ -527,7 +536,11 @@ define_connection! {
     sql!(
         ALTER TABLE breakpoints DROP COLUMN kind
     ),
-    sql!(ALTER TABLE toolchains ADD COLUMN relative_worktree_path TEXT DEFAULT "" NOT NULL)
+    sql!(ALTER TABLE toolchains ADD COLUMN relative_worktree_path TEXT DEFAULT "" NOT NULL),
+    sql!(
+        ALTER TABLE breakpoints ADD COLUMN condition TEXT;
+        ALTER TABLE breakpoints ADD COLUMN hit_condition TEXT;
+    ),
     ];
 }
 
@@ -680,7 +693,7 @@ impl WorkspaceDb {
     fn breakpoints(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> {
         let breakpoints: Result<Vec<(PathBuf, Breakpoint)>> = self
             .select_bound(sql! {
-                SELECT path, breakpoint_location, log_message, state
+                SELECT path, breakpoint_location, log_message, condition, hit_condition, state
                 FROM breakpoints
                 WHERE workspace_id = ?
             })
@@ -700,8 +713,18 @@ impl WorkspaceDb {
                         row: breakpoint.position,
                         path,
                         message: breakpoint.message,
+                        condition: breakpoint.condition,
+                        hit_condition: breakpoint.hit_condition,
                         state: breakpoint.state,
                     });
+                }
+
+                for (path, bps) in map.iter() {
+                    log::debug!(
+                        "Got {} breakpoints from path: {}",
+                        bps.len(),
+                        path.to_string_lossy()
+                    );
                 }
 
                 map
@@ -727,20 +750,23 @@ impl WorkspaceDb {
                     conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1 AND path = ?2))?((workspace.id, path.as_ref()))
                     .context("Clearing old breakpoints")?;
                     for bp in breakpoints {
-                        let message = bp.message;
                         let state = BreakpointStateWrapper::from(bp.state);
                         match conn.exec_bound(sql!(
-                            INSERT INTO breakpoints (workspace_id, path, breakpoint_location,  log_message, state)
-                            VALUES (?1, ?2, ?3, ?4, ?5);))?
+                            INSERT INTO breakpoints (workspace_id, path, breakpoint_location,  log_message, condition, hit_condition, state)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);))?
 
                         ((
                             workspace.id,
                             path.as_ref(),
                             bp.row,
-                            message,
+                            bp.message,
+                            bp.condition,
+                            bp.hit_condition,
                             state,
                         )) {
-                            Ok(_) => {}
+                            Ok(_) => {
+                                log::debug!("Stored breakpoint at row: {} in path: {}", bp.row, path.to_string_lossy())
+                            }
                             Err(err) => {
                                 log::error!("{err}");
                                 continue;
@@ -1409,18 +1435,40 @@ mod tests {
             position: 123,
             message: None,
             state: BreakpointState::Enabled,
+            condition: None,
+            hit_condition: None,
         };
 
         let log_breakpoint = Breakpoint {
             position: 456,
             message: Some("Test log message".into()),
             state: BreakpointState::Enabled,
+            condition: None,
+            hit_condition: None,
         };
 
         let disable_breakpoint = Breakpoint {
             position: 578,
             message: None,
             state: BreakpointState::Disabled,
+            condition: None,
+            hit_condition: None,
+        };
+
+        let condition_breakpoint = Breakpoint {
+            position: 789,
+            message: None,
+            state: BreakpointState::Enabled,
+            condition: Some("x > 5".into()),
+            hit_condition: None,
+        };
+
+        let hit_condition_breakpoint = Breakpoint {
+            position: 999,
+            message: None,
+            state: BreakpointState::Enabled,
+            condition: None,
+            hit_condition: Some(">= 3".into()),
         };
 
         let workspace = SerializedWorkspace {
@@ -1441,18 +1489,40 @@ mod tests {
                             path: Arc::from(path),
                             message: breakpoint.message.clone(),
                             state: breakpoint.state,
+                            condition: breakpoint.condition.clone(),
+                            hit_condition: breakpoint.hit_condition.clone(),
                         },
                         SourceBreakpoint {
                             row: log_breakpoint.position,
                             path: Arc::from(path),
                             message: log_breakpoint.message.clone(),
                             state: log_breakpoint.state,
+                            condition: log_breakpoint.condition.clone(),
+                            hit_condition: log_breakpoint.hit_condition.clone(),
                         },
                         SourceBreakpoint {
                             row: disable_breakpoint.position,
                             path: Arc::from(path),
                             message: disable_breakpoint.message.clone(),
                             state: disable_breakpoint.state,
+                            condition: disable_breakpoint.condition.clone(),
+                            hit_condition: disable_breakpoint.hit_condition.clone(),
+                        },
+                        SourceBreakpoint {
+                            row: condition_breakpoint.position,
+                            path: Arc::from(path),
+                            message: condition_breakpoint.message.clone(),
+                            state: condition_breakpoint.state,
+                            condition: condition_breakpoint.condition.clone(),
+                            hit_condition: condition_breakpoint.hit_condition.clone(),
+                        },
+                        SourceBreakpoint {
+                            row: hit_condition_breakpoint.position,
+                            path: Arc::from(path),
+                            message: hit_condition_breakpoint.message.clone(),
+                            state: hit_condition_breakpoint.state,
+                            condition: hit_condition_breakpoint.condition.clone(),
+                            hit_condition: hit_condition_breakpoint.hit_condition.clone(),
                         },
                     ],
                 );
@@ -1467,22 +1537,74 @@ mod tests {
         let loaded = db.workspace_for_roots(&["/tmp"]).unwrap();
         let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(path)).unwrap();
 
-        assert_eq!(loaded_breakpoints.len(), 3);
+        assert_eq!(loaded_breakpoints.len(), 5);
 
+        // normal breakpoint
         assert_eq!(loaded_breakpoints[0].row, breakpoint.position);
         assert_eq!(loaded_breakpoints[0].message, breakpoint.message);
+        assert_eq!(loaded_breakpoints[0].condition, breakpoint.condition);
+        assert_eq!(
+            loaded_breakpoints[0].hit_condition,
+            breakpoint.hit_condition
+        );
         assert_eq!(loaded_breakpoints[0].state, breakpoint.state);
         assert_eq!(loaded_breakpoints[0].path, Arc::from(path));
 
+        // enabled breakpoint
         assert_eq!(loaded_breakpoints[1].row, log_breakpoint.position);
         assert_eq!(loaded_breakpoints[1].message, log_breakpoint.message);
+        assert_eq!(loaded_breakpoints[1].condition, log_breakpoint.condition);
+        assert_eq!(
+            loaded_breakpoints[1].hit_condition,
+            log_breakpoint.hit_condition
+        );
         assert_eq!(loaded_breakpoints[1].state, log_breakpoint.state);
         assert_eq!(loaded_breakpoints[1].path, Arc::from(path));
 
+        // disable breakpoint
         assert_eq!(loaded_breakpoints[2].row, disable_breakpoint.position);
         assert_eq!(loaded_breakpoints[2].message, disable_breakpoint.message);
+        assert_eq!(
+            loaded_breakpoints[2].condition,
+            disable_breakpoint.condition
+        );
+        assert_eq!(
+            loaded_breakpoints[2].hit_condition,
+            disable_breakpoint.hit_condition
+        );
         assert_eq!(loaded_breakpoints[2].state, disable_breakpoint.state);
         assert_eq!(loaded_breakpoints[2].path, Arc::from(path));
+
+        // condition breakpoint
+        assert_eq!(loaded_breakpoints[3].row, condition_breakpoint.position);
+        assert_eq!(loaded_breakpoints[3].message, condition_breakpoint.message);
+        assert_eq!(
+            loaded_breakpoints[3].condition,
+            condition_breakpoint.condition
+        );
+        assert_eq!(
+            loaded_breakpoints[3].hit_condition,
+            condition_breakpoint.hit_condition
+        );
+        assert_eq!(loaded_breakpoints[3].state, condition_breakpoint.state);
+        assert_eq!(loaded_breakpoints[3].path, Arc::from(path));
+
+        // hit condition breakpoint
+        assert_eq!(loaded_breakpoints[4].row, hit_condition_breakpoint.position);
+        assert_eq!(
+            loaded_breakpoints[4].message,
+            hit_condition_breakpoint.message
+        );
+        assert_eq!(
+            loaded_breakpoints[4].condition,
+            hit_condition_breakpoint.condition
+        );
+        assert_eq!(
+            loaded_breakpoints[4].hit_condition,
+            hit_condition_breakpoint.hit_condition
+        );
+        assert_eq!(loaded_breakpoints[4].state, hit_condition_breakpoint.state);
+        assert_eq!(loaded_breakpoints[4].path, Arc::from(path));
     }
 
     #[gpui::test]

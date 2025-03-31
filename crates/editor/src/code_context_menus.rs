@@ -1,3 +1,4 @@
+use feature_flags::{Debugger, FeatureFlagAppExt as _};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight, ListSizingBehavior,
@@ -992,6 +993,17 @@ impl CodeActionsMenu {
                     .iter()
                     .skip(range.start)
                     .take(range.end - range.start)
+                    .filter(|action| {
+                        if action
+                            .as_task()
+                            .map(|task| matches!(task.task_type(), task::TaskType::Debug(_)))
+                            .unwrap_or(false)
+                        {
+                            cx.has_flag::<Debugger>()
+                        } else {
+                            true
+                        }
+                    })
                     .enumerate()
                     .map(|(ix, action)| {
                         let item_ix = range.start + ix;

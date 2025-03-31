@@ -4798,6 +4798,8 @@ impl Editor {
                                 Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
                             });
 
+                    let debugger_flag = cx.has_flag::<Debugger>();
+
                     Some(cx.spawn_in(window, async move |editor, cx| {
                         let task_context = match task_context {
                             Some(task_context) => task_context.await,
@@ -4813,12 +4815,22 @@ impl Editor {
                                     )),
                                 })
                             });
-                        let spawn_straight_away = resolved_tasks
+                        let spawn_straight_away = resolved_tasks.as_ref().map_or(false, |tasks| {
+                            tasks
+                                .templates
+                                .iter()
+                                .filter(|task| {
+                                    if matches!(task.1.task_type(), task::TaskType::Debug(_)) {
+                                        debugger_flag
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .count()
+                                == 1
+                        }) && code_actions
                             .as_ref()
-                            .map_or(false, |tasks| tasks.templates.len() == 1)
-                            && code_actions
-                                .as_ref()
-                                .map_or(true, |actions| actions.is_empty());
+                            .map_or(true, |actions| actions.is_empty());
                         if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
@@ -6292,6 +6304,22 @@ impl Editor {
             "Set Log Breakpoint"
         };
 
+        let condition_breakpoint_msg =
+            if breakpoint.as_ref().is_some_and(|bp| bp.condition.is_some()) {
+                "Edit Condition Breakpoint"
+            } else {
+                "Set Condition Breakpoint"
+            };
+
+        let hit_condition_breakpoint_msg = if breakpoint
+            .as_ref()
+            .is_some_and(|bp| bp.hit_condition.is_some())
+        {
+            "Edit Hit Condition Breakpoint"
+        } else {
+            "Set Hit Condition Breakpoint"
+        };
+
         let set_breakpoint_msg = if breakpoint.as_ref().is_some() {
             "Unset Breakpoint"
         } else {
@@ -6303,12 +6331,7 @@ impl Editor {
             BreakpointState::Disabled => Some("Enable"),
         });
 
-        let breakpoint = breakpoint.unwrap_or_else(|| {
-            Arc::new(Breakpoint {
-                state: BreakpointState::Enabled,
-                message: None,
-            })
-        });
+        let breakpoint = breakpoint.unwrap_or_else(|| Arc::new(Breakpoint::new_standard()));
 
         ui::ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
@@ -6347,10 +6370,50 @@ impl Editor {
                             .log_err();
                     }
                 })
-                .entry(log_breakpoint_msg, None, move |window, cx| {
+                .entry(log_breakpoint_msg, None, {
+                    let breakpoint = breakpoint.clone();
+                    let weak_editor = weak_editor.clone();
+                    move |window, cx| {
+                        weak_editor
+                            .update(cx, |this, cx| {
+                                this.add_edit_breakpoint_block(
+                                    anchor,
+                                    breakpoint.as_ref(),
+                                    BreakpointPromptEditAction::Log,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .log_err();
+                    }
+                })
+                .entry(condition_breakpoint_msg, None, {
+                    let breakpoint = breakpoint.clone();
+                    let weak_editor = weak_editor.clone();
+                    move |window, cx| {
+                        weak_editor
+                            .update(cx, |this, cx| {
+                                this.add_edit_breakpoint_block(
+                                    anchor,
+                                    breakpoint.as_ref(),
+                                    BreakpointPromptEditAction::Condition,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .log_err();
+                    }
+                })
+                .entry(hit_condition_breakpoint_msg, None, move |window, cx| {
                     weak_editor
                         .update(cx, |this, cx| {
-                            this.add_edit_breakpoint_block(anchor, breakpoint.as_ref(), window, cx);
+                            this.add_edit_breakpoint_block(
+                                anchor,
+                                breakpoint.as_ref(),
+                                BreakpointPromptEditAction::HitCondition,
+                                window,
+                                cx,
+                            );
                         })
                         .log_err();
                 })
@@ -8597,12 +8660,20 @@ impl Editor {
         &mut self,
         anchor: Anchor,
         breakpoint: &Breakpoint,
+        edit_action: BreakpointPromptEditAction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let weak_editor = cx.weak_entity();
         let bp_prompt = cx.new(|cx| {
-            BreakpointPromptEditor::new(weak_editor, anchor, breakpoint.clone(), window, cx)
+            BreakpointPromptEditor::new(
+                weak_editor,
+                anchor,
+                breakpoint.clone(),
+                edit_action,
+                window,
+                cx,
+            )
         });
 
         let height = bp_prompt.update(cx, |this, cx| {
@@ -8721,11 +8792,13 @@ impl Editor {
                     Breakpoint {
                         message: None,
                         state: BreakpointState::Enabled,
+                        condition: None,
+                        hit_condition: None,
                     },
                 )
             });
 
-        self.add_edit_breakpoint_block(anchor, &bp, window, cx);
+        self.add_edit_breakpoint_block(anchor, &bp, BreakpointPromptEditAction::Log, window, cx);
     }
 
     pub fn enable_breakpoint(
@@ -19861,11 +19934,18 @@ impl Global for KillRing {}
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
+enum BreakpointPromptEditAction {
+    Log,
+    Condition,
+    HitCondition,
+}
+
 struct BreakpointPromptEditor {
     pub(crate) prompt: Entity<Editor>,
     editor: WeakEntity<Editor>,
     breakpoint_anchor: Anchor,
     breakpoint: Breakpoint,
+    edit_action: BreakpointPromptEditAction,
     block_ids: HashSet<CustomBlockId>,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     _subscriptions: Vec<Subscription>,
@@ -19878,19 +19958,19 @@ impl BreakpointPromptEditor {
         editor: WeakEntity<Editor>,
         breakpoint_anchor: Anchor,
         breakpoint: Breakpoint,
+        edit_action: BreakpointPromptEditAction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let buffer = cx.new(|cx| {
-            Buffer::local(
-                breakpoint
-                    .message
-                    .as_ref()
-                    .map(|msg| msg.to_string())
-                    .unwrap_or_default(),
-                cx,
-            )
-        });
+        let base_text = match edit_action {
+            BreakpointPromptEditAction::Log => breakpoint.message.as_ref(),
+            BreakpointPromptEditAction::Condition => breakpoint.condition.as_ref(),
+            BreakpointPromptEditAction::HitCondition => breakpoint.hit_condition.as_ref(),
+        }
+        .map(|msg| msg.to_string())
+        .unwrap_or_default();
+
+        let buffer = cx.new(|cx| Buffer::local(base_text, cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
         let prompt = cx.new(|cx| {
@@ -19906,7 +19986,11 @@ impl BreakpointPromptEditor {
             prompt.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             prompt.set_show_cursor_when_unfocused(false, cx);
             prompt.set_placeholder_text(
-                "Message to log when breakpoint is hit. Expressions within {} are interpolated.",
+                match edit_action {
+                    BreakpointPromptEditAction::Log => "Message to log when a breakpoint is hit. Expressions within {} are interpolated.",
+                    BreakpointPromptEditAction::Condition => "Condition when a breakpoint is hit. Expressions within {} are interpolated.",
+                    BreakpointPromptEditAction::HitCondition => "How many breakpoint hits to ignore",
+                },
                 cx,
             );
 
@@ -19918,6 +20002,7 @@ impl BreakpointPromptEditor {
             editor,
             breakpoint_anchor,
             breakpoint,
+            edit_action,
             gutter_dimensions: Arc::new(Mutex::new(GutterDimensions::default())),
             block_ids: Default::default(),
             _subscriptions: vec![],
@@ -19930,7 +20015,7 @@ impl BreakpointPromptEditor {
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.editor.upgrade() {
-            let log_message = self
+            let message = self
                 .prompt
                 .read(cx)
                 .buffer
@@ -19945,7 +20030,17 @@ impl BreakpointPromptEditor {
                 editor.edit_breakpoint_at_anchor(
                     self.breakpoint_anchor,
                     self.breakpoint.clone(),
-                    BreakpointEditAction::EditLogMessage(log_message.into()),
+                    match self.edit_action {
+                        BreakpointPromptEditAction::Log => {
+                            BreakpointEditAction::EditLogMessage(message.into())
+                        }
+                        BreakpointPromptEditAction::Condition => {
+                            BreakpointEditAction::EditCondition(message.into())
+                        }
+                        BreakpointPromptEditAction::HitCondition => {
+                            BreakpointEditAction::EditHitCondition(message.into())
+                        }
+                    },
                     cx,
                 );
 

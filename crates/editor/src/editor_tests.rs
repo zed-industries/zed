@@ -17387,6 +17387,8 @@ fn assert_breakpoint(
                     Breakpoint {
                         message: breakpoint.message.clone(),
                         state: breakpoint.state,
+                        condition: breakpoint.condition.clone(),
+                        hit_condition: breakpoint.hit_condition.clone(),
                     },
                 )
             })
@@ -17415,13 +17417,7 @@ fn add_log_breakpoint_at_cursor(
                 .buffer_snapshot
                 .anchor_before(Point::new(cursor_position.row, 0));
 
-            (
-                breakpoint_position,
-                Breakpoint {
-                    message: Some(Arc::from(log_message)),
-                    state: BreakpointState::Enabled,
-                },
-            )
+            (breakpoint_position, Breakpoint::new_log(&log_message))
         });
 
     editor.edit_breakpoint_at_anchor(

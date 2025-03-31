@@ -2673,6 +2673,8 @@ message Breakpoint {
     BreakpointState state = 2;
     reserved 3;
     optional string message = 4;
+    optional string condition = 5;
+    optional string hit_condition = 6;
 }
 
 message BreakpointsForFile {
