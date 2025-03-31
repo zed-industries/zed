@@ -1,7 +1,7 @@
 use gpui::Render;
 use story::Story;
 
-use crate::{prelude::*, Avatar};
+use crate::{Avatar, prelude::*};
 use crate::{IconName, ListItem};
 
 const OVERFLOWING_TEXT: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Aenean mauris ligula, luctus vel dignissim eu, vestibulum sed libero. Sed at convallis velit.";

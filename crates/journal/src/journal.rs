@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
-use editor::scroll::Autoscroll;
 use editor::Editor;
-use gpui::{actions, App, AppContext as _, Context, Window};
+use editor::scroll::Autoscroll;
+use gpui::{App, AppContext as _, Context, Window, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};

@@ -1,9 +1,9 @@
-use crate::{motion::Motion, object::Object, Vim};
+use crate::{Vim, motion::Motion, object::Object};
 use collections::{HashMap, HashSet};
 use editor::{
+    Bias, DisplayPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     scroll::Autoscroll,
-    Bias, DisplayPoint,
 };
 use gpui::{Context, Window};
 use language::{Point, Selection};

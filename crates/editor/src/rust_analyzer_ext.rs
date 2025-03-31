@@ -8,8 +8,8 @@ use project::lsp_store::{lsp_ext_command::ExpandMacro, rust_analyzer_ext::RUST_A
 use text::ToPointUtf16;
 
 use crate::{
-    element::register_action, lsp_ext::find_specific_language_server_in_selection, Editor,
-    ExpandMacroRecursively, OpenDocs,
+    Editor, ExpandMacroRecursively, OpenDocs, element::register_action,
+    lsp_ext::find_specific_language_server_in_selection,
 };
 
 fn is_rust_language(language: &Language) -> bool {

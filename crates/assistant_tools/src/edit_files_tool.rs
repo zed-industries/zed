@@ -2,11 +2,11 @@ mod edit_action;
 pub mod log;
 
 use crate::replace::{replace_exact, replace_with_flexible_indent};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
-use futures::{channel::mpsc, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
@@ -528,7 +528,8 @@ impl EditToolRequest {
                         }
                     }
 
-                    write!(&mut output,
+                    write!(
+                        &mut output,
                         "The SEARCH section must exactly match an existing block of lines including all white \
                         space, comments, indentation, docstrings, etc."
                     )?;
@@ -547,7 +548,8 @@ impl EditToolRequest {
                 }
 
                 if has_errors {
-                    writeln!(&mut output,
+                    writeln!(
+                        &mut output,
                         "\n\nYou can fix errors by running the tool again. You can include instructions, \
                         but errors are part of the conversation so you don't need to repeat them.",
                     )?;

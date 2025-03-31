@@ -5,10 +5,10 @@ use crate::role::Role;
 use crate::{LanguageModelToolUse, LanguageModelToolUseId};
 use base64::write::EncoderWriter;
 use gpui::{
-    point, px, size, App, AppContext as _, DevicePixels, Image, ObjectFit, RenderImage,
-    SharedString, Size, Task,
+    App, AppContext as _, DevicePixels, Image, ObjectFit, RenderImage, SharedString, Size, Task,
+    point, px, size,
 };
-use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
+use image::{DynamicImage, ImageDecoder, codecs::png::PngEncoder, imageops::resize};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 

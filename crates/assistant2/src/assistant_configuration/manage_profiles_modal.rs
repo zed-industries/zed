@@ -11,12 +11,12 @@ use convert_case::{Case, Casing as _};
 use editor::Editor;
 use fs::Fs;
 use gpui::{
-    prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-    WeakEntity,
+    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity,
+    prelude::*,
 };
-use settings::{update_settings_file, Settings as _};
+use settings::{Settings as _, update_settings_file};
 use ui::{
-    prelude::*, KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry,
+    KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry, prelude::*,
 };
 use workspace::{ModalView, Workspace};
 

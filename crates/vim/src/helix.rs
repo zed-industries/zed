@@ -1,9 +1,9 @@
-use editor::{movement, scroll::Autoscroll, DisplayPoint, Editor};
-use gpui::{actions, Action};
+use editor::{DisplayPoint, Editor, movement, scroll::Autoscroll};
+use gpui::{Action, actions};
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
 
-use crate::{motion::Motion, state::Mode, Vim};
+use crate::{Vim, motion::Motion, state::Mode};
 
 actions!(vim, [HelixNormalAfter, HelixDelete]);
 

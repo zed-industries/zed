@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
 use language_model::LanguageModelRequestMessage;
 use project::{
-    search::{SearchQuery, SearchResult},
     Project,
+    search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
