@@ -62,10 +62,6 @@ define_connection!(pub static ref COMMAND_PALETTE_HISTORY: CommandPaletteDB<()> 
 );
 
 impl CommandPaletteDB {
-    pub fn list_commands_used(&self) -> Result<Vec<SerializedCommandUsage>> {
-        self.list_commands_used_internal()
-    }
-
     pub async fn write_command_invocation(
         &self,
         command_name: &str,
@@ -104,7 +100,7 @@ impl CommandPaletteDB {
     }
 
     query! {
-        fn list_commands_used_internal() -> Result<Vec<SerializedCommandUsage>> {
+        pub fn list_commands_used() -> Result<Vec<SerializedCommandUsage>> {
             SELECT command_name, COUNT(1), MAX(last_invoked)
             FROM command_invocations
             GROUP BY command_name
