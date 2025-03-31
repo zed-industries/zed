@@ -1904,9 +1904,8 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_delete_paragraph(cx: &mut gpui::TestAppContext) {
+async fn test_delete_paragraph_motion(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
-
     cx.set_shared_state(indoc! {
         "ˇhello world.
 
@@ -1914,7 +1913,22 @@ async fn test_delete_paragraph(cx: &mut gpui::TestAppContext) {
         "
     })
     .await;
-    cx.simulate_shared_keystrokes("y } d }").await;
+    cx.simulate_shared_keystrokes("y }").await;
     cx.shared_clipboard().await.assert_eq("hello world.\n");
-    cx.shared_state().await.assert_eq("ˇ\nhello world.");
+    cx.simulate_shared_keystrokes("d }").await;
+    cx.shared_state().await.assert_eq("ˇ\nhello world.\n");
+    cx.shared_clipboard().await.assert_eq("hello world.\n");
+
+    cx.set_shared_state(indoc! {
+        "helˇlo world.
+
+            hello world.
+            "
+    })
+    .await;
+    cx.simulate_shared_keystrokes("y }").await;
+    cx.shared_clipboard().await.assert_eq("lo world.");
+    cx.simulate_shared_keystrokes("d }").await;
+    cx.shared_state().await.assert_eq("heˇl\n\nhello world.\n");
+    cx.shared_clipboard().await.assert_eq("lo world.");
 }
