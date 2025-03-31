@@ -180,6 +180,11 @@ impl Tool for CodeActionTool {
                         })?
                         .await?;
 
+                    // Save the buffer after rename
+                    project
+                        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                        .await?;
+
                     action_log.update(cx, |log, cx| {
                         log.buffer_edited(buffer.clone(), Vec::new(), cx)
                     })?;
@@ -240,6 +245,11 @@ impl Tool for CodeActionTool {
                         .update(cx, |project, cx| {
                             project.apply_code_action(buffer.clone(), action, true, cx)
                         })?
+                        .await?;
+
+                    // Save the buffer after executing the code action
+                    project
+                        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
                         .await?;
 
                     action_log.update(cx, |log, cx| {
