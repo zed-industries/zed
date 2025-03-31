@@ -1,10 +1,7 @@
 use crate::{HighlightStyles, InlayId};
 use collections::BTreeSet;
-use gpui::{HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{
-    Anchor, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset,
-};
+use multi_buffer::{Anchor, MultiBufferRow, MultiBufferRows, RowInfo, ToOffset};
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
@@ -13,8 +10,7 @@ use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
 use super::{
-    custom_highlights::CustomHighlightsChunks,
-    token_map::{TokenChunks, TokenEdit, TokenMap, TokenOffset, TokenPoint, TokenSnapshot},
+    token_map::{TokenChunks, TokenEdit, TokenOffset, TokenSnapshot},
     Highlights,
 };
 
@@ -1493,7 +1489,7 @@ mod tests {
     #[gpui::test]
     fn test_inlay_buffer_rows(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
-        let (mut token_map, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        let (_, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         assert_eq!(inlay_snapshot.text(), "abc\ndef\nghi");
         let mut next_inlay_id = 0;

@@ -1,9 +1,9 @@
 use crate::HighlightStyles;
 use collections::BTreeSet;
-use gpui::{HighlightStyle, Hsla};
+use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
+use multi_buffer::MultiBufferSnapshot;
 use multi_buffer::{MultiBufferRow, MultiBufferRows, RowInfo, ToOffset};
-use multi_buffer::{MultiBufferSnapshot, ToOffset as _};
 use std::cmp;
 use std::ops::{Add, AddAssign, Range, Sub, SubAssign};
 use sum_tree::{Bias, Cursor, SumTree};
@@ -189,7 +189,6 @@ pub struct TokenChunks<'a> {
     token_chunk: Option<&'a str>,
     output_offset: TokenOffset,
     max_output_offset: TokenOffset,
-    highlight_styles: HighlightStyles,
     highlights: Highlights<'a>,
     snapshot: &'a TokenSnapshot,
 }
@@ -909,7 +908,6 @@ impl TokenSnapshot {
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
-            highlight_styles: highlights.styles,
             highlights,
             snapshot: self,
         }

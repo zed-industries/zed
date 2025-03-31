@@ -608,7 +608,6 @@ impl DisplayMap {
         self.wrap_map.read(cx).is_rewrapping()
     }
 }
-
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,

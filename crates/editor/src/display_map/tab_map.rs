@@ -753,7 +753,7 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
 
-        let (mut token_map, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
         let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
