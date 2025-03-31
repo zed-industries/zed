@@ -76,7 +76,10 @@ impl ScreenCaptureSource for ScapCaptureSource {
 
         // Due to use of blocking APIs, a dedicated thread is used.
         std::thread::spawn(move || match new_scap_capturer(Some(target)) {
-            Ok(capturer) => run_capture(capturer, frame_callback, stream_tx),
+            Ok(mut capturer) => {
+                capturer.start_capture();
+                run_capture(capturer, frame_callback, stream_tx);
+            }
             Err(e) => {
                 stream_tx.send(Err(e)).ok();
             }
