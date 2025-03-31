@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
+use anyhow::{Result, bail};
 use deepseek::Model as DeepseekModel;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Pixels};
@@ -325,15 +326,48 @@ impl AssistantSettingsContent {
     }
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
-        match self {
-            AssistantSettingsContent::Versioned(settings) => match settings {
-                VersionedAssistantSettingsContent::V2(settings) => {
-                    settings.default_profile = Some(profile_id);
-                }
-                VersionedAssistantSettingsContent::V1(_) => {}
-            },
-            AssistantSettingsContent::Legacy(_) => {}
+        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
+            self
+        else {
+            return;
+        };
+
+        settings.default_profile = Some(profile_id);
+    }
+
+    pub fn create_profile(&mut self, profile_id: Arc<str>, profile: AgentProfile) -> Result<()> {
+        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
+            self
+        else {
+            return Ok(());
+        };
+
+        let profiles = settings.profiles.get_or_insert_default();
+        if profiles.contains_key(&profile_id) {
+            bail!("profile with ID '{profile_id}' already exists");
         }
+
+        profiles.insert(
+            profile_id,
+            AgentProfileContent {
+                name: profile.name.into(),
+                tools: profile.tools,
+                context_servers: profile
+                    .context_servers
+                    .into_iter()
+                    .map(|(server_id, preset)| {
+                        (
+                            server_id,
+                            ContextServerPresetContent {
+                                tools: preset.tools,
+                            },
+                        )
+                    })
+                    .collect(),
+            },
+        );
+
+        Ok(())
     }
 }
 
