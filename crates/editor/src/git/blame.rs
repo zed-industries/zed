@@ -7,7 +7,7 @@ use git::{
 };
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Hsla, Subscription, Task, TextStyle,
-    WeakEntity,
+    WeakEntity, Window,
 };
 use language::{Bias, Buffer, BufferSnapshot, Edit};
 use multi_buffer::RowInfo;
@@ -100,6 +100,15 @@ pub trait BlameRenderer {
         _: Entity<Editor>,
         _: &mut App,
     ) -> Option<AnyElement>;
+
+    fn open_blame_commit(
+        &self,
+        _: BlameEntry,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
+        _: &mut Window,
+        _: &mut App,
+    );
 }
 
 impl BlameRenderer for () {
@@ -133,6 +142,16 @@ impl BlameRenderer for () {
         _: &mut App,
     ) -> Option<AnyElement> {
         None
+    }
+
+    fn open_blame_commit(
+        &self,
+        _: BlameEntry,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
+        _: &mut Window,
+        _: &mut App,
+    ) {
     }
 }
 

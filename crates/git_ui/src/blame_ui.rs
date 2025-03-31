@@ -164,6 +164,28 @@ impl BlameRenderer for GitBlameRenderer {
                 .into_any(),
         )
     }
+
+    fn open_blame_commit(
+        &self,
+        blame_entry: BlameEntry,
+        repository: Entity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        CommitView::open(
+            CommitSummary {
+                sha: blame_entry.sha.to_string().into(),
+                subject: blame_entry.summary.clone().unwrap_or_default().into(),
+                commit_timestamp: blame_entry.committer_time.unwrap_or_default(),
+                has_parent: true,
+            },
+            repository.downgrade(),
+            workspace.clone(),
+            window,
+            cx,
+        )
+    }
 }
 
 fn deploy_blame_entry_context_menu(
