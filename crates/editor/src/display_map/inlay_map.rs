@@ -10,7 +10,7 @@ use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
 use super::{
-    token_map::{TokenChunks, TokenEdit, TokenOffset, TokenSnapshot},
+    token_map::{TokenBufferRows, TokenChunks, TokenEdit, TokenOffset, TokenSnapshot},
     Highlights,
 };
 
@@ -198,9 +198,9 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
 #[derive(Clone)]
 pub struct InlayBufferRows<'a> {
     transforms: Cursor<'a, Transform, (InlayPoint, Point)>,
-    buffer_rows: MultiBufferRows<'a>,
+    token_rows: TokenBufferRows<'a>,
     inlay_row: u32,
-    max_buffer_row: MultiBufferRow,
+    max_buffer_row: u32,
 }
 
 pub struct InlayChunks<'a> {
@@ -348,7 +348,7 @@ impl InlayBufferRows<'_> {
         self.transforms.seek(&inlay_point, Bias::Left, &());
 
         let mut buffer_point = self.transforms.start().1;
-        let buffer_row = MultiBufferRow(if row == 0 {
+        let buffer_row = if row == 0 {
             0
         } else {
             match self.transforms.item() {
@@ -356,11 +356,11 @@ impl InlayBufferRows<'_> {
                     buffer_point += inlay_point.0 - self.transforms.start().0 .0;
                     buffer_point.row
                 }
-                _ => cmp::min(buffer_point.row + 1, self.max_buffer_row.0),
+                _ => cmp::min(buffer_point.row + 1, self.max_buffer_row),
             }
-        });
+        };
         self.inlay_row = inlay_point.row();
-        self.buffer_rows.seek(buffer_row);
+        self.token_rows.seek(buffer_row);
     }
 }
 
@@ -369,11 +369,11 @@ impl Iterator for InlayBufferRows<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let buffer_row = if self.inlay_row == 0 {
-            self.buffer_rows.next().unwrap()
+            self.token_rows.next().unwrap()
         } else {
             match self.transforms.item()? {
                 Transform::Inlay(_) => Default::default(),
-                Transform::Isomorphic(_) => self.buffer_rows.next().unwrap(),
+                Transform::Isomorphic(_) => self.token_rows.next().unwrap(),
             }
         };
 
@@ -980,24 +980,24 @@ impl InlaySnapshot {
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());
 
-        let max_buffer_row = self.token_snapshot.buffer.max_row();
+        let max_buffer_row = self.token_snapshot.max_row();
         let mut buffer_point = cursor.start().1;
         let buffer_row = if row == 0 {
-            MultiBufferRow(0)
+            0
         } else {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
                     buffer_point += inlay_point.0 - cursor.start().0 .0;
-                    MultiBufferRow(buffer_point.row)
+                    buffer_point.row
                 }
-                _ => cmp::min(MultiBufferRow(buffer_point.row + 1), max_buffer_row),
+                _ => cmp::min(buffer_point.row + 1, max_buffer_row),
             }
         };
 
         InlayBufferRows {
             transforms: cursor,
             inlay_row: inlay_point.row(),
-            buffer_rows: self.token_snapshot.buffer.row_infos(buffer_row),
+            token_rows: self.token_snapshot.row_infos(buffer_row),
             max_buffer_row,
         }
     }

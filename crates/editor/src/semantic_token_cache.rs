@@ -331,28 +331,27 @@ fn new_update_task(
     excerpt_buffer: Entity<Buffer>,
     cx: &mut Context<Editor>,
 ) -> Task<()> {
-    cx.spawn(async move |editor, cx| {
-        let visible_range_update_results = future::join_all(
-            query_ranges
-                .visible
-                .into_iter()
-                .filter_map(|visible_range| {
-                    let fetch_task = editor
-                        .update(cx, |_, cx| {
-                            fetch_and_update_tokens(
-                                excerpt_buffer.clone(),
-                                query,
-                                visible_range.clone(),
-                                query.invalidate.should_invalidate(),
-                                cx,
-                            )
-                        })
-                        .log_err()?;
-                    Some(async move { (visible_range, fetch_task.await) })
-                }),
-        )
-        .await;
+    cx.spawn(async move |editor: WeakEntity<Editor>, cx| {
+        let Some(visible_range) = query_ranges.clone().visible_range() else {
+            log::error!("trying to update semantic tokens without visible tokens");
+            return;
+        };
+        let Some(visible_range_update_results) = editor
+            .update(cx, |_, cx| {
+                fetch_and_update_tokens(
+                    excerpt_buffer.clone(),
+                    query,
+                    visible_range.clone(),
+                    query.invalidate.should_invalidate(),
+                    cx,
+                )
+            })
+            .log_err()
+        else {
+            return;
+        };
 
+        let result = visible_range_update_results.await;
         let token_delay = cx.background_executor().timer(Duration::from_millis(
             INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS,
         ));
@@ -374,10 +373,8 @@ fn new_update_task(
                     .ok()
             };
 
-        for (range, result) in visible_range_update_results {
-            if let Err(e) = result {
-                query_range_failed(&range, e, cx);
-            }
+        if let Err(e) = result {
+            query_range_failed(&visible_range, e, cx);
         }
 
         token_delay.await;
@@ -729,9 +726,12 @@ fn apply_token_update(
             multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_token.range.start),
             multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_token.range.end),
         ) {
+            let text = multi_buffer_snapshot
+                .text_for_range(new_start..new_end)
+                .collect::<String>();
             splice
                 .to_insert
-                .push(Token::new(new_token_id, new_start..new_end, style));
+                .push(Token::new(new_token_id, new_start..new_end, style, text));
         }
         cached_excerpt_tokens
             .tokens_by_id
