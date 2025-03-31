@@ -55,6 +55,16 @@ pub enum CodeActionType {
     
     /// List available code actions for the text range
     ListAvailable,
+
+    /// Execute a specific code action that matches the provided regex pattern
+    ExecuteAction {
+        /// Regex pattern to match against code action titles
+        /// Must match exactly one code action
+        pattern: String,
+        
+        /// Optional arguments to pass to the code action, as arbitrary JSON
+        arguments: Option<serde_json::Value>,
+    },
 }
 
 pub struct CodeActionTool;
@@ -90,6 +100,9 @@ impl Tool for CodeActionTool {
                     }
                     CodeActionType::ListAvailable => {
                         format!("List available code actions for '{}'", input.text_range)
+                    }
+                    CodeActionType::ExecuteAction { pattern, .. } => {
+                        format!("Execute code action matching '{}' for '{}'", pattern, input.text_range)
                     }
                 }
             }
@@ -226,6 +239,76 @@ impl Tool for CodeActionTool {
                     }
 
                     Ok(result)
+                },
+                CodeActionType::ExecuteAction { pattern, arguments } => {
+                    // Get code actions for the range
+                    let actions = project
+                        .update(cx, |project, cx| {
+                            project.code_actions(&buffer, range.clone(), None, cx)
+                        })?
+                        .await?;
+
+                    if actions.is_empty() {
+                        return Err(anyhow!("No code actions available for this range"));
+                    }
+
+                    // Compile the regex pattern
+                    let regex = match regex::Regex::new(&pattern) {
+                        Ok(regex) => regex,
+                        Err(err) => return Err(anyhow!("Invalid regex pattern: {}", err)),
+                    };
+
+                    // Find all matching actions
+                    let matching_actions: Vec<_> = actions
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, action)| {
+                            let title = action.lsp_action.title();
+                            regex.is_match(title)
+                        })
+                        .collect();
+
+                    // Ensure exactly one action matches
+                    if matching_actions.is_empty() {
+                        return Err(anyhow!("No code actions match the pattern: {}", pattern));
+                    } else if matching_actions.len() > 1 {
+                        let titles: Vec<_> = matching_actions
+                            .iter()
+                            .map(|(_, action)| action.lsp_action.title().to_string())
+                            .collect();
+                        
+                        return Err(anyhow!(
+                            "Pattern '{}' matches multiple code actions: {}", 
+                            pattern, 
+                            titles.join(", ")
+                        ));
+                    }
+
+                    // Get the single matching action
+                    let (_, action) = matching_actions[0];
+                    let action = action.clone();
+                    
+                    // If arguments are provided and this is a command action, 
+                    // we could theoretically modify the command's arguments here,
+                    // but for now we'll just log that arguments were provided but ignored
+                    if arguments.is_some() {
+                        eprintln!("Note: arguments provided to ExecuteAction are currently ignored");
+                    }
+                    
+                    let title = action.lsp_action.title().to_string();
+                    
+                    // Apply the selected code action
+                    let _transaction = project
+                        .update(cx, |project, cx| {
+                            project.apply_code_action(buffer.clone(), action, true, cx)
+                        })?
+                        .await?;
+
+                    action_log.update(cx, |log, cx| {
+                        log.buffer_edited(buffer.clone(), Vec::new(), cx)
+                    })?;
+
+                    Ok(format!("Executed code action: {}", title))
                 }
             }
         })
