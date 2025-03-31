@@ -38,14 +38,11 @@ impl Iterator for CodeSymbolIterator<'_> {
     type Item = Entry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // First, check if we have any pending symbols to process
         if let Some((symbol, depth)) = self.pending_symbols.pop() {
-            // Add children to pending stack with increased depth
             for child in symbol.children.iter().rev() {
                 self.pending_symbols.push((child, depth + 1));
             }
 
-            // Return the current symbol as an Entry
             return Some(Entry {
                 name: symbol.name.clone(),
                 kind: symbol.kind,
@@ -55,25 +52,17 @@ impl Iterator for CodeSymbolIterator<'_> {
             });
         }
 
-        // If no pending symbols, try to get the next symbol from the slice
         while self.current_index < self.symbols.len() {
+            let regex = self.regex.as_ref();
             let symbol = &self.symbols[self.current_index];
             self.current_index += 1;
 
-            // Process symbol based on regex pattern
-            let matches = match &self.regex {
-                None => true,
-                Some(re) => re.is_match(&symbol.name),
-            };
-
-            // If the symbol matches or we want to check its children
-            if matches {
-                // Push children onto the stack with incremented depth (in reverse order to maintain traversal order)
+            if regex.is_none_or(|regex| regex.is_match(&symbol.name)) {
+                // Push in reverse order to maintain traversal order
                 for child in symbol.children.iter().rev() {
                     self.pending_symbols.push((child, self.current_depth + 1));
                 }
 
-                // Return the current symbol as an Entry
                 return Some(Entry {
                     name: symbol.name.clone(),
                     kind: symbol.kind,
@@ -82,7 +71,7 @@ impl Iterator for CodeSymbolIterator<'_> {
                     end_line: symbol.range.end.0.row as usize,
                 });
             } else {
-                // Even if the parent doesn't match, push children to check them
+                // Even if parent doesn't match, push children to check them later
                 for child in symbol.children.iter().rev() {
                     self.pending_symbols.push((child, self.current_depth + 1));
                 }
