@@ -65,7 +65,7 @@ impl schemars::visit::Visitor for TransformToJsonSchemaSubsetVisitor {
                 schemars::schema::SingleOrVec::Vec(items) => items
                     .into_iter()
                     .next()
-                    .map(|s| schemars::schema::SingleOrVec::from(s)),
+                    .map(schemars::schema::SingleOrVec::from),
             };
         }
 
