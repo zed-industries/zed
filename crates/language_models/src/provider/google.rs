@@ -1,15 +1,17 @@
 use anyhow::{anyhow, Context as _, Result};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
+use futures::Stream;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use google_ai::{FunctionDeclaration, GenerateContentResponse};
+use google_ai::{FunctionDeclaration, GenerateContentResponse, Part, UsageMetadata};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionEvent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -19,6 +21,7 @@ use language_model::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::pin::Pin;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
@@ -346,15 +349,9 @@ impl LanguageModel for GoogleLanguageModel {
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(|err| anyhow!(err))?;
-            Ok(google_ai::extract_text_from_events(response).boxed())
+            Ok(map_to_language_model_completion_events(response))
         });
-        async move {
-            Ok(future
-                .await?
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                .boxed())
-        }
-        .boxed()
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 
     fn use_any_tool(
@@ -459,6 +456,100 @@ pub fn into_google(
     }
 }
 
+pub fn map_to_language_model_completion_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
+        usage: UsageMetadata,
+        stop_reason: StopReason,
+    }
+
+    futures::stream::unfold(
+        State {
+            events,
+            usage: UsageMetadata::default(),
+            stop_reason: StopReason::EndTurn,
+        },
+        |mut state| async move {
+            while let Some(event) = state.events.next().await {
+                match event {
+                    Ok(event) => {
+                        let mut events: Vec<Result<LanguageModelCompletionEvent>> = Vec::new();
+                        let mut wants_to_use_tool = false;
+                        if let Some(usage_metadata) = event.usage_metadata {
+                            update_usage(&mut state.usage, &usage_metadata);
+                            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
+                                convert_usage(&state.usage),
+                            )))
+                        }
+                        if let Some(candidates) = event.candidates {
+                            for candidate in candidates {
+                                if let Some(finish_reason) = candidate.finish_reason.as_deref() {
+                                    state.stop_reason = match finish_reason {
+                                        "STOP" => StopReason::EndTurn,
+                                        "MAX_TOKENS" => StopReason::MaxTokens,
+                                        _ => {
+                                            log::error!(
+                                                "Unexpected google finish_reason: {finish_reason}"
+                                            );
+                                            StopReason::EndTurn
+                                        }
+                                    };
+                                }
+                                candidate
+                                    .content
+                                    .parts
+                                    .into_iter()
+                                    .for_each(|part| match part {
+                                        Part::TextPart(text_part) => events.push(Ok(
+                                            LanguageModelCompletionEvent::Text(text_part.text),
+                                        )),
+                                        Part::InlineDataPart(_) => {} //TODO?,
+                                        Part::FunctionCallPart(function_call_part) => {
+                                            wants_to_use_tool = true;
+                                            let name: Arc<str> =
+                                                function_call_part.function_call.name.into();
+                                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: name.clone().into(),
+                                                    name,
+                                                    input: function_call_part.function_call.args,
+                                                },
+                                            )));
+                                        }
+                                        Part::FunctionResponsePart(function_response_part) => {
+                                            //TODO
+                                            println!(
+                                                "FunctionResponsePart {}\n{}",
+                                                function_response_part.function_response.name,
+                                                function_response_part.function_response.response
+                                            );
+                                        }
+                                    });
+                            }
+                        }
+
+                        // Even when Gemini wants to use a Tool, the API
+                        // responds with `finish_reason: STOP`
+                        if wants_to_use_tool {
+                            state.stop_reason = StopReason::ToolUse;
+                        }
+                        events.push(Ok(LanguageModelCompletionEvent::Stop(state.stop_reason)));
+                        return Some((events, state));
+                    }
+                    Err(err) => {
+                        return Some((vec![Err(anyhow!(err))], state));
+                    }
+                }
+            }
+
+            None
+        },
+    )
+    .flat_map(futures::stream::iter)
+}
+
 pub fn count_google_tokens(
     request: LanguageModelRequest,
     cx: &App,
@@ -486,6 +577,34 @@ pub fn count_google_tokens(
         tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
     })
     .boxed()
+}
+
+fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
+    if let Some(prompt_token_count) = new.prompt_token_count {
+        usage.prompt_token_count = Some(prompt_token_count);
+    }
+    if let Some(cached_content_token_count) = new.cached_content_token_count {
+        usage.cached_content_token_count = Some(cached_content_token_count);
+    }
+    if let Some(candidates_token_count) = new.candidates_token_count {
+        usage.candidates_token_count = Some(candidates_token_count);
+    }
+    if let Some(tool_use_prompt_token_count) = new.tool_use_prompt_token_count {
+        usage.tool_use_prompt_token_count = Some(tool_use_prompt_token_count);
+    }
+    if let Some(thoughts_token_count) = new.thoughts_token_count {
+        usage.thoughts_token_count = Some(thoughts_token_count);
+    }
+    if let Some(total_token_count) = new.total_token_count {
+        usage.total_token_count = Some(total_token_count);
+    }
+}
+
+fn convert_usage(usage: &UsageMetadata) -> language_model::TokenUsage {
+    //TODO
+    language_model::TokenUsage {
+        ..Default::default()
+    }
 }
 
 struct ConfigurationView {

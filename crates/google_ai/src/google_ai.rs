@@ -138,6 +138,7 @@ pub struct GenerateContentRequest {
 pub struct GenerateContentResponse {
     pub candidates: Option<Vec<GenerateContentCandidate>>,
     pub prompt_feedback: Option<PromptFeedback>,
+    pub usage_metadata: Option<UsageMetadata>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -227,6 +228,17 @@ pub struct PromptFeedback {
     pub block_reason: Option<String>,
     pub safety_ratings: Vec<SafetyRating>,
     pub block_reason_message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageMetadata {
+    pub prompt_token_count: Option<usize>,
+    pub cached_content_token_count: Option<usize>,
+    pub candidates_token_count: Option<usize>,
+    pub tool_use_prompt_token_count: Option<usize>,
+    pub thoughts_token_count: Option<usize>,
+    pub total_token_count: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
