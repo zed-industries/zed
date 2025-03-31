@@ -1,7 +1,9 @@
 use futures::channel::oneshot;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use picker::{Picker, PickerDelegate};
+use project::project_settings::ProjectSettings;
 use project::DirectoryLister;
+use settings::Settings;
 use std::{
     path::{Path, PathBuf, MAIN_SEPARATOR_STR},
     sync::{
@@ -11,7 +13,7 @@ use std::{
 };
 use ui::{prelude::*, HighlightedLabel, ListItemSpacing};
 use ui::{Context, ListItem, Window};
-use util::{maybe, paths::compare_paths};
+use util::{maybe, paths::compare_paths_with_strategy};
 use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
@@ -119,6 +121,20 @@ impl PickerDelegate for OpenPathDelegate {
         cx.notify();
     }
 
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        Arc::from(format!("[directory{MAIN_SEPARATOR_STR}]filename.ext"))
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if let Some(error) = self.directory_state.as_ref().and_then(|s| s.error.clone())
+        {
+            error
+        } else {
+            "No such file or directory".into()
+        };
+        Some(text)
+    }
+
     fn update_matches(
         &mut self,
         query: String,
@@ -161,6 +177,8 @@ impl PickerDelegate for OpenPathDelegate {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
 
+        let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
+
         cx.spawn_in(window, async move |this, cx| {
             if let Some(query) = query {
                 let paths = query.await;
@@ -171,7 +189,12 @@ impl PickerDelegate for OpenPathDelegate {
                 this.update(cx, |this, _| {
                     this.delegate.directory_state = Some(match paths {
                         Ok(mut paths) => {
-                            paths.sort_by(|a, b| compare_paths((&a.path, true), (&b.path, true)));
+                            paths.sort_by(|a, b| {
+                                // transform DirectoryItem to (&Path, is_dir)
+                                let a = (a.path.as_ref(), a.is_dir);
+                                let b = (b.path.as_ref(), b.is_dir);
+                                compare_paths_with_strategy(a, b, sort_strategy.into())
+                            });
                             let match_candidates = paths
                                 .iter()
                                 .enumerate()
@@ -273,6 +296,39 @@ impl PickerDelegate for OpenPathDelegate {
         })
     }
 
+    fn confirm(&mut self, _: bool, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(m) = self.matches.get(self.selected_index) else {
+            return;
+        };
+        let Some(directory_state) = self.directory_state.as_ref() else {
+            return;
+        };
+        let Some(candidate) = directory_state.match_candidates.get(*m) else {
+            return;
+        };
+        let result = Path::new(
+            self.lister
+                .resolve_tilde(&directory_state.path, cx)
+                .as_ref(),
+        )
+        .join(&candidate.path.string);
+        if let Some(tx) = self.tx.take() {
+            tx.send(Some(vec![result])).ok();
+        }
+        cx.emit(gpui::DismissEvent);
+    }
+
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if let Some(tx) = self.tx.take() {
+            tx.send(None).ok();
+        }
+        cx.emit(gpui::DismissEvent)
+    }
+
+    fn should_dismiss(&self) -> bool {
+        self.should_dismiss
+    }
+
     fn confirm_completion(
         &mut self,
         query: String,
@@ -297,39 +353,6 @@ impl PickerDelegate for OpenPathDelegate {
             })
             .unwrap_or(query),
         )
-    }
-
-    fn confirm(&mut self, _: bool, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let Some(m) = self.matches.get(self.selected_index) else {
-            return;
-        };
-        let Some(directory_state) = self.directory_state.as_ref() else {
-            return;
-        };
-        let Some(candidate) = directory_state.match_candidates.get(*m) else {
-            return;
-        };
-        let result = Path::new(
-            self.lister
-                .resolve_tilde(&directory_state.path, cx)
-                .as_ref(),
-        )
-        .join(&candidate.path.string);
-        if let Some(tx) = self.tx.take() {
-            tx.send(Some(vec![result])).ok();
-        }
-        cx.emit(gpui::DismissEvent);
-    }
-
-    fn should_dismiss(&self) -> bool {
-        self.should_dismiss
-    }
-
-    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if let Some(tx) = self.tx.take() {
-            tx.send(None).ok();
-        }
-        cx.emit(gpui::DismissEvent)
     }
 
     fn render_match(
@@ -359,19 +382,5 @@ impl PickerDelegate for OpenPathDelegate {
                     highlight_positions,
                 )),
         )
-    }
-
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
-        let text = if let Some(error) = self.directory_state.as_ref().and_then(|s| s.error.clone())
-        {
-            error
-        } else {
-            "No such file or directory".into()
-        };
-        Some(text)
-    }
-
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from(format!("[directory{MAIN_SEPARATOR_STR}]filename.ext"))
     }
 }

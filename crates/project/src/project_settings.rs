@@ -25,13 +25,64 @@ use std::{
     time::Duration,
 };
 use task::{TaskTemplates, VsCodeTaskFile};
-use util::ResultExt;
+use util::{
+    paths::{FileSortingSettings as UtilFileSortingSettings, SortStrategy as UtilSortStrategy},
+    ResultExt,
+};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
     task_store::{TaskSettingsLocation, TaskStore},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SortStrategy {
+    #[default]
+    Lexicographical,
+    Alphabetical,
+}
+
+impl From<UtilSortStrategy> for SortStrategy {
+    fn from(s: UtilSortStrategy) -> Self {
+        match s {
+            UtilSortStrategy::Lexicographical => SortStrategy::Lexicographical,
+            UtilSortStrategy::Alphabetical => SortStrategy::Alphabetical,
+        }
+    }
+}
+
+impl From<SortStrategy> for UtilSortStrategy {
+    fn from(s: SortStrategy) -> Self {
+        match s {
+            SortStrategy::Lexicographical => UtilSortStrategy::Lexicographical,
+            SortStrategy::Alphabetical => UtilSortStrategy::Alphabetical,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct FileSortingSettings {
+    pub strategy: SortStrategy,
+}
+
+impl From<UtilFileSortingSettings> for FileSortingSettings {
+    fn from(s: UtilFileSortingSettings) -> Self {
+        FileSortingSettings {
+            strategy: s.strategy.into(),
+        }
+    }
+}
+
+impl From<FileSortingSettings> for UtilFileSortingSettings {
+    fn from(s: FileSortingSettings) -> Self {
+        UtilFileSortingSettings {
+            strategy: s.strategy.into(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettings {
@@ -69,6 +120,10 @@ pub struct ProjectSettings {
     /// Configuration for session-related features
     #[serde(default)]
     pub session: SessionSettings,
+
+    /// Configuration for file sorting
+    #[serde(default)]
+    pub file_sorting: FileSortingSettings,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -100,7 +155,7 @@ pub enum DirenvSettings {
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsSettings {
-    /// Whether or not to include warning diagnostics
+    /// Whether to include warning diagnostics
     #[serde(default = "true_value")]
     pub include_warnings: bool,
 
@@ -111,7 +166,7 @@ pub struct DiagnosticsSettings {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct InlineDiagnosticsSettings {
-    /// Whether or not to show inline diagnostics
+    /// Whether to show inline diagnostics
     ///
     /// Default: false
     #[serde(default)]
@@ -171,7 +226,7 @@ fn default_inline_diagnostics_padding() -> u32 {
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GitSettings {
-    /// Whether or not to show the git gutter.
+    /// Whether to show the git gutter.
     ///
     /// Default: tracked_files
     pub git_gutter: Option<GitGutterSetting>,
@@ -179,7 +234,7 @@ pub struct GitSettings {
     ///
     /// Default: null
     pub gutter_debounce: Option<u64>,
-    /// Whether or not to show git blame data inline in
+    /// Whether to show git blame data inline in
     /// the currently focused line.
     ///
     /// Default: on
@@ -243,7 +298,7 @@ pub enum GitGutterSetting {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
-    /// Whether or not to show git blame data inline in
+    /// Whether to show git blame data inline in
     /// the currently focused line.
     ///
     /// Default: true
@@ -288,7 +343,7 @@ pub struct LspSettings {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SessionSettings {
-    /// Whether or not to restore unsaved buffers on restart.
+    /// Whether to restore unsaved buffers on restart.
     ///
     /// If this is true, user won't be prompted whether to save/discard
     /// dirty files when closing the application.
