@@ -318,6 +318,8 @@ pub trait GitRepository: Send + Sync {
 
     /// Applies a diff to the repository's index.
     fn apply_diff(&self, index: GitIndex, diff: String) -> BoxFuture<Result<()>>;
+
+    fn merge_message(&self) -> BoxFuture<Option<String>>;
 }
 
 pub enum DiffType {
@@ -1352,6 +1354,13 @@ impl GitRepository for RealGitRepository {
                 .await?;
                 Ok(())
             })
+            .boxed()
+    }
+
+    fn merge_message(&self) -> BoxFuture<Option<String>> {
+        let path = self.path().join("MERGE_MSG");
+        self.executor
+            .spawn(async move { std::fs::read_to_string(path).ok() })
             .boxed()
     }
 }

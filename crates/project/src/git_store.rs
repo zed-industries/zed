@@ -23,7 +23,10 @@ use git::{
         Branch, CommitDetails, DiffType, GitIndex, GitRepository, GitRepositoryCheckpoint,
         PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, UpstreamTrackingStatus,
     },
-    status::{FileStatus, GitStatus, GitSummary},
+    status::{
+        FileStatus, GitStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus,
+        UnmergedStatusCode,
+    },
     BuildPermalinkParams, GitHostingProviderRegistry,
 };
 use gpui::{
@@ -54,7 +57,7 @@ use std::{
 use sum_tree::{SumTree, TreeSet};
 use text::BufferId;
 use util::{debug_panic, ResultExt};
-use worktree::{File, PathKey, ProjectEntryId, StatusEntry, UpdatedGitRepositoriesSet, Worktree};
+use worktree::{File, PathKey, PathSummary, UpdatedGitRepositoriesSet, Worktree};
 
 pub struct GitStore {
     state: GitStoreState,
@@ -145,6 +148,64 @@ pub struct GitStoreCheckpoint {
     checkpoints_by_work_dir_abs_path: HashMap<Arc<Path>, GitRepositoryCheckpoint>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusEntry {
+    pub repo_path: RepoPath,
+    pub status: FileStatus,
+}
+
+impl StatusEntry {
+    fn to_proto(&self) -> proto::StatusEntry {
+        let simple_status = match self.status {
+            FileStatus::Ignored | FileStatus::Untracked => proto::GitStatus::Added as i32,
+            FileStatus::Unmerged { .. } => proto::GitStatus::Conflict as i32,
+            FileStatus::Tracked(TrackedStatus {
+                index_status,
+                worktree_status,
+            }) => tracked_status_to_proto(if worktree_status != StatusCode::Unmodified {
+                worktree_status
+            } else {
+                index_status
+            }),
+        };
+
+        proto::StatusEntry {
+            repo_path: self.repo_path.as_ref().to_proto(),
+            simple_status,
+            status: Some(status_to_proto(self.status)),
+        }
+    }
+}
+
+impl TryFrom<proto::StatusEntry> for StatusEntry {
+    type Error = anyhow::Error;
+
+    fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
+        let repo_path = RepoPath(Arc::<Path>::from_proto(value.repo_path));
+        let status = status_from_proto(value.simple_status, value.status)?;
+        Ok(Self { repo_path, status })
+    }
+}
+
+impl sum_tree::Item for StatusEntry {
+    type Summary = PathSummary<GitSummary>;
+
+    fn summary(&self, _: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
+        PathSummary {
+            max_path: self.repo_path.0.clone(),
+            item_summary: self.status.summary(),
+        }
+    }
+}
+
+impl sum_tree::KeyedItem for StatusEntry {
+    type Key = PathKey;
+
+    fn key(&self) -> Self::Key {
+        PathKey(self.repo_path.0.clone())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RepositoryId(pub u64);
 
@@ -157,8 +218,9 @@ pub struct RepositorySnapshot {
     pub worktree_scan_id: usize,
     pub completed_scan_id: usize,
     pub branch: Option<Branch>,
+    // FIXME remove this state
     pub merge_conflicts: TreeSet<RepoPath>,
-    pub work_directory_id: Option<ProjectEntryId>,
+    pub merge_head_shas: Vec<SharedString>,
 }
 
 #[derive(Clone, Debug)]
@@ -210,6 +272,8 @@ enum RepositoryState {
 #[derive(Clone, Debug)]
 pub enum RepositoryEvent {
     GitStateUpdated,
+    // FIXME listen for this downstream
+    MergeHeadsChanged,
 }
 
 #[derive(Debug)]
@@ -2620,8 +2684,7 @@ impl RepositorySnapshot {
             completed_scan_id: 0,
             branch: None,
             merge_conflicts: Default::default(),
-            // FIXME
-            work_directory_id: None,
+            merge_head_shas: Default::default(),
         }
     }
 
@@ -2744,6 +2807,14 @@ impl RepositorySnapshot {
             .to_string_lossy()
             .to_string()
             .into()
+    }
+
+    fn compare(&self, old: &Self) -> Vec<RepositoryEvent> {
+        let mut events = Vec::new();
+        if self.merge_head_shas != old.merge_head_shas {
+            events.push(RepositoryEvent::MergeHeadsChanged);
+        }
+        events
     }
 }
 
@@ -3754,8 +3825,11 @@ impl Repository {
                 })?
                 .await?;
             this.update(&mut cx, |this, cx| {
+                let events = snapshot.compare(&this.snapshot);
                 this.snapshot = snapshot.clone();
-                cx.emit(RepositoryEvent::GitStateUpdated);
+                for event in events {
+                    cx.emit(event);
+                }
             })?;
             if let Some(updates_tx) = updates_tx {
                 updates_tx
@@ -4145,9 +4219,13 @@ async fn compute_snapshot(
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
     let statuses = backend.status_blocking(&[git::WORK_DIRECTORY_REPO_PATH.clone()])?;
-    // FIXME
-    let merge_message = None;
-    // FIXME merge conflicts should be stateful
+    let merge_message = backend.merge_message().await.map(SharedString::from);
+    let merge_head_shas = backend
+        .merge_head_shas()
+        .into_iter()
+        .map(SharedString::from)
+        .collect();
+    // FIXME diff (at the caller's level), including merge conflicts
 
     let mut statuses_by_path = SumTree::new(&());
     let mut merge_conflicts = TreeSet::default();
@@ -4166,7 +4244,6 @@ async fn compute_snapshot(
 
     Ok(RepositorySnapshot {
         id,
-        work_directory_id: None,
         merge_message,
         statuses_by_path,
         work_directory_abs_path,
@@ -4174,5 +4251,138 @@ async fn compute_snapshot(
         completed_scan_id: 0,
         branch,
         merge_conflicts,
+        merge_head_shas,
     })
+}
+
+fn status_from_proto(
+    simple_status: i32,
+    status: Option<proto::GitFileStatus>,
+) -> anyhow::Result<FileStatus> {
+    use proto::git_file_status::Variant;
+
+    let Some(variant) = status.and_then(|status| status.variant) else {
+        let code = proto::GitStatus::from_i32(simple_status)
+            .ok_or_else(|| anyhow!("Invalid git status code: {simple_status}"))?;
+        let result = match code {
+            proto::GitStatus::Added => TrackedStatus {
+                worktree_status: StatusCode::Added,
+                index_status: StatusCode::Unmodified,
+            }
+            .into(),
+            proto::GitStatus::Modified => TrackedStatus {
+                worktree_status: StatusCode::Modified,
+                index_status: StatusCode::Unmodified,
+            }
+            .into(),
+            proto::GitStatus::Conflict => UnmergedStatus {
+                first_head: UnmergedStatusCode::Updated,
+                second_head: UnmergedStatusCode::Updated,
+            }
+            .into(),
+            proto::GitStatus::Deleted => TrackedStatus {
+                worktree_status: StatusCode::Deleted,
+                index_status: StatusCode::Unmodified,
+            }
+            .into(),
+            _ => return Err(anyhow!("Invalid code for simple status: {simple_status}")),
+        };
+        return Ok(result);
+    };
+
+    let result = match variant {
+        Variant::Untracked(_) => FileStatus::Untracked,
+        Variant::Ignored(_) => FileStatus::Ignored,
+        Variant::Unmerged(unmerged) => {
+            let [first_head, second_head] =
+                [unmerged.first_head, unmerged.second_head].map(|head| {
+                    let code = proto::GitStatus::from_i32(head)
+                        .ok_or_else(|| anyhow!("Invalid git status code: {head}"))?;
+                    let result = match code {
+                        proto::GitStatus::Added => UnmergedStatusCode::Added,
+                        proto::GitStatus::Updated => UnmergedStatusCode::Updated,
+                        proto::GitStatus::Deleted => UnmergedStatusCode::Deleted,
+                        _ => return Err(anyhow!("Invalid code for unmerged status: {code:?}")),
+                    };
+                    Ok(result)
+                });
+            let [first_head, second_head] = [first_head?, second_head?];
+            UnmergedStatus {
+                first_head,
+                second_head,
+            }
+            .into()
+        }
+        Variant::Tracked(tracked) => {
+            let [index_status, worktree_status] = [tracked.index_status, tracked.worktree_status]
+                .map(|status| {
+                    let code = proto::GitStatus::from_i32(status)
+                        .ok_or_else(|| anyhow!("Invalid git status code: {status}"))?;
+                    let result = match code {
+                        proto::GitStatus::Modified => StatusCode::Modified,
+                        proto::GitStatus::TypeChanged => StatusCode::TypeChanged,
+                        proto::GitStatus::Added => StatusCode::Added,
+                        proto::GitStatus::Deleted => StatusCode::Deleted,
+                        proto::GitStatus::Renamed => StatusCode::Renamed,
+                        proto::GitStatus::Copied => StatusCode::Copied,
+                        proto::GitStatus::Unmodified => StatusCode::Unmodified,
+                        _ => return Err(anyhow!("Invalid code for tracked status: {code:?}")),
+                    };
+                    Ok(result)
+                });
+            let [index_status, worktree_status] = [index_status?, worktree_status?];
+            TrackedStatus {
+                index_status,
+                worktree_status,
+            }
+            .into()
+        }
+    };
+    Ok(result)
+}
+
+fn status_to_proto(status: FileStatus) -> proto::GitFileStatus {
+    use proto::git_file_status::{Tracked, Unmerged, Variant};
+
+    let variant = match status {
+        FileStatus::Untracked => Variant::Untracked(Default::default()),
+        FileStatus::Ignored => Variant::Ignored(Default::default()),
+        FileStatus::Unmerged(UnmergedStatus {
+            first_head,
+            second_head,
+        }) => Variant::Unmerged(Unmerged {
+            first_head: unmerged_status_to_proto(first_head),
+            second_head: unmerged_status_to_proto(second_head),
+        }),
+        FileStatus::Tracked(TrackedStatus {
+            index_status,
+            worktree_status,
+        }) => Variant::Tracked(Tracked {
+            index_status: tracked_status_to_proto(index_status),
+            worktree_status: tracked_status_to_proto(worktree_status),
+        }),
+    };
+    proto::GitFileStatus {
+        variant: Some(variant),
+    }
+}
+
+fn unmerged_status_to_proto(code: UnmergedStatusCode) -> i32 {
+    match code {
+        UnmergedStatusCode::Added => proto::GitStatus::Added as _,
+        UnmergedStatusCode::Deleted => proto::GitStatus::Deleted as _,
+        UnmergedStatusCode::Updated => proto::GitStatus::Updated as _,
+    }
+}
+
+fn tracked_status_to_proto(code: StatusCode) -> i32 {
+    match code {
+        StatusCode::Added => proto::GitStatus::Added as _,
+        StatusCode::Deleted => proto::GitStatus::Deleted as _,
+        StatusCode::Modified => proto::GitStatus::Modified as _,
+        StatusCode::Renamed => proto::GitStatus::Renamed as _,
+        StatusCode::TypeChanged => proto::GitStatus::TypeChanged as _,
+        StatusCode::Copied => proto::GitStatus::Copied as _,
+        StatusCode::Unmodified => proto::GitStatus::Unmodified as _,
+    }
 }

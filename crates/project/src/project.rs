@@ -2714,6 +2714,7 @@ impl Project {
             GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::GitStateUpdated, _)
             | GitStoreEvent::RepositoryAdded(_)
             | GitStoreEvent::RepositoryRemoved(_) => cx.emit(Event::GitStateUpdated),
+            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::MergeHeadsChanged, _) => todo!(),
             GitStoreEvent::ActiveRepositoryChanged(_) => cx.emit(Event::ActiveRepositoryChanged),
             GitStoreEvent::IndexWriteError(_) => {}
         }

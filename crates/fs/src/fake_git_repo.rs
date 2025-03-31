@@ -465,4 +465,8 @@ impl GitRepository for FakeGitRepository {
     fn apply_diff(&self, _index: GitIndex, _diff: String) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
+
+    fn merge_message(&self) -> BoxFuture<Option<String>> {
+        async { None }.boxed()
+    }
 }

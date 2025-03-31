@@ -20,12 +20,8 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{
-    repository::{Branch, RepoPath},
-    status::{
-        FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
-    },
-    GitHostingProviderRegistry, COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK,
-    LFS_DIR,
+    repository::RepoPath, status::GitSummary, GitHostingProviderRegistry, COMMIT_MESSAGE, DOT_GIT,
+    FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task,
@@ -159,7 +155,6 @@ pub struct Snapshot {
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
     always_included_entries: Vec<Arc<Path>>,
-    repositories: SumTree<RepositoryEntry>,
 
     /// A number that increases every time the worktree begins scanning
     /// a set of paths from the filesystem. This scanning could be caused
@@ -172,41 +167,6 @@ pub struct Snapshot {
     /// greater than the `completed_scan_id` if operations are performed
     /// on the worktree while it is processing a file-system event.
     completed_scan_id: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RepositoryEntry {
-    /// The git status entries for this repository.
-    /// Note that the paths on this repository are relative to the git work directory.
-    /// If the .git folder is external to Zed, these paths will be relative to that folder,
-    /// and this data structure might reference files external to this worktree.
-    ///
-    /// For example:
-    ///
-    ///     my_root_folder/          <-- repository root
-    ///       .git
-    ///       my_sub_folder_1/
-    ///         project_root/        <-- Project root, Zed opened here
-    ///           changed_file_1     <-- File with changes, in worktree
-    ///       my_sub_folder_2/
-    ///         changed_file_2       <-- File with changes, out of worktree
-    ///           ...
-    ///
-    /// With this setup, this field would contain 2 entries, like so:
-    ///     - my_sub_folder_1/project_root/changed_file_1
-    ///     - my_sub_folder_2/changed_file_2
-    pub statuses_by_path: SumTree<StatusEntry>,
-    pub work_directory_id: ProjectEntryId,
-    pub work_directory_abs_path: PathBuf,
-    pub worktree_scan_id: usize,
-    pub current_branch: Option<Branch>,
-    pub current_merge_conflicts: TreeSet<RepoPath>,
-}
-
-impl RepositoryEntry {
-    pub fn work_directory_id(&self) -> ProjectEntryId {
-        self.work_directory_id
-    }
 }
 
 /// This path corresponds to the 'content path' of a repository in relation
@@ -849,57 +809,6 @@ impl Worktree {
             }
         }
     }
-
-    //pub fn load_staged_file(&self, path: &Path, cx: &App) -> Task<Result<Option<String>>> {
-    //    match self {
-    //        Worktree::Local(this) => {
-    //            let path = Arc::from(path);
-    //            let snapshot = this.snapshot();
-    //            cx.spawn(async move |_cx| {
-    //                if let Some(repo) = snapshot.local_repo_containing_path(&path) {
-    //                    if let Some(repo_path) = repo.relativize(&path).log_err() {
-    //                        if let Some(git_repo) =
-    //                            snapshot.git_repositories.get(&repo.work_directory_id)
-    //                        {
-    //                            return Ok(git_repo
-    //                                .repo_ptr
-    //                                .load_index_text(None, repo_path)
-    //                                .await);
-    //                        }
-    //                    }
-    //                }
-    //                Err(anyhow!("No repository found for {path:?}"))
-    //            })
-    //        }
-    //        Worktree::Remote(_) => {
-    //            Task::ready(Err(anyhow!("remote worktrees can't yet load staged files")))
-    //        }
-    //    }
-    //}
-
-    //pub fn load_committed_file(&self, path: &Path, cx: &App) -> Task<Result<Option<String>>> {
-    //    match self {
-    //        Worktree::Local(this) => {
-    //            let path = Arc::from(path);
-    //            let snapshot = this.snapshot();
-    //            cx.spawn(async move |_cx| {
-    //                if let Some(repo) = snapshot.local_repo_containing_path(&path) {
-    //                    if let Some(repo_path) = repo.relativize(&path).log_err() {
-    //                        if let Some(git_repo) =
-    //                            snapshot.git_repositories.get(&repo.work_directory_id)
-    //                        {
-    //                            return Ok(git_repo.repo_ptr.load_committed_text(repo_path).await);
-    //                        }
-    //                    }
-    //                }
-    //                Err(anyhow!("No repository found for {path:?}"))
-    //            })
-    //        }
-    //        Worktree::Remote(_) => Task::ready(Err(anyhow!(
-    //            "remote worktrees can't yet load committed files"
-    //        ))),
-    //    }
-    //}
 
     pub fn load_binary_file(
         &self,
@@ -2355,7 +2264,6 @@ impl Snapshot {
             always_included_entries: Default::default(),
             entries_by_path: Default::default(),
             entries_by_id: Default::default(),
-            repositories: Default::default(),
             scan_id: 1,
             completed_scan_id: 0,
         }
@@ -3122,11 +3030,6 @@ impl BackgroundScannerState {
         self.snapshot
             .git_repositories
             .retain(|id, _| removed_ids.binary_search(id).is_err());
-        self.snapshot.repositories.retain(&(), |repository| {
-            removed_ids
-                .binary_search(&repository.work_directory_id)
-                .is_err()
-        });
 
         #[cfg(test)]
         self.snapshot.check_invariants(false);
@@ -3201,6 +3104,7 @@ impl BackgroundScannerState {
 
         let dot_git_abs_path = self.snapshot.abs_path.as_path().join(&dot_git_path);
 
+        // FIXME figure out how to add these watchers without building a whole git2 repo
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
         log::info!("opened git repo for {dot_git_abs_path:?}");
@@ -3251,18 +3155,6 @@ impl BackgroundScannerState {
             //current_merge_head_shas: Default::default(),
             //merge_message: None,
         };
-
-        //self.snapshot.repositories.insert_or_replace(
-        //    RepositoryEntry {
-        //        work_directory_id,
-        //        work_directory_abs_path,
-        //        current_branch: None,
-        //        statuses_by_path: Default::default(),
-        //        current_merge_conflicts: Default::default(),
-        //        worktree_scan_id: 0,
-        //    },
-        //    &(),
-        //);
 
         self.snapshot
             .git_repositories
@@ -3613,45 +3505,6 @@ pub struct UpdatedGitRepository {
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
 pub type UpdatedGitRepositoriesSet = Arc<[UpdatedGitRepository]>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StatusEntry {
-    pub repo_path: RepoPath,
-    pub status: FileStatus,
-}
-
-impl StatusEntry {
-    pub fn to_proto(&self) -> proto::StatusEntry {
-        let simple_status = match self.status {
-            FileStatus::Ignored | FileStatus::Untracked => proto::GitStatus::Added as i32,
-            FileStatus::Unmerged { .. } => proto::GitStatus::Conflict as i32,
-            FileStatus::Tracked(TrackedStatus {
-                index_status,
-                worktree_status,
-            }) => tracked_status_to_proto(if worktree_status != StatusCode::Unmodified {
-                worktree_status
-            } else {
-                index_status
-            }),
-        };
-
-        proto::StatusEntry {
-            repo_path: self.repo_path.as_ref().to_proto(),
-            simple_status,
-            status: Some(status_to_proto(self.status)),
-        }
-    }
-}
-
-impl TryFrom<proto::StatusEntry> for StatusEntry {
-    type Error = anyhow::Error;
-
-    fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
-        let repo_path = RepoPath(Arc::<Path>::from_proto(value.repo_path));
-        let status = status_from_proto(value.simple_status, value.status)?;
-        Ok(Self { repo_path, status })
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct PathProgress<'a> {
     pub max_path: &'a Path,
@@ -3695,75 +3548,6 @@ impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for PathProgress<'a
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct AbsPathSummary {
-    max_path: Arc<Path>,
-}
-
-impl Summary for AbsPathSummary {
-    type Context = ();
-
-    fn zero(_: &Self::Context) -> Self {
-        Self {
-            max_path: Path::new("").into(),
-        }
-    }
-
-    fn add_summary(&mut self, rhs: &Self, _: &Self::Context) {
-        self.max_path = rhs.max_path.clone();
-    }
-}
-
-impl sum_tree::Item for RepositoryEntry {
-    type Summary = AbsPathSummary;
-
-    fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
-        AbsPathSummary {
-            max_path: self.work_directory_abs_path.as_path().into(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AbsPathKey(pub Arc<Path>);
-
-impl<'a> sum_tree::Dimension<'a, AbsPathSummary> for AbsPathKey {
-    fn zero(_: &()) -> Self {
-        Self(Path::new("").into())
-    }
-
-    fn add_summary(&mut self, summary: &'a AbsPathSummary, _: &()) {
-        self.0 = summary.max_path.clone();
-    }
-}
-
-impl sum_tree::KeyedItem for RepositoryEntry {
-    type Key = AbsPathKey;
-
-    fn key(&self) -> Self::Key {
-        AbsPathKey(self.work_directory_abs_path.as_path().into())
-    }
-}
-
-impl sum_tree::Item for StatusEntry {
-    type Summary = PathSummary<GitSummary>;
-
-    fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
-        PathSummary {
-            max_path: self.repo_path.0.clone(),
-            item_summary: self.status.summary(),
-        }
-    }
-}
-
-impl sum_tree::KeyedItem for StatusEntry {
-    type Key = PathKey;
-
-    fn key(&self) -> Self::Key {
-        PathKey(self.repo_path.0.clone())
-    }
-}
-
 impl<'a> sum_tree::Dimension<'a, PathSummary<GitSummary>> for GitSummary {
     fn zero(_cx: &()) -> Self {
         Default::default()
@@ -3771,6 +3555,14 @@ impl<'a> sum_tree::Dimension<'a, PathSummary<GitSummary>> for GitSummary {
 
     fn add_summary(&mut self, summary: &'a PathSummary<GitSummary>, _: &()) {
         *self += summary.item_summary
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, PathSummary<GitSummary>, (TraversalProgress<'a>, GitSummary)>
+    for PathTarget<'_>
+{
+    fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitSummary), _: &()) -> Ordering {
+        self.cmp_path(&cursor_location.0.max_path)
     }
 }
 
@@ -4810,60 +4602,7 @@ impl BackgroundScanner {
             }
         }
 
-        dbg!(&paths_by_git_repo);
-
         for (_work_directory, paths) in paths_by_git_repo {
-            //if let Ok(status) = paths.repo.status_blocking(&paths.repo_paths) {
-            //    let mut changed_path_statuses = Vec::new();
-            //    let statuses = paths.entry.statuses_by_path.clone();
-            //    let mut cursor = statuses.cursor::<PathProgress>(&());
-
-            //    for (repo_path, status) in &*status.entries {
-            //        paths.remove_repo_path(repo_path);
-            //        if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
-            //            if &cursor.item().unwrap().status == status {
-            //                continue;
-            //            }
-            //        }
-
-            //        changed_path_statuses.push(Edit::Insert(StatusEntry {
-            //            repo_path: repo_path.clone(),
-            //            status: *status,
-            //        }));
-            //    }
-
-            //    let mut cursor = statuses.cursor::<PathProgress>(&());
-            //    for path in paths.repo_paths {
-            //        if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
-            //            changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
-            //        }
-            //    }
-
-            //    if !changed_path_statuses.is_empty() {
-            //        let work_directory_id = state.snapshot.repositories.update(
-            //            &AbsPathKey(paths.entry.work_directory_abs_path.as_path().into()),
-            //            &(),
-            //            move |repository_entry| {
-            //                repository_entry
-            //                    .statuses_by_path
-            //                    .edit(changed_path_statuses, &());
-
-            //                repository_entry.work_directory_id
-            //            },
-            //        );
-
-            //        if let Some(work_directory_id) = work_directory_id {
-            //            let scan_id = state.snapshot.scan_id;
-            //            state.snapshot.git_repositories.update(
-            //                &work_directory_id,
-            //                |local_repository_entry| {
-            //                    local_repository_entry.status_scan_id = scan_id;
-            //                },
-            //            );
-            //        }
-            //    }
-            //}
-            dbg!("x");
             state.snapshot.git_repositories.update(
                 &paths.work_directory_id,
                 |local_repository_entry| {
@@ -4937,9 +4676,6 @@ impl BackgroundScanner {
                 let id = local_repo.work_directory_id;
                 log::debug!("remove repo path: {:?}", path);
                 snapshot.git_repositories.remove(&id);
-                snapshot
-                    .repositories
-                    .retain(&(), |repo_entry| repo_entry.work_directory_id != id);
                 return Some(());
             }
         }
@@ -5181,9 +4917,6 @@ impl BackgroundScanner {
             snapshot
                 .git_repositories
                 .retain(|work_directory_id, _| ids_to_preserve.contains(work_directory_id));
-            snapshot.repositories.retain(&(), |entry| {
-                ids_to_preserve.contains(&entry.work_directory_id)
-            });
         }
 
         let scans_running = self.scans_running.clone();
@@ -5609,7 +5342,6 @@ impl WorktreeModelHandle for Entity<Worktree> {
         let tree = self.clone();
         let (fs, root_path, mut git_dir_scan_id) = self.update(cx, |tree, _| {
             let tree = tree.as_local().unwrap();
-            // let repository = tree.repositories.first().unwrap();
             let local_repo_entry = tree
                 .git_repositories
                 .values()
@@ -5857,14 +5589,6 @@ impl<'a, S: Summary> SeekTarget<'a, PathSummary<S>, TraversalProgress<'a>> for P
     }
 }
 
-impl<'a> SeekTarget<'a, PathSummary<GitSummary>, (TraversalProgress<'a>, GitSummary)>
-    for PathTarget<'_>
-{
-    fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitSummary), _: &()) -> Ordering {
-        self.cmp_path(&cursor_location.0.max_path)
-    }
-}
-
 #[derive(Debug)]
 enum TraversalTarget<'a> {
     Path(PathTarget<'a>),
@@ -5990,138 +5714,6 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             char_bag,
             is_fifo: entry.is_fifo,
         })
-    }
-}
-
-fn status_from_proto(
-    simple_status: i32,
-    status: Option<proto::GitFileStatus>,
-) -> anyhow::Result<FileStatus> {
-    use proto::git_file_status::Variant;
-
-    let Some(variant) = status.and_then(|status| status.variant) else {
-        let code = proto::GitStatus::from_i32(simple_status)
-            .ok_or_else(|| anyhow!("Invalid git status code: {simple_status}"))?;
-        let result = match code {
-            proto::GitStatus::Added => TrackedStatus {
-                worktree_status: StatusCode::Added,
-                index_status: StatusCode::Unmodified,
-            }
-            .into(),
-            proto::GitStatus::Modified => TrackedStatus {
-                worktree_status: StatusCode::Modified,
-                index_status: StatusCode::Unmodified,
-            }
-            .into(),
-            proto::GitStatus::Conflict => UnmergedStatus {
-                first_head: UnmergedStatusCode::Updated,
-                second_head: UnmergedStatusCode::Updated,
-            }
-            .into(),
-            proto::GitStatus::Deleted => TrackedStatus {
-                worktree_status: StatusCode::Deleted,
-                index_status: StatusCode::Unmodified,
-            }
-            .into(),
-            _ => return Err(anyhow!("Invalid code for simple status: {simple_status}")),
-        };
-        return Ok(result);
-    };
-
-    let result = match variant {
-        Variant::Untracked(_) => FileStatus::Untracked,
-        Variant::Ignored(_) => FileStatus::Ignored,
-        Variant::Unmerged(unmerged) => {
-            let [first_head, second_head] =
-                [unmerged.first_head, unmerged.second_head].map(|head| {
-                    let code = proto::GitStatus::from_i32(head)
-                        .ok_or_else(|| anyhow!("Invalid git status code: {head}"))?;
-                    let result = match code {
-                        proto::GitStatus::Added => UnmergedStatusCode::Added,
-                        proto::GitStatus::Updated => UnmergedStatusCode::Updated,
-                        proto::GitStatus::Deleted => UnmergedStatusCode::Deleted,
-                        _ => return Err(anyhow!("Invalid code for unmerged status: {code:?}")),
-                    };
-                    Ok(result)
-                });
-            let [first_head, second_head] = [first_head?, second_head?];
-            UnmergedStatus {
-                first_head,
-                second_head,
-            }
-            .into()
-        }
-        Variant::Tracked(tracked) => {
-            let [index_status, worktree_status] = [tracked.index_status, tracked.worktree_status]
-                .map(|status| {
-                    let code = proto::GitStatus::from_i32(status)
-                        .ok_or_else(|| anyhow!("Invalid git status code: {status}"))?;
-                    let result = match code {
-                        proto::GitStatus::Modified => StatusCode::Modified,
-                        proto::GitStatus::TypeChanged => StatusCode::TypeChanged,
-                        proto::GitStatus::Added => StatusCode::Added,
-                        proto::GitStatus::Deleted => StatusCode::Deleted,
-                        proto::GitStatus::Renamed => StatusCode::Renamed,
-                        proto::GitStatus::Copied => StatusCode::Copied,
-                        proto::GitStatus::Unmodified => StatusCode::Unmodified,
-                        _ => return Err(anyhow!("Invalid code for tracked status: {code:?}")),
-                    };
-                    Ok(result)
-                });
-            let [index_status, worktree_status] = [index_status?, worktree_status?];
-            TrackedStatus {
-                index_status,
-                worktree_status,
-            }
-            .into()
-        }
-    };
-    Ok(result)
-}
-
-fn status_to_proto(status: FileStatus) -> proto::GitFileStatus {
-    use proto::git_file_status::{Tracked, Unmerged, Variant};
-
-    let variant = match status {
-        FileStatus::Untracked => Variant::Untracked(Default::default()),
-        FileStatus::Ignored => Variant::Ignored(Default::default()),
-        FileStatus::Unmerged(UnmergedStatus {
-            first_head,
-            second_head,
-        }) => Variant::Unmerged(Unmerged {
-            first_head: unmerged_status_to_proto(first_head),
-            second_head: unmerged_status_to_proto(second_head),
-        }),
-        FileStatus::Tracked(TrackedStatus {
-            index_status,
-            worktree_status,
-        }) => Variant::Tracked(Tracked {
-            index_status: tracked_status_to_proto(index_status),
-            worktree_status: tracked_status_to_proto(worktree_status),
-        }),
-    };
-    proto::GitFileStatus {
-        variant: Some(variant),
-    }
-}
-
-fn unmerged_status_to_proto(code: UnmergedStatusCode) -> i32 {
-    match code {
-        UnmergedStatusCode::Added => proto::GitStatus::Added as _,
-        UnmergedStatusCode::Deleted => proto::GitStatus::Deleted as _,
-        UnmergedStatusCode::Updated => proto::GitStatus::Updated as _,
-    }
-}
-
-fn tracked_status_to_proto(code: StatusCode) -> i32 {
-    match code {
-        StatusCode::Added => proto::GitStatus::Added as _,
-        StatusCode::Deleted => proto::GitStatus::Deleted as _,
-        StatusCode::Modified => proto::GitStatus::Modified as _,
-        StatusCode::Renamed => proto::GitStatus::Renamed as _,
-        StatusCode::TypeChanged => proto::GitStatus::TypeChanged as _,
-        StatusCode::Copied => proto::GitStatus::Copied as _,
-        StatusCode::Unmodified => proto::GitStatus::Unmodified as _,
     }
 }
 

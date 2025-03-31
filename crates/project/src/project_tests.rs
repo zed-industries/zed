@@ -1,6 +1,9 @@
 #![allow(clippy::format_collect)]
 
-use crate::{task_inventory::TaskContexts, task_store::TaskSettingsLocation, Event, *};
+use crate::{
+    git_store::StatusEntry, task_inventory::TaskContexts, task_store::TaskSettingsLocation, Event,
+    *,
+};
 use buffer_diff::{
     assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
 };
@@ -40,7 +43,7 @@ use util::{
     test::{marked_text_offsets, TempTree},
     uri, TryFutureExt as _,
 };
-use worktree::{StatusEntry, WorktreeModelHandle as _};
+use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {

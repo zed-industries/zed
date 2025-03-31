@@ -3,9 +3,9 @@ use git::status::GitSummary;
 use std::{ops::Deref, path::Path};
 use sum_tree::Cursor;
 use text::Bias;
-use worktree::{Entry, PathProgress, PathTarget, StatusEntry, Traversal};
+use worktree::{Entry, PathProgress, PathTarget, Traversal};
 
-use super::{RepositoryId, RepositorySnapshot};
+use super::{RepositoryId, RepositorySnapshot, StatusEntry};
 
 /// Walks the worktree entries and their associated git statuses.
 pub struct GitTraversal<'a> {
