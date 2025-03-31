@@ -891,7 +891,7 @@ fn new_utils_func() {{}}
 
         // The system prompt includes some text that would produce errors
         assert_eq!(
-            dbg!(errors[0].to_string()),
+            errors[0].to_string(),
             format!(
                 "input:102:1: Expected marker \"{}\", found '3'",
                 SEARCH_MARKER
