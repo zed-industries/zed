@@ -449,25 +449,18 @@ impl TokenMap {
         to_insert: Vec<Token>,
     ) -> (TokenSnapshot, Vec<TokenEdit>) {
         let snapshot = &mut self.snapshot;
-        let mut buffer_edits = vec![];
+        let mut edits = vec![];
 
         self.tokens.retain(|token| {
             let retain = !to_remove.contains(&token.id);
             if !retain {
-                // let range = token.range.to_offset(&snapshot.buffer);
-                // buffer_edits.push(Edit {
-                //     new: range.clone(),
-                //     old: range,
-                // })
+                edits.push(token.range.to_offset(&snapshot.buffer))
             }
             retain
         });
 
         for token_to_insert in to_insert {
-            buffer_edits.push(Edit {
-                old: token_to_insert.range.to_offset(&snapshot.buffer),
-                new: token_to_insert.range.to_offset(&snapshot.buffer),
-            });
+            edits.push(token_to_insert.range.to_offset(&snapshot.buffer));
             let (Ok(ix) | Err(ix)) = self.tokens.binary_search_by(|probe| {
                 probe
                     .range
@@ -478,8 +471,12 @@ impl TokenMap {
             self.tokens.insert(ix, token_to_insert);
         }
 
-        let buffer_edits = buffer_edits
+        let buffer_edits = edits
             .into_iter()
+            .map(|range| Edit {
+                old: range.clone(),
+                new: range,
+            })
             .sorted_by(|a, b| a.old.start.cmp(&b.old.start).then(cmp::Ordering::Greater))
             .collect_vec();
 
@@ -890,8 +887,7 @@ fn push_semantic_tokens(
         );
         acc = prefix_end;
     }
-    if acc != range.end {
-        // TODO: REVIEW assertion failed: end_offset >= self.offset
+    if acc < range.end {
         push_isomorphic(
             sum_tree,
             buffer_snapshot.text_summary_for_range(acc..range.end),
