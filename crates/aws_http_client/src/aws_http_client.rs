@@ -65,10 +65,6 @@ impl AwsConnector for AwsHttpConnector {
                 }
             }
 
-            for extension in parts.extensions {
-                response.add_extension(extension);
-            }
-
             Ok(response)
         })
     }
