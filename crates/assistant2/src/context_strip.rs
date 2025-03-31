@@ -92,12 +92,12 @@ impl ContextStrip {
         let active_buffer_entity = editor.buffer().read(cx).as_singleton()?;
         let active_buffer = active_buffer_entity.read(cx);
 
-        let path = active_buffer.file()?.path();
+        let path = active_buffer.file()?.full_path(cx);
 
         if self
             .context_store
             .read(cx)
-            .will_include_buffer(active_buffer.remote_id(), path)
+            .will_include_buffer(active_buffer.remote_id(), &path)
             .is_some()
         {
             return None;
@@ -108,7 +108,7 @@ impl ContextStrip {
             None => path.to_string_lossy().into_owned().into(),
         };
 
-        let icon_path = FileIcons::get_icon(path, cx);
+        let icon_path = FileIcons::get_icon(&path, cx);
 
         Some(SuggestedContext::File {
             name,
