@@ -990,7 +990,7 @@ impl Buffer {
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
-    ) -> impl Future<Output = BufferSnapshot> {
+    ) -> impl Future<Output = BufferSnapshot> + use<> {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
@@ -2085,23 +2085,26 @@ impl Buffer {
     }
 
     /// Waits for the buffer to receive operations with the given timestamps.
-    pub fn wait_for_edits(
+    pub fn wait_for_edits<It: IntoIterator<Item = clock::Lamport>>(
         &mut self,
-        edit_ids: impl IntoIterator<Item = clock::Lamport>,
-    ) -> impl Future<Output = Result<()>> {
+        edit_ids: It,
+    ) -> impl Future<Output = Result<()>> + use<It> {
         self.text.wait_for_edits(edit_ids)
     }
 
     /// Waits for the buffer to receive the operations necessary for resolving the given anchors.
-    pub fn wait_for_anchors(
+    pub fn wait_for_anchors<It: IntoIterator<Item = Anchor>>(
         &mut self,
-        anchors: impl IntoIterator<Item = Anchor>,
-    ) -> impl 'static + Future<Output = Result<()>> {
+        anchors: It,
+    ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         self.text.wait_for_anchors(anchors)
     }
 
     /// Waits for the buffer to receive operations up to the given version.
-    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_version(
+        &mut self,
+        version: clock::Global,
+    ) -> impl Future<Output = Result<()>> + use<> {
         self.text.wait_for_version(version)
     }
 

@@ -830,7 +830,7 @@ impl LanguageServer {
     }
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
-    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
+    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
         if let Some(tasks) = self.io_tasks.lock().take() {
             let response_handlers = self.response_handlers.clone();
             let next_id = AtomicI32::new(self.next_id.load(SeqCst));
@@ -1077,7 +1077,7 @@ impl LanguageServer {
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>> + use<T>
     where
         T::Result: 'static + Send,
     {

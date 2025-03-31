@@ -39,7 +39,7 @@ use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
     JsonSchema,
-    rgen::SchemaGenerator,
+    r#gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};

@@ -11,7 +11,7 @@ use std::{
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
-use super::{custom_highlights::CustomHighlightsChunks, Highlights};
+use super::{Highlights, custom_highlights::CustomHighlightsChunks};
 
 /// Decides where the [`Inlay`]s should be displayed.
 ///
@@ -254,7 +254,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     chunk
                         .text
                         .len()
-                        .min(self.transforms.end(&()).0 .0 - self.output_offset.0),
+                        .min(self.transforms.end(&()).0.0 - self.output_offset.0),
                 );
 
                 chunk.text = suffix;
@@ -352,7 +352,7 @@ impl InlayBufferRows<'_> {
         } else {
             match self.transforms.item() {
                 Some(Transform::Isomorphic(_)) => {
-                    buffer_point += inlay_point.0 - self.transforms.start().0 .0;
+                    buffer_point += inlay_point.0 - self.transforms.start().0.0;
                     buffer_point.row
                 }
                 _ => cmp::min(buffer_point.row + 1, self.max_buffer_row.0),
@@ -610,9 +610,9 @@ impl InlayMap {
         let mut to_insert = Vec::new();
         let snapshot = &mut self.snapshot;
         for i in 0..rng.gen_range(1..=5) {
-            if self.inlays.is_empty() || rng.gen() {
+            if self.inlays.is_empty() || rng.r#gen() {
                 let position = snapshot.buffer.random_byte_range(0, rng).start;
-                let bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                let bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
                 let len = if rng.gen_bool(0.01) {
                     0
                 } else {
@@ -664,18 +664,18 @@ impl InlaySnapshot {
             .transforms
             .cursor::<(InlayOffset, (InlayPoint, usize))>(&());
         cursor.seek(&offset, Bias::Right, &());
-        let overshoot = offset.0 - cursor.start().0 .0;
+        let overshoot = offset.0 - cursor.start().0.0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let buffer_offset_start = cursor.start().1 .1;
+                let buffer_offset_start = cursor.start().1.1;
                 let buffer_offset_end = buffer_offset_start + overshoot;
                 let buffer_start = self.buffer.offset_to_point(buffer_offset_start);
                 let buffer_end = self.buffer.offset_to_point(buffer_offset_end);
-                InlayPoint(cursor.start().1 .0 .0 + (buffer_end - buffer_start))
+                InlayPoint(cursor.start().1.0.0 + (buffer_end - buffer_start))
             }
             Some(Transform::Inlay(inlay)) => {
                 let overshoot = inlay.text.offset_to_point(overshoot);
-                InlayPoint(cursor.start().1 .0 .0 + overshoot)
+                InlayPoint(cursor.start().1.0.0 + overshoot)
             }
             None => self.max_point(),
         }
@@ -694,18 +694,18 @@ impl InlaySnapshot {
             .transforms
             .cursor::<(InlayPoint, (InlayOffset, Point))>(&());
         cursor.seek(&point, Bias::Right, &());
-        let overshoot = point.0 - cursor.start().0 .0;
+        let overshoot = point.0 - cursor.start().0.0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let buffer_point_start = cursor.start().1 .1;
+                let buffer_point_start = cursor.start().1.1;
                 let buffer_point_end = buffer_point_start + overshoot;
                 let buffer_offset_start = self.buffer.point_to_offset(buffer_point_start);
                 let buffer_offset_end = self.buffer.point_to_offset(buffer_point_end);
-                InlayOffset(cursor.start().1 .0 .0 + (buffer_offset_end - buffer_offset_start))
+                InlayOffset(cursor.start().1.0.0 + (buffer_offset_end - buffer_offset_start))
             }
             Some(Transform::Inlay(inlay)) => {
                 let overshoot = inlay.text.point_to_offset(overshoot);
-                InlayOffset(cursor.start().1 .0 .0 + overshoot)
+                InlayOffset(cursor.start().1.0.0 + overshoot)
             }
             None => self.len(),
         }
@@ -715,7 +715,7 @@ impl InlaySnapshot {
         cursor.seek(&point, Bias::Right, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let overshoot = point.0 - cursor.start().0 .0;
+                let overshoot = point.0 - cursor.start().0.0;
                 cursor.start().1 + overshoot
             }
             Some(Transform::Inlay(_)) => cursor.start().1,
@@ -752,7 +752,7 @@ impl InlaySnapshot {
                         return cursor.end(&()).1;
                     } else {
                         let overshoot = offset - cursor.start().0;
-                        return InlayOffset(cursor.start().1 .0 + overshoot);
+                        return InlayOffset(cursor.start().1.0 + overshoot);
                     }
                 }
                 Some(Transform::Inlay(inlay)) => {
@@ -785,7 +785,7 @@ impl InlaySnapshot {
                         return cursor.end(&()).1;
                     } else {
                         let overshoot = point - cursor.start().0;
-                        return InlayPoint(cursor.start().1 .0 + overshoot);
+                        return InlayPoint(cursor.start().1.0 + overshoot);
                     }
                 }
                 Some(Transform::Inlay(inlay)) => {
@@ -838,11 +838,11 @@ impl InlaySnapshot {
                             return point;
                         }
                     } else {
-                        let overshoot = point.0 - cursor.start().0 .0;
+                        let overshoot = point.0 - cursor.start().0.0;
                         let buffer_point = cursor.start().1 + overshoot;
                         let clipped_buffer_point = self.buffer.clip_point(buffer_point, bias);
                         let clipped_overshoot = clipped_buffer_point - cursor.start().1;
-                        let clipped_point = InlayPoint(cursor.start().0 .0 + clipped_overshoot);
+                        let clipped_point = InlayPoint(cursor.start().0.0 + clipped_overshoot);
                         if clipped_point == point {
                             return clipped_point;
                         } else {
@@ -903,19 +903,19 @@ impl InlaySnapshot {
         let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
         cursor.seek(&range.start, Bias::Right, &());
 
-        let overshoot = range.start.0 - cursor.start().0 .0;
+        let overshoot = range.start.0 - cursor.start().0.0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
                 let buffer_start = cursor.start().1;
                 let suffix_start = buffer_start + overshoot;
                 let suffix_end =
-                    buffer_start + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0);
+                    buffer_start + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0.0);
                 summary = self.buffer.text_summary_for_range(suffix_start..suffix_end);
                 cursor.next(&());
             }
             Some(Transform::Inlay(inlay)) => {
                 let suffix_start = overshoot;
-                let suffix_end = cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0;
+                let suffix_end = cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0.0;
                 summary = inlay.text.cursor(suffix_start).summary(suffix_end);
                 cursor.next(&());
             }
@@ -927,7 +927,7 @@ impl InlaySnapshot {
                 .summary::<_, TransformSummary>(&range.end, Bias::Right, &())
                 .output;
 
-            let overshoot = range.end.0 - cursor.start().0 .0;
+            let overshoot = range.end.0 - cursor.start().0.0;
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
                     let prefix_start = cursor.start().1;
@@ -959,7 +959,7 @@ impl InlaySnapshot {
         } else {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
-                    buffer_point += inlay_point.0 - cursor.start().0 .0;
+                    buffer_point += inlay_point.0 - cursor.start().0.0;
                     MultiBufferRow(buffer_point.row)
                 }
                 _ => cmp::min(MultiBufferRow(buffer_point.row + 1), max_buffer_row),
@@ -1066,9 +1066,9 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 mod tests {
     use super::*;
     use crate::{
+        InlayId, MultiBuffer,
         display_map::{InlayHighlights, TextHighlights},
         hover_links::InlayHighlight,
-        InlayId, MultiBuffer,
     };
     use gpui::{App, HighlightStyle};
     use project::{InlayHint, InlayHintLabel, ResolveState};
@@ -1500,7 +1500,7 @@ mod tests {
             .unwrap_or(10);
 
         let len = rng.gen_range(0..30);
-        let buffer = if rng.gen() {
+        let buffer = if rng.r#gen() {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();

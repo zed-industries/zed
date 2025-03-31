@@ -201,7 +201,7 @@ impl BackgroundExecutor {
         _background_only: bool,
         future: Fut,
         timeout: Option<Duration>,
-    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<'_, Fut>> {
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         use std::time::Instant;
 
         let mut future = Box::pin(future);
@@ -239,7 +239,7 @@ impl BackgroundExecutor {
         background_only: bool,
         future: Fut,
         timeout: Option<Duration>,
-    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<'_, Fut>> {
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         use std::sync::atomic::AtomicBool;
 
         let mut future = Box::pin(future);
@@ -307,7 +307,7 @@ impl BackgroundExecutor {
         &self,
         duration: Duration,
         future: Fut,
-    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<'_, Fut>> {
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         self.block_internal(true, future, Some(duration))
     }
 
