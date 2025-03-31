@@ -6,8 +6,8 @@ use editor::{ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, Ed
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
-    Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
-    WeakEntity,
+    linear_color_stop, linear_gradient, point, Animation, AnimationExt, App, DismissEvent, Entity,
+    Focusable, Subscription, TextStyle, WeakEntity,
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
@@ -31,8 +31,8 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AssistantDiff, Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker,
-    ToggleProfileSelector,
+    AssistantDiff, Chat, ChatMode, OpenAssistantDiff, RemoveAllContext, ThreadEvent,
+    ToggleContextPicker, ToggleProfileSelector,
 };
 
 pub struct MessageEditor {
@@ -331,7 +331,11 @@ impl Render for MessageEditor {
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
         let changed_buffers_count = changed_buffers.len();
+
         let editor_bg_color = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border;
+        let active_color = cx.theme().colors().element_selected;
+        let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
 
         v_flex()
             .size_full()
@@ -397,18 +401,27 @@ impl Render for MessageEditor {
                 parent.child(
                     v_flex()
                         .mx_2()
-                        .bg(cx.theme().colors().element_background)
+                        .bg(bg_edit_files_disclosure)
                         .border_1()
                         .border_b_0()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(border_color)
                         .rounded_t_md()
+                        .shadow(smallvec::smallvec![gpui::BoxShadow {
+                            color: gpui::black().opacity(0.15),
+                            offset: point(px(1.), px(-1.)),
+                            blur_radius: px(3.),
+                            spread_radius: px(0.),
+                        }])
                         .child(
                             h_flex()
-                                .p_2()
+                                .p_1p5()
                                 .justify_between()
+                                .when(self.edits_expanded, |this| {
+                                    this.border_b_1().border_color(border_color)
+                                })
                                 .child(
                                     h_flex()
-                                        .gap_2()
+                                        .gap_1()
                                         .child(
                                             Disclosure::new(
                                                 "edits-disclosure",
@@ -423,7 +436,7 @@ impl Render for MessageEditor {
                                         )
                                         .child(
                                             Label::new("Edits")
-                                                .size(LabelSize::XSmall)
+                                                .size(LabelSize::Small)
                                                 .color(Color::Muted),
                                         )
                                         .child(
@@ -441,13 +454,22 @@ impl Render for MessageEditor {
                                                     "files"
                                                 }
                                             ))
-                                            .size(LabelSize::XSmall)
+                                            .size(LabelSize::Small)
                                             .color(Color::Muted),
                                         ),
                                 )
                                 .child(
-                                    Button::new("review", "Review")
-                                        .label_size(LabelSize::XSmall)
+                                    Button::new("review", "Review Changes")
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &OpenAssistantDiff,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.handle_review_click(window, cx)
                                         })),
@@ -474,50 +496,94 @@ impl Render for MessageEditor {
                                                             std::path::MAIN_SEPARATOR_STR
                                                         ))
                                                         .color(Color::Muted)
-                                                        .size(LabelSize::Small),
+                                                        .size(LabelSize::XSmall)
+                                                        .buffer_font(cx),
                                                     )
                                                 }
                                             });
 
                                             let name_label = path.file_name().map(|name| {
                                                 Label::new(name.to_string_lossy().to_string())
-                                                    .size(LabelSize::Small)
+                                                    .size(LabelSize::XSmall)
+                                                    .buffer_font(cx)
                                             });
 
                                             let file_icon = FileIcons::get_icon(&path, cx)
                                                 .map(Icon::from_path)
-                                                .unwrap_or_else(|| Icon::new(IconName::File));
+                                                .map(|icon| {
+                                                    icon.color(Color::Muted).size(IconSize::Small)
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    Icon::new(IconName::File)
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::Small)
+                                                });
 
                                             let element = div()
-                                                .p_2()
+                                                .relative()
+                                                .py_1()
+                                                .px_2()
                                                 .when(index + 1 < changed_buffers_count, |parent| {
-                                                    parent
-                                                        .border_color(cx.theme().colors().border)
-                                                        .border_b_1()
+                                                    parent.border_color(border_color).border_b_1()
                                                 })
                                                 .child(
                                                     h_flex()
                                                         .gap_2()
-                                                        .child(file_icon)
+                                                        .justify_between()
                                                         .child(
-                                                            // TODO: handle overflow
                                                             h_flex()
-                                                                .children(parent_label)
-                                                                .children(name_label),
-                                                        )
-                                                        // TODO: show lines changed
-                                                        .child(
-                                                            Label::new("+").color(Color::Created),
-                                                        )
-                                                        .child(
-                                                            Label::new("-").color(Color::Deleted),
+                                                                .id("file-container")
+                                                                .pr_8()
+                                                                .gap_1p5()
+                                                                .max_w_full()
+                                                                .overflow_x_scroll()
+                                                                .child(file_icon)
+                                                                .child(
+                                                                    h_flex()
+                                                                        .children(parent_label)
+                                                                        .children(name_label),
+                                                                ) // TODO: show lines changed
+                                                                .child(
+                                                                    Label::new("+")
+                                                                        .color(Color::Created),
+                                                                )
+                                                                .child(
+                                                                    Label::new("-")
+                                                                        .color(Color::Deleted),
+                                                                ),
                                                         )
                                                         .when(!changed.needs_review, |parent| {
                                                             parent.child(
                                                                 Icon::new(IconName::Check)
                                                                     .color(Color::Success),
                                                             )
-                                                        }),
+                                                        })
+                                                        .child(
+                                                            div()
+                                                                .h_full()
+                                                                .absolute()
+                                                                .w_8()
+                                                                .bottom_0()
+                                                                .map(|this| {
+                                                                    if !changed.needs_review {
+                                                                        this.right_4()
+                                                                    } else {
+                                                                        this.right_0()
+                                                                    }
+                                                                })
+                                                                .bg(linear_gradient(
+                                                                    90.,
+                                                                    linear_color_stop(
+                                                                        editor_bg_color,
+                                                                        1.,
+                                                                    ),
+                                                                    linear_color_stop(
+                                                                        editor_bg_color
+                                                                            .opacity(0.2),
+                                                                        0.,
+                                                                    ),
+                                                                )),
+                                                        ),
                                                 );
 
                                             Some(element)

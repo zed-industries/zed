@@ -651,7 +651,8 @@
     "context": "MessageEditor > Editor",
     "bindings": {
       "enter": "assistant2::Chat",
-      "ctrl-i": "assistant2::ToggleProfileSelector"
+      "ctrl-i": "assistant2::ToggleProfileSelector",
+      "shift-ctrl-r": "assistant2::OpenAssistantDiff"
     }
   },
   {

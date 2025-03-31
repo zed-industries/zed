@@ -653,6 +653,7 @@
         "tools": {
           "bash": true,
           "batch-tool": true,
+          "code-symbols": true,
           "copy-path": true,
           "create-file": true,
           "delete-path": true,
@@ -666,12 +667,18 @@
           "path-search": true,
           "read-file": true,
           "regex-search": true,
+          "symbol-info": true,
           "thinking": true
         }
       }
     },
-    // Shows a notification when the agent needs confirmation before running an edit tool call or when that's concluded.
-    "notify_when_agent_waiting": true
+    // Where to show notifications when an agent has either completed
+    // its response, or else needs confirmation before it can run a
+    // tool action.
+    // "primary_screen" - Show the notification only on your primary screen (default)
+    // "all_screens" - Show these notifications on all screens
+    // "never" - Never show these notifications
+    "notify_when_agent_waiting": "primary_screen"
   },
   // The settings for slash commands.
   "slash_commands": {
