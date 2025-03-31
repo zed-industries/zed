@@ -240,7 +240,6 @@ impl<'a> Iterator for TokenChunks<'a> {
                 self.output_offset.0 += prefix.len();
                 Chunk {
                     text: prefix,
-                    highlight_style: Some(HighlightStyle::color(Hsla::blue())),
                     ..chunk.clone()
                 }
             }
@@ -382,33 +381,41 @@ impl TokenMap {
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
-                if let Some(Transform::Isomorphic(transform)) = cursor.item() {
-                    if cursor.end(&()).0 == buffer_edit.old.start {
-                        push_isomorphic(&mut new_transforms, *transform);
-                        cursor.next(&());
-                    }
-                }
+                // if let Some(Transform::Isomorphic(transform)) = cursor.item() {
+                //     if cursor.end(&()).0 == buffer_edit.old.start {
+                //         push_isomorphic(&mut new_transforms, *transform);
+                //         cursor.next(&());
+                //     }
+                // }
 
-                // Remove all the tokens and transforms contained by the edit.
+                // Remove all the inlays and transforms contained by the edit.
                 let old_start =
                     cursor.start().1 + TokenOffset(buffer_edit.old.start - cursor.start().0);
                 cursor.seek(&buffer_edit.old.end, Bias::Right, &());
                 let old_end =
                     cursor.start().1 + TokenOffset(buffer_edit.old.end - cursor.start().0);
-
-                // TODO: Push the unchanged prefix.
+                // Push the unchanged prefix.
                 let prefix_start = new_transforms.summary().input.len;
                 let prefix_end = buffer_edit.new.start;
                 push_isomorphic(
                     &mut new_transforms,
                     buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
                 );
+                let new_start = TokenOffset(new_transforms.summary().output.len);
+
                 // Apply the rest of the edit.
                 let transform_start = new_transforms.summary().input.len;
                 push_isomorphic(
                     &mut new_transforms,
                     buffer_snapshot.text_summary_for_range(transform_start..buffer_edit.new.end),
                 );
+                let new_end = TokenOffset(new_transforms.summary().output.len);
+                token_edits.push(Edit {
+                    old: old_start..old_end,
+                    new: new_start..new_end,
+                    // old: TokenOffset(buffer_edit.old.start)..TokenOffset(buffer_edit.old.end),
+                    // new: TokenOffset(buffer_edit.new.start)..TokenOffset(buffer_edit.new.end),
+                });
 
                 // If the next edit doesn't intersect the current isomorphic transform, then
                 // we can push its remainder.
@@ -916,7 +923,22 @@ impl TokenSnapshot {
     }
 
     fn check_invariants(&self) {
-        // TODO
+        #[cfg(any(debug_assertions, feature = "test-support"))]
+        {
+            assert_eq!(self.transforms.summary().input, self.buffer.text_summary());
+            let mut transforms = self.transforms.iter().peekable();
+            while let Some(transform) = transforms.next() {
+                let transform_is_isomorphic = matches!(transform, Transform::Isomorphic(_));
+                if let Some(next_transform) = transforms.peek() {
+                    let next_transform_is_isomorphic =
+                        matches!(next_transform, Transform::Isomorphic(_));
+                    assert!(
+                        !transform_is_isomorphic || !next_transform_is_isomorphic,
+                        "two adjacent isomorphic transforms"
+                    );
+                }
+            }
+        }
     }
 }
 
