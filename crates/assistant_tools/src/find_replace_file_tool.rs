@@ -182,6 +182,10 @@ impl Tool for FindReplaceFileTool {
                 return Err(anyhow!("`find` string cannot be empty. Use a different tool if you want to create a file."));
             }
 
+            if input.find == input.replace {
+                return Err(anyhow!("The `find` and `replace` strings are identical, so no changes would be made."));
+            }
+
             let result = cx
                 .background_spawn(async move {
                     replace_exact(&input.find, &input.replace, &snapshot).await
