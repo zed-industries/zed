@@ -415,8 +415,7 @@ impl Render for ConfigurationView {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let lmstudio_intro = "Run local LLMs like Llama, Phi, and Qwen.";
-        let lmstudio_reqs =
-            "To use LM Studio as a provider for Zed assistant, it needs to be running with at least one model downloaded.";
+        let lmstudio_reqs = "To use LM Studio as a provider for Zed assistant, it needs to be running with at least one model downloaded.";
 
         let inline_code_bg = cx.theme().colors().editor_foreground.opacity(0.05);
 

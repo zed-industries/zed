@@ -332,7 +332,7 @@ impl ChatPanel {
                                     .color(Color::Muted),
                             )
                         }),
-                )
+                );
             }
             Some(val) => val,
         };

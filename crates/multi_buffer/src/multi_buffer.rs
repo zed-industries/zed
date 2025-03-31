@@ -2271,11 +2271,11 @@ impl MultiBuffer {
         cx.notify();
     }
 
-    pub fn wait_for_anchors<'a>(
+    pub fn wait_for_anchors<'a, Anchors: 'a + Iterator<Item = Anchor>>(
         &self,
-        anchors: impl 'a + Iterator<Item = Anchor>,
+        anchors: Anchors,
         cx: &mut Context<Self>,
-    ) -> impl 'static + Future<Output = Result<()>> {
+    ) -> impl 'static + Future<Output = Result<()>> + use<Anchors> {
         let borrow = self.buffers.borrow();
         let mut error = None;
         let mut futures = Vec::new();
@@ -3494,8 +3494,8 @@ impl MultiBuffer {
             }
 
             let excerpt_ids = self.excerpt_ids();
-            if excerpt_ids.is_empty() || (rng.gen() && excerpt_ids.len() < max_excerpts) {
-                let buffer_handle = if rng.gen() || self.buffers.borrow().is_empty() {
+            if excerpt_ids.is_empty() || (rng.r#gen() && excerpt_ids.len() < max_excerpts) {
+                let buffer_handle = if rng.r#gen() || self.buffers.borrow().is_empty() {
                     let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
                     buffers.push(cx.new(|cx| Buffer::local(text, cx)));
                     let buffer = buffers.last().unwrap().read(cx);
@@ -3573,7 +3573,7 @@ impl MultiBuffer {
 
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    if rng.gen() {
+                    if rng.r#gen() {
                         buffer.randomly_edit(rng, mutation_count, cx);
                     } else {
                         buffer.randomly_undo_redo(rng, cx);
@@ -3873,108 +3873,114 @@ impl MultiBufferSnapshot {
             }
         }
 
-        iter::from_fn(move || loop {
-            let excerpt = cursor.excerpt()?;
+        iter::from_fn(move || {
+            loop {
+                let excerpt = cursor.excerpt()?;
 
-            // If we have already retrieved metadata for this excerpt, continue to use it.
-            let metadata_iter = if let Some((_, metadata)) = current_excerpt_metadata
-                .as_mut()
-                .filter(|(excerpt_id, _)| *excerpt_id == excerpt.id)
-            {
-                Some(metadata)
-            }
-            // Otherwise, compute the intersection of the input range with the excerpt's range,
-            // and retrieve the metadata for the resulting range.
-            else {
-                let region = cursor.region()?;
-                let mut buffer_start;
-                if region.is_main_buffer {
-                    buffer_start = region.buffer_range.start;
-                    if query_range.start > region.range.start {
-                        let overshoot = query_range.start - region.range.start;
-                        buffer_start.add_assign(&overshoot);
-                    }
-                    buffer_start = buffer_start.min(region.buffer_range.end);
-                } else {
-                    buffer_start = cursor.main_buffer_position()?;
-                };
-                let mut buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
-                if let Some((end_excerpt_id, end_buffer_offset)) = range_end {
-                    if excerpt.id == end_excerpt_id {
-                        buffer_end = buffer_end.min(end_buffer_offset);
-                    }
-                }
-
-                if let Some(iterator) =
-                    get_buffer_metadata(&excerpt.buffer, buffer_start..buffer_end)
+                // If we have already retrieved metadata for this excerpt, continue to use it.
+                let metadata_iter = if let Some((_, metadata)) = current_excerpt_metadata
+                    .as_mut()
+                    .filter(|(excerpt_id, _)| *excerpt_id == excerpt.id)
                 {
-                    Some(&mut current_excerpt_metadata.insert((excerpt.id, iterator)).1)
-                } else {
-                    None
+                    Some(metadata)
                 }
-            };
+                // Otherwise, compute the intersection of the input range with the excerpt's range,
+                // and retrieve the metadata for the resulting range.
+                else {
+                    let region = cursor.region()?;
+                    let mut buffer_start;
+                    if region.is_main_buffer {
+                        buffer_start = region.buffer_range.start;
+                        if query_range.start > region.range.start {
+                            let overshoot = query_range.start - region.range.start;
+                            buffer_start.add_assign(&overshoot);
+                        }
+                        buffer_start = buffer_start.min(region.buffer_range.end);
+                    } else {
+                        buffer_start = cursor.main_buffer_position()?;
+                    };
+                    let mut buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
+                    if let Some((end_excerpt_id, end_buffer_offset)) = range_end {
+                        if excerpt.id == end_excerpt_id {
+                            buffer_end = buffer_end.min(end_buffer_offset);
+                        }
+                    }
 
-            // Visit each metadata item.
-            if let Some((metadata_buffer_range, metadata)) = metadata_iter.and_then(Iterator::next)
-            {
-                // Find the multibuffer regions that contain the start and end of
-                // the metadata item's range.
-                if metadata_buffer_range.start > D::default() {
+                    if let Some(iterator) =
+                        get_buffer_metadata(&excerpt.buffer, buffer_start..buffer_end)
+                    {
+                        Some(&mut current_excerpt_metadata.insert((excerpt.id, iterator)).1)
+                    } else {
+                        None
+                    }
+                };
+
+                // Visit each metadata item.
+                if let Some((metadata_buffer_range, metadata)) =
+                    metadata_iter.and_then(Iterator::next)
+                {
+                    // Find the multibuffer regions that contain the start and end of
+                    // the metadata item's range.
+                    if metadata_buffer_range.start > D::default() {
+                        while let Some(region) = cursor.region() {
+                            if region.is_main_buffer
+                                && (region.buffer_range.end >= metadata_buffer_range.start
+                                    || cursor.is_at_end_of_excerpt())
+                            {
+                                break;
+                            }
+                            cursor.next();
+                        }
+                    }
+                    let start_region = cursor.region()?;
                     while let Some(region) = cursor.region() {
                         if region.is_main_buffer
-                            && (region.buffer_range.end >= metadata_buffer_range.start
+                            && (region.buffer_range.end > metadata_buffer_range.end
                                 || cursor.is_at_end_of_excerpt())
                         {
                             break;
                         }
                         cursor.next();
                     }
-                }
-                let start_region = cursor.region()?;
-                while let Some(region) = cursor.region() {
-                    if region.is_main_buffer
-                        && (region.buffer_range.end > metadata_buffer_range.end
-                            || cursor.is_at_end_of_excerpt())
+                    let end_region = cursor.region();
+
+                    // Convert the metadata item's range into multibuffer coordinates.
+                    let mut start_position = start_region.range.start;
+                    let region_buffer_start = start_region.buffer_range.start;
+                    if start_region.is_main_buffer
+                        && metadata_buffer_range.start > region_buffer_start
                     {
-                        break;
+                        start_position
+                            .add_assign(&(metadata_buffer_range.start - region_buffer_start));
+                        start_position = start_position.min(start_region.range.end);
                     }
-                    cursor.next();
-                }
-                let end_region = cursor.region();
 
-                // Convert the metadata item's range into multibuffer coordinates.
-                let mut start_position = start_region.range.start;
-                let region_buffer_start = start_region.buffer_range.start;
-                if start_region.is_main_buffer && metadata_buffer_range.start > region_buffer_start
-                {
-                    start_position.add_assign(&(metadata_buffer_range.start - region_buffer_start));
-                    start_position = start_position.min(start_region.range.end);
-                }
-
-                let mut end_position = max_position;
-                if let Some(end_region) = &end_region {
-                    end_position = end_region.range.start;
-                    debug_assert!(end_region.is_main_buffer);
-                    let region_buffer_start = end_region.buffer_range.start;
-                    if metadata_buffer_range.end > region_buffer_start {
-                        end_position.add_assign(&(metadata_buffer_range.end - region_buffer_start));
+                    let mut end_position = max_position;
+                    if let Some(end_region) = &end_region {
+                        end_position = end_region.range.start;
+                        debug_assert!(end_region.is_main_buffer);
+                        let region_buffer_start = end_region.buffer_range.start;
+                        if metadata_buffer_range.end > region_buffer_start {
+                            end_position
+                                .add_assign(&(metadata_buffer_range.end - region_buffer_start));
+                        }
+                        end_position = end_position.min(end_region.range.end);
                     }
-                    end_position = end_position.min(end_region.range.end);
-                }
 
-                if start_position <= query_range.end && end_position >= query_range.start {
-                    return Some((start_position..end_position, metadata, excerpt));
-                }
-            }
-            // When there are no more metadata items for this excerpt, move to the next excerpt.
-            else {
-                current_excerpt_metadata.take();
-                if let Some((end_excerpt_id, _)) = range_end {
-                    if excerpt.id == end_excerpt_id {
-                        return None;
+                    if start_position <= query_range.end && end_position >= query_range.start {
+                        return Some((start_position..end_position, metadata, excerpt));
                     }
                 }
-                cursor.next_excerpt();
+                // When there are no more metadata items for this excerpt, move to the next excerpt.
+                else {
+                    current_excerpt_metadata.take();
+                    if let Some((end_excerpt_id, _)) = range_end {
+                        if excerpt.id == end_excerpt_id {
+                            return None;
+                        }
+                    }
+                    cursor.next_excerpt();
+                }
             }
         })
     }
@@ -6197,7 +6203,8 @@ impl MultiBufferSnapshot {
                     if *inserted_hunk_info == *prev_inserted_hunk_info {
                         panic!(
                             "multiple adjacent buffer content transforms with is_inserted_hunk = {inserted_hunk_info:?}. transforms: {:+?}",
-                            self.diff_transforms.items(&()));
+                            self.diff_transforms.items(&())
+                        );
                     }
                 }
                 if summary.len == 0 && !self.is_empty() {
@@ -6842,14 +6849,18 @@ impl<'a> MultiBufferExcerpt<'a> {
     /// Map a range within the [`Buffer`] to a range within the [`MultiBuffer`]
     pub fn map_range_from_buffer(&mut self, buffer_range: Range<usize>) -> Range<usize> {
         if buffer_range.start < self.buffer_offset {
-            log::warn!("Attempting to map a range from a buffer offset that starts before the current buffer offset");
+            log::warn!(
+                "Attempting to map a range from a buffer offset that starts before the current buffer offset"
+            );
             return buffer_range;
         }
         let overshoot = buffer_range.start - self.buffer_offset;
         let excerpt_offset = ExcerptDimension(self.excerpt_offset.0 + overshoot);
         self.diff_transforms.seek(&excerpt_offset, Bias::Right, &());
         if excerpt_offset.0 < self.diff_transforms.start().1 .0 {
-            log::warn!("Attempting to map a range from a buffer offset that starts before the current buffer offset");
+            log::warn!(
+                "Attempting to map a range from a buffer offset that starts before the current buffer offset"
+            );
             return buffer_range;
         }
         let overshoot = excerpt_offset.0 - self.diff_transforms.start().1 .0;

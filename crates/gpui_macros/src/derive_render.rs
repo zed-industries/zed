@@ -7,7 +7,7 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
     let type_name = &ast.ident;
     let (impl_generics, type_generics, where_clause) = ast.generics.split_for_impl();
 
-    let gen = quote! {
+    let r#gen = quote! {
         impl #impl_generics gpui::Render for #type_name #type_generics
         #where_clause
         {
@@ -17,5 +17,5 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
         }
     };
 
-    gen.into()
+    r#gen.into()
 }

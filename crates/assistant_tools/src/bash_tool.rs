@@ -81,7 +81,9 @@ impl Tool for BashTool {
             };
 
             if worktrees.next().is_some() {
-                return Task::ready(Err(anyhow!("'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.")));
+                return Task::ready(Err(anyhow!(
+                    "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly."
+                )));
             }
 
             only_worktree.read(cx).abs_path()

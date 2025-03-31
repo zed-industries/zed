@@ -185,7 +185,7 @@ impl AnyProtoClient {
     pub fn request<T: RequestMessage>(
         &self,
         request: T,
-    ) -> impl Future<Output = anyhow::Result<T::Response>> {
+    ) -> impl Future<Output = anyhow::Result<T::Response>> + use<T> {
         let envelope = request.into_envelope(0, None, None);
         let response = self.0.request(envelope, T::NAME);
         async move {

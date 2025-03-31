@@ -226,7 +226,7 @@ embed-resource = "3.0"
 naga.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.70.0"
+bindgen = "0.71"
 cbindgen = { version = "0.28.0", default-features = false }
 naga.workspace = true
 

@@ -664,9 +664,11 @@ mod lenient_font_attributes {
     }
 
     unsafe fn wrap_under_get_rule(reference: CFStringRef) -> CFString {
-        assert!(!reference.is_null(), "Attempted to create a NULL object.");
-        let reference = CFRetain(reference as *const ::std::os::raw::c_void) as CFStringRef;
-        TCFType::wrap_under_create_rule(reference)
+        unsafe {
+            assert!(!reference.is_null(), "Attempted to create a NULL object.");
+            let reference = CFRetain(reference as *const ::std::os::raw::c_void) as CFStringRef;
+            TCFType::wrap_under_create_rule(reference)
+        }
     }
 }
 

@@ -534,7 +534,9 @@ async fn poll_stripe_events(
         if event_pages.page.has_more {
             if pages_of_already_processed_events >= NUMBER_OF_ALREADY_PROCESSED_PAGES_BEFORE_WE_STOP
             {
-                log::info!("Stripe events: stopping, saw {pages_of_already_processed_events} pages of already-processed events");
+                log::info!(
+                    "Stripe events: stopping, saw {pages_of_already_processed_events} pages of already-processed events"
+                );
                 break;
             } else {
                 log::info!("Stripe events: retrieving next page");

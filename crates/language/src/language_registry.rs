@@ -597,7 +597,7 @@ impl LanguageRegistry {
     pub fn language_for_name(
         self: &Arc<Self>,
         name: &str,
-    ) -> impl Future<Output = Result<Arc<Language>>> {
+    ) -> impl Future<Output = Result<Arc<Language>>> + use<> {
         let name = UniCase::new(name);
         let rx = self.get_or_load_language(|language_name, _| {
             if UniCase::new(&language_name.0) == name {

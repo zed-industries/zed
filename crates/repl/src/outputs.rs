@@ -205,11 +205,10 @@ impl Output {
 
     pub fn render(
         &self,
-
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<ExecutionView>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let content = match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),

@@ -782,7 +782,7 @@ impl Terminal {
         cx: &mut Context<Self>,
     ) {
         match event {
-            InternalEvent::Resize(mut new_bounds) => {
+            &InternalEvent::Resize(mut new_bounds) => {
                 new_bounds.bounds.size.height =
                     cmp::max(new_bounds.line_height, new_bounds.height());
                 new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
@@ -1943,15 +1943,20 @@ const TASK_DELIMITER: &str = "⏵ ";
 fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, String) {
     let escaped_full_label = task.full_label.replace("\r\n", "\r").replace('\n', "\r");
     let (success, task_line) = match error_code {
-        Some(0) => {
-            (true, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"))
-        }
-        Some(error_code) => {
-            (false, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"))
-        }
-        None => {
-            (false, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"))
-        }
+        Some(0) => (
+            true,
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
+        ),
+        Some(error_code) => (
+            false,
+            format!(
+                "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
+            ),
+        ),
+        None => (
+            false,
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
+        ),
     };
     let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
     let command_line = format!("{TASK_DELIMITER}Command: {escaped_command_label}");

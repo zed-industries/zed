@@ -547,7 +547,10 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         }
     } else {
         if let Some(pid) = server_pid {
-            log::info!("proxy found server already running with PID {}. Killing process and cleaning up files...", pid);
+            log::info!(
+                "proxy found server already running with PID {}. Killing process and cleaning up files...",
+                pid
+            );
             kill_running_server(pid, &server_paths)?;
         }
 
@@ -692,7 +695,10 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>> {
         .output()
     {
         Ok(output) if output.status.success() => {
-            log::debug!("Process with PID {} exists. NOT spawning new server, but attaching to existing one.", pid);
+            log::debug!(
+                "Process with PID {} exists. NOT spawning new server, but attaching to existing one.",
+                pid
+            );
             Ok(Some(pid))
         }
         _ => {
@@ -878,11 +884,11 @@ fn daemonize() -> Result<ControlFlow<()>> {
 }
 
 unsafe fn redirect_standard_streams() -> Result<()> {
-    let devnull_fd = libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR);
+    let devnull_fd = unsafe { libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR) };
     anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
 
     let process_stdio = |name, fd| {
-        let reopened_fd = libc::dup2(devnull_fd, fd);
+        let reopened_fd = unsafe { libc::dup2(devnull_fd, fd) };
         anyhow::ensure!(
             reopened_fd != -1,
             format!("failed to redirect {} to /dev/null", name)
@@ -895,7 +901,7 @@ unsafe fn redirect_standard_streams() -> Result<()> {
     process_stdio("stderr", libc::STDERR_FILENO)?;
 
     anyhow::ensure!(
-        libc::close(devnull_fd) != -1,
+        unsafe { libc::close(devnull_fd) != -1 },
         "failed to close /dev/null fd after redirecting"
     );
 

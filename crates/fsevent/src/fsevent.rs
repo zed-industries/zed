@@ -365,7 +365,7 @@ impl std::fmt::Display for StreamFlags {
 }
 
 #[link(name = "CoreServices", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     pub fn FSEventsGetCurrentEventId() -> u64;
 }
 

@@ -4595,7 +4595,7 @@ impl Project {
             ProjectClientState::Shared { .. } | ProjectClientState::Local => {
                 return Task::ready(Err(anyhow!(
                     "can't synchronize remote buffers on a local project"
-                )))
+                )));
             }
         };
 

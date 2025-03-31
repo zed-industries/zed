@@ -11,7 +11,7 @@ use gpui::{
 };
 use refineable::Refineable;
 use schemars::{
-    gen::SchemaGenerator,
+    r#gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
 };

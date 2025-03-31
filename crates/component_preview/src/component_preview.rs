@@ -244,7 +244,7 @@ impl ComponentPreview {
         ix: usize,
         entry: &PreviewEntry,
         cx: &Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         match entry {
             PreviewEntry::Component(component_metadata) => {
                 let id = component_metadata.id();

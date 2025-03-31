@@ -526,7 +526,8 @@ impl EditToolRequest {
                         }
                     }
 
-                    write!(&mut output,
+                    write!(
+                        &mut output,
                         "The SEARCH section must exactly match an existing block of lines including all white \
                         space, comments, indentation, docstrings, etc."
                     )?;
@@ -545,7 +546,8 @@ impl EditToolRequest {
                 }
 
                 if has_errors {
-                    writeln!(&mut output,
+                    writeln!(
+                        &mut output,
                         "\n\nYou can fix errors by running the tool again. You can include instructions, \
                         but errors are part of the conversation so you don't need to repeat them.",
                     )?;

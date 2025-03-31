@@ -687,7 +687,7 @@ pub fn refresh_context_store_text(
     context_store: Entity<ContextStore>,
     changed_buffers: &HashSet<Entity<Buffer>>,
     cx: &App,
-) -> impl Future<Output = Vec<ContextId>> {
+) -> impl Future<Output = Vec<ContextId>> + use<> {
     let mut tasks = Vec::new();
 
     for context in &context_store.read(cx).context {
@@ -855,7 +855,7 @@ fn refresh_thread_text(
 fn refresh_context_buffer(
     context_buffer: &ContextBuffer,
     cx: &App,
-) -> Option<impl Future<Output = ContextBuffer>> {
+) -> Option<impl Future<Output = ContextBuffer> + use<>> {
     let buffer = context_buffer.buffer.read(cx);
     let path = buffer_path_log_err(buffer)?;
     if buffer.version.changed_since(&context_buffer.version) {
@@ -875,7 +875,7 @@ fn refresh_context_buffer(
 fn refresh_context_symbol(
     context_symbol: &ContextSymbol,
     cx: &App,
-) -> Option<impl Future<Output = ContextSymbol>> {
+) -> Option<impl Future<Output = ContextSymbol> + use<>> {
     let buffer = context_symbol.buffer.read(cx);
     let path = buffer_path_log_err(buffer)?;
     let project_path = buffer.project_path(cx)?;

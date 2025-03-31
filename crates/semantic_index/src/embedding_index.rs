@@ -56,7 +56,10 @@ impl EmbeddingIndex {
         &self.db
     }
 
-    pub fn index_entries_changed_on_disk(&self, cx: &App) -> impl Future<Output = Result<()>> {
+    pub fn index_entries_changed_on_disk(
+        &self,
+        cx: &App,
+    ) -> impl Future<Output = Result<()>> + use<> {
         if !cx.is_staff() {
             return async move { Ok(()) }.boxed();
         }
@@ -78,7 +81,7 @@ impl EmbeddingIndex {
         &self,
         updated_entries: UpdatedEntriesSet,
         cx: &App,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<()>> + use<> {
         if !cx.is_staff() {
             return async move { Ok(()) }.boxed();
         }

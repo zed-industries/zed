@@ -682,7 +682,7 @@ impl SshRemoteClient {
     pub fn shutdown_processes<T: RequestMessage>(
         &self,
         shutdown_request: Option<T>,
-    ) -> Option<impl Future<Output = ()>> {
+    ) -> Option<impl Future<Output = ()> + use<T>> {
         let state = self.state.lock().take()?;
         log::info!("shutting down ssh processes");
 
@@ -1423,7 +1423,7 @@ impl RemoteConnection for SshRemoteConnection {
         {
             Ok(process) => process,
             Err(error) => {
-                return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)))
+                return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
             }
         };
 
