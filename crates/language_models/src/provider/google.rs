@@ -601,9 +601,11 @@ fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
 }
 
 fn convert_usage(usage: &UsageMetadata) -> language_model::TokenUsage {
-    //TODO
     language_model::TokenUsage {
-        ..Default::default()
+        input_tokens: usage.prompt_token_count.unwrap_or(0) as u32,
+        output_tokens: usage.candidates_token_count.unwrap_or(0) as u32,
+        cache_read_input_tokens: usage.cached_content_token_count.unwrap_or(0) as u32,
+        cache_creation_input_tokens: 0,
     }
 }
 
