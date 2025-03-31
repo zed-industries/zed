@@ -1427,7 +1427,7 @@ impl Session {
     fn clear_active_debug_line_response(
         &mut self,
         response: Result<()>,
-        cx: &mut Context<'_, Session>,
+        cx: &mut Context<Session>,
     ) -> Option<()> {
         response.log_err()?;
         self.clear_active_debug_line(cx);
@@ -1931,7 +1931,7 @@ fn create_local_session(
     mut message_rx: futures::channel::mpsc::UnboundedReceiver<Message>,
     mode: LocalMode,
     capabilities: Capabilities,
-    cx: &mut Context<'_, Session>,
+    cx: &mut Context<Session>,
 ) -> Session {
     let _background_tasks = vec![cx.spawn(async move |this: WeakEntity<Session>, cx| {
         let mut initialized_tx = Some(initialized_tx);

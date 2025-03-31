@@ -154,7 +154,7 @@ impl DebugSession {
         _: &Entity<InertState>,
         event: &InertEvent,
         window: &mut Window,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) {
         let dap_store = self.dap_store.clone();
         let InertEvent::Spawned { config } = event;
@@ -186,7 +186,7 @@ impl DebugSession {
         _: &Entity<StartingState>,
         event: &StartingEvent,
         window: &mut Window,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) {
         if let StartingEvent::Finished(session) = event {
             let mode =
@@ -337,7 +337,7 @@ impl FollowableItem for DebugSession {
 }
 
 impl Render for DebugSession {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.mode {
             DebugSessionState::Inert(inert_state) => {
                 inert_state.update(cx, |this, cx| this.render(window, cx).into_any_element())

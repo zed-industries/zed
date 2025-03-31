@@ -6,7 +6,7 @@ use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
 };
 use anyhow::{anyhow, bail, Context as _, Result};
-use askpass::{AskPassDelegate, AskPassSession};
+use askpass::AskPassDelegate;
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
@@ -20,10 +20,10 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, DiffType, GitIndex, GitRepository, GitRepositoryCheckpoint,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        Branch, CommitDetails, DiffType, GitRepository, GitRepositoryCheckpoint, PushOptions,
+        Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
-    status::{FileStatus, GitStatus},
+    status::FileStatus,
     BuildPermalinkParams, GitHostingProviderRegistry,
 };
 use gpui::{
@@ -144,22 +144,6 @@ struct LocalDownstreamState {
 #[derive(Clone)]
 pub struct GitStoreCheckpoint {
     checkpoints_by_work_dir_abs_path: HashMap<PathBuf, GitRepositoryCheckpoint>,
-}
-
-#[derive(Clone, Debug)]
-pub struct GitStoreDiff {
-    diffs_by_work_dir_abs_path: HashMap<PathBuf, String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct GitStoreIndex {
-    indices_by_work_dir_abs_path: HashMap<PathBuf, GitIndex>,
-}
-
-#[derive(Default)]
-pub struct GitStoreStatus {
-    #[allow(dead_code)]
-    statuses_by_work_dir_abs_path: HashMap<PathBuf, GitStatus>,
 }
 
 pub struct Repository {
@@ -755,113 +739,6 @@ impl GitStore {
         })
     }
 
-    pub fn diff_checkpoints(
-        &self,
-        base_checkpoint: GitStoreCheckpoint,
-        target_checkpoint: GitStoreCheckpoint,
-        cx: &App,
-    ) -> Task<Result<GitStoreDiff>> {
-        let repositories_by_work_dir_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| {
-                (
-                    repo.read(cx)
-                        .repository_entry
-                        .work_directory_abs_path
-                        .clone(),
-                    repo,
-                )
-            })
-            .collect::<HashMap<_, _>>();
-
-        let mut tasks = Vec::new();
-        for (work_dir_abs_path, base_checkpoint) in base_checkpoint.checkpoints_by_work_dir_abs_path
-        {
-            if let Some(target_checkpoint) = target_checkpoint
-                .checkpoints_by_work_dir_abs_path
-                .get(&work_dir_abs_path)
-                .cloned()
-            {
-                if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path)
-                {
-                    let diff = repository
-                        .read(cx)
-                        .diff_checkpoints(base_checkpoint, target_checkpoint);
-                    tasks.push(async move {
-                        let diff = diff.await??;
-                        anyhow::Ok((work_dir_abs_path, diff))
-                    });
-                }
-            }
-        }
-
-        cx.background_spawn(async move {
-            let diffs_by_path = future::try_join_all(tasks).await?;
-            Ok(GitStoreDiff {
-                diffs_by_work_dir_abs_path: diffs_by_path.into_iter().collect(),
-            })
-        })
-    }
-
-    pub fn create_index(&self, cx: &App) -> Task<Result<GitStoreIndex>> {
-        let mut indices = Vec::new();
-        for repository in self.repositories.values() {
-            let repository = repository.read(cx);
-            let work_dir_abs_path = repository.repository_entry.work_directory_abs_path.clone();
-            let index = repository.create_index().map(|index| index?);
-            indices.push(async move {
-                let index = index.await?;
-                anyhow::Ok((work_dir_abs_path, index))
-            });
-        }
-
-        cx.background_executor().spawn(async move {
-            let indices = future::try_join_all(indices).await?;
-            Ok(GitStoreIndex {
-                indices_by_work_dir_abs_path: indices.into_iter().collect(),
-            })
-        })
-    }
-
-    pub fn apply_diff(
-        &self,
-        mut index: GitStoreIndex,
-        diff: GitStoreDiff,
-        cx: &App,
-    ) -> Task<Result<()>> {
-        let repositories_by_work_dir_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| {
-                (
-                    repo.read(cx)
-                        .repository_entry
-                        .work_directory_abs_path
-                        .clone(),
-                    repo,
-                )
-            })
-            .collect::<HashMap<_, _>>();
-
-        let mut tasks = Vec::new();
-        for (work_dir_abs_path, diff) in diff.diffs_by_work_dir_abs_path {
-            if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path) {
-                if let Some(branch) = index
-                    .indices_by_work_dir_abs_path
-                    .remove(&work_dir_abs_path)
-                {
-                    let apply = repository.read(cx).apply_diff(branch, diff);
-                    tasks.push(async move { apply.await? });
-                }
-            }
-        }
-        cx.background_spawn(async move {
-            future::try_join_all(tasks).await?;
-            Ok(())
-        })
-    }
-
     /// Blames a buffer.
     pub fn blame_buffer(
         &self,
@@ -1107,7 +984,7 @@ impl GitStore {
     fn update_repositories(
         &mut self,
         worktree_store: &Entity<WorktreeStore>,
-        cx: &mut Context<'_, GitStore>,
+        cx: &mut Context<GitStore>,
     ) {
         let mut new_repositories = HashMap::default();
         let git_store = cx.weak_entity();
@@ -1406,7 +1283,7 @@ impl GitStore {
                         let index_text = if current_index_text.is_some() {
                             local_repo
                                 .repo()
-                                .load_index_text(None, relative_path.clone())
+                                .load_index_text(relative_path.clone())
                                 .await
                         } else {
                             None
@@ -1519,87 +1396,6 @@ impl GitStore {
         let (repo, path) = self.repository_and_path_for_buffer_id(buffer_id, cx)?;
         let status = repo.read(cx).repository_entry.status_for_path(&path)?;
         Some(status.status)
-    }
-
-    pub fn status(&self, index: Option<GitStoreIndex>, cx: &App) -> Task<Result<GitStoreStatus>> {
-        let repositories_by_work_dir_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| {
-                (
-                    repo.read(cx)
-                        .repository_entry
-                        .work_directory_abs_path
-                        .clone(),
-                    repo,
-                )
-            })
-            .collect::<HashMap<_, _>>();
-
-        let mut tasks = Vec::new();
-
-        if let Some(index) = index {
-            // When we have an index, just check the repositories that are part of it
-            for (work_dir_abs_path, git_index) in index.indices_by_work_dir_abs_path {
-                if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path)
-                {
-                    let status = repository.read(cx).status(Some(git_index));
-                    tasks.push(
-                        async move {
-                            let status = status.await??;
-                            anyhow::Ok((work_dir_abs_path, status))
-                        }
-                        .boxed(),
-                    );
-                }
-            }
-        } else {
-            // Otherwise, check all repositories
-            for repository in self.repositories.values() {
-                let repository = repository.read(cx);
-                let work_dir_abs_path = repository.repository_entry.work_directory_abs_path.clone();
-                let status = repository.status(None);
-                tasks.push(
-                    async move {
-                        let status = status.await??;
-                        anyhow::Ok((work_dir_abs_path, status))
-                    }
-                    .boxed(),
-                );
-            }
-        }
-
-        cx.background_executor().spawn(async move {
-            let statuses = future::try_join_all(tasks).await?;
-            Ok(GitStoreStatus {
-                statuses_by_work_dir_abs_path: statuses.into_iter().collect(),
-            })
-        })
-    }
-
-    pub fn load_index_text(
-        &self,
-        index: Option<GitStoreIndex>,
-        buffer: &Entity<Buffer>,
-        cx: &App,
-    ) -> Task<Option<String>> {
-        let Some((repository, path)) =
-            self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-        else {
-            return Task::ready(None);
-        };
-
-        let git_index = index.and_then(|index| {
-            index
-                .indices_by_work_dir_abs_path
-                .get(&repository.read(cx).repository_entry.work_directory_abs_path)
-                .copied()
-        });
-        let text = repository.read(cx).load_index_text(git_index, path);
-        cx.background_spawn(async move {
-            let text = text.await;
-            text.ok().flatten()
-        })
     }
 
     pub fn repository_and_path_for_buffer_id(
@@ -2851,24 +2647,11 @@ impl Repository {
         self.repository_entry.status()
     }
 
-    pub fn status(&self, index: Option<GitIndex>) -> oneshot::Receiver<Result<GitStatus>> {
-        self.send_job(move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(git_repository) => git_repository.status(index, &[]).await,
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
-            }
-        })
-    }
-
-    pub fn load_index_text(
-        &self,
-        index: Option<GitIndex>,
-        path: RepoPath,
-    ) -> oneshot::Receiver<Option<String>> {
+    pub fn load_index_text(&self, path: RepoPath) -> oneshot::Receiver<Option<String>> {
         self.send_job(move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
-                    git_repository.load_index_text(index, path).await
+                    git_repository.load_index_text(path).await
                 }
                 RepositoryState::Remote { .. } => None,
             }
@@ -3315,7 +3098,6 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
@@ -3323,7 +3105,6 @@ impl Repository {
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
-                    let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository.fetch(askpass, env, cx).await
                 }
@@ -3364,7 +3145,6 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
@@ -3373,7 +3153,7 @@ impl Repository {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
                     let env = env.await;
-                    let askpass = AskPassSession::new(&executor, askpass).await?;
+                    // let askpass = AskPassSession::new(&executor, askpass).await?;
                     git_repository
                         .push(
                             branch.to_string(),
@@ -3426,7 +3206,6 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
@@ -3434,7 +3213,6 @@ impl Repository {
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
-                    let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository
                         .pull(branch.to_string(), remote.to_string(), askpass, env, cx)
@@ -3774,26 +3552,6 @@ impl Repository {
                     git_repository
                         .diff_checkpoints(base_checkpoint, target_checkpoint)
                         .await
-                }
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
-            }
-        })
-    }
-
-    pub fn create_index(&self) -> oneshot::Receiver<Result<GitIndex>> {
-        self.send_job(move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(git_repository) => git_repository.create_index().await,
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
-            }
-        })
-    }
-
-    pub fn apply_diff(&self, index: GitIndex, diff: String) -> oneshot::Receiver<Result<()>> {
-        self.send_job(move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(git_repository) => {
-                    git_repository.apply_diff(index, diff).await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }

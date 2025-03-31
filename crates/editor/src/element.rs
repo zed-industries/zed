@@ -18,13 +18,13 @@ use crate::{
     scroll::scroll_amount::ScrollAmount,
     BlockId, ChunkReplacement, ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk,
     DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
-    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock, GoToHunk,
-    GoToPreviousHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight, LineUp,
-    OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight,
-    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS,
-    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
-    MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock,
+    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
+    InlineCompletion, JumpData, LineDown, LineHighlight, LineUp, OpenExcerpts, PageDown, PageUp,
+    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
+    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
@@ -43,7 +43,6 @@ use gpui::{
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
     Subscription, TextRun, TextStyleRefinement, Window,
 };
-use inline_completion::Direction;
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -72,14 +71,12 @@ use std::{
     ops::{Deref, Range},
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 use sum_tree::Bias;
 use text::BufferId;
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
-use ui::{
-    h_flex, prelude::*, ButtonLike, ContextMenu, IconButtonShape, KeyBinding, Tooltip,
-    POPOVER_Y_PADDING,
-};
+use ui::{h_flex, prelude::*, ButtonLike, ContextMenu, KeyBinding, Tooltip, POPOVER_Y_PADDING};
 use unicode_segmentation::UnicodeSegmentation;
 use util::{debug_panic, RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt};
@@ -717,9 +714,27 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        if position_map.gutter_hitbox.is_hovered(window) {
+            let gutter_right_padding = editor.gutter_dimensions.right_padding;
+            let hitbox = &position_map.gutter_hitbox;
+
+            if event.position.x <= hitbox.bounds.right() - gutter_right_padding {
+                let point_for_position = position_map.point_for_position(event.position);
+                editor.set_breakpoint_context_menu(
+                    point_for_position.previous_valid.row(),
+                    None,
+                    event.position,
+                    window,
+                    cx,
+                );
+            }
+            return;
+        }
+
         if !position_map.text_hitbox.is_hovered(window) {
             return;
         }
+
         let point_for_position = position_map.point_for_position(event.position);
         mouse_context_menu::deploy_context_menu(
             editor,
@@ -893,7 +908,6 @@ impl EditorElement {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
-        editor.gutter_breakpoint_indicator = None;
         editor.mouse_cursor_hidden = false;
 
         if gutter_hovered {
@@ -910,8 +924,38 @@ impl EditorElement {
                 .buffer_for_excerpt(buffer_anchor.excerpt_id)
                 .is_some_and(|buffer| buffer.file().is_some())
             {
-                editor.gutter_breakpoint_indicator = Some(new_point);
+                let was_hovered = editor.gutter_breakpoint_indicator.0.is_some();
+                let is_visible = editor
+                    .gutter_breakpoint_indicator
+                    .0
+                    .map_or(false, |(_, is_active)| is_active);
+                editor.gutter_breakpoint_indicator.0 = Some((new_point, is_visible));
+
+                editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
+                    cx.spawn(async move |this, cx| {
+                        if !was_hovered {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(200))
+                                .await;
+                        }
+
+                        this.update(cx, |this, cx| {
+                            if let Some((_, is_active)) =
+                                this.gutter_breakpoint_indicator.0.as_mut()
+                            {
+                                *is_active = true;
+                            }
+
+                            cx.notify();
+                        })
+                        .ok();
+                    })
+                });
+            } else {
+                editor.gutter_breakpoint_indicator = (None, None);
             }
+        } else {
+            editor.gutter_breakpoint_indicator = (None, None);
         }
 
         cx.notify();
@@ -3919,6 +3963,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
+        let render_diff_hunk_controls = editor.read(cx).render_diff_hunk_controls.clone();
         let point_for_position = position_map.point_for_position(window.mouse_position());
 
         let mut controls = vec![];
@@ -3961,13 +4006,14 @@ impl EditorElement {
                         + text_hitbox.bounds.top()
                         - scroll_pixel_position.y;
 
-                    let mut element = diff_hunk_controls(
+                    let mut element = render_diff_hunk_controls(
                         display_row_range.start.0,
                         status,
                         multi_buffer_range.clone(),
                         *is_created_file,
                         line_height,
                         &editor,
+                        window,
                         cx,
                     );
                     let size =
@@ -6836,14 +6882,16 @@ impl Element for EditorElement {
                     // has their mouse over that line when a breakpoint isn't there
                     if cx.has_flag::<Debugger>() {
                         let gutter_breakpoint_indicator =
-                            self.editor.read(cx).gutter_breakpoint_indicator;
-                        if let Some(gutter_breakpoint_point) = gutter_breakpoint_indicator {
+                            self.editor.read(cx).gutter_breakpoint_indicator.0;
+                        if let Some((gutter_breakpoint_point, _)) =
+                            gutter_breakpoint_indicator.filter(|(_, is_active)| *is_active)
+                        {
                             breakpoint_rows
                                 .entry(gutter_breakpoint_point.row())
                                 .or_insert_with(|| {
                                     let position = snapshot.display_point_to_anchor(
                                         gutter_breakpoint_point,
-                                        Bias::Left,
+                                        Bias::Right,
                                     );
                                     let breakpoint = Breakpoint::new_standard();
 
@@ -8881,188 +8929,4 @@ mod tests {
             .cloned()
             .collect()
     }
-}
-
-fn diff_hunk_controls(
-    row: u32,
-    status: &DiffHunkStatus,
-    hunk_range: Range<Anchor>,
-    is_created_file: bool,
-    line_height: Pixels,
-    editor: &Entity<Editor>,
-    cx: &mut App,
-) -> AnyElement {
-    h_flex()
-        .h(line_height)
-        .mr_1()
-        .gap_1()
-        .px_0p5()
-        .pb_1()
-        .border_x_1()
-        .border_b_1()
-        .border_color(cx.theme().colors().border_variant)
-        .rounded_b_lg()
-        .bg(cx.theme().colors().editor_background)
-        .gap_1()
-        .occlude()
-        .shadow_md()
-        .child(if status.has_secondary_hunk() {
-            Button::new(("stage", row as u64), "Stage")
-                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Stage Hunk",
-                            &::git::ToggleStaged,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, _window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            editor.stage_or_unstage_diff_hunks(
-                                true,
-                                vec![hunk_range.start..hunk_range.start],
-                                cx,
-                            );
-                        });
-                    }
-                })
-        } else {
-            Button::new(("unstage", row as u64), "Unstage")
-                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Unstage Hunk",
-                            &::git::ToggleStaged,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, _window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            editor.stage_or_unstage_diff_hunks(
-                                false,
-                                vec![hunk_range.start..hunk_range.start],
-                                cx,
-                            );
-                        });
-                    }
-                })
-        })
-        .child(
-            Button::new("restore", "Restore")
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Restore Hunk",
-                            &::git::Restore,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            let snapshot = editor.snapshot(window, cx);
-                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                            editor.restore_hunks_in_ranges(vec![point..point], window, cx);
-                        });
-                    }
-                })
-                .disabled(is_created_file),
-        )
-        .when(
-            !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),
-            |el| {
-                el.child(
-                    IconButton::new(("next-hunk", row as u64), IconName::ArrowDown)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::Small)
-                        // .disabled(!has_multiple_hunks)
-                        .tooltip({
-                            let focus_handle = editor.focus_handle(cx);
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Next Hunk",
-                                    &GoToHunk,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            move |_event, window, cx| {
-                                editor.update(cx, |editor, cx| {
-                                    let snapshot = editor.snapshot(window, cx);
-                                    let position =
-                                        hunk_range.end.to_point(&snapshot.buffer_snapshot);
-                                    editor.go_to_hunk_before_or_after_position(
-                                        &snapshot,
-                                        position,
-                                        Direction::Next,
-                                        window,
-                                        cx,
-                                    );
-                                    editor.expand_selected_diff_hunks(cx);
-                                });
-                            }
-                        }),
-                )
-                .child(
-                    IconButton::new(("prev-hunk", row as u64), IconName::ArrowUp)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::Small)
-                        // .disabled(!has_multiple_hunks)
-                        .tooltip({
-                            let focus_handle = editor.focus_handle(cx);
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Previous Hunk",
-                                    &GoToPreviousHunk,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            move |_event, window, cx| {
-                                editor.update(cx, |editor, cx| {
-                                    let snapshot = editor.snapshot(window, cx);
-                                    let point =
-                                        hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                                    editor.go_to_hunk_before_or_after_position(
-                                        &snapshot,
-                                        point,
-                                        Direction::Prev,
-                                        window,
-                                        cx,
-                                    );
-                                    editor.expand_selected_diff_hunks(cx);
-                                });
-                            }
-                        }),
-                )
-            },
-        )
-        .into_any_element()
 }

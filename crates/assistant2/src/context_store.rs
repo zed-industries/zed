@@ -60,6 +60,10 @@ impl ContextStore {
         &self.context
     }
 
+    pub fn context_for_id(&self, id: ContextId) -> Option<&AssistantContext> {
+        self.context().iter().find(|context| context.id() == id)
+    }
+
     pub fn clear(&mut self) {
         self.context.clear();
         self.files.clear();
@@ -253,21 +257,21 @@ impl ContextStore {
             }
 
             this.update(cx, |this, _| {
-                this.insert_directory(&project_path.path, context_buffers);
+                this.insert_directory(project_path, context_buffers);
             })?;
 
             anyhow::Ok(())
         })
     }
 
-    fn insert_directory(&mut self, path: &Path, context_buffers: Vec<ContextBuffer>) {
+    fn insert_directory(&mut self, project_path: ProjectPath, context_buffers: Vec<ContextBuffer>) {
         let id = self.next_context_id.post_inc();
-        self.directories.insert(path.to_path_buf(), id);
+        self.directories.insert(project_path.path.to_path_buf(), id);
 
         self.context
             .push(AssistantContext::Directory(DirectoryContext::new(
                 id,
-                path,
+                project_path,
                 context_buffers,
             )));
     }
@@ -704,8 +708,9 @@ pub fn refresh_context_store_text(
                         || changed_buffers.iter().any(|buffer| {
                             let buffer = buffer.read(cx);
 
-                            buffer_path_log_err(&buffer)
-                                .map_or(false, |path| path.starts_with(&directory_context.path))
+                            buffer_path_log_err(&buffer).map_or(false, |path| {
+                                path.starts_with(&directory_context.path.path)
+                            })
                         });
 
                     if should_refresh {
@@ -797,7 +802,7 @@ fn refresh_directory_text(
         let context_buffers = context_buffers.await;
         context_store
             .update(cx, |context_store, _| {
-                let new_directory_context = DirectoryContext::new(id, &path, context_buffers);
+                let new_directory_context = DirectoryContext::new(id, path, context_buffers);
                 context_store.replace_context(AssistantContext::Directory(new_directory_context));
             })
             .ok();

@@ -12,6 +12,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::{Borrow, Cow};
 use std::ffi::{OsStr, OsString};
+use std::future;
 use std::path::Component;
 use std::process::{ExitStatus, Stdio};
 use std::sync::LazyLock;
@@ -20,14 +21,13 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use std::{future, mem};
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
 use util::command::{new_smol_command, new_std_command};
 use util::ResultExt;
 use uuid::Uuid;
 
-pub use askpass::{AskPassResult, AskPassSession};
+pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
@@ -161,8 +161,7 @@ pub trait GitRepository: Send + Sync {
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_index_text(&self, index: Option<GitIndex>, path: RepoPath)
-        -> BoxFuture<Option<String>>;
+    fn load_index_text(&self, path: RepoPath) -> BoxFuture<Option<String>>;
 
     /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
     ///
@@ -184,11 +183,6 @@ pub trait GitRepository: Send + Sync {
 
     fn merge_head_shas(&self) -> Vec<String>;
 
-    fn status(
-        &self,
-        index: Option<GitIndex>,
-        path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'static, Result<GitStatus>>;
     fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>>;
@@ -255,7 +249,7 @@ pub trait GitRepository: Send + Sync {
         branch_name: String,
         upstream_name: String,
         options: Option<PushOptions>,
-        askpass: AskPassSession,
+        askpass: AskPassDelegate,
         env: HashMap<String, String>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -266,7 +260,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         branch_name: String,
         upstream_name: String,
-        askpass: AskPassSession,
+        askpass: AskPassDelegate,
         env: HashMap<String, String>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -275,7 +269,7 @@ pub trait GitRepository: Send + Sync {
 
     fn fetch(
         &self,
-        askpass: AskPassSession,
+        askpass: AskPassDelegate,
         env: HashMap<String, String>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -312,12 +306,6 @@ pub trait GitRepository: Send + Sync {
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<Result<String>>;
-
-    /// Creates a new index for the repository.
-    fn create_index(&self) -> BoxFuture<Result<GitIndex>>;
-
-    /// Applies a diff to the repository's index.
-    fn apply_diff(&self, index: GitIndex, diff: String) -> BoxFuture<Result<()>>;
 }
 
 pub enum DiffType {
@@ -372,11 +360,6 @@ pub struct GitRepositoryCheckpoint {
     ref_name: String,
     head_sha: Option<Oid>,
     commit_sha: Oid,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct GitIndex {
-    id: Uuid,
 }
 
 impl GitRepository for RealGitRepository {
@@ -484,82 +467,35 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn load_index_text(
-        &self,
-        index: Option<GitIndex>,
-        path: RepoPath,
-    ) -> BoxFuture<Option<String>> {
-        let working_directory = self.working_directory();
-        let git_binary_path = self.git_binary_path.clone();
-        let executor = self.executor.clone();
+    fn load_index_text(&self, path: RepoPath) -> BoxFuture<Option<String>> {
+        // https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
+        const GIT_MODE_SYMLINK: u32 = 0o120000;
+
+        let repo = self.repository.clone();
         self.executor
             .spawn(async move {
-                match check_path_to_repo_path_errors(&path) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        log::error!("Error with repo path: {:?}", err);
-                        return None;
-                    }
+                fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
+                    // This check is required because index.get_path() unwraps internally :(
+                    check_path_to_repo_path_errors(path)?;
+
+                    let mut index = repo.index()?;
+                    index.read(false)?;
+
+                    const STAGE_NORMAL: i32 = 0;
+                    let oid = match index.get_path(path, STAGE_NORMAL) {
+                        Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
+                        _ => return Ok(None),
+                    };
+
+                    let content = repo.find_blob(oid)?.content().to_owned();
+                    Ok(Some(String::from_utf8(content)?))
                 }
 
-                let working_directory = match working_directory {
-                    Ok(dir) => dir,
-                    Err(err) => {
-                        log::error!("Error getting working directory: {:?}", err);
-                        return None;
-                    }
-                };
-
-                let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-                let text = git
-                    .with_option_index(index, async |git| {
-                        // First check if the file is a symlink using ls-files
-                        let ls_files_output = git
-                            .run(&[
-                                OsStr::new("ls-files"),
-                                OsStr::new("--stage"),
-                                path.to_unix_style().as_ref(),
-                            ])
-                            .await
-                            .context("error running ls-files")?;
-
-                        // Parse ls-files output to check if it's a symlink
-                        // Format is: "100644 <sha> 0 <filename>" where 100644 is the mode
-                        if ls_files_output.is_empty() {
-                            return Ok(None); // File not in index
-                        }
-
-                        let parts: Vec<&str> = ls_files_output.split_whitespace().collect();
-                        if parts.len() < 2 {
-                            return Err(anyhow!(
-                                "unexpected ls-files output format: {}",
-                                ls_files_output
-                            ));
-                        }
-
-                        // Check if it's a symlink (120000 mode)
-                        if parts[0] == "120000" {
-                            return Ok(None);
-                        }
-
-                        let sha = parts[1];
-
-                        // Now get the content
-                        Ok(Some(
-                            git.run_raw(&["cat-file", "blob", sha])
-                                .await
-                                .context("error getting blob content")?,
-                        ))
-                    })
-                    .await;
-
-                match text {
-                    Ok(text) => text,
-                    Err(error) => {
-                        log::error!("Error getting text: {}", error);
-                        None
-                    }
+                match logic(&repo.lock(), &path) {
+                    Ok(value) => return value,
+                    Err(err) => log::error!("Error loading index text: {:?}", err),
                 }
+                None
             })
             .boxed()
     }
@@ -676,40 +612,6 @@ impl GitRepository for RealGitRepository {
             shas.push(oid.to_string())
         }
         shas
-    }
-
-    fn status(
-        &self,
-        index: Option<GitIndex>,
-        path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'static, Result<GitStatus>> {
-        let working_directory = self.working_directory();
-        let git_binary_path = self.git_binary_path.clone();
-        let executor = self.executor.clone();
-        let mut args = vec![
-            OsString::from("--no-optional-locks"),
-            OsString::from("status"),
-            OsString::from("--porcelain=v1"),
-            OsString::from("--untracked-files=all"),
-            OsString::from("--no-renames"),
-            OsString::from("-z"),
-        ];
-        args.extend(path_prefixes.iter().map(|path_prefix| {
-            if path_prefix.0.as_ref() == Path::new("") {
-                Path::new(".").into()
-            } else {
-                path_prefix.as_os_str().into()
-            }
-        }));
-        self.executor
-            .spawn(async move {
-                let working_directory = working_directory?;
-                let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-                git.with_option_index(index, async |git| git.run(&args).await)
-                    .await?
-                    .parse()
-            })
-            .boxed()
     }
 
     fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
@@ -966,20 +868,17 @@ impl GitRepository for RealGitRepository {
         branch_name: String,
         remote_name: String,
         options: Option<PushOptions>,
-        ask_pass: AskPassSession,
+        ask_pass: AskPassDelegate,
         env: HashMap<String, String>,
-        _cx: AsyncApp,
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let executor = cx.background_executor().clone();
         async move {
             let working_directory = working_directory?;
-
             let mut command = new_smol_command("git");
             command
-                .envs(env)
-                .env("GIT_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS_REQUIRE", "force")
+                .envs(&env)
                 .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory)
                 .args(["push"])
@@ -992,9 +891,8 @@ impl GitRepository for RealGitRepository {
                 .stdin(smol::process::Stdio::null())
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
-            let git_process = command.spawn()?;
 
-            run_remote_command(ask_pass, git_process).await
+            run_git_command(env, ask_pass, command, &executor).await
         }
         .boxed()
     }
@@ -1003,52 +901,48 @@ impl GitRepository for RealGitRepository {
         &self,
         branch_name: String,
         remote_name: String,
-        ask_pass: AskPassSession,
+        ask_pass: AskPassDelegate,
         env: HashMap<String, String>,
-        _cx: AsyncApp,
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
-        async {
+        let executor = cx.background_executor().clone();
+        async move {
             let mut command = new_smol_command("git");
             command
-                .envs(env)
-                .env("GIT_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS_REQUIRE", "force")
+                .envs(&env)
+                .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory?)
                 .args(["pull"])
                 .arg(remote_name)
                 .arg(branch_name)
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
-            let git_process = command.spawn()?;
 
-            run_remote_command(ask_pass, git_process).await
+            run_git_command(env, ask_pass, command, &executor).await
         }
         .boxed()
     }
 
     fn fetch(
         &self,
-        ask_pass: AskPassSession,
+        ask_pass: AskPassDelegate,
         env: HashMap<String, String>,
-        _cx: AsyncApp,
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
-        async {
+        let executor = cx.background_executor().clone();
+        async move {
             let mut command = new_smol_command("git");
             command
-                .envs(env)
-                .env("GIT_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS_REQUIRE", "force")
+                .envs(&env)
+                .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory?)
                 .args(["fetch", "--all"])
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
-            let git_process = command.spawn()?;
 
-            run_remote_command(ask_pass, git_process).await
+            run_git_command(env, ask_pass, command, &executor).await
         }
         .boxed()
     }
@@ -1319,41 +1213,6 @@ impl GitRepository for RealGitRepository {
             })
             .boxed()
     }
-
-    fn create_index(&self) -> BoxFuture<Result<GitIndex>> {
-        let working_directory = self.working_directory();
-        let git_binary_path = self.git_binary_path.clone();
-
-        let executor = self.executor.clone();
-        self.executor
-            .spawn(async move {
-                let working_directory = working_directory?;
-                let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-                let index = GitIndex { id: Uuid::new_v4() };
-                git.with_index(index, async move |git| git.run(&["add", "--all"]).await)
-                    .await?;
-                Ok(index)
-            })
-            .boxed()
-    }
-
-    fn apply_diff(&self, index: GitIndex, diff: String) -> BoxFuture<Result<()>> {
-        let working_directory = self.working_directory();
-        let git_binary_path = self.git_binary_path.clone();
-
-        let executor = self.executor.clone();
-        self.executor
-            .spawn(async move {
-                let working_directory = working_directory?;
-                let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-                git.with_index(index, async move |git| {
-                    git.run_with_stdin(&["apply", "--cached", "-"], diff).await
-                })
-                .await?;
-                Ok(())
-            })
-            .boxed()
-    }
 }
 
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
@@ -1407,7 +1266,7 @@ impl GitBinary {
         &mut self,
         f: impl AsyncFnOnce(&Self) -> Result<R>,
     ) -> Result<R> {
-        let index_file_path = self.path_for_index(GitIndex { id: Uuid::new_v4() });
+        let index_file_path = self.path_for_index_id(Uuid::new_v4());
 
         let delete_temp_index = util::defer({
             let index_file_path = index_file_path.clone();
@@ -1432,30 +1291,10 @@ impl GitBinary {
         Ok(result)
     }
 
-    pub async fn with_index<R>(
-        &mut self,
-        index: GitIndex,
-        f: impl AsyncFnOnce(&Self) -> Result<R>,
-    ) -> Result<R> {
-        self.with_option_index(Some(index), f).await
-    }
-
-    pub async fn with_option_index<R>(
-        &mut self,
-        index: Option<GitIndex>,
-        f: impl AsyncFnOnce(&Self) -> Result<R>,
-    ) -> Result<R> {
-        let new_index_path = index.map(|index| self.path_for_index(index));
-        let old_index_path = mem::replace(&mut self.index_file_path, new_index_path);
-        let result = f(self).await;
-        self.index_file_path = old_index_path;
-        result
-    }
-
-    fn path_for_index(&self, index: GitIndex) -> PathBuf {
+    fn path_for_index_id(&self, id: Uuid) -> PathBuf {
         self.working_directory
             .join(".git")
-            .join(format!("index-{}.tmp", index.id))
+            .join(format!("index-{}.tmp", id))
     }
 
     pub async fn run<S>(&self, args: impl IntoIterator<Item = S>) -> Result<String>
@@ -1486,26 +1325,6 @@ impl GitBinary {
         }
     }
 
-    pub async fn run_with_stdin(&self, args: &[&str], stdin: String) -> Result<String> {
-        let mut command = self.build_command(args);
-        command.stdin(Stdio::piped());
-        let mut child = command.spawn()?;
-
-        let mut child_stdin = child.stdin.take().context("failed to write to stdin")?;
-        child_stdin.write_all(stdin.as_bytes()).await?;
-        drop(child_stdin);
-
-        let output = child.output().await?;
-        if output.status.success() {
-            Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
-        } else {
-            Err(anyhow!(GitBinaryCommandError {
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                status: output.status,
-            }))
-        }
-    }
-
     fn build_command<S>(&self, args: impl IntoIterator<Item = S>) -> smol::process::Command
     where
         S: AsRef<OsStr>,
@@ -1528,7 +1347,36 @@ struct GitBinaryCommandError {
     status: ExitStatus,
 }
 
-async fn run_remote_command(
+async fn run_git_command(
+    env: HashMap<String, String>,
+    ask_pass: AskPassDelegate,
+    mut command: smol::process::Command,
+    executor: &BackgroundExecutor,
+) -> Result<RemoteCommandOutput> {
+    if env.contains_key("GIT_ASKPASS") {
+        let git_process = command.spawn()?;
+        let output = git_process.output().await?;
+        if !output.status.success() {
+            Err(anyhow!("{}", String::from_utf8_lossy(&output.stderr)))
+        } else {
+            Ok(RemoteCommandOutput {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            })
+        }
+    } else {
+        let ask_pass = AskPassSession::new(executor, ask_pass).await?;
+        command
+            .env("GIT_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS_REQUIRE", "force");
+        let git_process = command.spawn()?;
+
+        run_askpass_command(ask_pass, git_process).await
+    }
+}
+
+async fn run_askpass_command(
     mut ask_pass: AskPassSession,
     git_process: smol::process::Child,
 ) -> std::result::Result<RemoteCommandOutput, anyhow::Error> {
@@ -1787,9 +1635,8 @@ fn checkpoint_author_envs() -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::status::{FileStatus, StatusCode, TrackedStatus};
+    use crate::status::FileStatus;
     use gpui::TestAppContext;
-    use unindent::Unindent;
 
     #[gpui::test]
     async fn test_checkpoint_basic(cx: &mut TestAppContext) {
@@ -1969,7 +1816,7 @@ mod tests {
             "content2"
         );
         assert_eq!(
-            repo.status(None, &[]).await.unwrap().entries.as_ref(),
+            repo.status_blocking(&[]).unwrap().entries.as_ref(),
             &[
                 (RepoPath::from_str("new_file1"), FileStatus::Untracked),
                 (RepoPath::from_str("new_file2"), FileStatus::Untracked)
@@ -2006,90 +1853,6 @@ mod tests {
             .compare_checkpoints(checkpoint2, checkpoint3)
             .await
             .unwrap());
-    }
-
-    #[gpui::test]
-    async fn test_secondary_indices(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let repo_dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(repo_dir.path()).unwrap();
-        let repo =
-            RealGitRepository::new(&repo_dir.path().join(".git"), None, cx.executor()).unwrap();
-        let index = repo.create_index().await.unwrap();
-        smol::fs::write(repo_dir.path().join("file1"), "file1\n")
-            .await
-            .unwrap();
-        smol::fs::write(repo_dir.path().join("file2"), "file2\n")
-            .await
-            .unwrap();
-        let diff = r#"
-            diff --git a/file2 b/file2
-            new file mode 100644
-            index 0000000..cbc4e2e
-            --- /dev/null
-            +++ b/file2
-            @@ -0,0 +1 @@
-            +file2
-        "#
-        .unindent();
-        repo.apply_diff(index, diff.to_string()).await.unwrap();
-
-        assert_eq!(
-            repo.status(Some(index), &[])
-                .await
-                .unwrap()
-                .entries
-                .as_ref(),
-            vec![
-                (RepoPath::from_str("file1"), FileStatus::Untracked),
-                (
-                    RepoPath::from_str("file2"),
-                    FileStatus::index(StatusCode::Added)
-                )
-            ]
-        );
-        assert_eq!(
-            repo.load_index_text(Some(index), RepoPath::from_str("file1"))
-                .await,
-            None
-        );
-        assert_eq!(
-            repo.load_index_text(Some(index), RepoPath::from_str("file2"))
-                .await,
-            Some("file2\n".to_string())
-        );
-
-        smol::fs::write(repo_dir.path().join("file2"), "file2-changed\n")
-            .await
-            .unwrap();
-        assert_eq!(
-            repo.status(Some(index), &[])
-                .await
-                .unwrap()
-                .entries
-                .as_ref(),
-            vec![
-                (RepoPath::from_str("file1"), FileStatus::Untracked),
-                (
-                    RepoPath::from_str("file2"),
-                    FileStatus::Tracked(TrackedStatus {
-                        worktree_status: StatusCode::Modified,
-                        index_status: StatusCode::Added,
-                    })
-                )
-            ]
-        );
-        assert_eq!(
-            repo.load_index_text(Some(index), RepoPath::from_str("file1"))
-                .await,
-            None
-        );
-        assert_eq!(
-            repo.load_index_text(Some(index), RepoPath::from_str("file2"))
-                .await,
-            Some("file2\n".to_string())
-        );
     }
 
     #[test]

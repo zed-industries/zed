@@ -19,7 +19,8 @@ pub use debug_format::{
     DebugRequestType, DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
 };
 pub use task_template::{
-    HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates, TaskType,
+    DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,
+    TaskTemplates, TaskType,
 };
 pub use vscode_format::VsCodeTaskFile;
 pub use zed_actions::RevealTarget;
@@ -61,8 +62,6 @@ pub struct SpawnInTerminal {
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.
     pub shell: Shell,
-    /// Tells debug tasks which program to debug
-    pub program: Option<String>,
     /// Whether to show the task summary line in the task output (sucess/failure).
     pub show_summary: bool,
     /// Whether to show the command line in the task output.
@@ -104,24 +103,50 @@ impl ResolvedTask {
     }
 
     /// Get the configuration for the debug adapter that should be used for this task.
-    pub fn resolved_debug_adapter_config(&self) -> Option<DebugTaskDefinition> {
+    pub fn resolved_debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
         match self.original_task.task_type.clone() {
-            TaskType::Script => None,
-            TaskType::Debug(mut adapter_config) => {
-                if let Some(resolved) = &self.resolved {
-                    adapter_config.label = resolved.label.clone();
-                    if let DebugRequestType::Launch(ref mut launch) = adapter_config.request {
-                        if let Some(program) = resolved.program.clone() {
-                            launch.program = program;
-                        }
-                        if let Some(cwd) = resolved.cwd.clone() {
-                            launch.cwd = Some(cwd);
-                        }
-                    }
-                }
+            TaskType::Debug(debug_args) if self.resolved.is_some() => {
+                let resolved = self
+                    .resolved
+                    .as_ref()
+                    .expect("We just checked if this was some");
 
-                Some(adapter_config)
+                let args = resolved
+                    .args
+                    .iter()
+                    .cloned()
+                    .map(|arg| {
+                        if arg.starts_with("$") {
+                            arg.strip_prefix("$")
+                                .and_then(|arg| resolved.env.get(arg).map(ToOwned::to_owned))
+                                .unwrap_or_else(|| arg)
+                        } else {
+                            arg
+                        }
+                    })
+                    .collect();
+
+                Some(DebugAdapterConfig {
+                    label: resolved.label.clone(),
+                    adapter: debug_args.adapter.clone(),
+                    request: DebugRequestDisposition::UserConfigured(match debug_args.request {
+                        crate::task_template::DebugArgsRequest::Launch => {
+                            DebugRequestType::Launch(LaunchConfig {
+                                program: resolved.command.clone(),
+                                cwd: resolved.cwd.clone(),
+                            })
+                        }
+                        crate::task_template::DebugArgsRequest::Attach(attach_config) => {
+                            DebugRequestType::Attach(attach_config)
+                        }
+                    }),
+                    initialize_args: debug_args.initialize_args,
+                    tcp_connection: debug_args.tcp_connection,
+                    args,
+                    locator: debug_args.locator.clone(),
+                })
             }
+            _ => None,
         }
     }
 

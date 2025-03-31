@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    DebugRequestType, DebugTaskDefinition, ResolvedTask, RevealTarget, Shell, SpawnInTerminal,
-    TaskContext, TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
+    AttachConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TCPHost, TaskContext, TaskId,
+    VariableName, ZED_VARIABLE_NAME_PREFIX,
 };
 
 /// A template definition of a Zed task to run.
@@ -75,62 +75,39 @@ pub struct TaskTemplate {
     pub show_command: bool,
 }
 
+#[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
+/// Use to represent debug request type
+pub enum DebugArgsRequest {
+    /// launch (program, cwd) are stored in TaskTemplate as (command, cwd)
+    Launch,
+    /// Attach
+    Attach(AttachConfig),
+}
+
+#[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
+/// This represents the arguments for the debug task.
+pub struct DebugArgs {
+    /// The launch type
+    pub request: DebugArgsRequest,
+    /// Adapter choice
+    pub adapter: String,
+    /// TCP connection to make with debug adapter
+    pub tcp_connection: Option<TCPHost>,
+    /// Args to send to debug adapter
+    pub initialize_args: Option<serde_json::value::Value>,
+    /// the locator to use
+    pub locator: Option<String>,
+}
+
 /// Represents the type of task that is being ran
-#[derive(Default, Deserialize, Serialize, Eq, PartialEq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "snake_case", tag = "type")]
+#[derive(Default, Eq, PartialEq, Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum TaskType {
     /// Act like a typically task that runs commands
     #[default]
     Script,
     /// This task starts the debugger for a language
-    Debug(DebugTaskDefinition),
-}
-
-#[cfg(test)]
-mod deserialization_tests {
-    use crate::LaunchConfig;
-
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn deserialize_task_type_script() {
-        let json = json!({"type": "script"});
-
-        let task_type: TaskType =
-            serde_json::from_value(json).expect("Failed to deserialize TaskType::Script");
-        assert_eq!(task_type, TaskType::Script);
-    }
-
-    #[test]
-    fn deserialize_task_type_debug() {
-        let adapter_config = DebugTaskDefinition {
-            label: "test config".into(),
-            adapter: "Debugpy".into(),
-            request: crate::DebugRequestType::Launch(LaunchConfig {
-                program: "main".to_string(),
-                cwd: None,
-            }),
-            initialize_args: None,
-            tcp_connection: None,
-        };
-        let json = json!({
-            "label": "test config",
-            "type": "debug",
-            "adapter": "Debugpy",
-            "program": "main",
-            "supports_attach": false,
-        });
-
-        let task_type: TaskType =
-            serde_json::from_value(json).expect("Failed to deserialize TaskType::Debug");
-        if let TaskType::Debug(config) = task_type {
-            assert_eq!(config, adapter_config);
-        } else {
-            panic!("Expected TaskType::Debug");
-        }
-    }
+    Debug(DebugArgs),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -270,22 +247,6 @@ impl TaskTemplate {
             &mut substituted_variables,
         )?;
 
-        let program = match &self.task_type {
-            TaskType::Script => None,
-            TaskType::Debug(adapter_config) => {
-                if let DebugRequestType::Launch(ref launch) = &adapter_config.request {
-                    Some(substitute_all_template_variables_in_str(
-                        &launch.program,
-                        &task_variables,
-                        &variable_names,
-                        &mut substituted_variables,
-                    )?)
-                } else {
-                    None
-                }
-            }
-        };
-
         let task_hash = to_hex_hash(self)
             .context("hashing task template")
             .log_err()?;
@@ -341,7 +302,6 @@ impl TaskTemplate {
                 reveal_target: self.reveal_target,
                 hide: self.hide,
                 shell: self.shell.clone(),
-                program,
                 show_summary: self.show_summary,
                 show_command: self.show_command,
                 show_rerun: true,

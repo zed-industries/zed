@@ -10,7 +10,8 @@ use gpui::{
 use picker::{highlighted_match_with_paths::HighlightedMatch, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
 use task::{
-    DebugRequestType, ResolvedTask, RevealTarget, TaskContext, TaskModal, TaskTemplate, TaskType,
+    DebugRequestType, DebugTaskDefinition, ResolvedTask, RevealTarget, TaskContext, TaskModal,
+    TaskTemplate, TaskType,
 };
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
@@ -320,15 +321,11 @@ impl PickerDelegate for TasksModalDelegate {
         self.workspace
             .update(cx, |workspace, cx| {
                 match task.task_type() {
-                    TaskType::Script => schedule_resolved_task(
-                        workspace,
-                        task_source_kind,
-                        task,
-                        omit_history_entry,
-                        cx,
-                    ),
-                    TaskType::Debug(_) => {
-                        let Some(config) = task.resolved_debug_adapter_config() else {
+                    TaskType::Debug(config) if config.locator.is_none() => {
+                        let Some(config): Option<DebugTaskDefinition> = task
+                            .resolved_debug_adapter_config()
+                            .and_then(|config| config.try_into().ok())
+                        else {
                             return;
                         };
                         let project = workspace.project().clone();
@@ -355,6 +352,13 @@ impl PickerDelegate for TasksModalDelegate {
                             }
                         }
                     }
+                    _ => schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        task,
+                        omit_history_entry,
+                        cx,
+                    ),
                 };
             })
             .ok();
@@ -517,16 +521,30 @@ impl PickerDelegate for TasksModalDelegate {
                         omit_history_entry,
                         cx,
                     ),
-                    // TODO: Should create a schedule_resolved_debug_task function
+                    // todo(debugger): Should create a schedule_resolved_debug_task function
                     // This would allow users to access to debug history and other issues
-                    TaskType::Debug(_) => workspace.project().update(cx, |project, cx| {
-                        project
-                            .start_debug_session(
-                                task.resolved_debug_adapter_config().unwrap().into(),
+                    TaskType::Debug(debug_args) => {
+                        let Some(debug_config) = task.resolved_debug_adapter_config() else {
+                            // todo(debugger) log an error, this should never happen
+                            return;
+                        };
+
+                        if debug_args.locator.is_some() {
+                            schedule_resolved_task(
+                                workspace,
+                                task_source_kind,
+                                task,
+                                omit_history_entry,
                                 cx,
-                            )
-                            .detach_and_log_err(cx);
-                    }),
+                            );
+                        } else {
+                            workspace.project().update(cx, |project, cx| {
+                                project
+                                    .start_debug_session(debug_config, cx)
+                                    .detach_and_log_err(cx);
+                            });
+                        }
+                    }
                 };
             })
             .ok();
