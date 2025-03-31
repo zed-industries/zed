@@ -16,8 +16,20 @@ pub struct CodeActionToolInput {
     /// WARNING: you MUST start this path with one of the project's root directories.
     pub path: String,
 
-    /// The code action to perform.
-    pub action: CodeActionType,
+    /// The specific code action to execute.
+    /// 
+    /// If this field is provided, the tool will execute the specified action.
+    /// If omitted, the tool will list all available code actions for the text range.
+    /// 
+    /// Special case: To perform a rename operation, set this to "textDocument/rename"
+    /// and provide the new name in the `arguments` field.
+    pub action: Option<String>,
+    
+    /// Optional arguments to pass to the code action.
+    /// 
+    /// For rename operations (when action="textDocument/rename"), this should contain the new name.
+    /// For other code actions, these arguments may be passed to the language server.
+    pub arguments: Option<serde_json::Value>,
 
     /// The text that comes immediately before the text range in the file.
     pub context_before_range: String,
@@ -47,26 +59,6 @@ pub struct CodeActionToolInput {
     pub context_after_range: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CodeActionType {
-    /// Rename the text range to a new name
-    Rename(String),
-    
-    /// List available code actions for the text range
-    ListAvailable,
-
-    /// Execute a specific code action that matches the provided regex pattern
-    ExecuteAction {
-        /// Regex pattern to match against code action titles
-        /// Must match exactly one code action
-        pattern: String,
-        
-        /// Optional arguments to pass to the code action, as arbitrary JSON
-        arguments: Option<serde_json::Value>,
-    },
-}
-
 pub struct CodeActionTool;
 
 impl Tool for CodeActionTool {
@@ -86,7 +78,10 @@ impl Tool for CodeActionTool {
         IconName::Wand
     }
 
-    fn input_schema(&self) -> serde_json::Value {
+    fn input_schema(
+        &self,
+        _format: language_model::LanguageModelToolSchemaFormat,
+    ) -> serde_json::Value {
         let schema = schemars::schema_for!(CodeActionToolInput);
         serde_json::to_value(&schema).unwrap()
     }
@@ -94,18 +89,27 @@ impl Tool for CodeActionTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CodeActionToolInput>(input.clone()) {
             Ok(input) => {
-                match input.action {
-                    CodeActionType::Rename(ref new_name) => {
+                if let Some(action) = &input.action {
+                    if action == "textDocument/rename" {
+                        let new_name = match &input.arguments {
+                            Some(serde_json::Value::String(new_name)) => new_name.clone(),
+                            Some(value) => {
+                                if let Ok(new_name) = serde_json::from_value::<String>(value.clone()) {
+                                    new_name
+                                } else {
+                                    "invalid name".to_string()
+                                }
+                            },
+                            None => "missing name".to_string(),
+                        };
                         format!("Rename '{}' to '{}'", input.text_range, new_name)
+                    } else {
+                        format!("Execute code action '{}' for '{}'", action, input.text_range)
                     }
-                    CodeActionType::ListAvailable => {
-                        format!("List available code actions for '{}'", input.text_range)
-                    }
-                    CodeActionType::ExecuteAction { pattern, .. } => {
-                        format!("Execute code action matching '{}' for '{}'", pattern, input.text_range)
-                    }
+                } else {
+                    format!("List available code actions for '{}'", input.text_range)
                 }
-            }
+            },
             Err(_) => "Perform code action".to_string(),
         }
     }
@@ -150,8 +154,21 @@ impl Tool for CodeActionTool {
                 range
             };
 
-            match input.action {
-                CodeActionType::Rename(ref new_name) => {
+            if let Some(action_type) = &input.action {
+                if action_type == "textDocument/rename" {
+                    // Handle rename operation
+                    let new_name = match &input.arguments {
+                        Some(serde_json::Value::String(new_name)) => new_name.clone(),
+                        Some(value) => {
+                            if let Ok(new_name) = serde_json::from_value::<String>(value.clone()) {
+                                new_name
+                            } else {
+                                return Err(anyhow!("For rename operations, 'arguments' must be a string containing the new name"));
+                            }
+                        },
+                        None => return Err(anyhow!("For rename operations, 'arguments' must contain the new name")),
+                    };
+
                     let position = buffer.read_with(cx, |buffer, _| {
                         range.start.to_point_utf16(&buffer.snapshot())
                     })?;
@@ -168,79 +185,8 @@ impl Tool for CodeActionTool {
                     })?;
 
                     Ok(format!("Renamed '{}' to '{}'", input.text_range, new_name))
-                }
-                CodeActionType::ListAvailable => {
-                    let (position_start, position_end) = buffer.read_with(cx, |buffer, _| {
-                        let snapshot = buffer.snapshot();
-                        (
-                            range.start.to_point_utf16(&snapshot),
-                            range.end.to_point_utf16(&snapshot)
-                        )
-                    })?;
-
-                    // Convert position to display coordinates (1-based)
-                    let position_start_display = language::Point {
-                        row: position_start.row + 1,
-                        column: position_start.column + 1,
-                    };
-                    
-                    let position_end_display = language::Point {
-                        row: position_end.row + 1,
-                        column: position_end.column + 1,
-                    };
-
-                    // We already have the UTF-16 positions from our earlier calculation
-
-                    // Get code actions for the range
-                    let actions = project
-                        .update(cx, |project, cx| {
-                            project.code_actions(&buffer, range.clone(), None, cx)
-                        })?
-                        .await?;
-
-                    // Format the results
-                    let mut result = format!(
-                        "Available code actions for text range '{}' at position {}:{} to {}:{} (UTF-16 coordinates):\n\n", 
-                        input.text_range,
-                        position_start_display.row, position_start_display.column,
-                        position_end_display.row, position_end_display.column
-                    );
-
-                    if actions.is_empty() {
-                        result.push_str("No code actions available for this range.");
-                    } else {
-                        for (i, action) in actions.iter().enumerate() {
-                            let title = match &action.lsp_action {
-                                project::LspAction::Action(code_action) => code_action.title.as_str(),
-                                project::LspAction::Command(command) => command.title.as_str(),
-                                project::LspAction::CodeLens(code_lens) => {
-                                    if let Some(cmd) = &code_lens.command {
-                                        cmd.title.as_str()
-                                    } else {
-                                        "Unknown code lens"
-                                    }
-                                },
-                            };
-                            
-                            let kind = match &action.lsp_action {
-                                project::LspAction::Action(code_action) => {
-                                    if let Some(kind) = &code_action.kind {
-                                        kind.as_str()
-                                    } else {
-                                        "unknown"
-                                    }
-                                },
-                                project::LspAction::Command(_) => "command",
-                                project::LspAction::CodeLens(_) => "code_lens",
-                            };
-                            
-                            result.push_str(&format!("{}. {} ({})\n", i + 1, title, kind));
-                        }
-                    }
-
-                    Ok(result)
-                },
-                CodeActionType::ExecuteAction { pattern, arguments } => {
+                } else {
+                    // Handle execute specific code action
                     // Get code actions for the range
                     let actions = project
                         .update(cx, |project, cx| {
@@ -253,7 +199,7 @@ impl Tool for CodeActionTool {
                     }
 
                     // Compile the regex pattern
-                    let regex = match regex::Regex::new(&pattern) {
+                    let regex = match regex::Regex::new(action_type) {
                         Ok(regex) => regex,
                         Err(err) => return Err(anyhow!("Invalid regex pattern: {}", err)),
                     };
@@ -270,16 +216,16 @@ impl Tool for CodeActionTool {
 
                     // Ensure exactly one action matches
                     if matching_actions.is_empty() {
-                        return Err(anyhow!("No code actions match the pattern: {}", pattern));
+                        return Err(anyhow!("No code actions match the pattern: {}", action_type));
                     } else if matching_actions.len() > 1 {
                         let titles: Vec<_> = matching_actions
                             .iter()
                             .map(|(_, action)| action.lsp_action.title().to_string())
                             .collect();
-                        
+
                         return Err(anyhow!(
-                            "Pattern '{}' matches multiple code actions: {}", 
-                            pattern, 
+                            "Pattern '{}' matches multiple code actions: {}",
+                            action_type,
                             titles.join(", ")
                         ));
                     }
@@ -287,16 +233,8 @@ impl Tool for CodeActionTool {
                     // Get the single matching action
                     let (_, action) = matching_actions[0];
                     let action = action.clone();
-                    
-                    // If arguments are provided and this is a command action, 
-                    // we could theoretically modify the command's arguments here,
-                    // but for now we'll just log that arguments were provided but ignored
-                    if arguments.is_some() {
-                        eprintln!("Note: arguments provided to ExecuteAction are currently ignored");
-                    }
-                    
                     let title = action.lsp_action.title().to_string();
-                    
+
                     // Apply the selected code action
                     let _transaction = project
                         .update(cx, |project, cx| {
@@ -310,6 +248,75 @@ impl Tool for CodeActionTool {
 
                     Ok(format!("Executed code action: {}", title))
                 }
+            } else {
+                // List available code actions mode (no action specified)
+                let (position_start, position_end) = buffer.read_with(cx, |buffer, _| {
+                    let snapshot = buffer.snapshot();
+                    (
+                        range.start.to_point_utf16(&snapshot),
+                        range.end.to_point_utf16(&snapshot)
+                    )
+                })?;
+
+                // Convert position to display coordinates (1-based)
+                let position_start_display = language::Point {
+                    row: position_start.row + 1,
+                    column: position_start.column + 1,
+                };
+
+                let position_end_display = language::Point {
+                    row: position_end.row + 1,
+                    column: position_end.column + 1,
+                };
+
+                // Get code actions for the range
+                let actions = project
+                    .update(cx, |project, cx| {
+                        project.code_actions(&buffer, range.clone(), None, cx)
+                    })?
+                    .await?;
+
+                // Format the results
+                let mut result = format!(
+                    "Available code actions for text range '{}' at position {}:{} to {}:{} (UTF-16 coordinates):\n\n",
+                    input.text_range,
+                    position_start_display.row, position_start_display.column,
+                    position_end_display.row, position_end_display.column
+                );
+
+                if actions.is_empty() {
+                    result.push_str("No code actions available for this range.");
+                } else {
+                    for (i, action) in actions.iter().enumerate() {
+                        let title = match &action.lsp_action {
+                            project::LspAction::Action(code_action) => code_action.title.as_str(),
+                            project::LspAction::Command(command) => command.title.as_str(),
+                            project::LspAction::CodeLens(code_lens) => {
+                                if let Some(cmd) = &code_lens.command {
+                                    cmd.title.as_str()
+                                } else {
+                                    "Unknown code lens"
+                                }
+                            },
+                        };
+
+                        let kind = match &action.lsp_action {
+                            project::LspAction::Action(code_action) => {
+                                if let Some(kind) = &code_action.kind {
+                                    kind.as_str()
+                                } else {
+                                    "unknown"
+                                }
+                            },
+                            project::LspAction::Command(_) => "command",
+                            project::LspAction::CodeLens(_) => "code_lens",
+                        };
+
+                        result.push_str(&format!("{}. {} ({})\n", i + 1, title, kind));
+                    }
+                }
+
+                Ok(result)
             }
         })
     }
@@ -317,6 +324,9 @@ impl Tool for CodeActionTool {
 
 /// Finds the range of the text in the buffer, if it appears between context_before_range
 /// and context_after_range, and if that combined string has one unique result in the buffer.
+///
+/// If an exact match fails, it tries adding a newline to the end of context_before_range and
+/// to the beginning of context_after_range to accommodate line-based context matching.
 fn find_text_range(
     buffer: &Buffer,
     context_before_range: &str,
@@ -325,19 +335,51 @@ fn find_text_range(
 ) -> Option<Range<Anchor>> {
     let snapshot = buffer.snapshot();
     let text = snapshot.text();
+    
+    // First try with exact match
     let search_string = format!("{context_before_range}{text_range}{context_after_range}");
     let mut positions = text.match_indices(&search_string);
-    let position = positions.next()?.0;
-
-    // The combined string must appear exactly once.
-    if positions.next().is_some() {
+    let position_result = positions.next();
+    
+    if let Some(position) = position_result {
+        // Check if the matched string is unique
+        if positions.next().is_none() {
+            let range_start = position.0 + context_before_range.len();
+            let range_end = range_start + text_range.len();
+            let range_start_anchor = snapshot.anchor_before(snapshot.offset_to_point(range_start));
+            let range_end_anchor = snapshot.anchor_before(snapshot.offset_to_point(range_end));
+            
+            return Some(range_start_anchor..range_end_anchor);
+        }
+    }
+    
+    // If exact match fails or is not unique, try with line-based context
+    // Add a newline to the end of before context and beginning of after context
+    let line_based_before = if context_before_range.ends_with('\n') {
+        context_before_range.to_string()
+    } else {
+        format!("{context_before_range}\n")
+    };
+    
+    let line_based_after = if context_after_range.starts_with('\n') {
+        context_after_range.to_string()
+    } else {
+        format!("\n{context_after_range}")
+    };
+    
+    let line_search_string = format!("{line_based_before}{text_range}{line_based_after}");
+    let mut line_positions = text.match_indices(&line_search_string);
+    let line_position = line_positions.next()?;
+    
+    // The line-based search string must also appear exactly once
+    if line_positions.next().is_some() {
         return None;
     }
-
-    let range_start = position + context_before_range.len();
-    let range_end = range_start + text_range.len();
-    let range_start_anchor = snapshot.anchor_before(snapshot.offset_to_point(range_start));
-    let range_end_anchor = snapshot.anchor_before(snapshot.offset_to_point(range_end));
-
-    Some(range_start_anchor..range_end_anchor)
+    
+    let line_range_start = line_position.0 + line_based_before.len();
+    let line_range_end = line_range_start + text_range.len();
+    let line_range_start_anchor = snapshot.anchor_before(snapshot.offset_to_point(line_range_start));
+    let line_range_end_anchor = snapshot.anchor_before(snapshot.offset_to_point(line_range_end));
+    
+    Some(line_range_start_anchor..line_range_end_anchor)
 }
