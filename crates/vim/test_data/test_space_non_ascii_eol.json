@@ -1,4 +1,4 @@
-{"Put":{"state":"ππππˇπ\nanotherline"}}
-{"Key":"3"}
+{"Put":{"state":"ππππˇπ\nπanotherline"}}
+{"Key":"4"}
 {"Key":"space"}
-{"Get":{"state":"πππππ\nanˇotherline","mode":"Normal"}}
+{"Get":{"state":"πππππ\nπanˇotherline","mode":"Normal"}}

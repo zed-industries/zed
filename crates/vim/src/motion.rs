@@ -1274,7 +1274,16 @@ fn wrapping_right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) 
 }
 
 fn wrapping_right_single(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let max_column = map.line_len(point.row()).saturating_sub(1);
+    let eol_point = map.clip_point(
+        DisplayPoint::new(point.row(), map.line_len(point.row())),
+        Bias::Left,
+    );
+    let mut eol_chars = map.buffer_chars_at(eol_point.to_offset(map, Bias::Left));
+    let eol_char_len = match eol_chars.next() {
+        Some((ch, _)) => ch.len_utf8() as u32,
+        None => 1,
+    };
+    let max_column = map.line_len(point.row()).saturating_sub(eol_char_len);
     if point.column() < max_column {
         *point.column_mut() += 1;
         point = map.clip_point(point, Bias::Right);
@@ -3570,12 +3579,12 @@ mod test {
 
         cx.set_shared_state(indoc! {"
             ππππˇπ
-            anotherline"})
+            πanotherline"})
             .await;
-        cx.simulate_shared_keystrokes("3 space").await;
+        cx.simulate_shared_keystrokes("4 space").await;
         cx.shared_state().await.assert_eq(indoc! {"
             πππππ
-            anˇotherline"});
+            πanˇotherline"});
     }
 
     #[gpui::test]
