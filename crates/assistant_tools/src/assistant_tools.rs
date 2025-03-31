@@ -16,6 +16,7 @@ mod path_search_tool;
 mod read_file_tool;
 mod regex_search_tool;
 mod replace;
+mod symbol_info_tool;
 mod thinking_tool;
 
 use std::sync::Arc;
@@ -41,6 +42,7 @@ use crate::open_tool::OpenTool;
 use crate::path_search_tool::PathSearchTool;
 use crate::read_file_tool::ReadFileTool;
 use crate::regex_search_tool::RegexSearchTool;
+use crate::symbol_info_tool::SymbolInfoTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
@@ -55,6 +57,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
     registry.register_tool(FindReplaceFileTool);
+    registry.register_tool(SymbolInfoTool);
     registry.register_tool(MovePathTool);
     registry.register_tool(DiagnosticsTool);
     registry.register_tool(EditFilesTool);
