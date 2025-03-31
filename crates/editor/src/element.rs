@@ -46,7 +46,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     language_settings::{
-        IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
+        self, IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
         ShowWhitespaceSetting,
     },
     ChunkRendererContext,
@@ -1452,15 +1452,15 @@ impl EditorElement {
         cx: &mut App,
         snapshot: &EditorSnapshot,
         num_lines: f32,
+        minimap_width: Pixels,
+        minimap_wrap_width: Pixels,
         minimap_settings: &Minimap,
         bounds: Bounds<Pixels>,
         scrollbars_layout: Option<&EditorScrollbars>,
         line_height: Pixels,
         visible_range: Range<DisplayRow>,
     ) -> Option<MinimapLayout> {
-        let minimap_visible =
-            Self::is_minimap_visible(snapshot, minimap_settings, scrollbars_layout);
-        if !minimap_visible {
+        if !Self::should_show_minimap(snapshot, minimap_settings, scrollbars_layout) {
             return None;
         }
 
@@ -1489,7 +1489,15 @@ impl EditorElement {
 
         let editor_entity = cx.new(|_| editor);
 
-        let minimap_bounds = Self::get_minimap_bounds(top_right_anchor, &bounds, &minimap_settings);
+        // Override soft_wrap setting, if set, so that the minimap editor instance always wraps at the scaled equivalent of the main editor wrap width
+        editor_entity.update(cx, |editor, cx| {
+            if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None) {
+                editor.set_soft_wrap_mode(language_settings::SoftWrap::PreferredLineLength, cx);
+                editor.set_wrap_width(Some(minimap_wrap_width), cx);
+            }
+        });
+
+        let minimap_bounds = Self::get_minimap_bounds(minimap_width, top_right_anchor, &bounds);
         let minimap_line_height = self.get_minimap_line_height(window, &minimap_settings, cx);
         let minimap_height = minimap_bounds.size.height;
 
@@ -1548,7 +1556,7 @@ impl EditorElement {
         })
     }
 
-    fn is_minimap_visible(
+    fn should_show_minimap(
         snapshot: &EditorSnapshot,
         minimap_settings: &Minimap,
         scrollbar_layout: Option<&EditorScrollbars>,
@@ -1562,16 +1570,27 @@ impl EditorElement {
     }
 
     fn get_minimap_bounds(
+        minimap_width: Pixels,
         top_right_anchor: gpui::Point<Pixels>,
         editor_bounds: &Bounds<Pixels>,
-        minimap_settings: &Minimap,
     ) -> Bounds<Pixels> {
-        let minimap_width = px(minimap_settings.width);
         Bounds::from_corner_and_size(
             Corner::TopRight,
             top_right_anchor,
             size(minimap_width, editor_bounds.size.height),
         )
+    }
+
+    fn get_minimap_width(minimap_wrap_width: Pixels, minimap_settings: &Minimap) -> Pixels {
+        px(f32::min(minimap_wrap_width.0, minimap_settings.width))
+    }
+
+    fn get_minimap_wrap_width(
+        wrap_width: Pixels,
+        editor_font_size: Pixels,
+        minimap_settings: &Minimap,
+    ) -> Pixels {
+        px(wrap_width.0 * (minimap_settings.font_size / editor_font_size.0))
     }
 
     fn get_minimap_line_height(
@@ -6871,9 +6890,6 @@ impl Element for EditorElement {
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
-                    let minimap_settings = EditorSettings::get_global(cx).minimap;
-                    let minimap_width = px(minimap_settings.width);
-
                     let glyph_grid_cell = size(em_width, line_height);
 
                     let gutter_dimensions = snapshot
@@ -6888,16 +6904,19 @@ impl Element for EditorElement {
 
                     let editor_width =
                         text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
+                    let mut wrap_width = Pixels::MAX;
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
                         editor.gutter_dimensions = gutter_dimensions;
                         editor.set_visible_line_count(bounds.size.height / line_height, window, cx);
 
-                        if matches!(editor.mode, EditorMode::AutoHeight { .. }) {
+                        if matches!(editor.mode, EditorMode::AutoHeight { .. })
+                            || matches!(editor.mode, EditorMode::Minimap)
+                        {
                             snapshot
                         } else {
-                            let wrap_width = match editor.soft_wrap_mode(cx) {
+                            let soft_wrap_width = match editor.soft_wrap_mode(cx) {
                                 SoftWrap::GitDiff => None,
                                 SoftWrap::None => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
                                 SoftWrap::EditorWidth => Some(editor_width),
@@ -6907,7 +6926,11 @@ impl Element for EditorElement {
                                 }
                             };
 
-                            if editor.set_wrap_width(wrap_width, cx) {
+                            if soft_wrap_width.is_some() {
+                                wrap_width = soft_wrap_width.unwrap();
+                            }
+
+                            if editor.set_wrap_width(soft_wrap_width, cx) {
                                 editor.snapshot(window, cx)
                             } else {
                                 snapshot
@@ -7548,6 +7571,12 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let minimap_settings = EditorSettings::get_global(cx).minimap;
+                    let minimap_wrap_width =
+                        Self::get_minimap_wrap_width(wrap_width, font_size, &minimap_settings);
+                    let minimap_width =
+                        Self::get_minimap_width(minimap_wrap_width, &minimap_settings);
+
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
                         scrollbar_layout_information,
@@ -7738,6 +7767,8 @@ impl Element for EditorElement {
                             cx,
                             &snapshot,
                             max_row.as_f32(),
+                            minimap_width,
+                            minimap_wrap_width,
                             &minimap_settings,
                             bounds,
                             scrollbars_layout.as_ref(),
