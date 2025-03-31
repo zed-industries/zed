@@ -1,20 +1,20 @@
 //! Module for managing breakpoints in a project.
 //!
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use breakpoints_in_file::BreakpointsInFile;
 use collections::BTreeMap;
 use dap::client::SessionId;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
-use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
+use language::{Buffer, BufferSnapshot, proto::serialize_anchor as serialize_text_anchor};
 use rpc::{
-    proto::{self},
     AnyProtoClient, TypedEnvelope,
+    proto::{self},
 };
 use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
 use text::PointUtf16;
 
-use crate::{buffer_store::BufferStore, worktree_store::WorktreeStore, Project, ProjectPath};
+use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
 
 mod breakpoints_in_file {
     use language::BufferEvent;

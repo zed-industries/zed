@@ -1,6 +1,6 @@
 use super::{
-    wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
     Highlights,
+    wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
@@ -17,8 +17,8 @@ use std::{
     fmt::Debug,
     ops::{Deref, DerefMut, Range, RangeBounds, RangeInclusive},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 use sum_tree::{Bias, SumTree, Summary, TreeMap};
@@ -1282,8 +1282,8 @@ impl BlockSnapshot {
 
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(rows.start), Bias::Right, &());
-        let transform_output_start = cursor.start().0 .0;
-        let transform_input_start = cursor.start().1 .0;
+        let transform_output_start = cursor.start().0.0;
+        let transform_input_start = cursor.start().1.0;
 
         let mut input_start = transform_input_start;
         let mut input_end = transform_input_start;
@@ -1441,7 +1441,7 @@ impl BlockSnapshot {
                 let wrap_start_row = input_start.0 + overshoot;
                 let wrap_end_row = cmp::min(
                     input_start.0 + (range.end.0 - output_start.0),
-                    cursor.end(&()).1 .0,
+                    cursor.end(&()).1.0,
                 );
                 let summary = self
                     .wrap_snapshot
@@ -1532,7 +1532,7 @@ impl BlockSnapshot {
 
         let max_input_row = WrapRow(self.transforms.summary().input_rows);
         let mut search_left =
-            (bias == Bias::Left && cursor.start().1 .0 > 0) || cursor.end(&()).1 == max_input_row;
+            (bias == Bias::Left && cursor.start().1.0 > 0) || cursor.end(&()).1 == max_input_row;
         let mut reversed = false;
 
         loop {
@@ -1591,7 +1591,7 @@ impl BlockSnapshot {
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
         if let Some(transform) = cursor.item() {
             if transform.block.is_some() {
-                BlockPoint::new(cursor.start().1 .0, 0)
+                BlockPoint::new(cursor.start().1.0, 0)
             } else {
                 let (input_start_row, output_start_row) = cursor.start();
                 let input_start = Point::new(input_start_row.0, 0);
@@ -1611,20 +1611,20 @@ impl BlockSnapshot {
             match transform.block.as_ref() {
                 Some(block) => {
                     if block.place_below() {
-                        let wrap_row = cursor.start().1 .0 - 1;
+                        let wrap_row = cursor.start().1.0 - 1;
                         WrapPoint::new(wrap_row, self.wrap_snapshot.line_len(wrap_row))
                     } else if block.place_above() {
-                        WrapPoint::new(cursor.start().1 .0, 0)
+                        WrapPoint::new(cursor.start().1.0, 0)
                     } else if bias == Bias::Left {
-                        WrapPoint::new(cursor.start().1 .0, 0)
+                        WrapPoint::new(cursor.start().1.0, 0)
                     } else {
-                        let wrap_row = cursor.end(&()).1 .0 - 1;
+                        let wrap_row = cursor.end(&()).1.0 - 1;
                         WrapPoint::new(wrap_row, self.wrap_snapshot.line_len(wrap_row))
                     }
                 }
                 None => {
-                    let overshoot = block_point.row - cursor.start().0 .0;
-                    let wrap_row = cursor.start().1 .0 + overshoot;
+                    let overshoot = block_point.row - cursor.start().0.0;
+                    let wrap_row = cursor.start().1.0 + overshoot;
                     WrapPoint::new(wrap_row, block_point.column)
                 }
             }
@@ -1656,11 +1656,11 @@ impl BlockChunks<'_> {
             .item()
             .map_or(false, |transform| transform.block.is_none())
         {
-            let start_input_row = self.transforms.start().1 .0;
-            let start_output_row = self.transforms.start().0 .0;
+            let start_input_row = self.transforms.start().1.0;
+            let start_output_row = self.transforms.start().0.0;
             if start_output_row < self.max_output_row {
                 let end_input_row = cmp::min(
-                    self.transforms.end(&()).1 .0,
+                    self.transforms.end(&()).1.0,
                     start_input_row + (self.max_output_row - start_output_row),
                 );
                 self.input_chunks.seek(start_input_row..end_input_row);
@@ -1683,8 +1683,8 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         let transform = self.transforms.item()?;
         if transform.block.is_some() {
-            let block_start = self.transforms.start().0 .0;
-            let mut block_end = self.transforms.end(&()).0 .0;
+            let block_start = self.transforms.start().0.0;
+            let mut block_end = self.transforms.end(&()).0.0;
             self.advance();
             if self.transforms.item().is_none() {
                 block_end -= 1;
@@ -1719,7 +1719,7 @@ impl<'a> Iterator for BlockChunks<'a> {
             }
         }
 
-        let transform_end = self.transforms.end(&()).0 .0;
+        let transform_end = self.transforms.end(&()).0.0;
         let (prefix_rows, prefix_bytes) =
             offset_for_row(self.input_chunk.text, transform_end - self.output_row);
         self.output_row += prefix_rows;
@@ -1758,7 +1758,7 @@ impl Iterator for BlockRows<'_> {
             self.started = true;
         }
 
-        if self.output_row.0 >= self.transforms.end(&()).0 .0 {
+        if self.output_row.0 >= self.transforms.end(&()).0.0 {
             self.transforms.next(&());
             while let Some(transform) = self.transforms.item() {
                 if transform
@@ -1778,7 +1778,7 @@ impl Iterator for BlockRows<'_> {
                 .as_ref()
                 .map_or(true, |block| block.is_replacement())
             {
-                self.input_rows.seek(self.transforms.start().1 .0);
+                self.input_rows.seek(self.transforms.start().1.0);
             }
         }
 
@@ -1913,7 +1913,7 @@ mod tests {
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap},
         test::test_font,
     };
-    use gpui::{div, font, px, App, AppContext as _, Element};
+    use gpui::{App, AppContext as _, Element, div, font, px};
     use itertools::Itertools;
     use language::{Buffer, Capability};
     use multi_buffer::{ExcerptRange, MultiBuffer};

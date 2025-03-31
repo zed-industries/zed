@@ -1,22 +1,23 @@
 pub mod git_traversal;
 
 use crate::{
+    ProjectEnvironment, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    ProjectEnvironment, ProjectItem, ProjectPath,
 };
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::AskPassDelegate;
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
 use fs::Fs;
 use futures::{
+    FutureExt as _, StreamExt as _,
     channel::{mpsc, oneshot},
     future::{self, OptionFuture, Shared},
-    FutureExt as _, StreamExt as _,
 };
 use git::{
+    BuildPermalinkParams, GitHostingProviderRegistry,
     blame::Blame,
     parse_git_remote_url,
     repository::{
@@ -24,25 +25,24 @@ use git::{
         Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
     status::FileStatus,
-    BuildPermalinkParams, GitHostingProviderRegistry,
 };
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     WeakEntity,
 };
 use language::{
-    proto::{deserialize_version, serialize_version},
     Buffer, BufferEvent, Language, LanguageRegistry,
+    proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
 use rpc::{
-    proto::{self, git_reset, FromProto, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
+    proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset},
 };
 use serde::Deserialize;
 use settings::WorktreeId;
 use std::{
-    collections::{hash_map, VecDeque},
+    collections::{VecDeque, hash_map},
     future::Future,
     ops::Range,
     path::{Path, PathBuf},
@@ -50,10 +50,10 @@ use std::{
 };
 use sum_tree::TreeSet;
 use text::BufferId;
-use util::{debug_panic, maybe, ResultExt};
+use util::{ResultExt, debug_panic, maybe};
 use worktree::{
-    proto_to_branch, File, PathKey, ProjectEntryId, RepositoryEntry, StatusEntry,
-    UpdatedGitRepositoriesSet, Worktree,
+    File, PathKey, ProjectEntryId, RepositoryEntry, StatusEntry, UpdatedGitRepositoriesSet,
+    Worktree, proto_to_branch,
 };
 
 pub struct GitStore {

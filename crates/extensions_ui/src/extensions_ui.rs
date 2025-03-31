@@ -10,11 +10,11 @@ use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
-use fuzzy::{match_strings, StringMatchCandidate};
+use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    actions, point, uniform_list, Action, App, ClipboardItem, Context, Entity, EventEmitter,
-    Flatten, Focusable, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task,
-    TextStyle, UniformListScrollHandle, WeakEntity, Window,
+    Action, App, ClipboardItem, Context, Entity, EventEmitter, Flatten, Focusable,
+    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -23,13 +23,13 @@ use settings::Settings;
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar,
-    ScrollbarState, ToggleButton, Tooltip,
+    CheckboxWithLabel, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
+    ToggleButton, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
-    item::{Item, ItemEvent},
     Workspace, WorkspaceId,
+    item::{Item, ItemEvent},
 };
 use zed_actions::ExtensionCategoryFilter;
 

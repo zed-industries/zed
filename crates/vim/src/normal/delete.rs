@@ -1,13 +1,13 @@
 use crate::{
+    Vim,
     motion::{Motion, MotionKind},
     object::Object,
-    Vim,
 };
 use collections::{HashMap, HashSet};
 use editor::{
+    Bias, DisplayPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     scroll::Autoscroll,
-    Bias, DisplayPoint,
 };
 use gpui::{Context, Window};
 use language::{Point, Selection};

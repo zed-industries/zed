@@ -2,39 +2,40 @@ use crate::{
     Assistant, AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist,
     CyclePreviousInlineAssist,
 };
-use anyhow::{anyhow, Context as _, Result};
-use assistant_context_editor::{humanize_token_count, RequestType};
+use anyhow::{Context as _, Result, anyhow};
+use assistant_context_editor::{RequestType, humanize_token_count};
 use assistant_settings::AssistantSettings;
-use client::{telemetry::Telemetry, ErrorExt};
-use collections::{hash_map, HashMap, HashSet, VecDeque};
+use client::{ErrorExt, telemetry::Telemetry};
+use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::{
+    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
+    EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
+    ToOffset as _, ToPoint,
     actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
         BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
-    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
-    ToOffset as _, ToPoint,
 };
 use feature_flags::{
     Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedPro,
 };
 use fs::Fs;
 use futures::{
+    SinkExt, Stream, StreamExt,
     channel::mpsc,
     future::{BoxFuture, LocalBoxFuture},
-    join, SinkExt, Stream, StreamExt,
+    join,
 };
 use gpui::{
-    anchored, deferred, point, AnyElement, App, ClickEvent, Context, CursorStyle, Entity,
-    EventEmitter, FocusHandle, Focusable, FontWeight, Global, HighlightStyle, Subscription, Task,
-    TextStyle, UpdateGlobal, WeakEntity, Window,
+    AnyElement, App, ClickEvent, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
+    Focusable, FontWeight, Global, HighlightStyle, Subscription, Task, TextStyle, UpdateGlobal,
+    WeakEntity, Window, anchored, deferred, point,
 };
-use language::{line_diff, Buffer, IndentKind, Point, Selection, TransactionId};
+use language::{Buffer, IndentKind, Point, Selection, TransactionId, line_diff};
 use language_model::{
-    report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelTextStream, Role,
+    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelTextStream, Role, report_assistant_event,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use multi_buffer::MultiBufferRow;
@@ -42,7 +43,7 @@ use parking_lot::Mutex;
 use project::{CodeAction, LspAction, ProjectTransaction};
 use prompt_store::PromptBuilder;
 use rope::Rope;
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use smol::future::FutureExt;
 use std::{
     cmp,
@@ -61,10 +62,10 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip,
+    CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip, prelude::*, text_for_action,
 };
 use util::{RangeExt, ResultExt};
-use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
+use workspace::{ItemHandle, Toast, Workspace, notifications::NotificationId};
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -3710,8 +3711,8 @@ mod tests {
     use gpui::TestAppContext;
     use indoc::indoc;
     use language::{
-        language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, LanguageMatcher,
-        Point,
+        Buffer, Language, LanguageConfig, LanguageMatcher, Point, language_settings,
+        tree_sitter_rust,
     };
     use language_model::{LanguageModelRegistry, TokenUsage};
     use rand::prelude::*;

@@ -5,10 +5,10 @@ mod logger;
 mod reliability;
 mod zed;
 
-use anyhow::{anyhow, Context as _, Result};
-use clap::{command, Parser};
+use anyhow::{Context as _, Result, anyhow};
+use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{parse_zed_link, Client, ProxySettings, UserStore};
+use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use dap::DapRegistry;
@@ -17,12 +17,12 @@ use editor::Editor;
 use extension::ExtensionHostProxy;
 use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
-use futures::{future, StreamExt};
+use futures::{StreamExt, future};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
-use http_client::{read_proxy_from_env, Uri};
+use http_client::{Uri, read_proxy_from_env};
 use language::LanguageRegistry;
 use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
@@ -32,10 +32,10 @@ use logger::{init_logger, init_stdout_logger};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
-use recent_projects::{open_ssh_project, SshSettings};
+use recent_projects::{SshSettings, open_ssh_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{watch_config_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore, watch_config_file};
 use std::{
     env,
     io::{self, IsTerminal},
@@ -47,15 +47,15 @@ use theme::{
     ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
     ThemeSettings,
 };
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
-use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
+use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
 use zed::{
-    app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
-    handle_keymap_file_changes, handle_settings_changed, handle_settings_file_changes,
-    initialize_workspace, inline_completion_registry, open_paths_with_positions, OpenListener,
-    OpenRequest,
+    OpenListener, OpenRequest, app_menus, build_window_options, derive_paths_with_position,
+    handle_cli_connection, handle_keymap_file_changes, handle_settings_changed,
+    handle_settings_file_changes, initialize_workspace, inline_completion_registry,
+    open_paths_with_positions,
 };
 
 #[cfg(unix)]
@@ -174,7 +174,7 @@ fn main() {
 
     #[cfg(all(not(debug_assertions), target_os = "windows"))]
     unsafe {
-        use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
 
         if args.foreground {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);

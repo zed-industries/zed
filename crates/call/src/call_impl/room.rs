@@ -2,11 +2,11 @@ use crate::{
     call_settings::CallSettings,
     participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use audio::{Audio, Sound};
 use client::{
-    proto::{self, PeerId},
     ChannelId, Client, ParticipantIndex, TypedEnvelope, User, UserStore,
+    proto::{self, PeerId},
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
@@ -20,7 +20,7 @@ use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
 use std::{any::Any, future::Future, mem, sync::Arc, time::Duration};
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, post_inc};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -139,7 +139,7 @@ impl Room {
             pending_participants: Default::default(),
             pending_call_count: 0,
             client_subscriptions: vec![
-                client.add_message_handler(cx.weak_entity(), Self::handle_room_updated)
+                client.add_message_handler(cx.weak_entity(), Self::handle_room_updated),
             ],
             _subscriptions: vec![
                 cx.on_release(Self::released),

@@ -1,11 +1,11 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use editor::SearchSettings;
-use gpui::{actions, Action, App, FocusHandle, IntoElement};
+use gpui::{Action, App, FocusHandle, IntoElement, actions};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
-use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton, IconButtonShape};
+use ui::{Tooltip, prelude::*};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
 

@@ -1,13 +1,13 @@
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::{
-    future::{BoxFuture, LocalBoxFuture},
     Future, FutureExt as _,
+    future::{BoxFuture, LocalBoxFuture},
 };
 use gpui::{AnyEntity, AnyWeakEntity, AsyncApp, Entity};
 use proto::{
-    error::ErrorExt as _, AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage,
-    RequestMessage, TypedEnvelope,
+    AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage, RequestMessage, TypedEnvelope,
+    error::ErrorExt as _,
 };
 use std::{
     any::TypeId,

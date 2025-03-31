@@ -1,23 +1,23 @@
 mod channel_index;
 
-use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
-use anyhow::{anyhow, Result};
+use crate::{ChannelMessage, channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
+use anyhow::{Result, anyhow};
 use channel_index::ChannelIndex;
 use client::{ChannelId, Client, ClientSettings, Subscription, User, UserId, UserStore};
-use collections::{hash_map, HashMap, HashSet};
-use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
+use collections::{HashMap, HashSet, hash_map};
+use futures::{Future, FutureExt, StreamExt, channel::mpsc, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, SharedString, Task,
     WeakEntity,
 };
 use language::Capability;
 use rpc::{
-    proto::{self, ChannelRole, ChannelVisibility},
     TypedEnvelope,
+    proto::{self, ChannelRole, ChannelVisibility},
 };
 use settings::Settings;
 use std::{mem, sync::Arc, time::Duration};
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 

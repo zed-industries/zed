@@ -7,8 +7,8 @@ use html_to_markdown::markdown::{
     HeadingHandler, ListHandler, ParagraphHandler, StyledTextHandler, TableHandler,
 };
 use html_to_markdown::{
-    convert_html_to_markdown, HandleTag, HandlerOutcome, HtmlElement, MarkdownWriter,
-    StartTagOutcome, TagHandler,
+    HandleTag, HandlerOutcome, HtmlElement, MarkdownWriter, StartTagOutcome, TagHandler,
+    convert_html_to_markdown,
 };
 use indexmap::IndexSet;
 use strum::IntoEnumIterator;
@@ -326,7 +326,7 @@ impl HandleTag for RustdocItemCollector {
 
 #[cfg(test)]
 mod tests {
-    use html_to_markdown::{convert_html_to_markdown, TagHandler};
+    use html_to_markdown::{TagHandler, convert_html_to_markdown};
     use indoc::indoc;
     use pretty_assertions::assert_eq;
 

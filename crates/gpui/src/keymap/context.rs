@@ -1,5 +1,5 @@
 use crate::SharedString;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::fmt;
 
 /// A datastructure for resolving whether an action should be dispatched

@@ -4,7 +4,7 @@ use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrevious};
-use project::{RemoveOptions, FS_WATCH_LATENCY};
+use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
 use util::path;
 use workspace::{AppState, OpenOptions, ToggleFileFinder, Workspace};

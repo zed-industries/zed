@@ -51,7 +51,7 @@ pub mod test;
 pub(crate) use actions::*;
 pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex};
@@ -66,14 +66,14 @@ pub use editor_settings::{
     ShowScrollbar,
 };
 pub use editor_settings_controls::*;
-use element::{layout_line, AcceptEditPredictionBinding, LineWithInvisibles, PositionMap};
+use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
 use feature_flags::{Debugger, FeatureFlagAppExt};
 use futures::{
-    future::{self, join, Shared},
     FutureExt,
+    future::{self, Shared, join},
 };
 use fuzzy::StringMatchCandidate;
 
@@ -84,18 +84,18 @@ use code_context_menus::{
 };
 use git::blame::GitBlame;
 use gpui::{
-    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
-    AnimationExt, AnyElement, App, AppContext, AsyncWindowContext, AvailableSpace, Background,
-    Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase, Edges, Entity,
-    EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight,
-    Global, HighlightStyle, Hsla, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, Stateful, Styled, StyledText, Subscription,
-    Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
-    WeakEntity, WeakFocusHandle, Window,
+    Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
+    AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
+    DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
+    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
+    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size,
+    Stateful, Styled, StyledText, Subscription, Task, TextStyle, TextStyleRefinement,
+    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
-use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
-use hover_popover::{hide_hover, HoverState};
+use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
+use hover_popover::{HoverState, hide_hover};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion::Direction;
@@ -103,24 +103,25 @@ use inline_completion::{EditPredictionProvider, InlineCompletionProviderHandle};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
+    AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
+    CursorShape, Diagnostic, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText,
+    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
+    TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
-        WordsCompletionMode,
+        self, InlayHintSettings, RewrapBehavior, WordsCompletionMode, all_language_settings,
+        language_settings,
     },
-    point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
-    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    point_from_lsp, text_diff_with_options,
 };
-use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
+use language::{BufferRow, CharClassifier, Runnable, RunnableRange, point_to_lsp};
 use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
+    ProjectPath,
     debugger::breakpoint_store::{
         BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
     },
-    ProjectPath,
 };
 
 pub use proposed_changes_editor::{
@@ -148,21 +149,21 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use project::{
-    debugger::breakpoint_store::Breakpoint,
-    lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
-    project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
     Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
     TaskSourceKind,
+    debugger::breakpoint_store::Breakpoint,
+    lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
+    project_settings::{GitGutterSetting, ProjectSettings},
 };
 use rand::prelude::*;
-use rpc::{proto::*, ErrorExt};
+use rpc::{ErrorExt, proto::*};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{
-    resolve_selections, MutableSelectionsCollection, SelectionsCollection,
+    MutableSelectionsCollection, SelectionsCollection, resolve_selections,
 };
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsLocation, SettingsStore};
+use settings::{Settings, SettingsLocation, SettingsStore, update_settings_file};
 use smallvec::SmallVec;
 use snippet::Snippet;
 use std::sync::Arc;
@@ -182,21 +183,21 @@ pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{
-    observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
-    ThemeColors, ThemeSettings,
+    ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings,
+    observe_buffer_font_size_adjustment,
 };
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconButtonShape, IconName,
-    IconSize, Key, Tooltip,
+    ButtonSize, ButtonStyle, Disclosure, IconButton, IconButtonShape, IconName, IconSize, Key,
+    Tooltip, h_flex, prelude::*,
 };
-use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
+    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
+    RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
+    ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{ItemHandle, PreviewTabsSettings},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
-    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
-    RestoreOnStartupBehavior, SplitDirection, TabBarSettings, Toast, ViewId, Workspace,
-    WorkspaceId, WorkspaceSettings, SERIALIZATION_THROTTLE_TIME,
 };
 
 use crate::hover_links::{find_url, find_url_from_range};
@@ -271,11 +272,7 @@ pub enum Navigated {
 
 impl Navigated {
     pub fn from_bool(yes: bool) -> Navigated {
-        if yes {
-            Navigated::Yes
-        } else {
-            Navigated::No
-        }
+        if yes { Navigated::Yes } else { Navigated::No }
     }
 }
 
@@ -1969,12 +1966,12 @@ impl Editor {
     pub fn set_custom_context_menu(
         &mut self,
         f: impl 'static
-            + Fn(
-                &mut Self,
-                DisplayPoint,
-                &mut Window,
-                &mut Context<Self>,
-            ) -> Option<Entity<ui::ContextMenu>>,
+        + Fn(
+            &mut Self,
+            DisplayPoint,
+            &mut Window,
+            &mut Context<Self>,
+        ) -> Option<Entity<ui::ContextMenu>>,
     ) {
         self.custom_context_menu = Some(Box::new(f))
     }
@@ -12474,11 +12471,7 @@ impl Editor {
                     best_in_bracket_range = in_bracket_range;
                     best_destination = Some(
                         if close.contains(&selection.start) && close.contains(&selection.end) {
-                            if inside {
-                                open.end
-                            } else {
-                                open.start
-                            }
+                            if inside { open.end } else { open.start }
                         } else if inside {
                             *close.start()
                         } else {

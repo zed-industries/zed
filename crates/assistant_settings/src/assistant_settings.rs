@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
-use schemars::{schema::Schema, JsonSchema};
+use schemars::{JsonSchema, schema::Schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 

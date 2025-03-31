@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::{ClickEvent, CursorStyle};
 
-use crate::{prelude::*, Color, IconButton, IconButtonShape, IconName, IconSize};
+use crate::{Color, IconButton, IconButtonShape, IconName, IconSize, prelude::*};
 
 #[derive(IntoElement)]
 pub struct Disclosure {

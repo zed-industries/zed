@@ -1,5 +1,5 @@
 use crate::FakeFs;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture};
 use git::{

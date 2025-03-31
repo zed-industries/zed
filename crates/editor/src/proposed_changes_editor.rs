@@ -9,10 +9,10 @@ use project::Project;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
-use ui::{prelude::*, ButtonLike, KeyBinding};
+use ui::{ButtonLike, KeyBinding, prelude::*};
 use workspace::{
-    searchable::SearchableItemHandle, Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace,
+    Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    searchable::SearchableItemHandle,
 };
 
 pub struct ProposedChangesEditor {

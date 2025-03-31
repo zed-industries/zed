@@ -1,4 +1,4 @@
-use crate::db::{channel_member, ChannelId, ChannelMemberId, ChannelRole, UserId};
+use crate::db::{ChannelId, ChannelMemberId, ChannelRole, UserId, channel_member};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]

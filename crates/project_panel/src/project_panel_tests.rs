@@ -8,8 +8,9 @@ use settings::SettingsStore;
 use std::path::{Path, PathBuf};
 use util::{path, separator};
 use workspace::{
+    AppState, Pane,
     item::{Item, ProjectItem},
-    register_project_item, AppState, Pane,
+    register_project_item,
 };
 
 #[gpui::test]
@@ -4950,11 +4951,7 @@ fn visible_entries_as_strings(
 
             let indent = "    ".repeat(details.depth);
             let icon = if details.kind.is_dir() {
-                if details.is_expanded {
-                    "v "
-                } else {
-                    "> "
-                }
+                if details.is_expanded { "v " } else { "> " }
             } else {
                 "  "
             };

@@ -1,12 +1,12 @@
 use gpui::{
-    linear_color_stop, linear_gradient, point, App, Context, EventEmitter, IntoElement,
-    PlatformDisplay, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowKind, WindowOptions,
+    App, Context, EventEmitter, IntoElement, PlatformDisplay, Size, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
+    linear_color_stop, linear_gradient, point,
 };
 use release_channel::ReleaseChannel;
 use std::rc::Rc;
 use theme;
-use ui::{prelude::*, Render};
+use ui::{Render, prelude::*};
 
 pub struct AgentNotification {
     title: SharedString,

@@ -26,10 +26,10 @@ use prompt_store::{
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use util::{maybe, post_inc, ResultExt as _, TryFutureExt as _};
+use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
 use uuid::Uuid;
 
-use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
+use crate::context::{ContextId, ContextSnapshot, attach_context_to_message};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse,

@@ -2,9 +2,9 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use collections::{BTreeMap, HashMap, HashSet};
-use futures::{self, future, Future, FutureExt};
+use futures::{self, Future, FutureExt, future};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language::Buffer;
 use project::{ProjectItem, ProjectPath, Worktree};

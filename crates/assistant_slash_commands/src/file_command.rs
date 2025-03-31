@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent,
     SlashCommandOutput, SlashCommandOutputSection, SlashCommandResult,
 };
-use futures::channel::mpsc;
 use futures::Stream;
+use futures::channel::mpsc;
 use fuzzy::PathMatch;
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
@@ -15,7 +15,7 @@ use std::{
     fmt::Write,
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
 use util::ResultExt;
@@ -694,15 +694,21 @@ mod test {
         assert_eq!(result.sections.len(), 7);
 
         // Ensure that full file paths are included in the real output
-        assert!(result
-            .text
-            .contains(separator!("zed/assets/themes/andromeda/LICENSE")));
-        assert!(result
-            .text
-            .contains(separator!("zed/assets/themes/ayu/LICENSE")));
-        assert!(result
-            .text
-            .contains(separator!("zed/assets/themes/summercamp/LICENSE")));
+        assert!(
+            result
+                .text
+                .contains(separator!("zed/assets/themes/andromeda/LICENSE"))
+        );
+        assert!(
+            result
+                .text
+                .contains(separator!("zed/assets/themes/ayu/LICENSE"))
+        );
+        assert!(
+            result
+                .text
+                .contains(separator!("zed/assets/themes/summercamp/LICENSE"))
+        );
 
         assert_eq!(result.sections[5].label, "summercamp");
 

@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
-use anyhow::{anyhow, Context as _, Result};
-use client::{proto, TypedEnvelope};
+use anyhow::{Context as _, Result, anyhow};
+use client::{TypedEnvelope, proto};
 use collections::{HashMap, HashSet};
 use extension::{
     Extension, ExtensionHostProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
