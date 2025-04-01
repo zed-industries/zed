@@ -1,5 +1,4 @@
 mod failed;
-mod inert;
 pub mod running;
 mod starting;
 
@@ -11,7 +10,6 @@ use gpui::{
     Animation, AnimationExt, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, Transformation, WeakEntity, percentage,
 };
-use inert::{InertEvent, InertState};
 use project::Project;
 use project::debugger::{dap_store::DapStore, session::Session};
 use project::worktree_store::WorktreeStore;
@@ -29,7 +27,6 @@ use workspace::{
 use crate::debugger_panel::DebugPanel;
 
 pub(crate) enum DebugSessionState {
-    Inert(Entity<InertState>),
     Starting(Entity<StartingState>),
     Failed(Entity<FailedState>),
     Running(Entity<running::RunningState>),
@@ -69,41 +66,6 @@ pub enum ThreadItem {
 }
 
 impl DebugSession {
-    pub(super) fn inert(
-        project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
-        debug_panel: WeakEntity<DebugPanel>,
-        config: Option<DebugTaskDefinition>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Entity<Self> {
-        let default_cwd = project
-            .read(cx)
-            .worktrees(cx)
-            .next()
-            .and_then(|tree| tree.read(cx).abs_path().to_str().map(|str| str.to_string()))
-            .unwrap_or_default();
-
-        let inert =
-            cx.new(|cx| InertState::new(workspace.clone(), &default_cwd, config, window, cx));
-
-        let project = project.read(cx);
-        let dap_store = project.dap_store().downgrade();
-        let worktree_store = project.worktree_store().downgrade();
-        cx.new(|cx| {
-            let _subscriptions = [cx.subscribe_in(&inert, window, Self::on_inert_event)];
-            Self {
-                remote_id: None,
-                mode: DebugSessionState::Inert(inert),
-                dap_store,
-                worktree_store,
-                debug_panel,
-                workspace,
-                _subscriptions,
-            }
-        })
-    }
-
     pub(crate) fn running(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -129,7 +91,6 @@ impl DebugSession {
 
     pub(crate) fn session_id(&self, cx: &App) -> Option<SessionId> {
         match &self.mode {
-            DebugSessionState::Inert(_) => None,
             DebugSessionState::Starting(entity) => Some(entity.read(cx).session_id),
             DebugSessionState::Failed(_) => None,
             DebugSessionState::Running(entity) => Some(entity.read(cx).session_id()),
@@ -138,7 +99,6 @@ impl DebugSession {
 
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
         match &self.mode {
-            DebugSessionState::Inert(_) => {}
             DebugSessionState::Starting(_entity) => {} // todo(debugger): we need to shutdown the starting process in this case (or recreate it on a breakpoint being hit)
             DebugSessionState::Failed(_) => {}
             DebugSessionState::Running(state) => state.update(cx, |state, cx| state.shutdown(cx)),
@@ -147,38 +107,6 @@ impl DebugSession {
 
     pub(crate) fn mode(&self) -> &DebugSessionState {
         &self.mode
-    }
-
-    fn on_inert_event(
-        &mut self,
-        _: &Entity<InertState>,
-        event: &InertEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let dap_store = self.dap_store.clone();
-        let InertEvent::Spawned { config } = event;
-        let config = config.clone();
-
-        self.debug_panel
-            .update(cx, |this, _| this.last_inert_config = Some(config.clone()))
-            .log_err();
-
-        let worktree = self
-            .worktree_store
-            .update(cx, |this, _| this.worktrees().next())
-            .ok()
-            .flatten()
-            .expect("worktree-less project");
-        let Ok((new_session_id, task)) = dap_store.update(cx, |store, cx| {
-            store.new_session(config.into(), &worktree, None, cx)
-        }) else {
-            return;
-        };
-        let starting = cx.new(|cx| StartingState::new(new_session_id, task, cx));
-
-        self._subscriptions = [cx.subscribe_in(&starting, window, Self::on_starting_event)];
-        self.mode = DebugSessionState::Starting(starting);
     }
 
     fn on_starting_event(
@@ -200,7 +128,6 @@ impl DebugSession {
 
     pub(crate) fn label(&self, cx: &App) -> String {
         let session_id = match &self.mode {
-            DebugSessionState::Inert(_) => return "New Session".to_string(),
             DebugSessionState::Starting(starting_state) => starting_state.read(cx).session_id(),
             DebugSessionState::Failed(failed_state) => failed_state.read(cx).session_id(),
             DebugSessionState::Running(running_state) => running_state.read(cx).session_id(),
@@ -224,7 +151,6 @@ impl EventEmitter<DebugPanelItemEvent> for DebugSession {}
 impl Focusable for DebugSession {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.mode {
-            DebugSessionState::Inert(inert_state) => inert_state.focus_handle(cx),
             DebugSessionState::Starting(starting_state) => starting_state.focus_handle(cx),
             DebugSessionState::Failed(failed_state) => failed_state.focus_handle(cx),
             DebugSessionState::Running(running_state) => running_state.focus_handle(cx),
@@ -236,7 +162,6 @@ impl Item for DebugSession {
     type Event = DebugPanelItemEvent;
     fn tab_content(&self, _: item::TabContentParams, _: &Window, cx: &App) -> AnyElement {
         let (icon, label, color) = match &self.mode {
-            DebugSessionState::Inert(_) => (None, "New Session", Color::Default),
             DebugSessionState::Starting(_) => (None, "Starting", Color::Default),
             DebugSessionState::Failed(_) => (
                 Some(Indicator::dot().color(Color::Error)),
@@ -360,9 +285,6 @@ impl FollowableItem for DebugSession {
 impl Render for DebugSession {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.mode {
-            DebugSessionState::Inert(inert_state) => {
-                inert_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
-            }
             DebugSessionState::Starting(starting_state) => {
                 starting_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
             }

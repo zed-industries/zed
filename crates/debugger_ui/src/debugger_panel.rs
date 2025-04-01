@@ -25,6 +25,7 @@ use std::{any::TypeId, path::PathBuf};
 use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
+use util::ResultExt;
 use workspace::{
     ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut,
     StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
@@ -68,8 +69,6 @@ impl DebugPanel {
         cx.new(|cx| {
             let project = workspace.project().clone();
             let dap_store = project.read(cx).dap_store();
-            let weak_workspace = workspace.weak_handle();
-            let debug_panel = cx.weak_entity();
             let pane = cx.new(|cx| {
                 let mut pane = Pane::new(
                     workspace.weak_handle(),
@@ -86,21 +85,6 @@ impl DebugPanel {
                 pane.set_should_display_tab_bar(|_window, _cx| false);
                 pane.set_close_pane_if_empty(true, cx);
 
-                pane.add_item(
-                    Box::new(DebugSession::inert(
-                        project.clone(),
-                        weak_workspace.clone(),
-                        debug_panel.clone(),
-                        None,
-                        window,
-                        cx,
-                    )),
-                    false,
-                    false,
-                    None,
-                    window,
-                    cx,
-                );
                 pane
             });
 
@@ -737,8 +721,12 @@ impl Panel for DebugPanel {
     ) {
     }
 
-    fn size(&self, _window: &Window, _cx: &App) -> Pixels {
-        self.size
+    fn size(&self, _window: &Window, cx: &App) -> Pixels {
+        if self.pane.read(cx).items().next().is_some() {
+            self.size
+        } else {
+            px(0.)
+        }
     }
 
     fn set_size(&mut self, size: Option<Pixels>, _window: &mut Window, _cx: &mut Context<Self>) {
@@ -775,36 +763,32 @@ impl Panel for DebugPanel {
             };
             let config = self.last_inert_config.clone();
             let panel = cx.weak_entity();
-            // todo: We need to revisit it when we start adding stopped items to pane (as that'll cause us to add two items).
-            self.pane.update(cx, |this, cx| {
-                this.add_item(
-                    Box::new(DebugSession::inert(
-                        project,
-                        self.workspace.clone(),
-                        panel,
-                        config,
-                        window,
-                        cx,
-                    )),
-                    false,
-                    false,
-                    None,
-                    window,
-                    cx,
-                );
-            });
+            let workspace = self.workspace.clone();
+            cx.defer_in(window, |this, window, cx| {
+                this.workspace
+                    .update(cx, |this, cx| {
+                        this.toggle_modal(window, cx, |window, cx| {
+                            NewSessionModal::new(workspace, window, cx)
+                        });
+                    })
+                    .log_err();
+            })
         }
     }
 }
 
 impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_sessions = self.pane.read(cx).items().next().is_some();
         v_flex()
+            .h_0()
             .key_context("DebugPanel")
             .track_focus(&self.focus_handle(cx))
-            .size_full()
-            .child(h_flex().children(self.top_controls_strip(window, cx)))
-            .child(self.pane.clone())
+            .when(has_sessions, |this| {
+                this.size_full()
+                    .child(h_flex().children(self.top_controls_strip(window, cx)))
+                    .child(self.pane.clone())
+            })
             .into_any()
     }
 }
