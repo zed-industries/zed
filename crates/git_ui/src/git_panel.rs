@@ -48,7 +48,6 @@ use panel::{
 use project::git_store::RepositoryEvent;
 use project::{
     Fs, Project, ProjectPath,
-    git_store::{GitEvent, Repository},
     git_store::{GitStoreEvent, Repository},
 };
 use serde::{Deserialize, Serialize};

@@ -849,7 +849,7 @@ impl GitStore {
             }
         });
 
-        cx.spawn(|_: &mut AsyncApp| async move { Ok(rx.await??) })
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
     pub fn get_permalink_to_line(
@@ -944,7 +944,7 @@ impl GitStore {
                 }
             }
         });
-        cx.spawn(|_: &mut AsyncApp| async move { Ok(rx.await??) })
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
     fn downstream_client(&self) -> Option<(AnyProtoClient, ProjectId)> {
@@ -1860,8 +1860,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::LoadCommitDiff>,
         mut cx: AsyncApp,
     ) -> Result<proto::LoadCommitDiffResponse> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let commit_diff = repository_handle
             .update(&mut cx, |repository_handle, _| {
@@ -2771,7 +2771,7 @@ impl Repository {
             }
         });
 
-        cx.spawn(|_, _: &mut AsyncApp| async move { Ok(rx.await??) })
+        cx.spawn(|_, _: &mut AsyncApp| async move { rx.await? })
     }
 
     fn open_local_commit_buffer(
@@ -2899,7 +2899,8 @@ impl Repository {
     }
 
     pub fn load_commit_diff(&self, commit: String) -> oneshot::Receiver<Result<CommitDiff>> {
-        self.send_job(|git_repo, cx| async move {
+        let id = self.id;
+        self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local { backend, .. } => backend.load_commit(commit, cx).await,
                 RepositoryState::Remote {
@@ -2908,7 +2909,7 @@ impl Repository {
                     let response = client
                         .request(proto::LoadCommitDiff {
                             project_id: project_id.0,
-                            work_directory_id: work_directory_id.to_proto(),
+                            repository_id: id.to_proto(),
                             commit,
                         })
                         .await?;
@@ -3584,7 +3585,7 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .update(&mut cx, |this, cx| {
+                    .update(&mut cx, |this, _| {
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),
@@ -3738,7 +3739,7 @@ impl Repository {
                 }
             }
         });
-        cx.spawn(|_: &mut AsyncApp| async move { Ok(rx.await??) })
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
     fn load_committed_text(
@@ -3785,7 +3786,7 @@ impl Repository {
             }
         });
 
-        cx.spawn(|_: &mut AsyncApp| async move { Ok(rx.await??) })
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
     fn paths_changed(

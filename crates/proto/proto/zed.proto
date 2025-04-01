@@ -3372,7 +3372,7 @@ message GitCommitDetails {
 message LoadCommitDiff {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     string commit = 4;
 }
 

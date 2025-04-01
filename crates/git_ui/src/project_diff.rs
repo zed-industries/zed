@@ -24,7 +24,6 @@ use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
-    git_store::{GitEvent, GitStore},
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
 use std::any::{Any, TypeId};

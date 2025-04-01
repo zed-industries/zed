@@ -2,8 +2,9 @@ use crate::Editor;
 use anyhow::Result;
 use collections::HashMap;
 use git::{
+    GitHostingProviderRegistry, GitRemote, Oid,
     blame::{Blame, BlameEntry, ParsedCommitMessage},
-    parse_git_remote_url, GitHostingProviderRegistry, GitRemote, Oid,
+    parse_git_remote_url,
 };
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Hsla, Subscription, Task, TextStyle,
@@ -12,8 +13,8 @@ use gpui::{
 use language::{Bias, Buffer, BufferSnapshot, Edit};
 use multi_buffer::RowInfo;
 use project::{
-    git_store::{GitStoreEvent, RepositoryEvent},
     Project, ProjectItem,
+    git_store::{GitStoreEvent, Repository, RepositoryEvent},
 };
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
@@ -604,7 +605,7 @@ mod tests {
     use std::{cmp, env, ops::Range, path::Path};
     use text::BufferId;
     use unindent::Unindent as _;
-    use util::{path, RandomCharIter};
+    use util::{RandomCharIter, path};
 
     // macro_rules! assert_blame_rows {
     //     ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {

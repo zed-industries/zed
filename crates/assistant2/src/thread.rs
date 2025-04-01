@@ -1462,6 +1462,8 @@ impl Thread {
                 None => None,
                 Some((branch /* repo */,)) => {
                     let current_branch = branch.map(|branch| branch.name.to_string());
+
+                    // FIXME
                     //let remote_url = repo.remote_url("origin");
                     //let head_sha = repo.head_sha();
 

@@ -310,7 +310,7 @@ impl GitRepository for FakeGitRepository {
                 entries: entries.into(),
             })
         });
-        async move { Ok(result??) }.boxed()
+        async move { result? }.boxed()
     }
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
