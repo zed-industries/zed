@@ -285,24 +285,21 @@ impl ProjectSearch {
                     }
                 }
 
-                let match_ranges = this
-                    .update(cx, |this, cx| {
-                        this.excerpts.update(cx, |excerpts, cx| {
-                            excerpts.push_multiple_excerpts_with_context_lines(
-                                buffers_with_ranges,
+                this.update(cx, |this, cx| {
+                    this.excerpts.update(cx, |excerpts, cx| {
+                        for (buffer, ranges) in buffers_with_ranges {
+                            let (new_ranges, _) = excerpts.set_excerpts_for_path(
+                                PathKey::for_buffer(&buffer, cx),
+                                buffer,
+                                ranges,
                                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                                 cx,
-                            )
-                        })
+                            );
+                            this.match_ranges.extend(new_ranges)
+                        }
                     })
-                    .ok()?
-                    .await;
-
-                this.update(cx, |this, cx| {
-                    this.match_ranges.extend(match_ranges);
-                    cx.notify();
                 })
-                .ok()?;
+                .ok()?
             }
 
             this.update(cx, |this, cx| {
