@@ -1273,25 +1273,19 @@ fn wrapping_right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) 
     point
 }
 
-fn wrapping_right_single(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let eol_point = map.clip_point(
-        DisplayPoint::new(point.row(), map.line_len(point.row())),
-        Bias::Left,
-    );
-    let mut eol_chars = map.buffer_chars_at(eol_point.to_offset(map, Bias::Left));
-    let eol_char_len = match eol_chars.next() {
-        Some((ch, _)) => ch.len_utf8() as u32,
-        None => 1,
-    };
-    let max_column = map.line_len(point.row()).saturating_sub(eol_char_len);
-    if point.column() < max_column {
-        *point.column_mut() += 1;
-        point = map.clip_point(point, Bias::Right);
-    } else if point.row() < map.max_point().row() {
-        *point.row_mut() += 1;
-        *point.column_mut() = 0;
+fn wrapping_right_single(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let mut next_point = point;
+    *next_point.column_mut() += 1;
+    next_point = map.clip_point(next_point, Bias::Right);
+    if next_point == point {
+        if next_point.row() == map.max_point().row() {
+            next_point
+        } else {
+            DisplayPoint::new(next_point.row().next_row(), 0)
+        }
+    } else {
+        next_point
     }
-    point
 }
 
 pub(crate) fn start_of_relative_buffer_row(
