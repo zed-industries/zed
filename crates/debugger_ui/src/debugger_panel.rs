@@ -1,4 +1,4 @@
-use crate::session::DebugSession;
+use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
@@ -660,32 +660,40 @@ impl DebugPanel {
                             IconButton::new("debug-new-session", IconName::Plus)
                                 .icon_size(IconSize::Small)
                                 .on_click({
-                                    cx.listener(move |this, _, window, cx| {
-                                        let config = this.last_inert_config.clone();
-                                        let project = this.project.clone();
-                                        let weak_workspace = this.workspace.clone();
-                                        let debug_panel = cx.weak_entity();
-                                        this.pane.update(cx, |this, cx| {
-                                            let project = project.upgrade();
-                                            if let Some(project) = project {
-                                                this.add_item(
-                                                    Box::new(DebugSession::inert(
-                                                        project.clone(),
-                                                        weak_workspace.clone(),
-                                                        debug_panel.clone(),
-                                                        config,
-                                                        window,
-                                                        cx,
-                                                    )),
-                                                    false,
-                                                    false,
-                                                    None,
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
+                                    let workspace = self.workspace.clone();
+                                    move |_, window, cx| {
+                                        workspace.update(cx, |this, cx| {
+                                            this.toggle_modal(window, cx, |window, cx| {
+                                                NewSessionModal::new(window, cx)
+                                            });
                                         });
-                                    })
+                                    }
+                                    // cx.listener(move |this, _, window, cx| {
+                                    //     let config = this.last_inert_config.clone();
+                                    //     let project = this.project.clone();
+                                    //     let weak_workspace = this.workspace.clone();
+                                    //     let debug_panel = cx.weak_entity();
+                                    //     this.pane.update(cx, |this, cx| {
+                                    //         let project = project.upgrade();
+                                    //         if let Some(project) = project {
+                                    //             this.add_item(
+                                    //                 Box::new(DebugSession::inert(
+                                    //                     project.clone(),
+                                    //                     weak_workspace.clone(),
+                                    //                     debug_panel.clone(),
+                                    //                     config,
+                                    //                     window,
+                                    //                     cx,
+                                    //                 )),
+                                    //                 false,
+                                    //                 false,
+                                    //                 None,
+                                    //                 window,
+                                    //                 cx,
+                                    //             );
+                                    //         }
+                                    //     });
+                                    // })
                                 }),
                         ),
                 ),

@@ -11,7 +11,8 @@ use workspace::{
 
 pub mod attach_modal;
 pub mod debugger_panel;
-pub mod session;
+mod new_session_modal;
+pub(crate) mod session;
 
 #[cfg(test)]
 mod tests;
