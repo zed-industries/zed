@@ -670,6 +670,13 @@
       "pagedown": "editor::ContextMenuLast"
     }
   },
+  {
+    "context": "Editor && showing_signature_help && !showing_completions",
+    "bindings": {
+      "up": "editor::SignatureHelpPrevious",
+      "down": "editor::SignatureHelpNext"
+    }
+  },
   // Custom bindings
   {
     "bindings": {
