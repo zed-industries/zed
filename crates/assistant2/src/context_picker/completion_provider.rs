@@ -198,7 +198,7 @@ impl ContextPickerCompletionProvider {
         context_store: Entity<ContextStore>,
         http_client: Arc<HttpClientWithUrl>,
     ) -> Completion {
-        let new_text = format!("@fetch {}", url_to_fetch);
+        let new_text = format!("[@{}]({})", url_to_fetch, url_to_fetch);
         let new_text_len = new_text.len();
         Completion {
             old_range: source_range.clone(),
