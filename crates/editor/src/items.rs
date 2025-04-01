@@ -509,7 +509,8 @@ fn deserialize_excerpt_range(excerpt: proto::Excerpt) -> Option<ExcerptRange<lan
             let start = language::proto::deserialize_anchor(start)?;
             let end = language::proto::deserialize_anchor(end)?;
             Some(start..end)
-        }).unwrap_or_else(|| context.clone());
+        })
+        .unwrap_or_else(|| context.clone());
     Some(ExcerptRange { context, primary })
 }
 
