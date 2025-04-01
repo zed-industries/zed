@@ -3889,11 +3889,6 @@ impl Repository {
         job_tx
     }
 
-    /// Returns a channel that will resolve when all previously-submitted git jobs have completed.
-    pub fn scan_barrier(&self) -> oneshot::Receiver<()> {
-        todo!()
-    }
-
     fn load_staged_text(
         &self,
         buffer_id: BufferId,

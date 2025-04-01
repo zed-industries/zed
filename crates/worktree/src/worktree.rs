@@ -378,17 +378,17 @@ struct BackgroundScannerState {
 }
 
 #[derive(Debug, Clone)]
-pub struct LocalRepositoryEntry {
-    pub(crate) work_directory_id: ProjectEntryId,
-    pub(crate) work_directory: WorkDirectory,
-    pub(crate) work_directory_abs_path: Arc<Path>,
-    pub(crate) git_dir_scan_id: usize,
-    pub(crate) original_dot_git_abs_path: Arc<Path>,
+struct LocalRepositoryEntry {
+    work_directory_id: ProjectEntryId,
+    work_directory: WorkDirectory,
+    work_directory_abs_path: Arc<Path>,
+    git_dir_scan_id: usize,
+    original_dot_git_abs_path: Arc<Path>,
     /// Absolute path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
-    pub(crate) dot_git_dir_abs_path: Arc<Path>,
+    dot_git_dir_abs_path: Arc<Path>,
     /// Absolute path to the .git file, if we're in a git worktree.
-    pub(crate) dot_git_worktree_abs_path: Option<Arc<Path>>,
+    dot_git_worktree_abs_path: Option<Arc<Path>>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -1414,13 +1414,6 @@ impl LocalWorktree {
         self.settings.clone()
     }
 
-    pub fn get_local_repo(
-        &self,
-        work_directory_id: ProjectEntryId,
-    ) -> Option<&LocalRepositoryEntry> {
-        self.git_repositories.get(&work_directory_id)
-    }
-
     fn load_binary_file(
         &self,
         path: &Path,
@@ -2376,7 +2369,7 @@ impl Snapshot {
         }
     }
 
-    pub(crate) fn apply_remote_update(
+    fn apply_remote_update(
         &mut self,
         update: proto::UpdateWorktree,
         always_included_paths: &PathMatcher,
@@ -2506,16 +2499,6 @@ impl Snapshot {
     pub fn entries(&self, include_ignored: bool, start: usize) -> Traversal {
         self.traverse_from_offset(true, true, include_ignored, start)
     }
-
-    //pub fn repositories(&self) -> &SumTree<RepositoryEntry> {
-    //    &self.repositories
-    //}
-
-    //fn repository_for_id(&self, id: ProjectEntryId) -> Option<&RepositoryEntry> {
-    //    self.repositories
-    //        .iter()
-    //        .find(|repo| repo.work_directory_id == id)
-    //}
 
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
         let empty_path = Path::new("");
@@ -2733,7 +2716,7 @@ impl LocalSnapshot {
     }
 
     #[cfg(test)]
-    pub(crate) fn expanded_entries(&self) -> impl Iterator<Item = &Entry> {
+    fn expanded_entries(&self) -> impl Iterator<Item = &Entry> {
         self.entries_by_path
             .cursor::<()>(&())
             .filter(|entry| entry.kind == EntryKind::Dir && (entry.is_external || entry.is_ignored))
