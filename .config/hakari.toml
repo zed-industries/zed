@@ -19,11 +19,16 @@ platforms = [
     # "wasm32-wasip1", # extensions
 ]
 
+[final-excludes]
+third-party = [
+{ name = "time" },
+]
+
 [traversal-excludes]
 workspace-members = [
-    "remote_server"
+    # "remote_server"
 ]
 third-party = [
-    # { name = "aws-lc-rs" },
+    { name = "time" },
     # { name = "aws-lc-sys" },
 ]

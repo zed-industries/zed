@@ -204,12 +204,12 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             .collect::<Vec<_>>(),
         [Some(3)]
     );
-    assert_eq!(
+    assert!(
         snapshot
             .row_infos(MultiBufferRow(5))
             .map(|info| info.buffer_row)
-            .collect::<Vec<_>>(),
-        []
+            .collect::<Vec<_>>()
+            .is_empty()
     );
 
     assert_eq!(
@@ -870,12 +870,12 @@ fn test_empty_multibuffer(cx: &mut App) {
             .collect::<Vec<_>>(),
         &[Some(0)]
     );
-    assert_eq!(
+    assert!(
         snapshot
             .row_infos(MultiBufferRow(1))
             .map(|info| info.buffer_row)
-            .collect::<Vec<_>>(),
-        &[]
+            .collect::<Vec<_>>()
+            .is_empty(),
     );
 }
 
