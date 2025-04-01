@@ -2338,21 +2338,23 @@ pub(crate) fn parse_completion_text_edit(
                 CompletionMode::Insert => false,
                 CompletionMode::Replace => true,
                 CompletionMode::Auto => {
-                    let mut range = edit.replace;
-                    range.start = edit.insert.end;
-                    let range = range_from_lsp(range);
+                    let range_after_cursor = lsp::Range {
+                        start: edit.insert.end,
+                        end: edit.replace.end,
+                    };
+                    let range_after_cursor = range_from_lsp(range_after_cursor);
 
-                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                    if start != range.start.0 || end != range.end.0 {
+                    let start = snapshot.clip_point_utf16(range_after_cursor.start, Bias::Left);
+                    let end = snapshot.clip_point_utf16(range_after_cursor.end, Bias::Left);
+                    if start != range_after_cursor.start.0 || end != range_after_cursor.end.0 {
                         false
                     } else {
-                        let v = snapshot
+                        let text_after_cursor = snapshot
                             .text_for_range(
                                 snapshot.anchor_before(start)..snapshot.anchor_after(end),
                             )
                             .collect::<String>();
-                        edit.new_text.ends_with(&v)
+                        edit.new_text.ends_with(&text_after_cursor)
                     }
                 }
             };
