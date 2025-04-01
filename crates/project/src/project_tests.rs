@@ -7486,6 +7486,9 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
         git_status(&repo),
         collections::HashMap::from_iter([("a.txt".to_owned(), git2::Status::CONFLICTED)])
     );
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
     tree.flush_fs_events(cx).await;
     let conflicts = repository.update(cx, |repository, _| {
         repository
