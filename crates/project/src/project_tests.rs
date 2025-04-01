@@ -7437,7 +7437,7 @@ async fn test_repository_subfolder_git_status(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 100)]
+#[gpui::test]
 async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();

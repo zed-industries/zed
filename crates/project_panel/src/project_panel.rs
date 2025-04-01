@@ -314,6 +314,7 @@ impl ProjectPanel {
                 | GitStoreEvent::RepositoryAdded(_)
                 | GitStoreEvent::RepositoryRemoved(_) => {
                     this.update_visible_entries(None, cx);
+                    cx.notify();
                 }
                 _ => {}
             })

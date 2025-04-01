@@ -1070,10 +1070,6 @@ impl GitStore {
                 {
                     existing.update(cx, |existing, cx| {
                         existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
-                        // detach
-                        eprintln!(
-                            "scheduling scan because we got an event for an existing repository"
-                        );
                         existing.schedule_scan(updates_tx.clone(), cx);
                     });
                 } else {
@@ -1096,7 +1092,6 @@ impl GitStore {
                         git_store,
                         cx,
                     );
-                    // detach
                     repo.schedule_scan(updates_tx.clone(), cx);
                     repo
                 });
@@ -3844,7 +3839,6 @@ impl Repository {
                     .await;
 
                 this.update(&mut cx, |this, cx| {
-                    cx.emit(RepositoryEvent::Updated);
                     if !changed_path_statuses.is_empty() {
                         this.snapshot
                             .statuses_by_path
@@ -3858,6 +3852,7 @@ impl Repository {
                                 .ok();
                         }
                     }
+                    cx.emit(RepositoryEvent::Updated);
                 })
             },
         );
