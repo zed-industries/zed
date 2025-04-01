@@ -429,14 +429,13 @@ jobs:
     name: Tests Pass
     runs-on: ubuntu-latest
     needs:
-      # FIXME
       - job_spec
-      # - style
-      # - migration_checks
-      # - linux_tests
-      # - build_remote_server
-      # - macos_tests
-      # - windows_clippy
+      - style
+      - migration_checks
+      - linux_tests
+      - build_remote_server
+      - macos_tests
+      - windows_clippy
       - windows_tests
     if: always()
     steps:

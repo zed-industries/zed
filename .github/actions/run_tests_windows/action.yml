@@ -23,8 +23,4 @@ runs:
     - name: Run tests
       shell: pwsh
       working-directory: ${{ inputs.working-directory }}
-      # FIXME
-      env:
-        RUST_LOG: worktree=debug,project=debug,git=debug
-      run: cargo nextest run -p project test_conflicted_cherry_pick
-      # run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast

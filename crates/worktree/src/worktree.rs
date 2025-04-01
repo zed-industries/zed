@@ -4013,16 +4013,14 @@ impl BackgroundScanner {
             {
                 let mut is_git_related = false;
 
-                dbg!(&abs_path);
                 let dot_git_paths = abs_path.as_path().ancestors().find_map(|ancestor| {
-                    if dbg!(smol::block_on(is_git_dir(dbg!(ancestor), self.fs.as_ref()))) {
+                    if smol::block_on(is_git_dir(ancestor, self.fs.as_ref())) {
                         let path_in_git_dir = abs_path.as_path().strip_prefix(ancestor).expect("stripping off the ancestor");
                         Some((ancestor.to_owned(), path_in_git_dir.to_owned()))
                     } else {
                         None
                     }
                 });
-                dbg!(&dot_git_paths);
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
                     if skipped_files_in_dot_git.contains(path_in_git_dir.as_os_str()) || skipped_dirs_in_dot_git.iter().any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir)) {
@@ -4038,7 +4036,7 @@ impl BackgroundScanner {
 
                 let relative_path: Arc<Path> =
                     if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
-                        dbg!(path.into())
+                        path.into()
                     } else {
                         if is_git_related {
                             log::debug!(

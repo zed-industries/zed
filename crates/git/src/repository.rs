@@ -723,13 +723,13 @@ impl GitRepository for RealGitRepository {
                 true
             })
             .ok();
-        if let Some(oid) = dbg!(
-            self.repository
-                .lock()
-                .find_reference("CHERRY_PICK_HEAD")
-                .ok()
-                .and_then(|reference| reference.target())
-        ) {
+        if let Some(oid) = self
+            .repository
+            .lock()
+            .find_reference("CHERRY_PICK_HEAD")
+            .ok()
+            .and_then(|reference| reference.target())
+        {
             shas.push(oid.to_string())
         }
         shas

@@ -4086,7 +4086,7 @@ async fn compute_snapshot(
         &(),
     );
 
-    let merge_head_shas_changed = dbg!(&merge_head_shas) != dbg!(&prev_snapshot.merge_head_shas);
+    let merge_head_shas_changed = merge_head_shas != prev_snapshot.merge_head_shas;
 
     if merge_head_shas_changed
         || branch != prev_snapshot.branch
@@ -4097,7 +4097,6 @@ async fn compute_snapshot(
 
     let mut current_merge_conflicts = TreeSet::default();
     for (repo_path, status) in statuses.entries.iter() {
-        dbg!(&repo_path, &status);
         if status.is_conflicted() {
             current_merge_conflicts.insert(repo_path.clone());
         }
@@ -4107,7 +4106,7 @@ async fn compute_snapshot(
     // until the merge heads change (at commit time, etc.).
     let mut merge_conflicts = prev_snapshot.merge_conflicts.clone();
     if merge_head_shas_changed {
-        merge_conflicts = dbg!(current_merge_conflicts);
+        merge_conflicts = current_merge_conflicts;
         events.push(RepositoryEvent::MergeHeadsChanged);
     }
 
