@@ -1062,8 +1062,12 @@ impl GitStore {
         let mut removed_ids = Vec::new();
         for update in updated_git_repositories.iter() {
             if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
-                Some(&repo.read(cx).work_directory_abs_path)
+                let existing_work_directory_abs_path =
+                    repo.read(cx).work_directory_abs_path.clone();
+                Some(&existing_work_directory_abs_path)
                     == update.old_work_directory_abs_path.as_ref()
+                    || Some(&existing_work_directory_abs_path)
+                        == update.new_work_directory_abs_path.as_ref()
             }) {
                 if let Some(new_work_directory_abs_path) =
                     update.new_work_directory_abs_path.clone()
