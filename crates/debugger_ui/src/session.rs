@@ -192,12 +192,33 @@ impl DebugSession {
             let mode =
                 cx.new(|cx| RunningState::new(session.clone(), self.workspace.clone(), window, cx));
             self.mode = DebugSessionState::Running(mode);
-        } else if let StartingEvent::Failed = event {
-            self.mode = DebugSessionState::Failed(cx.new(FailedState::new));
+        } else if let StartingEvent::Failed(id) = event {
+            self.mode = DebugSessionState::Failed(cx.new(|cx| FailedState::new(*id, cx)));
         };
         cx.notify();
     }
+
+    pub(crate) fn label(&self, cx: &App) -> String {
+        let session_id = match &self.mode {
+            DebugSessionState::Inert(_) => return "New Session".to_string(),
+            DebugSessionState::Starting(starting_state) => starting_state.read(cx).session_id(),
+            DebugSessionState::Failed(failed_state) => failed_state.read(cx).session_id(),
+            DebugSessionState::Running(running_state) => running_state.read(cx).session_id(),
+        };
+        let Ok(Some(session)) = self
+            .dap_store
+            .read_with(cx, |store, _| store.session_by_id(session_id))
+        else {
+            return "".to_owned();
+        };
+        session
+            .read(cx)
+            .as_local()
+            .expect("Remote Debug Sessions are not implemented yet")
+            .label()
+    }
 }
+
 impl EventEmitter<DebugPanelItemEvent> for DebugSession {}
 
 impl Focusable for DebugSession {

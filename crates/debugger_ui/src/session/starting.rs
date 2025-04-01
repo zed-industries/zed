@@ -17,7 +17,7 @@ pub(crate) struct StartingState {
 }
 
 pub(crate) enum StartingEvent {
-    Failed,
+    Failed(SessionId),
     Finished(Entity<Session>),
 }
 
@@ -32,11 +32,11 @@ impl StartingState {
         let _notify_parent = cx.spawn(async move |this, cx| {
             let entity = task.await;
 
-            this.update(cx, |_, cx| {
+            this.update(cx, |this, cx| {
                 if let Ok(entity) = entity {
                     cx.emit(StartingEvent::Finished(entity))
                 } else {
-                    cx.emit(StartingEvent::Failed)
+                    cx.emit(StartingEvent::Failed(this.session_id))
                 }
             })
             .ok();
@@ -46,6 +46,9 @@ impl StartingState {
             focus_handle: cx.focus_handle(),
             _notify_parent,
         }
+    }
+    pub(crate) fn session_id(&self) -> SessionId {
+        self.session_id
     }
 }
 

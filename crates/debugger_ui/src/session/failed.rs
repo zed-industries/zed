@@ -1,16 +1,22 @@
+use dap::client::SessionId;
 use gpui::{FocusHandle, Focusable};
 use ui::{
     Color, Context, IntoElement, Label, LabelCommon, ParentElement, Render, Styled, Window, h_flex,
 };
 
 pub(crate) struct FailedState {
+    session_id: SessionId,
     focus_handle: FocusHandle,
 }
 impl FailedState {
-    pub(super) fn new(cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(session_id: SessionId, cx: &mut Context<Self>) -> Self {
         Self {
+            session_id,
             focus_handle: cx.focus_handle(),
         }
+    }
+    pub(crate) fn session_id(&self) -> SessionId {
+        self.session_id
     }
 }
 
