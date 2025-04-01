@@ -284,8 +284,13 @@ impl ActionLog {
                 };
             }
         }
+<<<<<<< Updated upstream
 
         tracked_buffer.schedule_diff_update();
+=======
+        dbg!("!!!!!!!!!!!");
+        tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
+>>>>>>> Stashed changes
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
