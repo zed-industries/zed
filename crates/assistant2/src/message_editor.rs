@@ -638,12 +638,7 @@ impl Render for MessageEditor {
                     .child(
                         v_flex()
                             .gap_5()
-                            .child(
-                                if is_too_long {
-                                    div().child(EDITOR_PLACEHOLDER).text_color(cx.theme().colors().text_disabled)
-                                        .text_size(font_size)
-                                        .into_any()
-                                } else  {
+                            .child({
                                     let settings = ThemeSettings::get_global(cx);
                                     let text_style = TextStyle {
                                         color: cx.theme().colors().text,
@@ -699,7 +694,6 @@ impl Render for MessageEditor {
                                                     is_editor_empty
                                                         || !is_model_selected
                                                         || is_generating
-                                                        || is_too_long,
                                                 )
                                                 .child(
                                                     h_flex()
