@@ -4,13 +4,16 @@ use gpui::{
     WeakEntity,
 };
 use settings::Settings;
+use task::DebugTaskDefinition;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, ContextMenu, Divider, DropdownMenu,
-    FixedWidth, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
-    StyledExt, ToggleButton, Toggleable, Window, h_flex, relative, v_flex,
+    FixedWidth, FluentBuilder, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, Styled, StyledExt, ToggleButton, Toggleable, Window, h_flex, relative, v_flex,
 };
 use workspace::{ModalView, Workspace};
+
+use crate::attach_modal::AttachModal;
 
 #[derive(Clone)]
 pub(super) struct NewSessionModal {
@@ -55,83 +58,141 @@ impl LaunchMode {
 }
 
 struct AttachMode {
+    workspace: WeakEntity<Workspace>,
+    debugger: Option<SharedString>,
+    debug_definition: DebugTaskDefinition,
+    attach_picker: Option<Entity<AttachModal>>,
     focus_handle: FocusHandle,
 }
 
 impl AttachMode {
-    fn new(cx: &mut App) -> Entity<Self> {
+    fn new(workspace: WeakEntity<Workspace>, cx: &mut App) -> Entity<Self> {
+        let debug_definition = DebugTaskDefinition {
+            label: "Attach New Session Setup".into(),
+            request: dap::DebugRequestType::Attach(task::AttachConfig { process_id: None }),
+            tcp_connection: None,
+            args: Vec::default(),
+            adapter: "".into(),
+            locator: None,
+            initialize_args: None,
+        };
+
         cx.new(|cx| Self {
+            workspace,
+            debugger: None,
+            debug_definition,
+            attach_picker: None,
             focus_handle: cx.focus_handle(),
         })
     }
 }
 
-impl Render for AttachMode {
-    fn render(&mut self, window: &mut Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
-        v_flex().child("Attach mode contents")
-    }
-}
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
-impl Render for LaunchMode {
-    fn render(&mut self, window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
-        let weak = cx.weak_entity();
-        let workspace = self.workspace.clone();
-        v_flex()
-            .w_full()
-            .gap_2()
-            .track_focus(&self.program.focus_handle(cx))
-            .child(render_editor(&self.program, cx))
-            .child(render_editor(&self.cwd, cx))
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .child(DropdownMenu::new(
-                        "dap-adapter-picker",
-                        self.debugger
-                            .as_ref()
-                            .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
-                            .clone(),
-                        ContextMenu::build(window, cx, move |mut this, _, cx| {
-                            let setter_for_name = |name: SharedString| {
-                                let weak = weak.clone();
-                                move |_: &mut Window, cx: &mut App| {
-                                    let name = name.clone();
-                                    weak.update(cx, move |this, cx| {
-                                        this.debugger = Some(name.clone());
-                                        cx.notify();
-                                    })
-                                    .ok();
-                                }
-                            };
-                            let available_adapters = workspace
-                                .update(cx, |this, cx| {
-                                    this.project()
-                                        .read(cx)
-                                        .debug_adapters()
-                                        .enumerate_adapters()
-                                })
-                                .ok()
-                                .unwrap_or_default();
 
-                            for adapter in available_adapters {
-                                this = this.entry(
-                                    adapter.0.clone(),
-                                    None,
-                                    setter_for_name(adapter.0.clone()),
-                                );
-                            }
-                            this
-                        }),
-                    ))
-                    .child(Button::new("debugger-launch-spawn", "Launch")),
-            )
-    }
-}
 #[derive(Clone)]
 enum NewSessionMode {
     Launch(Entity<LaunchMode>),
     Attach(Entity<AttachMode>),
+}
+
+impl NewSessionMode {
+    fn adapter_drop_down_menu(&self, window: &mut Window, cx: &mut App) -> ui::DropdownMenu {
+        #[derive(Clone)]
+        enum Either {
+            Launch(WeakEntity<LaunchMode>),
+            Attach(WeakEntity<AttachMode>),
+        }
+
+        let (debugger, either, workspace) = match self {
+            NewSessionMode::Launch(launch) => {
+                let entity = launch.read(cx);
+                (
+                    entity.debugger.clone(),
+                    Either::Launch(launch.downgrade()),
+                    entity.workspace.clone(),
+                )
+            }
+            NewSessionMode::Attach(attach) => {
+                let entity = attach.read(cx);
+                (
+                    entity.debugger.clone(),
+                    Either::Attach(attach.downgrade()),
+                    entity.workspace.clone(),
+                )
+            }
+        };
+
+        DropdownMenu::new(
+            "dap-adapter-picker",
+            debugger
+                .as_ref()
+                .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
+                .clone(),
+            ContextMenu::build(window, cx, move |mut menu, _, cx| {
+                let setter_for_name = |name: SharedString| {
+                    let either = either.clone();
+                    move |window: &mut Window, cx: &mut App| match &either {
+                        Either::Launch(launch) => {
+                            let name = name.clone();
+                            launch
+                                .update(cx, move |this, cx| {
+                                    this.debugger = Some(name);
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                        Either::Attach(attach) => {
+                            let name = name.clone();
+                            attach
+                                .update(cx, |this, cx| {
+                                    if name != this.debug_definition.adapter {
+                                        this.debug_definition.adapter = name.clone().into();
+                                        if let Some(project) = this
+                                            .workspace
+                                            .read_with(cx, |workspace, _| {
+                                                workspace.project().clone()
+                                            })
+                                            .ok()
+                                        {
+                                            this.attach_picker = Some(cx.new(|cx| {
+                                                let modal = AttachModal::new(
+                                                    project,
+                                                    this.debug_definition.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+
+                                                window.focus(&modal.focus_handle(cx));
+
+                                                modal
+                                            }));
+                                        }
+                                    }
+
+                                    this.debugger = Some(name);
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                    }
+                };
+                let available_adapters = workspace
+                    .update(cx, |this, cx| {
+                        this.project()
+                            .read(cx)
+                            .debug_adapters()
+                            .enumerate_adapters()
+                    })
+                    .ok()
+                    .unwrap_or_default();
+
+                for adapter in available_adapters {
+                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.0.clone()));
+                }
+                menu
+            }),
+        )
+    }
 }
 
 impl Focusable for NewSessionMode {
@@ -145,20 +206,49 @@ impl Focusable for NewSessionMode {
 
 impl RenderOnce for NewSessionMode {
     fn render(self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
+        let adapter_menu = self.adapter_drop_down_menu(window, cx);
+
         match self {
-            NewSessionMode::Launch(entity) => {
-                entity.update(cx, |this, cx| this.render(window, cx).into_any_element())
-            }
-            NewSessionMode::Attach(entity) => {
-                entity.update(cx, |this, cx| this.render(window, cx).into_any_element())
-            }
+            NewSessionMode::Launch(entity) => entity
+                .read_with(cx, |this, cx| {
+                    v_flex()
+                        .w_full()
+                        .gap_2()
+                        .track_focus(&this.program.focus_handle(cx))
+                        .child(render_editor(&this.program, cx))
+                        .child(render_editor(&this.cwd, cx))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .child(adapter_menu)
+                                .child(Button::new("debugger-launch-spawn", "Launch")),
+                        )
+                })
+                .into_any_element(),
+            NewSessionMode::Attach(entity) => entity.read_with(cx, |this, _| {
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .child(adapter_menu)
+                            .child(Button::new("debugger-launch-spawn", "Attach")),
+                    )
+                    .when_some(this.attach_picker.clone(), |this, picker| {
+                        this.child(picker)
+                    })
+                    .into_any_element()
+            }),
         }
     }
 }
 
 impl NewSessionMode {
-    fn attach(_workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut App) -> Self {
-        Self::Attach(AttachMode::new(cx))
+    fn attach(workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut App) -> Self {
+        Self::Attach(AttachMode::new(workspace, cx))
     }
     fn launch(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Self {
         Self::Launch(LaunchMode::new(workspace, window, cx))
