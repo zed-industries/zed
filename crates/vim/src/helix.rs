@@ -1,16 +1,32 @@
+use editor::display_map::ToDisplayPoint;
 use editor::{DisplayPoint, Editor, movement, scroll::Autoscroll};
-use gpui::{Action, actions};
+use gpui::{Action, actions, impl_actions};
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::motion::MotionKind;
 use crate::{Vim, motion::Motion, state::Mode};
 
 actions!(vim, [HelixNormalAfter, HelixDelete, HelixYank]);
 
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HelixPaste {
+    #[serde(default)]
+    before: bool,
+    #[serde(default)]
+    preserve_clipboard: bool,
+}
+
+impl_actions!(vim, [HelixPaste]);
+
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
     Vim::action(editor, cx, Vim::helix_delete);
+    Vim::action(editor, cx, Vim::helix_yank);
+    Vim::action(editor, cx, Vim::helix_paste);
 }
 
 impl Vim {
@@ -292,6 +308,166 @@ impl Vim {
         });
     }
 
+    pub fn helix_paste(
+        &mut self,
+        action: &HelixPaste,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode != Mode::HelixNormal {
+            return;
+        }
+        self.record_current_action(cx);
+        self.store_visual_marks(window, cx);
+        let count = Vim::take_count(cx).unwrap_or(1);
+
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            _ = editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+
+                let selected_register = vim.selected_register.take();
+
+                let Some(crate::state::Register {
+                    text,
+                    clipboard_selections,
+                }) = Vim::update_globals(cx, |globals, cx| {
+                    globals.read_register(selected_register, Some(editor), cx)
+                })
+                .filter(|reg| !reg.text.is_empty())
+                else {
+                    return;
+                };
+                let clipboard_selections = clipboard_selections
+                    .filter(|sel| sel.len() > 1 && vim.mode != Mode::VisualLine);
+
+                if !action.preserve_clipboard && vim.mode.is_visual() {
+                    vim.copy_selections_content(editor, MotionKind::for_mode(vim.mode), window, cx);
+                }
+
+                let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
+
+                // unlike zed, if you have a multi-cursor selection from vim block mode,
+                // pasting it will paste it on subsequent lines, even if you don't yet
+                // have a cursor there.
+                let mut selections_to_process = Vec::new();
+                let mut i = 0;
+                while i < current_selections.len() {
+                    selections_to_process
+                        .push((current_selections[i].start..current_selections[i].end, true));
+                    i += 1;
+                }
+                if let Some(clipboard_selections) = clipboard_selections.as_ref() {
+                    let left = current_selections
+                        .iter()
+                        .map(|selection| {
+                            std::cmp::min(selection.start.column(), selection.end.column())
+                        })
+                        .min()
+                        .unwrap();
+                    let mut row =
+                        editor::RowExt::next_row(&current_selections.last().unwrap().end.row());
+                    while i < clipboard_selections.len() {
+                        let cursor =
+                            display_map.clip_point(DisplayPoint::new(row, left), text::Bias::Left);
+                        selections_to_process.push((cursor..cursor, false));
+                        i += 1;
+                        row.0 += 1;
+                    }
+                }
+
+                let first_selection_indent_column =
+                    clipboard_selections.as_ref().and_then(|zed_selections| {
+                        zed_selections
+                            .first()
+                            .map(|selection| selection.first_line_indent)});
+                let before = action.before || vim.mode == Mode::VisualLine;
+
+                let mut edits = Vec::new();
+                let mut new_selections = Vec::new();
+                let mut original_indent_columns = Vec::new();
+                let mut start_offset = 0;
+
+                for (ix, (selection, preserve)) in selections_to_process.iter().enumerate() {
+                    let (mut to_insert, original_indent_column) =
+                        if let Some(clipboard_selections) = &clipboard_selections {
+                            if let Some(clipboard_selection) = clipboard_selections.get(ix) {
+                                let end_offset = start_offset + clipboard_selection.len;
+                                let text = text[start_offset..end_offset].to_string();
+                                start_offset = end_offset + 1;
+                                dbg!((text, Some(clipboard_selection.first_line_indent)))
+                            } else {
+                                dbg!(("".to_string(), first_selection_indent_column))
+                            }
+                        } else {
+                            dbg!((text.to_string(), first_selection_indent_column))
+                        };
+                    let line_mode = to_insert.ends_with('\n');
+
+                    if line_mode && !before {
+                        if selection.is_empty() {
+                            to_insert =
+                                "\n".to_owned() + &to_insert[..to_insert.len() - "\n".len()];
+                        } else {
+                            to_insert = "\n".to_owned() + &to_insert;
+                        }
+                    } else if line_mode && vim.mode == Mode::VisualLine {
+                        to_insert.pop();
+                    }
+
+                    let display_range = if line_mode {
+                        let point = if before {
+                            movement::line_beginning(&display_map, selection.start, false)
+                        } else {
+                            movement::line_end(&display_map, selection.end, false)
+                        };
+                        point..point
+                    } else {
+                        let point = if before {
+                            selection.start
+                        } else {
+                            movement::saturating_right(&display_map, selection.end)
+                        };
+                        point..point
+                    };
+
+                    let point_range = display_range.start.to_point(&display_map)
+                        ..display_range.end.to_point(&display_map);
+
+                    let selection_beg =
+                        display_map.buffer_snapshot.anchor_before(point_range.start);
+                    let selection_end = display_map.buffer_snapshot.anchor_after(point_range.end);
+                    edits.push((point_range, to_insert.repeat(count)));
+                    new_selections.push((selection_beg, selection_end));
+                    original_indent_columns.push(original_indent_column);
+                }
+
+                let cursor_offset = editor.selections.last::<usize>(cx).head();
+                if editor
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .language_settings_at(cursor_offset, cx)
+                    .auto_indent_on_paste
+                {
+                    editor.edit_with_block_indent(edits, original_indent_columns, cx);
+                } else {
+                    editor.edit(edits, cx);
+                }
+
+                // in line_mode vim will insert the new text on the next (or previous if before) line
+                // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
+                // otherwise vim will insert the next text at (or before) the current cursor position,
+                // the cursor will go to the last (or first, if is_multiline) inserted character.
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    let display_map = s.display_map();
+                    s.select_display_ranges(new_selections.into_iter().map(|(s, e)| {
+                        s.to_display_point(&display_map)..e.to_display_point(&display_map)
+                    }));
+                })
+            });
+        });
+    }
 }
 
 /// Fixup selections so they have helix's semantics.
@@ -426,6 +602,50 @@ mod test {
             The quick brown
             fox jumps over
             the lazy dog.ˇ"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_yank_and_paste(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            The quick brown
+            fox jumps over
+            the lazy dog.ˇ"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("x");
+
+        cx.assert_state(
+            indoc! {"
+            The quick brown
+            fox jumps over
+            «the lazy dog.ˇ»"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("y");
+
+        cx.assert_state(
+            indoc! {"
+            The quick brown
+            fox jumps over
+            «the lazy dog.ˇ»"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("p");
+
+        cx.assert_state(
+            indoc! {"
+            The quick brown
+            fox jumps over
+            the lazy dog.
+            «the lazy dog.ˇ»"},
             Mode::HelixNormal,
         );
     }

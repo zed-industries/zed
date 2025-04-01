@@ -342,6 +342,7 @@
       "x": "vim::CurrentLine",
       "X": "vim::CurrentLine",
       "y": "vim::HelixYank",
+      "p": "vim::HelixPaste",
 
       "h": "vim::Left",
       "j": "vim::Down",
