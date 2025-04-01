@@ -279,8 +279,7 @@ impl ContextPickerCompletionProvider {
             crease_icon_path.clone()
         };
 
-        let link_prefix = if is_directory { "directory" } else { "file" };
-        let new_text = format!("[@{}]({}:{})", file_name, link_prefix, full_path);
+        let new_text = format!("[@{}](file:{})", file_name, full_path);
         let new_text_len = new_text.len();
         Completion {
             old_range: source_range.clone(),

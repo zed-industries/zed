@@ -296,22 +296,24 @@ fn open_markdown_link(
             let Some(project_path) = extract_project_path_from_link(path, &workspace, cx) else {
                 return;
             };
-            workspace
-                .update(cx, |workspace, cx| {
-                    workspace.open_path(project_path, None, true, window, cx)
-                })
-                .detach_and_log_err(cx);
-        }
-        (Some("directory"), Some(path)) => {
-            let Some(project_path) = extract_project_path_from_link(path, &workspace, cx) else {
-                return;
-            };
             workspace.update(cx, |workspace, cx| {
-                workspace.project().update(cx, |project, cx| {
-                    if let Some(entry) = project.entry_for_path(&project_path, cx) {
+                let Some(entry) = workspace
+                    .project()
+                    .read(cx)
+                    .entry_for_path(&project_path, cx)
+                else {
+                    return;
+                };
+
+                if entry.is_dir() {
+                    workspace.project().update(cx, |_, cx| {
                         cx.emit(project::Event::RevealInProjectPanel(entry.id));
-                    }
-                })
+                    })
+                } else {
+                    workspace
+                        .open_path(project_path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                }
             })
         }
         _ => cx.open_url(&text),
