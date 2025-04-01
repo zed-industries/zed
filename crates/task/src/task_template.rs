@@ -62,7 +62,7 @@ pub struct TaskTemplate {
     #[serde(default, skip)]
     pub task_type: TaskType,
     /// Represents the tags which this template attaches to.
-    /// Adding this removes this task from other UI and gives you ability to run it by tag..
+    /// Adding this removes this task from other UI and gives you ability to run it by tag.
     /// Empty tags are ignored.
     #[serde(default)]
     pub tags: Vec<String>,
