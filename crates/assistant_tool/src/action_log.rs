@@ -50,12 +50,7 @@ impl ActionLog {
             .entry(buffer.clone())
             .or_insert_with(|| {
                 let text_snapshot = buffer.read(cx).text_snapshot();
-                let unreviewed_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
-                let diff = cx.new(|cx| {
-                    let mut diff = BufferDiff::new(&text_snapshot, cx);
-                    diff.set_secondary_diff(unreviewed_diff.clone());
-                    diff
-                });
+                let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 TrackedBuffer {
                     buffer: buffer.clone(),
@@ -138,11 +133,8 @@ impl ActionLog {
                     // If the buffer had been deleted by a tool, but it got
                     // resurrected externally, we want to clear the changes we
                     // were tracking and reset the buffer's state.
-                    tracked_buffer.unreviewed_changes = Patch::default();
-                    tracked_buffer.base_text = buffer.read(cx).as_rope().clone();
-                    tracked_buffer.status = TrackedBufferStatus::Modified;
-                    tracked_buffer.version = buffer.read(cx).version();
-                    tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
+                    self.tracked_buffers.remove(&buffer);
+                    self.track_buffer(buffer, false, cx);
                 }
                 cx.notify();
             }
