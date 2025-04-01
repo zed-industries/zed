@@ -58,6 +58,12 @@ impl std::fmt::Display for ThreadId {
     }
 }
 
+impl From<&str> for ThreadId {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct MessageId(pub(crate) usize);
 

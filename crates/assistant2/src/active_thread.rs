@@ -1,5 +1,6 @@
 use crate::AssistantPanel;
 use crate::context::{AssistantContext, ContextId};
+use crate::context_picker::MentionLink;
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
     ThreadEvent, ThreadFeedback,
@@ -7,8 +8,10 @@ use crate::thread::{
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
+use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::HashMap;
+use editor::scroll::Autoscroll;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength,
@@ -63,6 +66,7 @@ impl RenderedMessage {
     fn from_segments(
         segments: &[MessageSegment],
         language_registry: Arc<LanguageRegistry>,
+        workspace: WeakEntity<Workspace>,
         window: &Window,
         cx: &mut App,
     ) -> Self {
@@ -71,12 +75,18 @@ impl RenderedMessage {
             segments: Vec::with_capacity(segments.len()),
         };
         for segment in segments {
-            this.push_segment(segment, window, cx);
+            this.push_segment(segment, workspace.clone(), window, cx);
         }
         this
     }
 
-    fn append_thinking(&mut self, text: &String, window: &Window, cx: &mut App) {
+    fn append_thinking(
+        &mut self,
+        text: &String,
+        workspace: WeakEntity<Workspace>,
+        window: &Window,
+        cx: &mut App,
+    ) {
         if let Some(RenderedMessageSegment::Thinking {
             content,
             scroll_handle,
@@ -88,13 +98,25 @@ impl RenderedMessage {
             scroll_handle.scroll_to_bottom();
         } else {
             self.segments.push(RenderedMessageSegment::Thinking {
-                content: render_markdown(text.into(), self.language_registry.clone(), window, cx),
+                content: render_markdown(
+                    text.into(),
+                    self.language_registry.clone(),
+                    workspace,
+                    window,
+                    cx,
+                ),
                 scroll_handle: ScrollHandle::default(),
             });
         }
     }
 
-    fn append_text(&mut self, text: &String, window: &Window, cx: &mut App) {
+    fn append_text(
+        &mut self,
+        text: &String,
+        workspace: WeakEntity<Workspace>,
+        window: &Window,
+        cx: &mut App,
+    ) {
         if let Some(RenderedMessageSegment::Text(markdown)) = self.segments.last_mut() {
             markdown.update(cx, |markdown, cx| markdown.append(text, cx));
         } else {
@@ -102,21 +124,35 @@ impl RenderedMessage {
                 .push(RenderedMessageSegment::Text(render_markdown(
                     SharedString::from(text),
                     self.language_registry.clone(),
+                    workspace,
                     window,
                     cx,
                 )));
         }
     }
 
-    fn push_segment(&mut self, segment: &MessageSegment, window: &Window, cx: &mut App) {
+    fn push_segment(
+        &mut self,
+        segment: &MessageSegment,
+        workspace: WeakEntity<Workspace>,
+        window: &Window,
+        cx: &mut App,
+    ) {
         let rendered_segment = match segment {
             MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking {
-                content: render_markdown(text.into(), self.language_registry.clone(), window, cx),
+                content: render_markdown(
+                    text.into(),
+                    self.language_registry.clone(),
+                    workspace,
+                    window,
+                    cx,
+                ),
                 scroll_handle: ScrollHandle::default(),
             },
             MessageSegment::Text(text) => RenderedMessageSegment::Text(render_markdown(
                 text.into(),
                 self.language_registry.clone(),
+                workspace,
                 window,
                 cx,
             )),
@@ -136,6 +172,7 @@ enum RenderedMessageSegment {
 fn render_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
+    workspace: WeakEntity<Workspace>,
     window: &Window,
     cx: &mut App,
 ) -> Entity<Markdown> {
@@ -210,7 +247,80 @@ fn render_markdown(
         ..Default::default()
     };
 
-    cx.new(|cx| Markdown::new(text, markdown_style, Some(language_registry), None, cx))
+    cx.new(|cx| {
+        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
+            move |text, window, cx| {
+                open_markdown_link(text, workspace.clone(), window, cx);
+            },
+        )
+    })
+}
+
+fn open_markdown_link(
+    text: SharedString,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(workspace) = workspace.upgrade() else {
+        cx.open_url(&text);
+        return;
+    };
+
+    match MentionLink::try_parse(&text, &workspace, cx) {
+        Some(MentionLink::File(path, entry)) => workspace.update(cx, |workspace, cx| {
+            if entry.is_dir() {
+                workspace.project().update(cx, |_, cx| {
+                    cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                })
+            } else {
+                workspace
+                    .open_path(path, None, true, window, cx)
+                    .detach_and_log_err(cx);
+            }
+        }),
+        Some(MentionLink::Symbol(path, symbol_name)) => {
+            let open_task = workspace.update(cx, |workspace, cx| {
+                workspace.open_path(path, None, true, window, cx)
+            });
+            window
+                .spawn(cx, async move |cx| {
+                    let active_editor = open_task
+                        .await?
+                        .downcast::<Editor>()
+                        .context("Item is not an editor")?;
+                    active_editor.update_in(cx, |editor, window, cx| {
+                        let symbol_range = editor
+                            .buffer()
+                            .read(cx)
+                            .snapshot(cx)
+                            .outline(None)
+                            .and_then(|outline| {
+                                outline
+                                    .find_most_similar(&symbol_name)
+                                    .map(|(_, item)| item.range.clone())
+                            })
+                            .context("Could not find matching symbol")?;
+
+                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
+                            s.select_anchor_ranges([symbol_range.start..symbol_range.start])
+                        });
+                        anyhow::Ok(())
+                    })
+                })
+                .detach_and_log_err(cx);
+        }
+        Some(MentionLink::Thread(thread_id)) => workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel
+                        .open_thread(&thread_id, window, cx)
+                        .detach_and_log_err(cx)
+                });
+            }
+        }),
+        None => cx.open_url(&text),
+    }
 }
 
 struct EditMessageState {
@@ -318,8 +428,13 @@ impl ActiveThread {
         self.messages.push(*id);
         self.list_state.splice(old_len..old_len, 1);
 
-        let rendered_message =
-            RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
+        let rendered_message = RenderedMessage::from_segments(
+            segments,
+            self.language_registry.clone(),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
         self.rendered_messages_by_id.insert(*id, rendered_message);
     }
 
@@ -334,8 +449,13 @@ impl ActiveThread {
             return;
         };
         self.list_state.splice(index..index + 1, 1);
-        let rendered_message =
-            RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
+        let rendered_message = RenderedMessage::from_segments(
+            segments,
+            self.language_registry.clone(),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
         self.rendered_messages_by_id.insert(*id, rendered_message);
     }
 
@@ -360,6 +480,7 @@ impl ActiveThread {
             render_markdown(
                 tool_label.into(),
                 self.language_registry.clone(),
+                self.workspace.clone(),
                 window,
                 cx,
             ),
@@ -401,12 +522,12 @@ impl ActiveThread {
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    rendered_message.append_text(text, window, cx);
+                    rendered_message.append_text(text, self.workspace.clone(), window, cx);
                 }
             }
             ThreadEvent::StreamedAssistantThinking(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    rendered_message.append_thinking(text, window, cx);
+                    rendered_message.append_thinking(text, self.workspace.clone(), window, cx);
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
@@ -1420,26 +1541,31 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        let status_icons = div().child({
-            let (icon_name, color, animated) = match &tool_use.status {
-                ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
-                    (IconName::Warning, Color::Warning, false)
-                }
-                ToolUseStatus::Running => (IconName::ArrowCircle, Color::Accent, true),
-                ToolUseStatus::Finished(_) => (IconName::Check, Color::Success, false),
-                ToolUseStatus::Error(_) => (IconName::Close, Color::Error, false),
-            };
+        let is_status_finished = matches!(&tool_use.status, ToolUseStatus::Finished(_));
 
-            let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
-
-            if animated {
+        let status_icons = div().child(match &tool_use.status {
+            ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
+                let icon = Icon::new(IconName::Warning)
+                    .color(Color::Warning)
+                    .size(IconSize::Small);
+                icon.into_any_element()
+            }
+            ToolUseStatus::Running => {
+                let icon = Icon::new(IconName::ArrowCircle)
+                    .color(Color::Accent)
+                    .size(IconSize::Small);
                 icon.with_animation(
                     "arrow-circle",
                     Animation::new(Duration::from_secs(2)).repeat(),
                     |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
                 )
                 .into_any_element()
-            } else {
+            }
+            ToolUseStatus::Finished(_) => div().w_0().into_any_element(),
+            ToolUseStatus::Error(_) => {
+                let icon = Icon::new(IconName::Close)
+                    .color(Color::Error)
+                    .size(IconSize::Small);
                 icon.into_any_element()
             }
         });
@@ -1531,23 +1657,29 @@ impl ActiveThread {
                 ),
             });
 
-        fn gradient_overlay(color: Hsla) -> impl IntoElement {
+        let gradient_overlay = |color: Hsla| {
             div()
                 .h_full()
                 .absolute()
                 .w_8()
                 .bottom_0()
-                .right_12()
+                .map(|element| {
+                    if is_status_finished {
+                        element.right_7()
+                    } else {
+                        element.right_12()
+                    }
+                })
                 .bg(linear_gradient(
                     90.,
                     linear_color_stop(color, 1.),
                     linear_color_stop(color.opacity(0.2), 0.),
                 ))
-        }
+        };
 
-        div().map(|this| {
+        div().map(|element| {
             if !tool_use.needs_confirmation {
-                this.py_2p5().child(
+                element.py_2p5().child(
                     v_flex()
                         .child(
                             h_flex()
@@ -1557,7 +1689,7 @@ impl ActiveThread {
                                 .justify_between()
                                 .opacity(0.8)
                                 .hover(|style| style.opacity(1.))
-                                .pr_2()
+                                .when(!is_status_finished, |this| this.pr_2())
                                 .child(
                                     h_flex()
                                         .id("tool-label-container")
@@ -1619,7 +1751,7 @@ impl ActiveThread {
                         }),
                 )
             } else {
-                this.py_2().child(
+                element.py_2().child(
                     v_flex()
                         .rounded_lg()
                         .border_1()
@@ -1632,7 +1764,13 @@ impl ActiveThread {
                                 .gap_1p5()
                                 .justify_between()
                                 .py_1()
-                                .px_2()
+                                .map(|element| {
+                                    if is_status_finished {
+                                        element.pl_2().pr_0p5()
+                                    } else {
+                                        element.px_2()
+                                    }
+                                })
                                 .bg(self.tool_card_header_bg(cx))
                                 .map(|element| {
                                     if is_open {
