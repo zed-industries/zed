@@ -131,7 +131,7 @@ fn spawn_task_or_modal(
             });
             let tag = task_tag.clone();
             spawn_tasks_filtered(
-                move |(_, task)| task.tags.contains(&tag) && !tag.is_empty(),
+                move |(_, task)| task.tags.contains(&tag),
                 overrides,
                 window,
                 cx,
@@ -195,7 +195,7 @@ fn spawn_tasks_filtered<F>(
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>>
 where
-    F: FnMut(&(TaskSourceKind, TaskTemplate)) -> bool + 'static,
+    F: FnMut((&TaskSourceKind, &TaskTemplate)) -> bool + 'static,
 {
     cx.spawn_in(window, async move |workspace, cx| {
         let task_contexts = workspace.update_in(cx, |workspace, window, cx| {
@@ -234,7 +234,7 @@ where
                 let active_context = task_contexts.active_context().unwrap_or(&default_context);
 
                 tasks.retain_mut(|(task_source_kind, target_task)| {
-                    if predicate(&(task_source_kind.clone(), target_task.clone())) {
+                    if predicate((task_source_kind, target_task)) {
                         if let Some(overrides) = &overrides {
                             if let Some(target_override) = overrides.reveal_target {
                                 target_task.reveal_target = target_override;
