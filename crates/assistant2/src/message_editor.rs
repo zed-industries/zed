@@ -49,6 +49,7 @@ pub struct MessageEditor {
     model_selector: Entity<AssistantModelSelector>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
+    waiting_for_summaries: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -143,6 +144,7 @@ impl MessageEditor {
                 )
             }),
             edits_expanded: false,
+            waiting_for_summaries: false,
             profile_selector: cx
                 .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
             _subscriptions: subscriptions,
@@ -228,7 +230,7 @@ impl MessageEditor {
         let context_store = self.context_store.clone();
         let checkpoint = self.project.read(cx).git_store().read(cx).checkpoint(cx);
 
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |this, cx| {
             let checkpoint = checkpoint.await.ok();
             refresh_task.await;
             let (system_prompt_context, load_error) = system_prompt_context_task.await;
@@ -253,7 +255,19 @@ impl MessageEditor {
                 .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
                 .log_err()
             {
+                this.update(cx, |this, cx| {
+                    this.waiting_for_summaries = true;
+                    cx.notify();
+                })
+                .ok();
+
                 wait_for_summaries.await;
+
+                this.update(cx, |this, cx| {
+                    this.waiting_for_summaries = false;
+                    cx.notify();
+                })
+                .ok();
             }
 
             // Send to model after waiting for summaries
@@ -356,6 +370,41 @@ impl Render for MessageEditor {
 
         v_flex()
             .size_full()
+            .when(self.waiting_for_summaries, |parent| {
+                parent.child(
+                    h_flex().py_3().w_full().justify_center().child(
+                        h_flex()
+                            .flex_none()
+                            .px_2()
+                            .py_2()
+                            .bg(editor_bg_color)
+                            .border_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .rounded_lg()
+                            .shadow_md()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(gpui::Transformation::rotate(
+                                                gpui::percentage(delta),
+                                            ))
+                                        },
+                                    ),
+                            )
+                            .child(
+                                Label::new("Summarizing context…")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+                )
+            })
             .when(is_generating, |parent| {
                 let focus_handle = self.editor.focus_handle(cx).clone();
                 parent.child(
@@ -694,6 +743,7 @@ impl Render for MessageEditor {
                                                     is_editor_empty
                                                         || !is_model_selected
                                                         || is_generating
+                                                        || self.waiting_for_summaries
                                                 )
                                                 .child(
                                                     h_flex()

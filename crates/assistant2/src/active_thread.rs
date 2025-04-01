@@ -824,7 +824,7 @@ impl ActiveThread {
             .map(|(_, state)| state.editor.clone());
 
         let first_message = ix == 0;
-        let is_last_message = ix == self.messages.len() - 1;
+        let show_feedback = ix == self.messages.len() - 1 && message.role != Role::User;
 
         let colors = cx.theme().colors();
         let active_color = colors.element_active;
@@ -1193,7 +1193,7 @@ impl ActiveThread {
             })
             .child(styled_message)
             .when(
-                is_last_message && !self.thread.read(cx).is_generating(),
+                show_feedback && !self.thread.read(cx).is_generating(),
                 |parent| parent.child(feedback_items),
             )
             .into_any()
