@@ -6,7 +6,7 @@ use crate::thread::{
 };
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
-use crate::ui::{AgentNotification, AgentNotificationEvent, ContextPill};
+use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
@@ -487,14 +487,14 @@ impl ActiveThread {
                             let updated_context_ids = refresh_task.await;
 
                             this.update(cx, |this, cx| {
-                                this.context_store.read_with(cx, |context_store, cx| {
+                                this.context_store.read_with(cx, |context_store, _cx| {
                                     context_store
                                         .context()
                                         .iter()
                                         .filter(|context| {
                                             updated_context_ids.contains(&context.id())
                                         })
-                                        .flat_map(|context| context.snapshot(cx))
+                                        .cloned()
                                         .collect()
                                 })
                             })
@@ -806,7 +806,7 @@ impl ActiveThread {
         let thread = self.thread.read(cx);
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
-        let context = thread.context_for_message(message_id);
+        let context = thread.context_for_message(message_id).collect::<Vec<_>>();
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
 
         // Don't render user messages that are just there for returning tool results.
@@ -926,53 +926,50 @@ impl ActiveThread {
                 .into_any_element(),
         };
 
-        let message_content =
-            v_flex()
-                .gap_1p5()
-                .child(
-                    if let Some(edit_message_editor) = edit_message_editor.clone() {
-                        div()
-                            .key_context("EditMessageEditor")
-                            .on_action(cx.listener(Self::cancel_editing_message))
-                            .on_action(cx.listener(Self::confirm_editing_message))
-                            .min_h_6()
-                            .child(edit_message_editor)
-                    } else {
-                        div()
-                            .min_h_6()
-                            .text_ui(cx)
-                            .child(self.render_message_content(message_id, rendered_message, cx))
-                    },
-                )
-                .when_some(context, |parent, context| {
-                    if !context.is_empty() {
-                        parent.child(h_flex().flex_wrap().gap_1().children(
-                            context.into_iter().map(|context| {
-                                let context_id = context.id;
-                                ContextPill::added(context, false, false, None).on_click(Rc::new(
-                                    cx.listener({
-                                        let workspace = workspace.clone();
-                                        let context_store = context_store.clone();
-                                        move |_, _, window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                open_context(
-                                                    context_id,
-                                                    context_store.clone(),
-                                                    workspace,
-                                                    window,
-                                                    cx,
-                                                );
-                                                cx.notify();
-                                            }
+        let message_content = v_flex()
+            .gap_1p5()
+            .child(
+                if let Some(edit_message_editor) = edit_message_editor.clone() {
+                    div()
+                        .key_context("EditMessageEditor")
+                        .on_action(cx.listener(Self::cancel_editing_message))
+                        .on_action(cx.listener(Self::confirm_editing_message))
+                        .min_h_6()
+                        .child(edit_message_editor)
+                } else {
+                    div()
+                        .min_h_6()
+                        .text_ui(cx)
+                        .child(self.render_message_content(message_id, rendered_message, cx))
+                },
+            )
+            .when(!context.is_empty(), |parent| {
+                parent.child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .children(context.into_iter().map(|context| {
+                            let context_id = context.id();
+                            ContextPill::added(AddedContext::new(context, cx), false, false, None)
+                                .on_click(Rc::new(cx.listener({
+                                    let workspace = workspace.clone();
+                                    let context_store = context_store.clone();
+                                    move |_, _, window, cx| {
+                                        if let Some(workspace) = workspace.upgrade() {
+                                            open_context(
+                                                context_id,
+                                                context_store.clone(),
+                                                workspace,
+                                                window,
+                                                cx,
+                                            );
+                                            cx.notify();
                                         }
-                                    }),
-                                ))
-                            }),
-                        ))
-                    } else {
-                        parent
-                    }
-                });
+                                    }
+                                })))
+                        })),
+                )
+            });
 
         let styled_message = match message.role {
             Role::User => v_flex()
@@ -1974,7 +1971,7 @@ pub(crate) fn open_context(
             }
         }
         AssistantContext::Directory(directory_context) => {
-            let path = directory_context.path.clone();
+            let path = directory_context.project_path.clone();
             workspace.update(cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
                     if let Some(entry) = project.entry_for_path(&path, cx) {

@@ -239,7 +239,7 @@ impl MessageEditor {
                 .ok();
             thread
                 .update(cx, |thread, cx| {
-                    let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
+                    let context = context_store.read(cx).context().clone();
                     thread.action_log().update(cx, |action_log, cx| {
                         action_log.clear_reviewed_changes(cx);
                     });
