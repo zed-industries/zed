@@ -19,9 +19,6 @@ use language_model::{LanguageModel, LanguageModelRegistry};
 use regex::Regex;
 use reqwest_client::ReqwestClient;
 use std::{path::PathBuf, sync::Arc};
-use templates_eval::all_templates
-use reqwest_client::ReqwestClient;
-use std::{path::PathBuf, sync::Arc};
 use templates_eval::all_templates;
 
 #[derive(Parser, Debug)]
