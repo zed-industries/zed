@@ -16,9 +16,7 @@ use project::worktree_store::WorktreeStore;
 use rpc::proto::{self, PeerId};
 use running::RunningState;
 use starting::{StartingEvent, StartingState};
-use task::DebugTaskDefinition;
 use ui::{Indicator, prelude::*};
-use util::ResultExt;
 use workspace::{
     FollowableItem, ViewId, Workspace,
     item::{self, Item},

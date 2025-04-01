@@ -646,7 +646,7 @@ impl DebugPanel {
                                 .on_click({
                                     let workspace = self.workspace.clone();
                                     move |_, window, cx| {
-                                        workspace.update(cx, |this, cx| {
+                                        let _ = workspace.update(cx, |this, cx| {
                                             let workspace = cx.weak_entity();
                                             this.toggle_modal(window, cx, |window, cx| {
                                                 NewSessionModal::new(workspace, window, cx)
@@ -758,11 +758,10 @@ impl Panel for DebugPanel {
     }
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         if active && self.pane.read(cx).items_len() == 0 {
-            let Some(project) = self.project.clone().upgrade() else {
+            let Some(_) = self.project.clone().upgrade() else {
                 return;
             };
-            let config = self.last_inert_config.clone();
-            let panel = cx.weak_entity();
+
             let workspace = self.workspace.clone();
             cx.defer_in(window, |this, window, cx| {
                 this.workspace

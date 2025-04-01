@@ -1,9 +1,7 @@
-use std::f32::consts::PI;
-
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ManagedView,
-    Render, TextStyle, WeakEntity, div,
+    App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
+    WeakEntity,
 };
 use settings::Settings;
 use theme::ThemeSettings;
@@ -47,7 +45,7 @@ impl LaunchMode {
         cwd.update(cx, |this, cx| {
             this.set_placeholder_text("Working Directory", cx);
         });
-        cx.new(|cx| Self {
+        cx.new(|_| Self {
             program,
             cwd,
             debugger: None,
@@ -65,6 +63,12 @@ impl AttachMode {
         cx.new(|cx| Self {
             focus_handle: cx.focus_handle(),
         })
+    }
+}
+
+impl Render for AttachMode {
+    fn render(&mut self, window: &mut Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
+        v_flex().child("Attach mode contents")
     }
 }
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
@@ -142,15 +146,18 @@ impl Focusable for NewSessionMode {
 impl RenderOnce for NewSessionMode {
     fn render(self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
         match self {
-            NewSessionMode::Launch(entity) => div()
-                .child(entity.update(cx, |this, cx| this.render(window, cx).into_any_element())),
-            NewSessionMode::Attach(entity) => div(),
+            NewSessionMode::Launch(entity) => {
+                entity.update(cx, |this, cx| this.render(window, cx).into_any_element())
+            }
+            NewSessionMode::Attach(entity) => {
+                entity.update(cx, |this, cx| this.render(window, cx).into_any_element())
+            }
         }
     }
 }
 
 impl NewSessionMode {
-    fn attach(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Self {
+    fn attach(_workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut App) -> Self {
         Self::Attach(AttachMode::new(cx))
     }
     fn launch(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Self {
