@@ -932,7 +932,10 @@ impl Thread {
 
         if action_log.has_edited_files_since_project_diagnostics_check() {
             content.push(
-                "When you're done making changes, make sure to check project diagnostics and fix all errors AND warnings you introduced!".into(),
+                "\n\nWhen you're done making changes, make sure to check project diagnostics \
+                and fix all errors AND warnings you introduced! \
+                DO NOT mention you're going to do this until you're done."
+                    .into(),
             );
         }
 
