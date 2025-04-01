@@ -693,7 +693,6 @@ name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-watch",
  "buffer_diff",
  "clock",
  "collections",
@@ -724,7 +723,6 @@ dependencies = [
  "anyhow",
  "assistant_tool",
  "chrono",
- "clock",
  "collections",
  "feature_flags",
  "futures 0.3.31",
