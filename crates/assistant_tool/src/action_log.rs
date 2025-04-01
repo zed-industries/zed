@@ -188,6 +188,7 @@ impl ActionLog {
                     ))
                 })??;
 
+            dbg!(&buffer_snapshot.text(), &base_text);
             let diff_snapshot = BufferDiff::update_diff(
                 diff.clone(),
                 buffer_snapshot.clone(),
@@ -242,6 +243,7 @@ impl ActionLog {
                 cx.notify();
             }
             TrackedBufferStatus::Modified => {
+                buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
                 tracked_buffer.status = TrackedBufferStatus::Deleted;
                 tracked_buffer.unreviewed_changes = Patch::new(vec![Edit {
                     old: 0..tracked_buffer.base_text.max_point().row + 1,
@@ -250,7 +252,7 @@ impl ActionLog {
                 tracked_buffer.version = buffer.read(cx).version();
                 tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
             }
-            TrackedBufferStatus::Deleted => todo!(),
+            TrackedBufferStatus::Deleted => {}
         }
         cx.notify();
     }
@@ -341,88 +343,82 @@ fn rebase_patch(
 
     let mut old_edits = patch.edits().iter().cloned().peekable();
     let mut new_edits = edits.into_iter().peekable();
-    let mut delta = 0i32;
-    loop {
-        match (old_edits.peek(), new_edits.peek()) {
-            (Some(old_edit), Some(new_edit)) => {
-                if new_edit.old.end <= old_edit.new.start {
-                    let mut new_edit = new_edits.next().unwrap();
+    let mut applied_delta = 0i32;
+    let mut rebased_delta = 0i32;
 
-                    new_edit.old.start = (new_edit.old.start as i32 + delta) as u32;
-                    new_edit.old.end = (new_edit.old.end as i32 + delta) as u32;
+    while let Some(mut new_edit) = new_edits.next() {
+        let mut conflict = false;
 
-                    let old_bytes = old_text.point_to_offset(Point::new(new_edit.old.start, 0))
-                        ..old_text.point_to_offset(cmp::min(
-                            Point::new(new_edit.old.end, 0),
-                            old_text.max_point(),
-                        ));
-                    let new_bytes = new_text.point_to_offset(Point::new(new_edit.new.start, 0))
-                        ..new_text.point_to_offset(cmp::min(
-                            Point::new(new_edit.new.end, 0),
-                            new_text.max_point(),
-                        ));
-                    old_text.replace(
-                        old_bytes,
-                        &new_text.chunks_in_range(new_bytes).collect::<String>(),
-                    );
-
-                    delta += new_edit.new_len() as i32 - new_edit.old_len() as i32;
-                } else if new_edit.old.start >= old_edit.new.end {
-                    let mut old_edit = old_edits.next().unwrap();
-                    old_edit.old.start = (old_edit.old.start as i32 + delta) as u32;
-                    old_edit.old.end = (old_edit.old.end as i32 + delta) as u32;
-                    old_edit.new.start = (old_edit.new.start as i32 + delta) as u32;
-                    old_edit.new.end = (old_edit.new.end as i32 + delta) as u32;
-                    translated_unreviewed_edits.push(old_edit);
+        // Push all the old edits that are before this new edit or that intersect with it.
+        while let Some(old_edit) = old_edits.peek() {
+            if new_edit.old.end <= old_edit.new.start {
+                break;
+            } else if old_edit.new.end <= new_edit.old.start {
+                let mut old_edit = old_edits.next().unwrap();
+                old_edit.old.start = (old_edit.old.start as i32 + applied_delta) as u32;
+                old_edit.old.end = (old_edit.old.end as i32 + applied_delta) as u32;
+                old_edit.new.start = (old_edit.new.start as i32 + applied_delta) as u32;
+                old_edit.new.end = (old_edit.new.end as i32 + applied_delta) as u32;
+                rebased_delta += old_edit.new_len() as i32 - old_edit.old_len() as i32;
+                translated_unreviewed_edits.push(old_edit);
+            } else {
+                conflict = true;
+                if new_edits
+                    .peek()
+                    .map_or(false, |next_edit| next_edit.old.overlaps(&old_edit.new))
+                {
+                    new_edit.old.start = (new_edit.old.start as i32 + applied_delta) as u32;
+                    new_edit.old.end = (new_edit.old.end as i32 + applied_delta) as u32;
+                    conflicting_edits.push(new_edit);
+                    new_edit = new_edits.next().unwrap();
                 } else {
                     let mut old_edit = old_edits.next().unwrap();
-                    old_edit.old.start = (old_edit.old.start as i32 + delta) as u32;
-                    old_edit.old.end = (old_edit.old.end as i32 + delta) as u32;
-                    old_edit.new.start = (old_edit.new.start as i32 + delta) as u32;
-                    old_edit.new.end = (old_edit.new.end as i32 + delta) as u32;
-
-                    let mut new_edit = new_edits.next().unwrap();
-                    new_edit.old.start = (new_edit.old.start as i32 + delta) as u32;
-                    new_edit.old.end = (new_edit.old.end as i32 + delta) as u32;
-
+                    old_edit.old.start = (old_edit.old.start as i32 + applied_delta) as u32;
+                    old_edit.old.end = (old_edit.old.end as i32 + applied_delta) as u32;
+                    old_edit.new.start = (old_edit.new.start as i32 + applied_delta) as u32;
+                    old_edit.new.end = (old_edit.new.end as i32 + applied_delta) as u32;
+                    rebased_delta += old_edit.new_len() as i32 - old_edit.old_len() as i32;
                     translated_unreviewed_edits.push(old_edit);
-                    conflicting_edits.push(new_edit);
                 }
             }
-            (Some(_old_edit), None) => {
-                let mut old_edit = old_edits.next().unwrap();
-                old_edit.old.start = (old_edit.old.start as i32 + delta) as u32;
-                old_edit.old.end = (old_edit.old.end as i32 + delta) as u32;
-                old_edit.new.start = (old_edit.new.start as i32 + delta) as u32;
-                old_edit.new.end = (old_edit.new.end as i32 + delta) as u32;
-                translated_unreviewed_edits.push(old_edit);
-            }
-            (None, Some(_new_edit)) => {
-                let mut new_edit = new_edits.next().unwrap();
+        }
 
-                new_edit.old.start = (new_edit.old.start as i32 + delta) as u32;
-                new_edit.old.end = (new_edit.old.end as i32 + delta) as u32;
+        if conflict {
+            new_edit.old.start = (new_edit.old.start as i32 + applied_delta) as u32;
+            new_edit.old.end = (new_edit.old.end as i32 + applied_delta) as u32;
+            conflicting_edits.push(new_edit);
+        } else {
+            new_edit.old.start = (new_edit.old.start as i32 + applied_delta - rebased_delta) as u32;
+            new_edit.old.end = (new_edit.old.end as i32 + applied_delta - rebased_delta) as u32;
 
-                let old_bytes = old_text.point_to_offset(Point::new(new_edit.old.start, 0))
-                    ..old_text.point_to_offset(cmp::min(
-                        Point::new(new_edit.old.end, 0),
-                        old_text.max_point(),
-                    ));
-                let new_bytes = new_text.point_to_offset(Point::new(new_edit.new.start, 0))
-                    ..new_text.point_to_offset(cmp::min(
-                        Point::new(new_edit.new.end, 0),
-                        new_text.max_point(),
-                    ));
-                old_text.replace(
-                    old_bytes,
-                    &new_text.chunks_in_range(new_bytes).collect::<String>(),
-                );
-
-                delta += new_edit.new_len() as i32 - new_edit.old_len() as i32;
-            }
-            (None, None) => break,
+            // This edit doesn't intersect with any old edit, so we can apply it to the old text.
+            let old_bytes = old_text.point_to_offset(Point::new(new_edit.old.start, 0))
+                ..old_text.point_to_offset(cmp::min(
+                    Point::new(new_edit.old.end, 0),
+                    old_text.max_point(),
+                ));
+            let new_bytes = new_text.point_to_offset(Point::new(new_edit.new.start, 0))
+                ..new_text.point_to_offset(cmp::min(
+                    Point::new(new_edit.new.end, 0),
+                    new_text.max_point(),
+                ));
+            old_text.replace(
+                old_bytes,
+                &new_text.chunks_in_range(new_bytes).collect::<String>(),
+            );
+            applied_delta += new_edit.new_len() as i32 - new_edit.old_len() as i32;
         }
     }
+
+    // Push all the outstanding old edits.
+    for mut old_edit in old_edits {
+        old_edit.old.start = (old_edit.old.start as i32 + applied_delta) as u32;
+        old_edit.old.end = (old_edit.old.end as i32 + applied_delta) as u32;
+        old_edit.new.start = (old_edit.new.start as i32 + applied_delta) as u32;
+        old_edit.new.end = (old_edit.new.end as i32 + applied_delta) as u32;
+        translated_unreviewed_edits.push(old_edit);
+    }
+
     translated_unreviewed_edits.compose(conflicting_edits)
 }
 
@@ -500,14 +496,24 @@ pub struct ChangedBuffer {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
     use language::Point;
     use project::{FakeFs, Fs, Project, RemoveOptions};
+    use rand::prelude::*;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, post_inc};
+
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
 
     #[gpui::test(iterations = 10)]
     async fn test_edit_review(cx: &mut TestAppContext) {
@@ -764,6 +770,85 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_rebase(mut rng: StdRng) {
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(20);
+
+        let mut next_line_id = 0;
+        let base_lines = (0..rng.gen_range(1..=10))
+            .map(|_| post_inc(&mut next_line_id).to_string())
+            .collect::<Vec<_>>();
+        log::info!("base lines: {:?}", base_lines);
+
+        let (new_lines, patch_1) =
+            build_edits(&base_lines, operations, &mut rng, &mut next_line_id);
+        log::info!("agent edits: {:#?}", patch_1);
+        let (new_lines, patch_2) = build_edits(&new_lines, operations, &mut rng, &mut next_line_id);
+        log::info!("user edits: {:#?}", patch_2);
+
+        let mut old_text = Rope::from(base_lines.join("\n"));
+        let new_text = Rope::from(new_lines.join("\n"));
+        let patch = rebase_patch(&patch_1, patch_2.into_inner(), &mut old_text, &new_text);
+        log::info!("rebased edits: {:#?}", patch.edits());
+
+        for edit in patch.edits() {
+            let old_start = old_text.point_to_offset(Point::new(edit.new.start, 0));
+            let old_end = old_text.point_to_offset(cmp::min(
+                Point::new(edit.new.start + edit.old_len(), 0),
+                old_text.max_point(),
+            ));
+            old_text.replace(
+                old_start..old_end,
+                &new_text.slice_rows(edit.new.clone()).to_string(),
+            );
+        }
+        pretty_assertions::assert_eq!(old_text.to_string(), new_text.to_string());
+    }
+
+    fn build_edits(
+        lines: &Vec<String>,
+        count: usize,
+        rng: &mut StdRng,
+        next_line_id: &mut usize,
+    ) -> (Vec<String>, Patch<u32>) {
+        let mut delta = 0i32;
+        let mut last_edit_end = 0;
+        let mut edits = Patch::default();
+        let mut edited_lines = lines.clone();
+        for _ in 0..count {
+            if last_edit_end >= lines.len() {
+                break;
+            }
+
+            let end = rng.gen_range(last_edit_end..lines.len());
+            let start = rng.gen_range(last_edit_end..=end);
+            let old_len = end - start;
+
+            let mut new_len = rng.gen_range(0..=3);
+            if start == end && new_len == 0 {
+                new_len += 1;
+            }
+
+            last_edit_end = end + 1;
+
+            let new_lines = (0..new_len)
+                .map(|_| post_inc(next_line_id).to_string())
+                .collect::<Vec<_>>();
+            log::info!("  editing {:?}: {:?}", start..end, new_lines);
+            let old = start as u32..end as u32;
+            let new = (start as i32 + delta) as u32..(start as i32 + delta + new_len as i32) as u32;
+            edited_lines.splice(
+                new.start as usize..new.start as usize + old.len(),
+                new_lines,
+            );
+            edits.push(Edit { old, new });
+            delta += new_len as i32 - old_len as i32;
+        }
+        (edited_lines, edits)
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
