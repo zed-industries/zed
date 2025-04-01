@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use util::ResultExt as _;
 
-use crate::thread::{MessageId, ProjectSnapshot, Thread, ThreadEvent, ThreadId};
+use crate::thread::{
+    DetailedSummaryState, MessageId, ProjectSnapshot, Thread, ThreadEvent, ThreadId,
+};
 
 pub fn init(cx: &mut App) {
     ThreadsDatabase::init(cx);
@@ -300,7 +302,7 @@ pub struct SerializedThreadMetadata {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SerializedThread {
     pub version: String,
     pub summary: SharedString,
@@ -311,7 +313,7 @@ pub struct SerializedThread {
     #[serde(default)]
     pub cumulative_token_usage: TokenUsage,
     #[serde(default)]
-    pub detailed_summary: Option<SharedString>,
+    pub detailed_summary_state: DetailedSummaryState,
 }
 
 impl SerializedThread {
@@ -395,7 +397,7 @@ impl LegacySerializedThread {
             messages: self.messages.into_iter().map(|msg| msg.upgrade()).collect(),
             initial_project_snapshot: self.initial_project_snapshot,
             cumulative_token_usage: TokenUsage::default(),
-            detailed_summary: None,
+            detailed_summary_state: DetailedSummaryState::default(),
         }
     }
 }

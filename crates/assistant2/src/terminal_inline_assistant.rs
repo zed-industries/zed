@@ -75,7 +75,8 @@ impl TerminalInlineAssistant {
         let assist_id = self.next_assist_id.post_inc();
         let prompt_buffer =
             cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
-        let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
+        let context_store =
+            cx.new(|_cx| ContextStore::new(workspace.clone(), thread_store.clone()));
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new(|cx| {

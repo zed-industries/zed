@@ -178,8 +178,12 @@ impl AssistantPanel {
         let workspace = workspace.weak_handle();
         let weak_self = cx.entity().downgrade();
 
-        let message_editor_context_store =
-            cx.new(|_cx| crate::context_store::ContextStore::new(workspace.clone()));
+        let message_editor_context_store = cx.new(|_cx| {
+            crate::context_store::ContextStore::new(
+                workspace.clone(),
+                Some(thread_store.downgrade()),
+            )
+        });
 
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
@@ -272,8 +276,12 @@ impl AssistantPanel {
 
         self.active_view = ActiveView::Thread;
 
-        let message_editor_context_store =
-            cx.new(|_cx| crate::context_store::ContextStore::new(self.workspace.clone()));
+        let message_editor_context_store = cx.new(|_cx| {
+            crate::context_store::ContextStore::new(
+                self.workspace.clone(),
+                Some(self.thread_store.downgrade()),
+            )
+        });
 
         if let Some(other_thread_id) = action.from_thread_id.clone() {
             let other_thread_task = self
@@ -431,8 +439,12 @@ impl AssistantPanel {
             let thread = open_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
                 this.active_view = ActiveView::Thread;
-                let message_editor_context_store =
-                    cx.new(|_cx| crate::context_store::ContextStore::new(this.workspace.clone()));
+                let message_editor_context_store = cx.new(|_cx| {
+                    crate::context_store::ContextStore::new(
+                        this.workspace.clone(),
+                        Some(this.thread_store.downgrade()),
+                    )
+                });
                 this.thread = cx.new(|cx| {
                     ActiveThread::new(
                         thread.clone(),

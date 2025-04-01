@@ -240,11 +240,11 @@ impl MessageEditor {
                 })
                 .ok();
 
-            if let Some(task) = context_store
-                .read_with(cx, |context_store, cx| context_store.wait_for_summaries(cx))
+            if let Some(wait_summaries_task) = context_store
+                .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
                 .log_err()
             {
-                task.await;
+                wait_summaries_task.await;
             }
 
             thread

@@ -170,11 +170,11 @@ impl LastRestoreCheckpoint {
     }
 }
 
-/// A thread of conversation with the LLM.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub enum DetailedSummaryState {
+    #[default]
     NotGenerated,
     Generating {
-        task: Shared<Task<()>>,
         message_id: MessageId,
     },
     Generated {
@@ -183,6 +183,7 @@ pub enum DetailedSummaryState {
     },
 }
 
+/// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
     updated_at: DateTime<Utc>,
@@ -271,7 +272,7 @@ impl Thread {
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
-            detailed_summary_state: DetailedSummaryState::NotGenerated,
+            detailed_summary_state: serialized.detailed_summary_state,
             messages: serialized
                 .messages
                 .into_iter()
@@ -340,17 +341,17 @@ impl Thread {
         cx.emit(ThreadEvent::SummaryChanged);
     }
 
-    pub fn detailed_summary(&self) -> Option<SharedString> {
+    pub fn latest_detailed_summary_or_text(&self) -> SharedString {
+        self.latest_detailed_summary()
+            .unwrap_or_else(|| self.text().into())
+    }
+
+    fn latest_detailed_summary(&self) -> Option<SharedString> {
         if let DetailedSummaryState::Generated { text, .. } = &self.detailed_summary_state {
             Some(text.clone())
         } else {
             None
         }
-    }
-
-    pub fn detailed_summary_or_text(&self) -> SharedString {
-        self.detailed_summary()
-            .unwrap_or_else(|| self.text().into())
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
@@ -680,7 +681,7 @@ impl Thread {
                     .collect(),
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage.clone(),
-                detailed_summary: this.detailed_summary(),
+                detailed_summary_state: this.detailed_summary_state.clone(),
             })
         })
     }
@@ -1221,9 +1222,9 @@ impl Thread {
         });
     }
 
-    pub fn generate_detailed_summary(&mut self, cx: &mut Context<Self>) {
+    pub fn generate_detailed_summary(&mut self, cx: &mut Context<Self>) -> Option<Task<()>> {
         let Some(last_message_id) = self.messages.last().map(|message| message.id) else {
-            return;
+            return None;
         };
 
         match &self.detailed_summary_state {
@@ -1231,21 +1232,22 @@ impl Thread {
             | DetailedSummaryState::Generated { message_id, .. }
                 if *message_id == last_message_id =>
             {
-                return;
+                // Already up-to-date
+                return None;
             }
             _ => {}
         }
 
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
-            return;
+            return None;
         };
 
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
-            return;
+            return None;
         };
 
         if !provider.is_authenticated(cx) {
-            return;
+            return None;
         }
 
         let mut request = self.to_completion_request(RequestKind::Summarize, cx);
@@ -1264,13 +1266,14 @@ impl Thread {
             cache: false,
         });
 
-        let task = cx.spawn(async move |this, cx| {
+        let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion_text(request, &cx);
             let Some(mut messages) = stream.await.log_err() else {
-                this.update(cx, |this, _cx| {
-                    this.detailed_summary_state = DetailedSummaryState::NotGenerated;
-                })
-                .log_err();
+                thread
+                    .update(cx, |this, _cx| {
+                        this.detailed_summary_state = DetailedSummaryState::NotGenerated;
+                    })
+                    .log_err();
 
                 return;
             };
@@ -1283,31 +1286,21 @@ impl Thread {
                 }
             }
 
-            this.update(cx, |this, cx| {
-                this.detailed_summary_state = DetailedSummaryState::Generated {
-                    text: new_detailed_summary.into(),
-                    message_id: last_message_id,
-                };
-
-                this.touch_updated_at();
-                cx.emit(ThreadEvent::DetailedSummaryChanged);
-            })
-            .log_err();
-
-            ()
+            thread
+                .update(cx, |this, _cx| {
+                    this.detailed_summary_state = DetailedSummaryState::Generated {
+                        text: new_detailed_summary.into(),
+                        message_id: last_message_id,
+                    };
+                })
+                .log_err();
         });
 
         self.detailed_summary_state = DetailedSummaryState::Generating {
             message_id: last_message_id,
-            task: task.shared(),
         };
-    }
 
-    pub fn generating_detailed_summary_task(&self) -> Option<Shared<Task<()>>> {
-        match &self.detailed_summary_state {
-            DetailedSummaryState::Generating { task, .. } => Some(task.clone()),
-            _ => None,
-        }
+        Some(task)
     }
 
     pub fn use_pending_tools(
@@ -1755,7 +1748,6 @@ pub enum ThreadEvent {
     MessageEdited(MessageId),
     MessageDeleted(MessageId),
     SummaryChanged,
-    DetailedSummaryChanged,
     UsePendingTools,
     ToolFinished {
         #[allow(unused)]

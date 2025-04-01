@@ -11,7 +11,7 @@ use language::Buffer;
 use project::{ProjectItem, ProjectPath, Worktree};
 use rope::Rope;
 use text::{Anchor, BufferId, OffsetRangeExt};
-use util::maybe;
+use util::{maybe, ResultExt as _};
 use workspace::Workspace;
 
 use crate::context::{
@@ -20,10 +20,12 @@ use crate::context::{
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
+use crate::ThreadStore;
 
 pub struct ContextStore {
     workspace: WeakEntity<Workspace>,
     context: Vec<AssistantContext>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
     // TODO: If an EntityId is used for all context types (like BufferId), can remove ContextId.
     next_context_id: ContextId,
     files: BTreeMap<BufferId, ContextId>,
@@ -32,13 +34,18 @@ pub struct ContextStore {
     symbol_buffers: HashMap<ContextSymbolId, Entity<Buffer>>,
     symbols_by_path: HashMap<ProjectPath, Vec<ContextSymbolId>>,
     threads: HashMap<ThreadId, ContextId>,
+    thread_summary_tasks: Vec<Task<()>>,
     fetched_urls: HashMap<String, ContextId>,
 }
 
 impl ContextStore {
-    pub fn new(workspace: WeakEntity<Workspace>) -> Self {
+    pub fn new(
+        workspace: WeakEntity<Workspace>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+    ) -> Self {
         Self {
             workspace,
+            thread_store,
             context: Vec::new(),
             next_context_id: ContextId(0),
             files: BTreeMap::default(),
@@ -47,6 +54,7 @@ impl ContextStore {
             symbol_buffers: HashMap::default(),
             symbols_by_path: HashMap::default(),
             threads: HashMap::default(),
+            thread_summary_tasks: Vec::new(),
             fetched_urls: HashMap::default(),
         }
     }
@@ -366,38 +374,43 @@ impl ContextStore {
                 self.remove_context(context_id);
             }
         } else {
-            thread.update(cx, |thread, cx| {
-                thread.generate_detailed_summary(cx);
-            });
-
             self.insert_thread(thread, cx);
         }
     }
 
-    pub fn wait_for_summaries(&self, cx: &App) -> Task<()> {
-        let tasks: Vec<_> = self
-            .context
-            .iter()
-            .filter_map(|context| {
-                if let AssistantContext::Thread(thread_context) = context {
-                    thread_context
-                        .thread
-                        .read(cx)
-                        .generating_detailed_summary_task()
-                } else {
-                    None
-                }
-            })
-            .collect();
+    pub fn wait_for_summaries(&mut self, cx: &App) -> Task<()> {
+        let tasks = std::mem::take(&mut self.thread_summary_tasks);
 
         cx.spawn(async move |_cx| {
             join_all(tasks).await;
         })
     }
 
-    fn insert_thread(&mut self, thread: Entity<Thread>, cx: &App) {
+    fn insert_thread(&mut self, thread: Entity<Thread>, cx: &mut App) {
+        if let Some(summary_task) =
+            thread.update(cx, |thread, cx| thread.generate_detailed_summary(cx))
+        {
+            let thread = thread.clone();
+            let thread_store = self.thread_store.clone();
+
+            self.thread_summary_tasks.push(cx.spawn(async move |cx| {
+                summary_task.await;
+
+                if let Some(thread_store) = thread_store {
+                    // Save thread so its summary can be reused later
+                    let save_task = thread_store
+                        .update(cx, |thread_store, cx| thread_store.save_thread(&thread, cx));
+
+                    if let Some(save_task) = save_task.ok() {
+                        save_task.await.log_err();
+                    }
+                }
+            }));
+        }
+
         let id = self.next_context_id.post_inc();
-        let text = thread.read(cx).detailed_summary_or_text().into();
+
+        let text = thread.read(cx).latest_detailed_summary_or_text().into();
 
         self.threads.insert(thread.read(cx).id().clone(), id);
         self.context
@@ -867,7 +880,7 @@ fn refresh_thread_text(
     cx.spawn(async move |cx| {
         context_store
             .update(cx, |context_store, cx| {
-                let text = thread.read(cx).detailed_summary_or_text().into();
+                let text = thread.read(cx).latest_detailed_summary_or_text().into();
                 context_store.replace_context(AssistantContext::Thread(ThreadContext {
                     id,
                     thread,
