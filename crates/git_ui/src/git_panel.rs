@@ -920,9 +920,9 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         maybe!({
-            let skip_prompt = action.skip_prompt;
             let list_entry = self.entries.get(self.selected_entry?)?.clone();
             let entry = list_entry.status_entry()?.to_owned();
+            let skip_prompt = action.skip_prompt || entry.status.is_created();
 
             let prompt = if skip_prompt {
                 Task::ready(Ok(0))
