@@ -5035,17 +5035,19 @@ impl Editor {
         let excerpt_buffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite).with_title(title);
             for (buffer_handle, transaction) in &entries {
-                let buffer = buffer_handle.read(cx);
-                ranges_to_highlight.extend(
-                    multibuffer.push_excerpts_with_context_lines(
-                        buffer_handle.clone(),
-                        buffer
-                            .edited_ranges_for_transaction::<usize>(transaction)
-                            .collect(),
-                        DEFAULT_MULTIBUFFER_CONTEXT,
-                        cx,
-                    ),
+                let edited_ranges = buffer_handle
+                    .read(cx)
+                    .edited_ranges_for_transaction::<Point>(transaction)
+                    .collect::<Vec<_>>();
+                let (ranges, _) = multibuffer.set_excerpts_for_path(
+                    PathKey::for_buffer(buffer_handle, cx),
+                    buffer_handle.clone(),
+                    edited_ranges,
+                    DEFAULT_MULTIBUFFER_CONTEXT,
+                    cx,
                 );
+
+                ranges_to_highlight.extend(ranges);
             }
             multibuffer.push_transaction(entries.iter().map(|(b, t)| (b, t)), cx);
             multibuffer
