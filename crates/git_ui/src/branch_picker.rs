@@ -201,11 +201,11 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let sanitized_branch_name = new_branch_name.to_string().replace(' ', "-");
+        let new_branch_name = new_branch_name.to_string().replace(' ', "-");
         cx.spawn(async move |_, cx| {
-            cx.update(|cx| repo.read(cx).create_branch(sanitized_branch_name.clone()))?
+            cx.update(|cx| repo.read(cx).create_branch(new_branch_name.clone()))?
                 .await??;
-            cx.update(|cx| repo.read(cx).change_branch(sanitized_branch_name))?
+            cx.update(|cx| repo.read(cx).change_branch(new_branch_name))?
                 .await??;
             Ok(())
         })
@@ -301,10 +301,10 @@ impl PickerDelegate for BranchListDelegate {
                             .first()
                             .is_some_and(|entry| entry.branch.name == query)
                     {
-                        let sanitized_name = query.replace(' ', "-");
+                        let branch_name = query.replace(' ', "-");
                         matches.push(BranchEntry {
                             branch: Branch {
-                                name: sanitized_name.into(),
+                                name: branch_name.into(),
                                 is_head: false,
                                 upstream: None,
                                 most_recent_commit: None,
