@@ -565,11 +565,9 @@ impl Dock {
 
     pub fn restore_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(serialized) = self.serialized_dock.clone() {
-            if let Some(active_panel) = serialized.active_panel {
+            if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible) {
                 if let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
-                    if serialized.visible {
-                        self.activate_panel(idx, window, cx);
-                    }
+                    self.activate_panel(idx, window, cx);
                 }
             }
 
