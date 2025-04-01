@@ -65,7 +65,7 @@ impl ActionLog {
                         buffer.read(cx).as_rope().clone()
                     },
                     unreviewed_changes: Patch::default(),
-                    diff_version: text_snapshot.version().clone(),
+                    snapshot: text_snapshot.clone(),
                     status: if created {
                         TrackedBufferStatus::Created
                     } else {
@@ -163,8 +163,7 @@ impl ActionLog {
                         .get_mut(&buffer)
                         .context("buffer not tracked")?;
 
-                    let edits =
-                        row_edits_since_version(&tracked_buffer.diff_version, &buffer_snapshot);
+                    let edits = diff_snapshots(&tracked_buffer.snapshot, &buffer_snapshot);
                     match author {
                         ChangeAuthor::User => {
                             tracked_buffer.unreviewed_changes = rebase_patch(
@@ -179,6 +178,7 @@ impl ActionLog {
                                 tracked_buffer.unreviewed_changes.compose(edits)
                         }
                     }
+                    tracked_buffer.snapshot = buffer_snapshot.clone();
 
                     anyhow::Ok((
                         tracked_buffer.diff.clone(),
@@ -188,7 +188,6 @@ impl ActionLog {
                     ))
                 })??;
 
-            dbg!(&buffer_snapshot.text(), &base_text);
             let diff_snapshot = BufferDiff::update_diff(
                 diff.clone(),
                 buffer_snapshot.clone(),
@@ -353,7 +352,7 @@ fn rebase_patch(
         while let Some(old_edit) = old_edits.peek() {
             if new_edit.old.end <= old_edit.new.start {
                 break;
-            } else if old_edit.new.end <= new_edit.old.start {
+            } else if new_edit.old.start >= old_edit.new.end {
                 let mut old_edit = old_edits.next().unwrap();
                 old_edit.old.start = (old_edit.old.start as i32 + applied_delta) as u32;
                 old_edit.old.end = (old_edit.old.end as i32 + applied_delta) as u32;
@@ -388,10 +387,9 @@ fn rebase_patch(
             new_edit.old.end = (new_edit.old.end as i32 + applied_delta) as u32;
             conflicting_edits.push(new_edit);
         } else {
+            // This edit doesn't intersect with any old edit, so we can apply it to the old text.
             new_edit.old.start = (new_edit.old.start as i32 + applied_delta - rebased_delta) as u32;
             new_edit.old.end = (new_edit.old.end as i32 + applied_delta - rebased_delta) as u32;
-
-            // This edit doesn't intersect with any old edit, so we can apply it to the old text.
             let old_bytes = old_text.point_to_offset(Point::new(new_edit.old.start, 0))
                 ..old_text.point_to_offset(cmp::min(
                     Point::new(new_edit.old.end, 0),
@@ -402,6 +400,7 @@ fn rebase_patch(
                     Point::new(new_edit.new.end, 0),
                     new_text.max_point(),
                 ));
+
             old_text.replace(
                 old_bytes,
                 &new_text.chunks_in_range(new_bytes).collect::<String>(),
@@ -422,29 +421,49 @@ fn rebase_patch(
     translated_unreviewed_edits.compose(conflicting_edits)
 }
 
-fn row_edits_since_version(
-    since: &clock::Global,
-    buffer_snapshot: &text::BufferSnapshot,
+fn diff_snapshots(
+    old_snapshot: &text::BufferSnapshot,
+    new_snapshot: &text::BufferSnapshot,
 ) -> Vec<Edit<u32>> {
-    let mut edits = buffer_snapshot.edits_since::<Point>(since).peekable();
+    let mut edits = new_snapshot
+        .edits_since::<Point>(&old_snapshot.version)
+        .map(|edit| {
+            if edit.old.start.column == old_snapshot.line_len(edit.old.start.row)
+                && new_snapshot.chars_at(edit.new.start).next() == Some('\n')
+                && edit.old.start != old_snapshot.max_point()
+            {
+                Edit {
+                    old: edit.old.start.row + 1..edit.old.end.row + 1,
+                    new: edit.new.start.row + 1..edit.new.end.row + 1,
+                }
+            } else if edit.old.start.column == 0
+                && edit.old.end.column == 0
+                && edit.new.end.column == 0
+            {
+                Edit {
+                    old: edit.old.start.row..edit.old.end.row,
+                    new: edit.new.start.row..edit.new.end.row,
+                }
+            } else {
+                Edit {
+                    old: edit.old.start.row..edit.old.end.row + 1,
+                    new: edit.new.start.row..edit.new.end.row + 1,
+                }
+            }
+        })
+        .peekable();
     let mut row_edits = Vec::new();
-    while let Some(edit) = edits.next() {
-        let mut old_range = edit.old.start.row..edit.old.end.row + 1;
-        let mut new_range = edit.new.start.row..edit.new.end.row + 1;
+    while let Some(mut edit) = edits.next() {
         while let Some(next_edit) = edits.peek() {
-            if old_range.end > next_edit.old.start.row {
-                old_range.end = next_edit.old.end.row + 1;
-                new_range.end = next_edit.new.end.row + 1;
+            if edit.old.end >= next_edit.old.start {
+                edit.old.end = next_edit.old.end;
+                edit.new.end = next_edit.new.end;
                 edits.next();
             } else {
                 break;
             }
         }
-
-        row_edits.push(Edit {
-            old: old_range,
-            new: new_range,
-        });
+        row_edits.push(edit);
     }
     row_edits
 }
@@ -468,7 +487,7 @@ struct TrackedBuffer {
     status: TrackedBufferStatus,
     version: clock::Global,
     diff: Entity<BufferDiff>,
-    diff_version: clock::Global,
+    snapshot: text::BufferSnapshot,
     diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
@@ -506,7 +525,7 @@ mod tests {
     use rand::prelude::*;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::{path, post_inc};
+    use util::{path, post_inc, RandomCharIter};
 
     #[ctor::ctor]
     fn init_logger() {
@@ -613,12 +632,19 @@ mod tests {
         );
 
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(0, 2)..Point::new(0, 2), "X")], None, cx)
+            buffer.edit(
+                [
+                    (Point::new(0, 2)..Point::new(0, 2), "X"),
+                    (Point::new(3, 0)..Point::new(3, 0), "Y"),
+                ],
+                None,
+                cx,
+            )
         });
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
-            "abXc\ndeF\nGHI\njkl\nmno"
+            "abXc\ndeF\nGHI\nYjkl\nmno"
         );
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
@@ -633,12 +659,12 @@ mod tests {
         );
 
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(1, 1)..Point::new(1, 1), "Y")], None, cx)
+            buffer.edit([(Point::new(1, 1)..Point::new(1, 1), "Z")], None, cx)
         });
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
-            "abXc\ndYeF\nGHI\njkl\nmno"
+            "abXc\ndZeF\nGHI\nYjkl\nmno"
         );
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
@@ -773,13 +799,72 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_rebase(mut rng: StdRng) {
+    async fn test_random_diffs(mut rng: StdRng, cx: &mut TestAppContext) {
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(20);
+
+        let action_log = cx.new(|_| ActionLog::new());
+        let text = RandomCharIter::new(&mut rng).take(50).collect::<String>();
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+
+        for _ in 0..operations {
+            let is_agent_change = rng.gen();
+            if is_agent_change {
+                log::info!("agent edit");
+            } else {
+                log::info!("user edit");
+            }
+            cx.update(|cx| {
+                buffer.update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
+                if is_agent_change {
+                    action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                }
+            });
+
+            if rng.gen_bool(0.2) {
+                quiesce(&action_log, &buffer, cx);
+            }
+        }
+
+        quiesce(&action_log, &buffer, cx);
+
+        fn quiesce(
+            action_log: &Entity<ActionLog>,
+            buffer: &Entity<Buffer>,
+            cx: &mut TestAppContext,
+        ) {
+            log::info!("quiescing...");
+            cx.run_until_parked();
+            action_log.update(cx, |log, cx| {
+                let tracked_buffer = log.track_buffer(buffer.clone(), false, cx);
+                let mut old_text = tracked_buffer.base_text.clone();
+                let new_text = buffer.read(cx).as_rope();
+                for edit in tracked_buffer.unreviewed_changes.edits() {
+                    let old_start = old_text.point_to_offset(Point::new(edit.new.start, 0));
+                    let old_end = old_text.point_to_offset(cmp::min(
+                        Point::new(edit.new.start + edit.old_len(), 0),
+                        old_text.max_point(),
+                    ));
+                    old_text.replace(
+                        old_start..old_end,
+                        &new_text.slice_rows(edit.new.clone()).to_string(),
+                    );
+                }
+                pretty_assertions::assert_eq!(old_text.to_string(), new_text.to_string());
+            })
+        }
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_rebase_random(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(20);
 
         let mut next_line_id = 0;
-        let base_lines = (0..rng.gen_range(1..=10))
+        let base_lines = (0..rng.gen_range(1..=20))
             .map(|_| post_inc(&mut next_line_id).to_string())
             .collect::<Vec<_>>();
         log::info!("base lines: {:?}", base_lines);
