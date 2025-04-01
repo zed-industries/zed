@@ -171,7 +171,11 @@ impl ActionLog {
                                 ),
                                 ChangeAuthor::Agent => unreviewed_changes.compose(edits),
                             };
-                            (base_text, unreviewed_changes)
+                            (
+                                Arc::new(base_text.to_string()),
+                                base_text,
+                                unreviewed_changes,
+                            )
                         }
                     });
 
@@ -183,11 +187,11 @@ impl ActionLog {
                     ))
                 })??;
 
-            let (new_base_text, unreviewed_changes) = rebase.await;
+            let (new_base_text, new_base_text_rope, unreviewed_changes) = rebase.await;
             let diff_snapshot = BufferDiff::update_diff(
                 diff.clone(),
                 buffer_snapshot.clone(),
-                Some(Arc::new(new_base_text.to_string())),
+                Some(new_base_text),
                 true,
                 false,
                 language,
@@ -205,8 +209,8 @@ impl ActionLog {
                     .tracked_buffers
                     .get_mut(&buffer)
                     .context("buffer not tracked")?;
-                tracked_buffer.base_text = new_base_text.clone();
-                tracked_buffer.snapshot = buffer_snapshot.clone();
+                tracked_buffer.base_text = new_base_text_rope;
+                tracked_buffer.snapshot = buffer_snapshot;
                 tracked_buffer.unreviewed_changes = unreviewed_changes;
                 cx.notify();
                 anyhow::Ok(())
