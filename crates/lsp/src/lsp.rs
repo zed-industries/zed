@@ -788,7 +788,7 @@ impl LanguageServer {
                         dynamic_registration: Some(false),
                         requests: SemanticTokensClientCapabilitiesRequests {
                             range: Some(true),
-                            full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                            full: Some(SemanticTokensFullOptions::Delta { delta: Some(false) }),
                         },
                         multiline_token_support: Some(false),
                         formats: vec![TokenFormat::new("relative")],
