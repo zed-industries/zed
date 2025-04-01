@@ -64,10 +64,10 @@ define_connection!(pub static ref COMMAND_PALETTE_HISTORY: CommandPaletteDB<()> 
 impl CommandPaletteDB {
     pub async fn write_command_invocation(
         &self,
-        command_name: &str,
-        user_query: &str,
+        command_name: impl Into<String>,
+        user_query: impl Into<String>,
     ) -> Result<()> {
-        self.write_command_invocation_internal(command_name.to_string(), user_query.to_string())
+        self.write_command_invocation_internal(command_name.into(), user_query.into())
             .await
     }
 

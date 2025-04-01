@@ -141,6 +141,7 @@ impl Render for CommandPalette {
 }
 
 pub struct CommandPaletteDelegate {
+    latest_query: String,
     command_palette: WeakEntity<CommandPalette>,
     all_commands: Vec<Command>,
     commands: Vec<Command>,
@@ -180,6 +181,7 @@ impl CommandPaletteDelegate {
             commands,
             selected_ix: 0,
             previous_focus_handle,
+            latest_query: String::new(),
             updating_matches: None,
         }
     }
@@ -192,6 +194,7 @@ impl CommandPaletteDelegate {
         cx: &mut Context<Picker<Self>>,
     ) {
         self.updating_matches.take();
+        self.latest_query = query.clone();
 
         let mut intercept_results = CommandPaletteInterceptor::try_global(cx)
             .map(|interceptor| interceptor.intercept(&query, cx))
@@ -398,9 +401,10 @@ impl PickerDelegate for CommandPaletteDelegate {
         self.matches.clear();
         self.commands.clear();
         let command_name = command.name.clone();
+        let latest_query = self.latest_query.clone();
         cx.background_spawn(async move {
             COMMAND_PALETTE_HISTORY
-                .write_command_invocation(&command_name, "")
+                .write_command_invocation(command_name, latest_query)
                 .await
         })
         .detach_and_log_err(cx);
