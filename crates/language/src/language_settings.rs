@@ -372,8 +372,10 @@ pub enum CompletionMode {
     Insert,
     /// Replaces the whole word, using the `replace` range described in the LSP specification.
     Replace,
+    /// Only replace the whole word if the text after cursor is a subsequence (fuzzy match) of the completion.
+    AutoSimilar,
     /// Only replace the whole word if the text after cursor is a suffix of the completion.
-    Auto,
+    AutoStrict,
 }
 
 fn default_words_completion_mode() -> WordsCompletionMode {

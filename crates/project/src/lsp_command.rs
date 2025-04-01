@@ -2337,7 +2337,33 @@ pub(crate) fn parse_completion_text_edit(
             let replace = match completion_mode {
                 CompletionMode::Insert => false,
                 CompletionMode::Replace => true,
-                CompletionMode::Auto => {
+                CompletionMode::AutoSimilar => {
+                    let range_after_cursor = lsp::Range {
+                        start: edit.insert.end,
+                        end: edit.replace.end,
+                    };
+                    let range_after_cursor = range_from_lsp(range_after_cursor);
+
+                    let start = snapshot.clip_point_utf16(range_after_cursor.start, Bias::Left);
+                    let end = snapshot.clip_point_utf16(range_after_cursor.end, Bias::Left);
+                    if start != range_after_cursor.start.0 || end != range_after_cursor.end.0 {
+                        false
+                    } else {
+                        let mut completion_text = edit.new_text.chars();
+
+                        let mut text_after_cursor = snapshot.chars_for_range(
+                            snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                        );
+
+                        // is `completion_text` a subsequence of `text_after_cursor`
+                        text_after_cursor.all(|needle_ch| {
+                            completion_text
+                                .find(|haystack_ch| *haystack_ch == needle_ch)
+                                .is_some()
+                        })
+                    }
+                }
+                CompletionMode::AutoStrict => {
                     let range_after_cursor = lsp::Range {
                         start: edit.insert.end,
                         end: edit.replace.end,

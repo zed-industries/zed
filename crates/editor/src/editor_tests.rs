@@ -9220,7 +9220,8 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
         completion_text: &'static str,
         expected_with_insertion_mode: String,
         expected_with_replace_mode: String,
-        expected_with_auto_mode: String,
+        expected_with_auto_similar_mode: String,
+        expected_with_auto_strict_mode: String,
     }
 
     let runs = [
@@ -9231,7 +9232,8 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             completion_text: "editor",
             expected_with_insertion_mode: "before editorˇ after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
-            expected_with_auto_mode: "before editorˇ after".into(),
+            expected_with_auto_similar_mode: "before editorˇ after".into(),
+            expected_with_auto_strict_mode: "before editorˇ after".into(),
         },
         Run {
             run_description: "Accept same text at the middle of the word",
@@ -9240,7 +9242,8 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             completion_text: "editor",
             expected_with_insertion_mode: "before editorˇtor after".into(),
             expected_with_replace_mode: "before ediˇtor after".into(),
-            expected_with_auto_mode: "before ediˇtor after".into(),
+            expected_with_auto_similar_mode: "before ediˇtor after".into(),
+            expected_with_auto_strict_mode: "before ediˇtor after".into(),
         },
         Run {
             run_description: "End of word matches completion text -- cursor at end",
@@ -9249,7 +9252,8 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             completion_text: "editor",
             expected_with_insertion_mode: "before editorˇ after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
-            expected_with_auto_mode: "before editorˇ after".into(),
+            expected_with_auto_similar_mode: "before editorˇ after".into(),
+            expected_with_auto_strict_mode: "before editorˇ after".into(),
         },
         Run {
             run_description: "End of word matches completion text -- cursor at start",
@@ -9258,7 +9262,8 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             completion_text: "editor",
             expected_with_insertion_mode: "before editorˇtor after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
-            expected_with_auto_mode: "before editorˇ after".into(),
+            expected_with_auto_similar_mode: "before editorˇ after".into(),
+            expected_with_auto_strict_mode: "before editorˇ after".into(),
         },
         Run {
             run_description: "Prepend text containing whitespace",
@@ -9267,7 +9272,8 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             completion_text: "pub ",
             expected_with_insertion_mode: "pub ˇfield: bool".into(),
             expected_with_replace_mode: "pub ˇ: bool".into(),
-            expected_with_auto_mode: "pub ˇfield: bool".into(),
+            expected_with_auto_similar_mode: "pub ˇfield: bool".into(),
+            expected_with_auto_strict_mode: "pub ˇfield: bool".into(),
         },
         Run {
             run_description: "Add element to start of list",
@@ -9276,25 +9282,18 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             completion_text: "element_1",
             expected_with_insertion_mode: "[element_1ˇelement_2]".into(),
             expected_with_replace_mode: "[element_1ˇ]".into(),
-            expected_with_auto_mode: "[element_1ˇelement_2]".into(),
+            expected_with_auto_similar_mode: "[element_1ˇelement_2]".into(),
+            expected_with_auto_strict_mode: "[element_1ˇelement_2]".into(),
         },
         Run {
-            run_description: "Add element to start of list - first and second elements are equal",
+            run_description: "Add element to start of list -- first and second elements are equal",
             initial_state: "[elˇelement]".into(),
             buffer_marked_text: "[<el|element>]".into(),
             completion_text: "element",
             expected_with_insertion_mode: "[elementˇelement]".into(),
             expected_with_replace_mode: "[elˇement]".into(),
-            expected_with_auto_mode: "[elˇement]".into(),
-        },
-        Run {
-            run_description: "Add element to start of list - LSP server gave a shorter range",
-            initial_state: "[element_ˇelement_2]".into(),
-            buffer_marked_text: "[e<lement_|element>_2]".into(),
-            completion_text: "element_1",
-            expected_with_insertion_mode: "[eelement_1ˇelement_2]".into(),
-            expected_with_replace_mode: "[eelement_1ˇ_2]".into(),
-            expected_with_auto_mode: "[eelement_1ˇelement_2]".into(),
+            expected_with_auto_similar_mode: "[elˇement]".into(),
+            expected_with_auto_strict_mode: "[elˇement]".into(),
         },
         Run {
             run_description: "Ends with matching suffix",
@@ -9303,7 +9302,8 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             completion_text: "SubscriptionError",
             expected_with_insertion_mode: "SubscriptionErrorˇError".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
-            expected_with_auto_mode: "SubscriptionErrorˇ".into(),
+            expected_with_auto_similar_mode: "SubscriptionErrorˇ".into(),
+            expected_with_auto_strict_mode: "SubscriptionErrorˇ".into(),
         },
         Run {
             run_description: "Suffix is a subsequence -- contiguous",
@@ -9312,7 +9312,28 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             completion_text: "SubscriptionError",
             expected_with_insertion_mode: "SubscriptionErrorˇErr".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
-            expected_with_auto_mode: "SubscriptionErrorˇErr".into(),
+            expected_with_auto_similar_mode: "SubscriptionErrorˇ".into(),
+            expected_with_auto_strict_mode: "SubscriptionErrorˇErr".into(),
+        },
+        Run {
+            run_description: "Suffix is a subsequence -- non-contiguous -- replace intended",
+            initial_state: "Suˇscrirr".into(),
+            buffer_marked_text: "<Su|scrirr>".into(),
+            completion_text: "SubscriptionError",
+            expected_with_insertion_mode: "SubscriptionErrorˇscrirr".into(),
+            expected_with_replace_mode: "SubscriptionErrorˇ".into(),
+            expected_with_auto_similar_mode: "SubscriptionErrorˇ".into(),
+            expected_with_auto_strict_mode: "SubscriptionErrorˇscrirr".into(),
+        },
+        Run {
+            run_description: "Suffix is a subsequence -- non-contiguous -- replace unintended",
+            initial_state: "foo(indˇix)".into(),
+            buffer_marked_text: "foo(<ind|ix>)".into(),
+            completion_text: "node_index",
+            expected_with_insertion_mode: "foo(node_indexˇix)".into(),
+            expected_with_replace_mode: "foo(node_indexˇ)".into(),
+            expected_with_auto_similar_mode: "foo(node_indexˇ)".into(),
+            expected_with_auto_strict_mode: "foo(node_indexˇix)".into(),
         },
     ];
 
@@ -9320,7 +9341,14 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
         let run_variations = [
             (CompletionMode::Insert, run.expected_with_insertion_mode),
             (CompletionMode::Replace, run.expected_with_replace_mode),
-            (CompletionMode::Auto, run.expected_with_auto_mode),
+            (
+                CompletionMode::AutoSimilar,
+                run.expected_with_auto_similar_mode,
+            ),
+            (
+                CompletionMode::AutoStrict,
+                run.expected_with_auto_strict_mode,
+            ),
         ];
 
         for (completion_mode, expected_text) in run_variations {
