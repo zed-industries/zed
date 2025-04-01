@@ -313,7 +313,7 @@ impl SignatureHelpState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SignatureHelpData {
-    label: SharedString,
+    pub(crate) label: SharedString,
     documentation: Option<SharedString>,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
