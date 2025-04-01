@@ -30,6 +30,7 @@ pub struct ContextSnapshot {
     pub tooltip: Option<SharedString>,
     pub icon_path: Option<SharedString>,
     pub kind: ContextKind,
+    pub summarizing: bool,
     /// Joining these strings separated by \n yields text for model. Not refreshed by `snapshot`.
     pub text: Box<[SharedString]>,
 }
@@ -175,6 +176,7 @@ impl FileContext {
             parent,
             tooltip: Some(full_path),
             icon_path,
+            summarizing: false,
             kind: ContextKind::File,
             text: Box::new([self.context_buffer.text.clone()]),
         })
@@ -217,6 +219,7 @@ impl DirectoryContext {
                 tooltip: Some(full_path),
                 icon_path: None,
                 kind: ContextKind::Directory,
+                summarizing: false,
                 text,
             },
         }
@@ -242,6 +245,7 @@ impl SymbolContext {
             parent: Some(path),
             tooltip: None,
             icon_path: None,
+            summarizing: false,
             kind: ContextKind::Symbol,
             text: Box::new([self.context_symbol.text.clone()]),
         })
@@ -256,6 +260,7 @@ impl FetchedUrlContext {
             parent: None,
             tooltip: None,
             icon_path: None,
+            summarizing: false,
             kind: ContextKind::FetchedUrl,
             text: Box::new([self.text.clone()]),
         }
@@ -271,6 +276,7 @@ impl ThreadContext {
             parent: None,
             tooltip: None,
             icon_path: None,
+            summarizing: thread.is_generating_detailed_summary(),
             kind: ContextKind::Thread,
             text: Box::new([self.text.clone()]),
         }

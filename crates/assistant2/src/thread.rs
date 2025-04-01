@@ -1303,6 +1303,13 @@ impl Thread {
         Some(task)
     }
 
+    pub fn is_generating_detailed_summary(&self) -> bool {
+        matches!(
+            self.detailed_summary_state,
+            DetailedSummaryState::Generating { .. }
+        )
+    }
+
     pub fn use_pending_tools(
         &mut self,
         cx: &mut Context<Self>,

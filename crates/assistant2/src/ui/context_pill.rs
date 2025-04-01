@@ -1,6 +1,6 @@
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 
-use gpui::ClickEvent;
+use gpui::{pulsating_between, Animation, AnimationExt as _, ClickEvent};
 use ui::{prelude::*, IconButtonShape, Tooltip};
 
 use crate::context::{ContextKind, ContextSnapshot};
@@ -92,6 +92,13 @@ impl ContextPill {
             } => Icon::new(kind.icon()),
         }
     }
+
+    pub fn is_summarizing(&self) -> bool {
+        match self {
+            Self::Added { context, .. } => context.summarizing,
+            Self::Suggested { .. } => false,
+        }
+    }
 }
 
 impl RenderOnce for ContextPill {
@@ -165,6 +172,22 @@ impl RenderOnce for ContextPill {
                     element
                         .cursor_pointer()
                         .on_click(move |event, window, cx| on_click(event, window, cx))
+                })
+                .map(|element| {
+                    if self.is_summarizing() {
+                        element
+                            .tooltip(ui::Tooltip::text("Summarizing..."))
+                            .with_animation(
+                                "pulsating-ctx-pill",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.opacity(delta),
+                            )
+                            .into_any_element()
+                    } else {
+                        element.into_any()
+                    }
                 }),
             ContextPill::Suggested {
                 name,
@@ -215,7 +238,8 @@ impl RenderOnce for ContextPill {
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
                     element.on_click(move |event, window, cx| on_click(event, window, cx))
-                }),
+                })
+                .into_any(),
         }
     }
 }

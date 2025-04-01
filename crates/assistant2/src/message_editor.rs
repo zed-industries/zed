@@ -227,33 +227,38 @@ impl MessageEditor {
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
         let checkpoint = self.project.read(cx).git_store().read(cx).checkpoint(cx);
-        cx.spawn(async move |_, cx| {
+
+        cx.spawn(async move |_this, cx| {
             let checkpoint = checkpoint.await.ok();
             refresh_task.await;
             let (system_prompt_context, load_error) = system_prompt_context_task.await;
+
             thread
                 .update(cx, |thread, cx| {
                     thread.set_system_prompt_context(system_prompt_context);
                     if let Some(load_error) = load_error {
                         cx.emit(ThreadEvent::ShowError(load_error));
                     }
-                })
-                .ok();
 
-            if let Some(wait_summaries_task) = context_store
-                .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
-                .log_err()
-            {
-                wait_summaries_task.await;
-            }
-
-            thread
-                .update(cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
+
                     thread.action_log().update(cx, |action_log, cx| {
                         action_log.clear_reviewed_changes(cx);
                     });
                     thread.insert_user_message(user_message, context, checkpoint, cx);
+                })
+                .ok();
+
+            if let Some(wait_for_summaries) = context_store
+                .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
+                .log_err()
+            {
+                wait_for_summaries.await;
+            }
+
+            // Send to model after waiting for summaries
+            thread
+                .update(cx, |thread, cx| {
                     thread.send_to_model(model, request_kind, cx);
                 })
                 .ok();
