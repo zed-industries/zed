@@ -61,7 +61,7 @@ impl Room {
         let task = cx.background_executor().spawn(async move {
             while let Some(event) = events.recv().await {
                 if let Some(event) = room_event_from_livekit(event) {
-                    tx.send(event.into()).await.ok();
+                    tx.send(event).await.ok();
                 }
             }
         });
@@ -159,7 +159,7 @@ impl LocalParticipant {
             participant.publish_track(track, options).await
         })?
         .await?
-        .map(|p| LocalTrackPublication(p))
+        .map(LocalTrackPublication)
         .map_err(|error| anyhow::anyhow!("failed to publish track: {error}"))
     }
 
@@ -171,7 +171,7 @@ impl LocalParticipant {
         let participant = self.0.clone();
         Tokio::spawn(cx, async move { participant.unpublish_track(&sid).await })?
             .await?
-            .map(|p| LocalTrackPublication(p))
+            .map(LocalTrackPublication)
             .map_err(|error| anyhow::anyhow!("failed to unpublish track: {error}"))
     }
 }
@@ -449,7 +449,7 @@ fn room_event_from_livekit(event: livekit::RoomEvent) -> Option<RoomEvent> {
                     |(p, t)| {
                         (
                             RemoteParticipant(p),
-                            t.into_iter().map(|t| RemoteTrackPublication(t)).collect(),
+                            t.into_iter().map(RemoteTrackPublication).collect(),
                         )
                     }
                 })
