@@ -6,10 +6,10 @@ use std::iter::Iterator;
 use std::sync::Arc;
 
 use client::UserStore;
-use component::{components, ComponentId, ComponentMetadata};
+use component::{ComponentId, ComponentMetadata, components};
 use gpui::{
-    list, prelude::*, uniform_list, App, Entity, EventEmitter, FocusHandle, Focusable, Task,
-    WeakEntity, Window,
+    App, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window, list, prelude::*,
+    uniform_list,
 };
 
 use collections::HashMap;
@@ -18,10 +18,10 @@ use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::Project;
-use ui::{prelude::*, Divider, ListItem, ListSubHeader};
+use ui::{Divider, ListItem, ListSubHeader, prelude::*};
 
-use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
 use workspace::{AppState, ItemId, SerializableItem};
+use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     let app_state = app_state.clone();
@@ -244,7 +244,7 @@ impl ComponentPreview {
         ix: usize,
         entry: &PreviewEntry,
         cx: &Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         match entry {
             PreviewEntry::Component(component_metadata) => {
                 let id = component_metadata.id();

@@ -361,7 +361,13 @@ message Envelope {
         RemoveRepository remove_repository = 329;
 
         GetDocumentSymbols get_document_symbols = 330;
-        GetDocumentSymbolsResponse get_document_symbols_response = 331; // current max
+        GetDocumentSymbolsResponse get_document_symbols_response = 331;
+
+        LanguageServerIdForName language_server_id_for_name = 332;
+        LanguageServerIdForNameResponse language_server_id_for_name_response = 333; // current max
+
+        LoadCommitDiff load_commit_diff = 334;
+        LoadCommitDiffResponse load_commit_diff_response = 335; // current max
     }
 
     reserved 87 to 88;
@@ -2670,6 +2676,8 @@ message Breakpoint {
     BreakpointState state = 2;
     reserved 3;
     optional string message = 4;
+    optional string condition = 5;
+    optional string hit_condition = 6;
 }
 
 message BreakpointsForFile {
@@ -3266,6 +3274,7 @@ message ListToolchains {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     string language_name = 3;
+    optional string path = 4;
 }
 
 message Toolchain {
@@ -3290,12 +3299,14 @@ message ActivateToolchain {
     uint64 worktree_id = 2;
     Toolchain toolchain = 3;
     string language_name = 4;
+    optional string path = 5;
 }
 
 message ActiveToolchain {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     string language_name = 3;
+    optional string path = 4;
 }
 
 message ActiveToolchainResponse {
@@ -3355,6 +3366,23 @@ message GitCommitDetails {
     int64 commit_timestamp = 3;
     string committer_email = 4;
     string committer_name = 5;
+}
+
+message LoadCommitDiff {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+}
+
+message LoadCommitDiffResponse {
+    repeated CommitFile files = 1;
+}
+
+message CommitFile {
+    string path = 1;
+    optional string old_text = 2;
+    optional string new_text = 3;
 }
 
 message GitReset {
@@ -3566,4 +3594,14 @@ message GitInit {
     uint64 project_id = 1;
     string abs_path = 2;
     string fallback_branch_name = 3;
+}
+
+message LanguageServerIdForName {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    string name = 3;
+}
+
+message LanguageServerIdForNameResponse {
+    optional uint64 server_id = 1;
 }

@@ -2,15 +2,15 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap, HashSet};
-use futures::{self, future, Future, FutureExt};
+use futures::{self, Future, FutureExt, future};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, File};
 use project::{ProjectItem, ProjectPath, Worktree};
 use rope::Rope;
 use text::{Anchor, BufferId, OffsetRangeExt};
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 use workspace::Workspace;
 
 use crate::context::{
@@ -252,7 +252,10 @@ impl ContextStore {
                 .collect::<Vec<_>>();
 
             if context_buffers.is_empty() {
-                bail!("No text files found in {}", &project_path.path.display());
+                return Err(anyhow!(
+                    "No text files found in {}",
+                    &project_path.path.display()
+                ));
             }
 
             this.update(cx, |this, _| {
@@ -474,7 +477,7 @@ impl ContextStore {
             let found_file_context = self.context.iter().find(|context| match &context {
                 AssistantContext::File(file_context) => {
                     let buffer = file_context.context_buffer.buffer.read(cx);
-                    if let Some(file_path) = buffer_path_log_err(buffer) {
+                    if let Some(file_path) = buffer_path_log_err(buffer, cx) {
                         *file_path == *path
                     } else {
                         false
@@ -547,7 +550,7 @@ impl ContextStore {
             .filter_map(|context| match context {
                 AssistantContext::File(file) => {
                     let buffer = file.context_buffer.buffer.read(cx);
-                    buffer_path_log_err(buffer).map(|p| p.to_path_buf())
+                    buffer_path_log_err(buffer, cx).map(|p| p.to_path_buf())
                 }
                 AssistantContext::Directory(_)
                 | AssistantContext::Symbol(_)
@@ -628,9 +631,14 @@ fn collect_buffer_info_and_text(
     Ok((buffer_info, text_task))
 }
 
-pub fn buffer_path_log_err(buffer: &Buffer) -> Option<Arc<Path>> {
+pub fn buffer_path_log_err(buffer: &Buffer, cx: &App) -> Option<Arc<Path>> {
     if let Some(file) = buffer.file() {
-        Some(file.path().clone())
+        let mut path = file.path().clone();
+
+        if path.as_os_str().is_empty() {
+            path = file.full_path(cx).into();
+        }
+        Some(path)
     } else {
         log::error!("Buffer that had a path unexpectedly no longer has a path.");
         None
@@ -695,7 +703,7 @@ pub fn refresh_context_store_text(
     context_store: Entity<ContextStore>,
     changed_buffers: &HashSet<Entity<Buffer>>,
     cx: &App,
-) -> impl Future<Output = Vec<ContextId>> {
+) -> impl Future<Output = Vec<ContextId>> + use<> {
     let mut tasks = Vec::new();
 
     for context in &context_store.read(cx).context {
@@ -716,7 +724,7 @@ pub fn refresh_context_store_text(
                         || changed_buffers.iter().any(|buffer| {
                             let buffer = buffer.read(cx);
 
-                            buffer_path_log_err(&buffer).map_or(false, |path| {
+                            buffer_path_log_err(&buffer, cx).map_or(false, |path| {
                                 path.starts_with(&directory_context.project_path.path)
                             })
                         });
@@ -863,9 +871,9 @@ fn refresh_thread_text(
 fn refresh_context_buffer(
     context_buffer: &ContextBuffer,
     cx: &App,
-) -> Option<impl Future<Output = ContextBuffer>> {
+) -> Option<impl Future<Output = ContextBuffer> + use<>> {
     let buffer = context_buffer.buffer.read(cx);
-    let path = buffer_path_log_err(buffer)?;
+    let path = buffer_path_log_err(buffer, cx)?;
     if buffer.version.changed_since(&context_buffer.version) {
         let (buffer_info, text_task) = collect_buffer_info_and_text(
             path,
@@ -884,9 +892,9 @@ fn refresh_context_buffer(
 fn refresh_context_symbol(
     context_symbol: &ContextSymbol,
     cx: &App,
-) -> Option<impl Future<Output = ContextSymbol>> {
+) -> Option<impl Future<Output = ContextSymbol> + use<>> {
     let buffer = context_symbol.buffer.read(cx);
-    let path = buffer_path_log_err(buffer)?;
+    let path = buffer_path_log_err(buffer, cx)?;
     let project_path = buffer.project_path(cx)?;
     if buffer.version.changed_since(&context_symbol.buffer_version) {
         let (buffer_info, text_task) = collect_buffer_info_and_text(

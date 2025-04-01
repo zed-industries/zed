@@ -1,6 +1,6 @@
 use crate::{
-    matcher::{MatchCandidate, Matcher},
     CharBag,
+    matcher::{MatchCandidate, Matcher},
 };
 use gpui::BackgroundExecutor;
 use std::{

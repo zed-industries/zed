@@ -1,10 +1,10 @@
 use std::{ops::Range, path::Path, sync::Arc};
 
 use editor::{
+    Anchor, Bias, DisplayPoint, Editor, MultiBuffer,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, Editor, MultiBuffer,
 };
 use gpui::{Context, Entity, EntityId, UpdateGlobal, Window};
 use language::SelectionGoal;
@@ -13,9 +13,9 @@ use ui::App;
 use workspace::OpenOptions;
 
 use crate::{
+    Vim,
     motion::{self, Motion},
     state::{Mark, Mode, VimGlobals},
-    Vim,
 };
 
 impl Vim {

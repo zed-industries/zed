@@ -1,7 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, AppContext, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -31,12 +32,11 @@ impl Tool for OpenTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::ExternalLink
+        IconName::ArrowUpRight
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(OpenToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<OpenToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

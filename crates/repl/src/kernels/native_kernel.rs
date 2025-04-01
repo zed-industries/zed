@@ -1,14 +1,14 @@
 use anyhow::{Context as _, Result};
 use futures::{
+    AsyncBufReadExt as _, SinkExt as _,
     channel::mpsc::{self},
     io::BufReader,
     stream::{SelectAll, StreamExt},
-    AsyncBufReadExt as _, SinkExt as _,
 };
 use gpui::{App, AppContext as _, Entity, EntityId, Task, Window};
 use jupyter_protocol::{
-    connection_info::{ConnectionInfo, Transport},
     ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
+    connection_info::{ConnectionInfo, Transport},
 };
 use project::Fs;
 use runtimelib::dirs;

@@ -1,14 +1,15 @@
 use gpui::{
-    div, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     InteractiveElement, IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse,
     Refineable, Render, RenderablePromptHandle, SharedString, Styled, TextStyleRefinement, Window,
+    div,
 };
 use markdown::{Markdown, MarkdownStyle};
 use settings::{Settings, SettingsStore};
 use theme::ThemeSettings;
 use ui::{
-    h_flex, v_flex, ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex,
-    FluentBuilder, LabelSize, StyledExt, TintColor,
+    ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder, LabelSize,
+    StyledExt, TintColor, h_flex, v_flex,
 };
 use workspace::WorkspaceSettings;
 

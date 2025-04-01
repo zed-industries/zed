@@ -17,31 +17,31 @@ mod workspace_settings;
 use dap::DapRegistry;
 pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
 
-use anyhow::{anyhow, Context as _, Result};
-use call::{call_settings::CallSettings, ActiveCall};
+use anyhow::{Context as _, Result, anyhow};
+use call::{ActiveCall, call_settings::CallSettings};
 use client::{
-    proto::{self, ErrorCode, PanelId, PeerId},
     ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
+    proto::{self, ErrorCode, PanelId, PeerId},
 };
-use collections::{hash_map, HashMap, HashSet};
+use collections::{HashMap, HashSet, hash_map};
 use derive_more::{Deref, DerefMut};
 pub use dock::Panel;
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
+    Future, FutureExt, StreamExt,
     channel::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     future::try_join_all,
-    Future, FutureExt, StreamExt,
 };
 use gpui::{
-    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
-    transparent_black, Action, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds,
-    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions,
-    Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity,
-    WindowBounds, WindowHandle, WindowId, WindowOptions,
+    Action, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context, CursorStyle,
+    Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Global,
+    Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel,
+    Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity, WindowBounds,
+    WindowHandle, WindowId, WindowOptions, action_as, actions, canvas, impl_action_as,
+    impl_actions, point, relative, size, transparent_black,
 };
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -52,24 +52,24 @@ use language::{LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
-    simple_message_notification::MessageNotification, DetachAndPromptErr, Notifications,
+    DetachAndPromptErr, Notifications, simple_message_notification::MessageNotification,
 };
 pub use pane::*;
 pub use pane_group::*;
-pub use persistence::{
-    model::{ItemId, LocalPaths, SerializedWorkspaceLocation},
-    WorkspaceDb, DB as WORKSPACE_DB,
-};
 use persistence::{
+    DB, SerializedWindowBounds,
     model::{SerializedSshProject, SerializedWorkspace},
-    SerializedWindowBounds, DB,
+};
+pub use persistence::{
+    DB as WORKSPACE_DB, WorkspaceDb,
+    model::{ItemId, LocalPaths, SerializedWorkspaceLocation},
 };
 use postage::stream::Stream;
 use project::{
-    debugger::breakpoint_store::BreakpointStoreEvent, DirectoryLister, Project, ProjectEntryId,
-    ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    debugger::breakpoint_store::BreakpointStoreEvent,
 };
-use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
+use remote::{SshClientDelegate, SshConnectionOptions, ssh_session::ConnectionIdentifier};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
@@ -91,7 +91,7 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{atomic::AtomicUsize, Arc, LazyLock, Weak},
+    sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
     time::Duration,
 };
 use task::{DebugAdapterConfig, SpawnInTerminal, TaskId};
@@ -99,7 +99,7 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::prelude::*;
-use util::{paths::SanitizedPath, serde::default_true, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -107,8 +107,8 @@ pub use workspace_settings::{
 
 use crate::notifications::NotificationId;
 use crate::persistence::{
-    model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     SerializedAxis,
+    model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
@@ -1273,10 +1273,10 @@ impl Workspace {
             };
 
             let toolchains = DB.toolchains(workspace_id).await?;
-            for (toolchain, worktree_id) in toolchains {
+            for (toolchain, worktree_id, path) in toolchains {
                 project_handle
                     .update(cx, |this, cx| {
-                        this.activate_toolchain(worktree_id, toolchain, cx)
+                        this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
                     })?
                     .await;
             }
@@ -1832,7 +1832,7 @@ impl Workspace {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static {
+    pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static + use<> {
         let futures = self
             .worktrees(cx)
             .filter_map(|worktree| worktree.read(cx).as_local())
@@ -5253,7 +5253,7 @@ fn open_items(
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> {
+) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> + use<> {
     let restored_items = serialized_workspace.map(|serialized_workspace| {
         Workspace::load_workspace(
             serialized_workspace,
@@ -6319,10 +6319,10 @@ pub fn open_ssh_project(
         })?;
 
         let toolchains = DB.toolchains(workspace_id).await?;
-        for (toolchain, worktree_id) in toolchains {
+        for (toolchain, worktree_id, path) in toolchains {
             project
                 .update(cx, |this, cx| {
-                    this.activate_toolchain(worktree_id, toolchain, cx)
+                    this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
                 })?
                 .await;
         }
@@ -6918,16 +6918,16 @@ mod tests {
 
     use super::*;
     use crate::{
-        dock::{test::TestPanel, PanelEvent},
+        dock::{PanelEvent, test::TestPanel},
         item::{
-            test::{TestItem, TestProjectItem},
             ItemEvent,
+            test::{TestItem, TestProjectItem},
         },
     };
     use fs::FakeFs;
     use gpui::{
-        px, DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
-        UpdateGlobal, VisualTestContext,
+        DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
+        UpdateGlobal, VisualTestContext, px,
     };
     use project::{Project, ProjectEntryId};
     use serde_json::json;

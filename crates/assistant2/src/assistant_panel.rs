@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_context_editor::{
-    make_lsp_adapter_delegate, render_remaining_tokens, AssistantPanelDelegate, ConfigurationError,
-    ContextEditor, SlashCommandCompletionProvider,
+    AssistantPanelDelegate, ConfigurationError, ContextEditor, SlashCommandCompletionProvider,
+    make_lsp_adapter_delegate, render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -14,21 +14,22 @@ use client::zed_urls;
 use editor::{Editor, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    action_with_deprecated_aliases, prelude::*, Action, AnyElement, App, AsyncWindowContext,
-    Corner, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
-    Subscription, Task, UpdateGlobal, WeakEntity,
+    Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle,
+    Focusable, FontWeight, KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
+    action_with_deprecated_aliases, prelude::*,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
+use language_model_selector::ToggleModelSelector;
 use project::Project;
-use prompt_library::{open_prompt_library, PromptLibrary};
+use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
-use settings::{update_settings_file, Settings};
+use settings::{Settings, update_settings_file};
 use time::UtcOffset;
-use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip};
+use ui::{ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*};
 use util::ResultExt as _;
-use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
+use workspace::dock::{DockPosition, Panel, PanelEvent};
 use zed_actions::assistant::ToggleFocus;
 
 use crate::active_thread::ActiveThread;
@@ -40,7 +41,7 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
     AssistantDiff, InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAssistantDiff, OpenConfiguration, OpenHistory,
+    OpenAssistantDiff, OpenConfiguration, OpenHistory, ToggleContextPicker,
 };
 
 action_with_deprecated_aliases!(
@@ -830,66 +831,150 @@ impl AssistantPanel {
             .history_store
             .update(cx, |this, cx| this.recent_entries(6, cx));
 
-        let create_welcome_heading = || {
-            h_flex()
-                .w_full()
-                .child(Headline::new("Welcome to the Assistant Panel").size(HeadlineSize::Small))
-        };
-
         let configuration_error = self.configuration_error(cx);
         let no_error = configuration_error.is_none();
+        let focus_handle = self.focus_handle(cx);
 
         v_flex()
-            .p_1p5()
             .size_full()
-            .justify_end()
-            .gap_1()
-            .map(|parent| {
-                match configuration_error {
-                    Some(ConfigurationError::ProviderNotAuthenticated)
-                    | Some(ConfigurationError::NoProvider) => {
-                        parent.child(
-                            v_flex()
-                                .px_1p5()
-                                .gap_0p5()
-                                .child(create_welcome_heading())
-                                .child(
-                                    Label::new(
-                                        "To start using the assistant, configure at least one LLM provider.",
-                                    )
-                                    .color(Color::Muted),
-                                )
-                                .child(
-                                    h_flex().mt_1().w_full().child(
-                                        Button::new("open-configuration", "Configure a Provider")
-                                            .size(ButtonSize::Compact)
-                                            .icon(Some(IconName::Sliders))
-                                            .icon_size(IconSize::Small)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.open_configuration(window, cx);
-                                            })),
-                                    ),
-                                ),
-                        )
-                    }
-                    Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => parent
-                        .child(v_flex().px_1p5().gap_0p5().child(create_welcome_heading()).children(
-                            provider.render_accept_terms(
-                                LanguageModelProviderTosView::ThreadEmptyState,
-                                cx,
+            .when(recent_history.is_empty(), |this| {
+                this.child(
+                    v_flex()
+                        .size_full()
+                        .max_w_80()
+                        .mx_auto()
+                        .justify_center()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            h_flex().child(
+                                Headline::new("Welcome to the Assistant Panel")
                             ),
-                        )),
-                    None => parent,
-                }
-            })
-            .when(recent_history.is_empty() && no_error, |parent| {
-                parent.child(v_flex().gap_0p5().child(create_welcome_heading()).child(
-                    Label::new("Start typing to chat with your codebase").color(Color::Muted),
-                ))
+                        )
+                        .when(no_error, |parent| {
+                            parent.child(
+                                h_flex().child(
+                                    Label::new("Ask and build anything.")
+                                        .color(Color::Muted)
+                                        .mb_2p5(),
+                                ),
+                            )
+                            .child(
+                                Button::new("new-thread", "Start New Thread")
+                                    .icon(IconName::Plus)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .full_width()
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &NewThread,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    ))
+                                    .on_click(|_event, window, cx| {
+                                        window.dispatch_action(NewThread.boxed_clone(), cx)
+                                    }),
+                            )
+                            .child(
+                                Button::new("context", "Add Context")
+                                    .icon(IconName::FileCode)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .full_width()
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &ToggleContextPicker,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    ))
+                                    .on_click(|_event, window, cx| {
+                                        window.dispatch_action(ToggleContextPicker.boxed_clone(), cx)
+                                    }),
+                            )
+                            .child(
+                                Button::new("mode", "Switch Model")
+                                    .icon(IconName::DatabaseZap)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .full_width()
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &ToggleModelSelector,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    ))
+                                    .on_click(|_event, window, cx| {
+                                        window.dispatch_action(ToggleModelSelector.boxed_clone(), cx)
+                                    }),
+                            )
+                            .child(
+                                Button::new("settings", "View Settings")
+                                    .icon(IconName::Settings)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .full_width()
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &OpenConfiguration,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    ))
+                                    .on_click(|_event, window, cx| {
+                                        window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
+                                    }),
+                            )
+                        })
+                        .map(|parent| {
+                            match configuration_error {
+                                Some(ConfigurationError::ProviderNotAuthenticated)
+                                | Some(ConfigurationError::NoProvider) => {
+                                    parent
+                                        .child(
+                                            h_flex().child(
+                                                Label::new("To start using the assistant, configure at least one LLM provider.")
+                                                    .color(Color::Muted)
+                                                    .mb_2p5()
+                                            )
+                                        )
+                                        .child(
+                                            Button::new("settings", "Configure a Provider")
+                                                .icon(IconName::Settings)
+                                                .icon_position(IconPosition::Start)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .full_width()
+                                                .key_binding(KeyBinding::for_action_in(
+                                                    &OpenConfiguration,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                ))
+                                                .on_click(|_event, window, cx| {
+                                                    window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
+                                                }),
+                                        )
+                                }
+                                Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => parent
+                                    .children(
+                                        provider.render_accept_terms(
+                                            LanguageModelProviderTosView::ThreadEmptyState,
+                                            cx,
+                                        ),
+                                    ),
+                                None => parent,
+                            }
+                        })
+                )
             })
             .when(!recent_history.is_empty(), |parent| {
                 parent
+                    .p_1p5()
+                          .justify_end()
+                          .gap_1()
                     .child(
                         h_flex()
                             .pl_1p5()
@@ -912,7 +997,7 @@ impl AssistantPanel {
                                         &self.focus_handle(cx),
                                         window,
                                         cx,
-                                    ))
+                                    ).map(|kb| kb.size(rems_from_px(12.))),)
                                     .on_click(move |_event, window, cx| {
                                         window.dispatch_action(OpenHistory.boxed_clone(), cx);
                                     }),
@@ -920,7 +1005,7 @@ impl AssistantPanel {
                     )
                     .child(v_flex().gap_1().children(
                         recent_history.into_iter().map(|entry| {
-                            // TODO: Add keyboard navigation.
+                             // TODO: Add keyboard navigation.
                             match entry {
                                 HistoryEntry::Thread(thread) => {
                                     PastThread::new(thread, cx.entity().downgrade(), false)

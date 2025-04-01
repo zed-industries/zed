@@ -16,7 +16,6 @@ pub mod actions;
 mod blink_manager;
 mod clangd_ext;
 mod code_context_menus;
-pub mod commit_tooltip;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -51,7 +50,7 @@ pub mod test;
 pub(crate) use actions::*;
 pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex};
@@ -66,14 +65,14 @@ pub use editor_settings::{
     ShowScrollbar,
 };
 pub use editor_settings_controls::*;
-use element::{layout_line, AcceptEditPredictionBinding, LineWithInvisibles, PositionMap};
+use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
 use feature_flags::{Debugger, FeatureFlagAppExt};
 use futures::{
-    future::{self, join, Shared},
     FutureExt,
+    future::{self, Shared, join},
 };
 use fuzzy::StringMatchCandidate;
 
@@ -82,20 +81,22 @@ use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
 };
-use git::blame::GitBlame;
+use git::blame::{GitBlame, GlobalBlameRenderer};
 use gpui::{
-    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
-    AnimationExt, AnyElement, App, AppContext, AsyncWindowContext, AvailableSpace, Background,
-    Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase, Edges, Entity,
-    EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight,
-    Global, HighlightStyle, Hsla, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, Stateful, Styled, StyledText, Subscription,
-    Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
-    WeakEntity, WeakFocusHandle, Window,
+    Action, Animation, AnimationExt, AnyElement, AnyWeakEntity, App, AppContext,
+    AsyncWindowContext, AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry,
+    ClipboardItem, Context, DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter,
+    FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla,
+    KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render,
+    SharedString, Size, Stateful, Styled, StyledText, Subscription, Task, TextStyle,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
+    WeakFocusHandle, Window, div, impl_actions, point, prelude::*, pulsating_between, px, relative,
+    size,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
-use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
-use hover_popover::{hide_hover, HoverState};
+use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
+pub use hover_popover::hover_markdown_style;
+use hover_popover::{HoverState, hide_hover};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion::Direction;
@@ -103,26 +104,28 @@ use inline_completion::{EditPredictionProvider, InlineCompletionProviderHandle};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
+    AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
+    CursorShape, Diagnostic, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText,
+    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
+    TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
-        WordsCompletionMode,
+        self, InlayHintSettings, RewrapBehavior, WordsCompletionMode, all_language_settings,
+        language_settings,
     },
-    point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
-    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    point_from_lsp, text_diff_with_options,
 };
-use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
+use language::{BufferRow, CharClassifier, Runnable, RunnableRange, point_to_lsp};
 use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
+    ProjectPath,
     debugger::breakpoint_store::{
         BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
     },
-    ProjectPath,
 };
 
+pub use git::blame::BlameRenderer;
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
@@ -148,21 +151,21 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use project::{
-    debugger::breakpoint_store::Breakpoint,
-    lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
-    project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
     Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
     TaskSourceKind,
+    debugger::breakpoint_store::Breakpoint,
+    lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
+    project_settings::{GitGutterSetting, ProjectSettings},
 };
 use rand::prelude::*;
-use rpc::{proto::*, ErrorExt};
+use rpc::{ErrorExt, proto::*};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{
-    resolve_selections, MutableSelectionsCollection, SelectionsCollection,
+    MutableSelectionsCollection, SelectionsCollection, resolve_selections,
 };
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsLocation, SettingsStore};
+use settings::{Settings, SettingsLocation, SettingsStore, update_settings_file};
 use smallvec::SmallVec;
 use snippet::Snippet;
 use std::sync::Arc;
@@ -182,21 +185,21 @@ pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{
-    observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
-    ThemeColors, ThemeSettings,
+    ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings,
+    observe_buffer_font_size_adjustment,
 };
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconButtonShape, IconName,
-    IconSize, Key, Tooltip,
+    ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
+    IconSize, Key, Tooltip, h_flex, prelude::*,
 };
-use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
+    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
+    RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
+    ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{ItemHandle, PreviewTabsSettings},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
-    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
-    RestoreOnStartupBehavior, SplitDirection, TabBarSettings, Toast, ViewId, Workspace,
-    WorkspaceId, WorkspaceSettings, SERIALIZATION_THROTTLE_TIME,
 };
 
 use crate::hover_links::{find_url, find_url_from_range};
@@ -271,11 +274,7 @@ pub enum Navigated {
 
 impl Navigated {
     pub fn from_bool(yes: bool) -> Navigated {
-        if yes {
-            Navigated::Yes
-        } else {
-            Navigated::No
-        }
+        if yes { Navigated::Yes } else { Navigated::No }
     }
 }
 
@@ -304,6 +303,8 @@ pub fn init_settings(cx: &mut App) {
 
 pub fn init(cx: &mut App) {
     init_settings(cx);
+
+    cx.set_global(GlobalBlameRenderer(Arc::new(())));
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
@@ -348,6 +349,10 @@ pub fn init(cx: &mut App) {
             .detach();
         }
     });
+}
+
+pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
+    cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
 }
 
 pub struct SearchWithinRange;
@@ -769,7 +774,7 @@ pub struct Editor {
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
-    git_blame_inline_tooltip: Option<WeakEntity<crate::commit_tooltip::CommitTooltip>>,
+    pub git_blame_inline_tooltip: Option<AnyWeakEntity>,
     git_blame_inline_enabled: bool,
     render_diff_hunk_controls: RenderDiffHunkControlsFn,
     serialize_dirty_buffers: bool,
@@ -850,8 +855,6 @@ pub struct EditorSnapshot {
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
 }
-
-const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct GutterDimensions {
@@ -1646,6 +1649,21 @@ impl Editor {
         this
     }
 
+    pub fn deploy_mouse_context_menu(
+        &mut self,
+        position: gpui::Point<Pixels>,
+        context_menu: Entity<ContextMenu>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.mouse_context_menu = Some(MouseContextMenu::new(
+            crate::mouse_context_menu::MenuPosition::PinnedToScreen(position),
+            context_menu,
+            window,
+            cx,
+        ));
+    }
+
     pub fn mouse_menu_is_focused(&self, window: &Window, cx: &App) -> bool {
         self.mouse_context_menu
             .as_ref()
@@ -1969,12 +1987,12 @@ impl Editor {
     pub fn set_custom_context_menu(
         &mut self,
         f: impl 'static
-            + Fn(
-                &mut Self,
-                DisplayPoint,
-                &mut Window,
-                &mut Context<Self>,
-            ) -> Option<Entity<ui::ContextMenu>>,
+        + Fn(
+            &mut Self,
+            DisplayPoint,
+            &mut Window,
+            &mut Context<Self>,
+        ) -> Option<Entity<ui::ContextMenu>>,
     ) {
         self.custom_context_menu = Some(Box::new(f))
     }
@@ -2428,7 +2446,11 @@ impl Editor {
             background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
             DB.save_editor_folds(editor_id, workspace_id, db_folds)
                 .await
-                .with_context(|| format!("persisting editor folds for editor {editor_id}, workspace {workspace_id:?}"))
+                .with_context(|| {
+                    format!(
+                        "persisting editor folds for editor {editor_id}, workspace {workspace_id:?}"
+                    )
+                })
                 .log_err();
         });
     }
@@ -4797,6 +4819,8 @@ impl Editor {
                                 Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
                             });
 
+                    let debugger_flag = cx.has_flag::<Debugger>();
+
                     Some(cx.spawn_in(window, async move |editor, cx| {
                         let task_context = match task_context {
                             Some(task_context) => task_context.await,
@@ -4812,12 +4836,22 @@ impl Editor {
                                     )),
                                 })
                             });
-                        let spawn_straight_away = resolved_tasks
+                        let spawn_straight_away = resolved_tasks.as_ref().map_or(false, |tasks| {
+                            tasks
+                                .templates
+                                .iter()
+                                .filter(|task| {
+                                    if matches!(task.1.task_type(), task::TaskType::Debug(_)) {
+                                        debugger_flag
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .count()
+                                == 1
+                        }) && code_actions
                             .as_ref()
-                            .map_or(false, |tasks| tasks.templates.len() == 1)
-                            && code_actions
-                                .as_ref()
-                                .map_or(true, |actions| actions.is_empty());
+                            .map_or(true, |actions| actions.is_empty());
                         if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
@@ -6200,7 +6234,9 @@ impl Editor {
     fn insert_tasks(&mut self, key: (BufferId, BufferRow), value: RunnableTasks) {
         if self.tasks.insert(key, value).is_some() {
             // This case should hopefully be rare, but just in case...
-            log::error!("multiple different run targets found on a single line, only the last target will be rendered")
+            log::error!(
+                "multiple different run targets found on a single line, only the last target will be rendered"
+            )
         }
     }
 
@@ -6289,6 +6325,22 @@ impl Editor {
             "Set Log Breakpoint"
         };
 
+        let condition_breakpoint_msg =
+            if breakpoint.as_ref().is_some_and(|bp| bp.condition.is_some()) {
+                "Edit Condition Breakpoint"
+            } else {
+                "Set Condition Breakpoint"
+            };
+
+        let hit_condition_breakpoint_msg = if breakpoint
+            .as_ref()
+            .is_some_and(|bp| bp.hit_condition.is_some())
+        {
+            "Edit Hit Condition Breakpoint"
+        } else {
+            "Set Hit Condition Breakpoint"
+        };
+
         let set_breakpoint_msg = if breakpoint.as_ref().is_some() {
             "Unset Breakpoint"
         } else {
@@ -6300,12 +6352,7 @@ impl Editor {
             BreakpointState::Disabled => Some("Enable"),
         });
 
-        let breakpoint = breakpoint.unwrap_or_else(|| {
-            Arc::new(Breakpoint {
-                state: BreakpointState::Enabled,
-                message: None,
-            })
-        });
+        let breakpoint = breakpoint.unwrap_or_else(|| Arc::new(Breakpoint::new_standard()));
 
         ui::ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
@@ -6344,10 +6391,50 @@ impl Editor {
                             .log_err();
                     }
                 })
-                .entry(log_breakpoint_msg, None, move |window, cx| {
+                .entry(log_breakpoint_msg, None, {
+                    let breakpoint = breakpoint.clone();
+                    let weak_editor = weak_editor.clone();
+                    move |window, cx| {
+                        weak_editor
+                            .update(cx, |this, cx| {
+                                this.add_edit_breakpoint_block(
+                                    anchor,
+                                    breakpoint.as_ref(),
+                                    BreakpointPromptEditAction::Log,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .log_err();
+                    }
+                })
+                .entry(condition_breakpoint_msg, None, {
+                    let breakpoint = breakpoint.clone();
+                    let weak_editor = weak_editor.clone();
+                    move |window, cx| {
+                        weak_editor
+                            .update(cx, |this, cx| {
+                                this.add_edit_breakpoint_block(
+                                    anchor,
+                                    breakpoint.as_ref(),
+                                    BreakpointPromptEditAction::Condition,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .log_err();
+                    }
+                })
+                .entry(hit_condition_breakpoint_msg, None, move |window, cx| {
                     weak_editor
                         .update(cx, |this, cx| {
-                            this.add_edit_breakpoint_block(anchor, breakpoint.as_ref(), window, cx);
+                            this.add_edit_breakpoint_block(
+                                anchor,
+                                breakpoint.as_ref(),
+                                BreakpointPromptEditAction::HitCondition,
+                                window,
+                                cx,
+                            );
                         })
                         .log_err();
                 })
@@ -7891,40 +7978,37 @@ impl Editor {
             }
 
             let mut selections = this.selections.all::<MultiBufferPoint>(cx);
-            if !this.selections.line_mode {
-                let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
-                for selection in &mut selections {
-                    if selection.is_empty() {
-                        let old_head = selection.head();
-                        let mut new_head =
-                            movement::left(&display_map, old_head.to_display_point(&display_map))
-                                .to_point(&display_map);
-                        if let Some((buffer, line_buffer_range)) = display_map
-                            .buffer_snapshot
-                            .buffer_line_for_row(MultiBufferRow(old_head.row))
-                        {
-                            let indent_size =
-                                buffer.indent_size_for_line(line_buffer_range.start.row);
-                            let indent_len = match indent_size.kind {
-                                IndentKind::Space => {
-                                    buffer.settings_at(line_buffer_range.start, cx).tab_size
-                                }
-                                IndentKind::Tab => NonZeroU32::new(1).unwrap(),
-                            };
-                            if old_head.column <= indent_size.len && old_head.column > 0 {
-                                let indent_len = indent_len.get();
-                                new_head = cmp::min(
-                                    new_head,
-                                    MultiBufferPoint::new(
-                                        old_head.row,
-                                        ((old_head.column - 1) / indent_len) * indent_len,
-                                    ),
-                                );
+            let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+            for selection in &mut selections {
+                if selection.is_empty() {
+                    let old_head = selection.head();
+                    let mut new_head =
+                        movement::left(&display_map, old_head.to_display_point(&display_map))
+                            .to_point(&display_map);
+                    if let Some((buffer, line_buffer_range)) = display_map
+                        .buffer_snapshot
+                        .buffer_line_for_row(MultiBufferRow(old_head.row))
+                    {
+                        let indent_size = buffer.indent_size_for_line(line_buffer_range.start.row);
+                        let indent_len = match indent_size.kind {
+                            IndentKind::Space => {
+                                buffer.settings_at(line_buffer_range.start, cx).tab_size
                             }
+                            IndentKind::Tab => NonZeroU32::new(1).unwrap(),
+                        };
+                        if old_head.column <= indent_size.len && old_head.column > 0 {
+                            let indent_len = indent_len.get();
+                            new_head = cmp::min(
+                                new_head,
+                                MultiBufferPoint::new(
+                                    old_head.row,
+                                    ((old_head.column - 1) / indent_len) * indent_len,
+                                ),
+                            );
                         }
-
-                        selection.set_head(new_head, SelectionGoal::None);
                     }
+
+                    selection.set_head(new_head, SelectionGoal::None);
                 }
             }
 
@@ -7968,9 +8052,8 @@ impl Editor {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
+                    if selection.is_empty() {
                         let cursor = movement::right(map, selection.head());
                         selection.end = cursor;
                         selection.reversed = true;
@@ -8598,12 +8681,20 @@ impl Editor {
         &mut self,
         anchor: Anchor,
         breakpoint: &Breakpoint,
+        edit_action: BreakpointPromptEditAction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let weak_editor = cx.weak_entity();
         let bp_prompt = cx.new(|cx| {
-            BreakpointPromptEditor::new(weak_editor, anchor, breakpoint.clone(), window, cx)
+            BreakpointPromptEditor::new(
+                weak_editor,
+                anchor,
+                breakpoint.clone(),
+                edit_action,
+                window,
+                cx,
+            )
         });
 
         let height = bp_prompt.update(cx, |this, cx| {
@@ -8722,11 +8813,13 @@ impl Editor {
                     Breakpoint {
                         message: None,
                         state: BreakpointState::Enabled,
+                        condition: None,
+                        hit_condition: None,
                     },
                 )
             });
 
-        self.add_edit_breakpoint_block(anchor, &bp, window, cx);
+        self.add_edit_breakpoint_block(anchor, &bp, BreakpointPromptEditAction::Log, window, cx);
     }
 
     pub fn enable_breakpoint(
@@ -9419,9 +9512,8 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             let edits = this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
-                let line_mode = s.line_mode;
                 s.move_with(|display_map, selection| {
-                    if !selection.is_empty() || line_mode {
+                    if !selection.is_empty() {
                         return;
                     }
 
@@ -9994,9 +10086,8 @@ impl Editor {
     pub fn move_left(&mut self, _: &MoveLeft, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                let cursor = if selection.is_empty() && !line_mode {
+                let cursor = if selection.is_empty() {
                     movement::left(map, selection.start)
                 } else {
                     selection.start
@@ -10016,9 +10107,8 @@ impl Editor {
     pub fn move_right(&mut self, _: &MoveRight, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                let cursor = if selection.is_empty() && !line_mode {
+                let cursor = if selection.is_empty() {
                     movement::right(map, selection.end)
                 } else {
                     selection.end
@@ -10052,9 +10142,8 @@ impl Editor {
         let first_selection = self.selections.first_anchor();
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::up(
@@ -10094,9 +10183,8 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::up_by_rows(
@@ -10132,9 +10220,8 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::down_by_rows(
@@ -10241,9 +10328,8 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(autoscroll), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::up_by_rows(
@@ -10284,9 +10370,8 @@ impl Editor {
         let first_selection = self.selections.first_anchor();
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::down(
@@ -10366,9 +10451,8 @@ impl Editor {
 
         let text_layout_details = &self.text_layout_details(window);
         self.change_selections(Some(autoscroll), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::down_by_rows(
@@ -10516,9 +10600,8 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
+                    if selection.is_empty() {
                         let cursor = if action.ignore_newlines {
                             movement::previous_word_start(map, selection.head())
                         } else {
@@ -10542,9 +10625,8 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
+                    if selection.is_empty() {
                         let cursor = movement::previous_subword_start(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
@@ -10619,9 +10701,8 @@ impl Editor {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
+                    if selection.is_empty() {
                         let cursor = if action.ignore_newlines {
                             movement::next_word_end(map, selection.head())
                         } else {
@@ -12484,11 +12565,7 @@ impl Editor {
                     best_in_bracket_range = in_bracket_range;
                     best_destination = Some(
                         if close.contains(&selection.start) && close.contains(&selection.end) {
-                            if inside {
-                                open.end
-                            } else {
-                                open.start
-                            }
+                            if inside { open.end } else { open.start }
                         } else if inside {
                             *close.start()
                         } else {
@@ -14745,25 +14822,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selections = self.selections.all::<Point>(cx);
+        let selections = self.selections.all_adjusted(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let line_mode = self.selections.line_mode;
         let ranges = selections
             .into_iter()
-            .map(|s| {
-                if line_mode {
-                    let start = Point::new(s.start.row, 0);
-                    let end = Point::new(
-                        s.end.row,
-                        display_map
-                            .buffer_snapshot
-                            .line_len(MultiBufferRow(s.end.row)),
-                    );
-                    Crease::simple(start..end, display_map.fold_placeholder.clone())
-                } else {
-                    Crease::simple(s.start..s.end, display_map.fold_placeholder.clone())
-                }
-            })
+            .map(|s| Crease::simple(s.range(), display_map.fold_placeholder.clone()))
             .collect::<Vec<_>>();
         self.fold_creases(ranges, true, window, cx);
     }
@@ -14878,6 +14941,13 @@ impl Editor {
 
     pub fn folded_buffers<'a>(&self, cx: &'a App) -> &'a HashSet<BufferId> {
         self.display_map.read(cx).folded_buffers()
+    }
+
+    pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.disable_header_for_buffer(buffer_id, cx);
+        });
+        cx.notify();
     }
 
     /// Removes any folds with the given ranges.
@@ -15817,6 +15887,45 @@ impl Editor {
     ) {
         self.toggle_git_blame_inline_internal(true, window, cx);
         cx.notify();
+    }
+
+    pub fn open_git_blame_commit(
+        &mut self,
+        _: &OpenGitBlameCommit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_git_blame_commit_internal(window, cx);
+    }
+
+    fn open_git_blame_commit_internal(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let blame = self.blame.as_ref()?;
+        let snapshot = self.snapshot(window, cx);
+        let cursor = self.selections.newest::<Point>(cx).head();
+        let (buffer, point, _) = snapshot.buffer_snapshot.point_to_buffer_point(cursor)?;
+        let blame_entry = blame
+            .update(cx, |blame, cx| {
+                blame
+                    .blame_for_rows(
+                        &[RowInfo {
+                            buffer_id: Some(buffer.remote_id()),
+                            buffer_row: Some(point.row),
+                            ..Default::default()
+                        }],
+                        cx,
+                    )
+                    .next()
+            })
+            .flatten()?;
+        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+        let repo = blame.read(cx).repository(cx)?;
+        let workspace = self.workspace()?.downgrade();
+        renderer.open_blame_commit(blame_entry, repo, workspace, window, cx);
+        None
     }
 
     pub fn git_blame_inline_enabled(&self) -> bool {
@@ -17752,7 +17861,9 @@ fn get_uncommitted_diff_for_buffer(
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
-            tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+            if project::File::from_dyn(buffer.read(cx).file()).is_some() {
+                tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+            }
         }
     });
     cx.spawn(async move |cx| {
@@ -18869,13 +18980,13 @@ impl EditorSnapshot {
         let git_blame_entries_width =
             self.git_blame_gutter_max_author_length
                 .map(|max_author_length| {
+                    let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
                     const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
 
                     /// The number of characters to dedicate to gaps and margins.
                     const SPACING_WIDTH: usize = 4;
 
-                    let max_char_count = max_author_length
-                        .min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
+                    let max_char_count = max_author_length.min(renderer.max_author_length())
                         + ::git::SHORT_SHA_LENGTH
                         + MAX_RELATIVE_TIMESTAMP.len()
                         + SPACING_WIDTH;
@@ -19892,11 +20003,18 @@ impl Global for KillRing {}
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
+enum BreakpointPromptEditAction {
+    Log,
+    Condition,
+    HitCondition,
+}
+
 struct BreakpointPromptEditor {
     pub(crate) prompt: Entity<Editor>,
     editor: WeakEntity<Editor>,
     breakpoint_anchor: Anchor,
     breakpoint: Breakpoint,
+    edit_action: BreakpointPromptEditAction,
     block_ids: HashSet<CustomBlockId>,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     _subscriptions: Vec<Subscription>,
@@ -19909,19 +20027,19 @@ impl BreakpointPromptEditor {
         editor: WeakEntity<Editor>,
         breakpoint_anchor: Anchor,
         breakpoint: Breakpoint,
+        edit_action: BreakpointPromptEditAction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let buffer = cx.new(|cx| {
-            Buffer::local(
-                breakpoint
-                    .message
-                    .as_ref()
-                    .map(|msg| msg.to_string())
-                    .unwrap_or_default(),
-                cx,
-            )
-        });
+        let base_text = match edit_action {
+            BreakpointPromptEditAction::Log => breakpoint.message.as_ref(),
+            BreakpointPromptEditAction::Condition => breakpoint.condition.as_ref(),
+            BreakpointPromptEditAction::HitCondition => breakpoint.hit_condition.as_ref(),
+        }
+        .map(|msg| msg.to_string())
+        .unwrap_or_default();
+
+        let buffer = cx.new(|cx| Buffer::local(base_text, cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
         let prompt = cx.new(|cx| {
@@ -19937,7 +20055,11 @@ impl BreakpointPromptEditor {
             prompt.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             prompt.set_show_cursor_when_unfocused(false, cx);
             prompt.set_placeholder_text(
-                "Message to log when breakpoint is hit. Expressions within {} are interpolated.",
+                match edit_action {
+                    BreakpointPromptEditAction::Log => "Message to log when a breakpoint is hit. Expressions within {} are interpolated.",
+                    BreakpointPromptEditAction::Condition => "Condition when a breakpoint is hit. Expressions within {} are interpolated.",
+                    BreakpointPromptEditAction::HitCondition => "How many breakpoint hits to ignore",
+                },
                 cx,
             );
 
@@ -19949,6 +20071,7 @@ impl BreakpointPromptEditor {
             editor,
             breakpoint_anchor,
             breakpoint,
+            edit_action,
             gutter_dimensions: Arc::new(Mutex::new(GutterDimensions::default())),
             block_ids: Default::default(),
             _subscriptions: vec![],
@@ -19961,7 +20084,7 @@ impl BreakpointPromptEditor {
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.editor.upgrade() {
-            let log_message = self
+            let message = self
                 .prompt
                 .read(cx)
                 .buffer
@@ -19976,7 +20099,17 @@ impl BreakpointPromptEditor {
                 editor.edit_breakpoint_at_anchor(
                     self.breakpoint_anchor,
                     self.breakpoint.clone(),
-                    BreakpointEditAction::EditLogMessage(log_message.into()),
+                    match self.edit_action {
+                        BreakpointPromptEditAction::Log => {
+                            BreakpointEditAction::EditLogMessage(message.into())
+                        }
+                        BreakpointPromptEditAction::Condition => {
+                            BreakpointEditAction::EditCondition(message.into())
+                        }
+                        BreakpointPromptEditAction::HitCondition => {
+                            BreakpointEditAction::EditHitCondition(message.into())
+                        }
+                    },
                     cx,
                 );
 

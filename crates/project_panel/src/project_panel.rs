@@ -1,42 +1,43 @@
 mod project_panel_settings;
 mod utils;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use client::{ErrorCode, ErrorExt};
-use collections::{hash_map, BTreeSet, HashMap};
+use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
+    Editor, EditorEvent, EditorSettings, ShowScrollbar,
     items::{
         entry_diagnostic_aware_icon_decoration_and_color,
         entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
     scroll::{Autoscroll, ScrollbarAutoHide},
-    Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
 use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
-    DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
-    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window,
+    Action, AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context,
+    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
+    Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions,
+    anchored, deferred, div, impl_actions, point, px, size, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
-    git_store::git_traversal::ChildEntriesGitIter, relativize_path, Entry, EntryKind, Fs, GitEntry,
-    GitEntryRef, GitTraversal, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId,
+    Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
+    ProjectPath, Worktree, WorktreeId, git_store::git_traversal::ChildEntriesGitIter,
+    relativize_path,
 };
 use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use smallvec::SmallVec;
 use std::any::TypeId;
 use std::{
@@ -51,16 +52,16 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
-    ScrollbarState, Tooltip,
+    ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
+    IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
+    Tooltip, prelude::*, v_flex,
 };
-use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyTaskExt},
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     Workspace,
+    dock::{DockPosition, Panel, PanelEvent},
+    notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 
@@ -1493,7 +1494,9 @@ impl ProjectPanel {
                         } else if dirty_buffers == 1 {
                             "\n\n1 of these has unsaved changes, which will be lost.".to_string()
                         } else {
-                            format!("\n\n{dirty_buffers} of these have unsaved changes, which will be lost.")
+                            format!(
+                                "\n\n{dirty_buffers} of these have unsaved changes, which will be lost."
+                            )
                         };
 
                         format!(
@@ -4422,26 +4425,28 @@ impl Render for ProjectPanel {
                     return;
                 };
                 let adjustment = point(px(0.), px(vertical_scroll_offset));
-                this.hover_scroll_task = Some(cx.spawn_in(window, async move |this, cx| loop {
-                    let should_stop_scrolling = this
-                        .update(cx, |this, cx| {
-                            this.hover_scroll_task.as_ref()?;
-                            let handle = this.scroll_handle.0.borrow_mut();
-                            let offset = handle.base_handle.offset();
+                this.hover_scroll_task = Some(cx.spawn_in(window, async move |this, cx| {
+                    loop {
+                        let should_stop_scrolling = this
+                            .update(cx, |this, cx| {
+                                this.hover_scroll_task.as_ref()?;
+                                let handle = this.scroll_handle.0.borrow_mut();
+                                let offset = handle.base_handle.offset();
 
-                            handle.base_handle.set_offset(offset + adjustment);
-                            cx.notify();
-                            Some(())
-                        })
-                        .ok()
-                        .flatten()
-                        .is_some();
-                    if should_stop_scrolling {
-                        return;
+                                handle.base_handle.set_offset(offset + adjustment);
+                                cx.notify();
+                                Some(())
+                            })
+                            .ok()
+                            .flatten()
+                            .is_some();
+                        if should_stop_scrolling {
+                            return;
+                        }
+                        cx.background_executor()
+                            .timer(Duration::from_millis(16))
+                            .await;
                     }
-                    cx.background_executor()
-                        .timer(Duration::from_millis(16))
-                        .await;
                 }));
             }
             h_flex()

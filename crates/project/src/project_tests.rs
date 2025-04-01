@@ -1,23 +1,23 @@
 #![allow(clippy::format_collect)]
 
-use crate::{task_inventory::TaskContexts, task_store::TaskSettingsLocation, Event, *};
+use crate::{Event, task_inventory::TaskContexts, task_store::TaskSettingsLocation, *};
 use buffer_diff::{
-    assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
+    BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
 };
 use fs::FakeFs;
-use futures::{future, StreamExt};
+use futures::{StreamExt, future};
 use git::repository::RepoPath;
 use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
-    language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, DiagnosticSet,
-    DiskState, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageName, LineEnding,
-    OffsetRangeExt, Point, ToPoint,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, DiskState, FakeLspAdapter, LanguageConfig,
+    LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
+    language_settings::{AllLanguageSettings, LanguageSettingsContent, language_settings},
+    tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{
-    notification::DidRenameFiles, DiagnosticSeverity, DocumentChanges, FileOperationFilter,
-    NumberOrString, TextDocumentEdit, WillRenameFiles,
+    DiagnosticSeverity, DocumentChanges, FileOperationFilter, NumberOrString, TextDocumentEdit,
+    WillRenameFiles, notification::DidRenameFiles,
 };
 use parking_lot::Mutex;
 use paths::tasks_file;
@@ -29,11 +29,11 @@ use std::{mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
-    assert_set_eq, path,
+    TryFutureExt as _, assert_set_eq, path,
     paths::PathMatcher,
     separator,
-    test::{marked_text_offsets, TempTree},
-    uri, TryFutureExt as _,
+    test::{TempTree, marked_text_offsets},
+    uri,
 };
 use worktree::WorktreeModelHandle as _;
 
@@ -4772,12 +4772,11 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-
-                    PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
-
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 Default::default(),
                 None,
-            ).unwrap(),
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4797,12 +4796,12 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-
-                    PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
-
-               Default::default(),
-               None,
-            ).unwrap(),
+                PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
+                    .unwrap(),
+                Default::default(),
+                None,
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4897,7 +4896,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 Default::default(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 None,
-            ).unwrap(),
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4917,16 +4917,17 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                 Default::default(),
-
-                    PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
-                    None,
-
-            ).unwrap(),
+                Default::default(),
+                PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
+                    .unwrap(),
+                None,
+            )
+            .unwrap(),
             cx
         )
         .await
-        .unwrap().is_empty(),
+        .unwrap()
+        .is_empty(),
         "Rust and typescript exclusion should give no files, even if other exclusions don't match anything"
     );
 }
@@ -4982,7 +4983,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 None,
-            ).unwrap(),
+            )
+            .unwrap(),
             cx
         )
         .await
