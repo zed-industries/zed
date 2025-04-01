@@ -400,7 +400,7 @@ impl PickerDelegate for TasksModalDelegate {
                 tooltip_label_text.push_str(&resolved.command_label);
             }
         }
-        if !template.tags.is_empty() {
+        if template.tags.iter().any(|tag| !tag.is_empty()) {
             tooltip_label_text.push('\n');
             tooltip_label_text.push_str(
                 template
@@ -456,7 +456,7 @@ impl PickerDelegate for TasksModalDelegate {
                 .end_slot::<AnyElement>(
                     h_flex()
                         .gap_1()
-                        .when(!template.tags.is_empty(), |item| {
+                        .when(template.tags.iter().any(|tag| !tag.is_empty()), |item| {
                             item.child(Label::new(format!(
                                 "#{}",
                                 truncate_and_trailoff(&template.tags.join(" "), MAX_TAGS_LINE_LEN)

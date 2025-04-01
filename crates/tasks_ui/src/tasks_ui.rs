@@ -131,7 +131,7 @@ fn spawn_task_or_modal(
             });
             let tag = task_tag.clone();
             spawn_tasks_filtered(
-                move |(_, task)| task.tags.contains(&tag),
+                move |(_, task)| task.tags.contains(&tag) && !tag.is_empty(),
                 overrides,
                 window,
                 cx,
@@ -254,11 +254,7 @@ where
                     }
                 });
 
-                if tasks.is_empty() {
-                    None
-                } else {
-                    Some(())
-                }
+                if tasks.is_empty() { None } else { Some(()) }
             })?
             .is_some();
         if !did_spawn {
