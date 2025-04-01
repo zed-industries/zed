@@ -3395,7 +3395,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<SignatureHelp>> {
+    ) -> Task<Vec<SignatureHelps>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.signature_help(buffer, position, cx)
         })

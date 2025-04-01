@@ -1,94 +1,79 @@
 use std::ops::Range;
 
-use gpui::{FontStyle, FontWeight, HighlightStyle};
+use gpui::{FontWeight, HighlightStyle};
 use rpc::proto::{self, documentation};
 
 #[derive(Debug)]
-pub struct SignatureHelp {
-    pub label: String,
-    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+pub struct SignatureHelps {
+    pub active_signature: usize,
+    pub signatures: Vec<SignatureHelp>,
     pub(super) original_data: lsp::SignatureHelp,
 }
 
-impl SignatureHelp {
+#[derive(Debug, Clone)]
+pub struct SignatureHelp {
+    pub label: String,
+    pub documentation: Option<String>,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+
+impl SignatureHelps {
     pub fn new(help: lsp::SignatureHelp) -> Option<Self> {
-        let function_options_count = help.signatures.len();
+        let active_signature = help.active_signature.unwrap_or(0) as usize;
+        let active_parameter = help.active_parameter.unwrap_or(0) as usize;
+        let mut signatures = Vec::<SignatureHelp>::with_capacity(help.signatures.capacity());
+        for signature in help.signatures.clone() {
+            let str_for_join = ", ";
+            let mut highlights = Vec::new();
+            let mut highlight_start = 0;
+            let parameters: Vec<_> = signature
+                .parameters
+                .as_ref()?
+                .iter()
+                .enumerate()
+                .map(|(i, parameter_information)| {
+                    let label = match parameter_information.label.clone() {
+                        lsp::ParameterLabel::Simple(string) => string,
+                        lsp::ParameterLabel::LabelOffsets(offset) => signature
+                            .label
+                            .chars()
+                            .skip(offset[0] as usize)
+                            .take((offset[1] - offset[0]) as usize)
+                            .collect::<String>(),
+                    };
+                    let label_length = label.len();
 
-        let signature_information = help
-            .active_signature
-            .and_then(|active_signature| help.signatures.get(active_signature as usize))
-            .or_else(|| help.signatures.first())?;
-
-        let str_for_join = ", ";
-        let parameter_length = signature_information
-            .parameters
-            .as_ref()
-            .map_or(0, |parameters| parameters.len());
-        let mut highlight_start = 0;
-        let (strings, mut highlights): (Vec<_>, Vec<_>) = signature_information
-            .parameters
-            .as_ref()?
-            .iter()
-            .enumerate()
-            .map(|(i, parameter_information)| {
-                let label = match parameter_information.label.clone() {
-                    lsp::ParameterLabel::Simple(string) => string,
-                    lsp::ParameterLabel::LabelOffsets(offset) => signature_information
-                        .label
-                        .chars()
-                        .skip(offset[0] as usize)
-                        .take((offset[1] - offset[0]) as usize)
-                        .collect::<String>(),
-                };
-                let label_length = label.len();
-
-                let highlights = help.active_parameter.and_then(|active_parameter| {
-                    if i == active_parameter as usize {
-                        Some((
+                    if i == active_parameter {
+                        highlights.push((
                             highlight_start..(highlight_start + label_length),
                             HighlightStyle {
                                 font_weight: Some(FontWeight::EXTRA_BOLD),
                                 ..Default::default()
                             },
-                        ))
-                    } else {
-                        None
+                        ));
                     }
-                });
-
-                if i != parameter_length {
                     highlight_start += label_length + str_for_join.len();
-                }
+                    label
+                })
+                .collect();
 
-                (label, highlights)
-            })
-            .unzip();
+            let label = parameters.join(str_for_join);
+            let documentation = signature.documentation.map(|doc| match doc {
+                lsp::Documentation::String(string) => string,
+                lsp::Documentation::MarkupContent(markup) => markup.value,
+            });
 
-        if strings.is_empty() {
-            None
-        } else {
-            let mut label = strings.join(str_for_join);
-
-            if function_options_count >= 2 {
-                let suffix = format!("(+{} overload)", function_options_count - 1);
-                let highlight_start = label.len() + 1;
-                highlights.push(Some((
-                    highlight_start..(highlight_start + suffix.len()),
-                    HighlightStyle {
-                        font_style: Some(FontStyle::Italic),
-                        ..Default::default()
-                    },
-                )));
-                label.push(' ');
-                label.push_str(&suffix);
-            };
-
-            Some(Self {
+            signatures.push(SignatureHelp {
                 label,
-                highlights: highlights.into_iter().flatten().collect(),
-                original_data: help,
-            })
+                documentation,
+                highlights,
+            });
         }
+        Some(Self {
+            signatures,
+            active_signature,
+            original_data: help,
+        })
     }
 }
 
@@ -206,20 +191,13 @@ fn proto_to_lsp_documentation(documentation: proto::Documentation) -> Option<lsp
 
 #[cfg(test)]
 mod tests {
-    use gpui::{FontStyle, FontWeight, HighlightStyle};
+    use gpui::{FontWeight, HighlightStyle};
 
-    use crate::lsp_command::signature_help::SignatureHelp;
+    use crate::lsp_command::signature_help::SignatureHelps;
 
     fn current_parameter() -> HighlightStyle {
         HighlightStyle {
             font_weight: Some(FontWeight::EXTRA_BOLD),
-            ..Default::default()
-        }
-    }
-
-    fn overload() -> HighlightStyle {
-        HighlightStyle {
-            font_style: Some(FontStyle::Italic),
             ..Default::default()
         }
     }
@@ -245,11 +223,12 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = SignatureHelps::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
-        let markdown = (markdown.label, markdown.highlights);
+        let signature = markdown.signatures[markdown.active_signature].clone();
+        let markdown = (signature.label, signature.highlights);
         assert_eq!(
             markdown,
             (
@@ -280,11 +259,12 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(1),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = SignatureHelps::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
-        let markdown = (markdown.label, markdown.highlights);
+        let signature = markdown.signatures[markdown.active_signature].clone();
+        let markdown = (signature.label, signature.highlights);
         assert_eq!(
             markdown,
             (
@@ -332,16 +312,17 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = SignatureHelps::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
-        let markdown = (markdown.label, markdown.highlights);
+        let signature = markdown.signatures[markdown.active_signature].clone();
+        let markdown = (signature.label, signature.highlights);
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str (+1 overload)".to_string(),
-                vec![(0..7, current_parameter()), (19..32, overload())]
+                "foo: u8, bar: &str".to_string(),
+                vec![(0..7, current_parameter())]
             )
         );
     }
@@ -384,16 +365,17 @@ mod tests {
             active_signature: Some(1),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = SignatureHelps::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
-        let markdown = (markdown.label, markdown.highlights);
+        let signature = markdown.signatures[markdown.active_signature].clone();
+        let markdown = (signature.label, signature.highlights);
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool (+1 overload)".to_string(),
-                vec![(0..12, current_parameter()), (25..38, overload())]
+                "hoge: String, fuga: bool".to_string(),
+                vec![(0..12, current_parameter())]
             )
         );
     }
@@ -436,16 +418,17 @@ mod tests {
             active_signature: Some(1),
             active_parameter: Some(1),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = SignatureHelps::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
-        let markdown = (markdown.label, markdown.highlights);
+        let signature = markdown.signatures[markdown.active_signature].clone();
+        let markdown = (signature.label, signature.highlights);
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool (+1 overload)".to_string(),
-                vec![(14..24, current_parameter()), (25..38, overload())]
+                "hoge: String, fuga: bool".to_string(),
+                vec![(14..24, current_parameter())]
             )
         );
     }
@@ -488,16 +471,17 @@ mod tests {
             active_signature: Some(1),
             active_parameter: None,
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = SignatureHelps::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
-        let markdown = (markdown.label, markdown.highlights);
+        let signature = markdown.signatures[markdown.active_signature].clone();
+        let markdown = (signature.label, signature.highlights);
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool (+1 overload)".to_string(),
-                vec![(25..38, overload())]
+                "hoge: String, fuga: bool".to_string(),
+                vec![(0..12, current_parameter())]
             )
         );
     }
@@ -555,16 +539,17 @@ mod tests {
             active_signature: Some(2),
             active_parameter: Some(1),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = SignatureHelps::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
-        let markdown = (markdown.label, markdown.highlights);
+        let signature = markdown.signatures[markdown.active_signature].clone();
+        let markdown = (signature.label, signature.highlights);
         assert_eq!(
             markdown,
             (
-                "one: usize, two: u32 (+2 overload)".to_string(),
-                vec![(12..20, current_parameter()), (21..34, overload())]
+                "one: usize, two: u32".to_string(),
+                vec![(12..20, current_parameter())]
             )
         );
     }
@@ -576,7 +561,7 @@ mod tests {
             active_signature: None,
             active_parameter: None,
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = SignatureHelps::new(signature_help);
         assert!(maybe_markdown.is_none());
     }
 
@@ -601,11 +586,12 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = SignatureHelps::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
-        let markdown = (markdown.label, markdown.highlights);
+        let signature = markdown.signatures[markdown.active_signature].clone();
+        let markdown = (signature.label, signature.highlights);
         assert_eq!(
             markdown,
             (

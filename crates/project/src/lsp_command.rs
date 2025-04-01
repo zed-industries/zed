@@ -33,6 +33,7 @@ use std::{cmp::Reverse, mem, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
 pub use signature_help::SignatureHelp;
+pub use signature_help::SignatureHelps;
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
@@ -1768,7 +1769,7 @@ impl LspCommand for GetDocumentSymbols {
 
 #[async_trait(?Send)]
 impl LspCommand for GetSignatureHelp {
-    type Response = Option<SignatureHelp>;
+    type Response = Option<SignatureHelps>;
     type LspRequest = lsp::SignatureHelpRequest;
     type ProtoRequest = proto::GetSignatureHelp;
 
@@ -1805,7 +1806,7 @@ impl LspCommand for GetSignatureHelp {
         _: LanguageServerId,
         _: AsyncApp,
     ) -> Result<Self::Response> {
-        Ok(message.and_then(SignatureHelp::new))
+        Ok(message.and_then(SignatureHelps::new))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1863,7 +1864,7 @@ impl LspCommand for GetSignatureHelp {
         Ok(response
             .signature_help
             .map(proto_to_lsp_signature)
-            .and_then(SignatureHelp::new))
+            .and_then(SignatureHelps::new))
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
