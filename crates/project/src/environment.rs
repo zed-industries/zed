@@ -1,6 +1,6 @@
 use futures::{
-    future::{Shared, WeakShared},
     FutureExt,
+    future::{Shared, WeakShared},
 };
 use std::{path::Path, sync::Arc};
 use util::ResultExt;
