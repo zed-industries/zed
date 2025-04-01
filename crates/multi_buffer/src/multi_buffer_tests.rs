@@ -1539,11 +1539,13 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
             one
             two
             two.five
+            three
             -----
             four
             five
             six
             seven
+            eight
             -----
             nine
             ten
@@ -1577,11 +1579,11 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
              two
              two.five
              three
-             -----
              four
              five
              six
              seven
+             eight
              -----
              nine
              ten
