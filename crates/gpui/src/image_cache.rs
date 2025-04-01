@@ -13,7 +13,7 @@ type ImageLoadingTask = Shared<Task<Result<Arc<RenderImage>, ImageCacheError>>>;
 struct ImageCacheInner {
     app: AsyncApp,
     images: RefCell<LruCache<u64, ImageLoadingTask>>,
-    max_items: Option<u32>,
+    max_items: Option<usize>,
 }
 
 impl Drop for ImageCacheInner {
@@ -57,7 +57,7 @@ impl ImageCache {
     }
 
     /// Create a new image cache with a maximum number of items.
-    pub fn max_items(cx: &mut App, max_items: u32) -> Self {
+    pub fn max_items(cx: &mut App, max_items: usize) -> Self {
         ImageCache(Rc::new(ImageCacheInner {
             app: cx.to_async(),
             images: RefCell::new(LruCache::unbounded()),
@@ -75,7 +75,7 @@ impl ImageCache {
 
         if let Some(max_items) = self.0.max_items {
             // remove least recently used images
-            while images.len() >= max_items as usize {
+            while images.len() >= max_items {
                 if let Some((_, task)) = images.pop_lru() {
                     if let Some(Ok(image)) = task.now_or_never() {
                         remove_image_from_windows(image.clone(), window, cx);
