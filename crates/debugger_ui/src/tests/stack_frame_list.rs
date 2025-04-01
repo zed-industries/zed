@@ -4,8 +4,8 @@ use crate::{
     tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
-    requests::{StackTrace, Threads},
     StackFrame,
+    requests::{StackTrace, Threads},
 };
 use editor::{Editor, ToPoint as _};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};

@@ -1,8 +1,8 @@
 use crate::PlatformStyle;
-use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
+use crate::{Icon, IconName, IconSize, h_flex, prelude::*};
 use gpui::{
-    relative, Action, AnyElement, App, FocusHandle, Global, IntoElement, Keystroke, Modifiers,
-    Window,
+    Action, AnyElement, App, FocusHandle, Global, IntoElement, Keystroke, Modifiers, Window,
+    relative,
 };
 use itertools::Itertools;
 

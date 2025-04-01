@@ -1,10 +1,10 @@
-use editor::{movement, Editor};
-use gpui::{actions, Context, Window};
+use editor::{Editor, movement};
+use gpui::{Context, Window, actions};
 use language::Point;
 
 use crate::{
-    motion::{Motion, MotionKind},
     Mode, Vim,
+    motion::{Motion, MotionKind},
 };
 
 actions!(vim, [Substitute, SubstituteLine]);

@@ -8,7 +8,7 @@ use workspace::{OpenOptions, OpenVisible};
 
 use crate::lsp_ext::find_specific_language_server_in_selection;
 
-use crate::{element::register_action, Editor, SwitchSourceHeader};
+use crate::{Editor, SwitchSourceHeader, element::register_action};
 
 use project::lsp_store::clangd_ext::CLANGD_SERVER_NAME;
 

@@ -6,8 +6,8 @@ use editor::{ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, Ed
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
-    linear_color_stop, linear_gradient, point, Animation, AnimationExt, App, DismissEvent, Entity,
-    Focusable, Subscription, TextStyle, WeakEntity,
+    Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
+    WeakEntity, linear_color_stop, linear_gradient, point,
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
@@ -16,8 +16,8 @@ use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle,
-    Tooltip,
+    ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
 use vim_mode_setting::VimModeSetting;
@@ -25,7 +25,7 @@ use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker, ContextPickerCompletionProvider};
-use crate::context_store::{refresh_context_store_text, ContextStore};
+use crate::context_store::{ContextStore, refresh_context_store_text};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
@@ -241,9 +241,12 @@ impl MessageEditor {
                     if let Some(load_error) = load_error {
                         cx.emit(ThreadEvent::ShowError(load_error));
                     }
+                })
+                .ok();
 
-                    let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
-
+            thread
+                .update(cx, |thread, cx| {
+                    let context = context_store.read(cx).context().clone();
                     thread.action_log().update(cx, |action_log, cx| {
                         action_log.clear_reviewed_changes(cx);
                     });
@@ -270,7 +273,7 @@ impl MessageEditor {
                 .ok();
             }
 
-            // Send to model after waiting for summaries
+            // Send to model after summaries are done
             thread
                 .update(cx, |thread, cx| {
                     thread.send_to_model(model, request_kind, cx);

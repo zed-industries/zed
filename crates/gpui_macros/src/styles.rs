@@ -2,9 +2,9 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    braced,
+    Token, Visibility, braced,
     parse::{Parse, ParseStream, Result},
-    parse_macro_input, Token, Visibility,
+    parse_macro_input,
 };
 
 #[derive(Debug)]

@@ -7,8 +7,8 @@ use std::time::Duration;
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    actions::DeleteLine, display_map::DisplayRow, test::editor_test_context::EditorTestContext,
-    DisplayPoint, Editor, EditorMode, MultiBuffer,
+    DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine, display_map::DisplayRow,
+    test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
@@ -21,7 +21,7 @@ use indoc::indoc;
 use search::BufferSearchBar;
 use workspace::WorkspaceSettings;
 
-use crate::{insert::NormalBefore, motion, state::Mode, PushSneak, PushSneakBackward};
+use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
 
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
@@ -228,7 +228,9 @@ async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
     cx.set_state("aˇbc\n", Mode::Normal);
     cx.simulate_keystrokes("i cmd-shift-p");
 
-    assert!(cx.workspace(|workspace, _, cx| workspace.active_modal::<CommandPalette>(cx).is_some()));
+    assert!(
+        cx.workspace(|workspace, _, cx| workspace.active_modal::<CommandPalette>(cx).is_some())
+    );
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
     assert!(
@@ -1938,8 +1940,8 @@ async fn test_delete_unmatched_brace(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
     cx.set_shared_state(indoc! {
         "fn o(wow: i32) {
-          dbgˇ!(wow)
-          dbg!(wow)
+          othˇ(wow)
+          oth(wow)
         }
         "
     })
@@ -1947,15 +1949,15 @@ async fn test_delete_unmatched_brace(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes("d ] }").await;
     cx.shared_state().await.assert_eq(indoc! {
         "fn o(wow: i32) {
-          dbˇg
+          otˇh
         }
         "
     });
-    cx.shared_clipboard().await.assert_eq("!(wow)\n  dbg!(wow)");
+    cx.shared_clipboard().await.assert_eq("(wow)\n  oth(wow)");
     cx.set_shared_state(indoc! {
         "fn o(wow: i32) {
-          ˇdbg!(wow)
-          dbg!(wow)
+          ˇoth(wow)
+          oth(wow)
         }
         "
     })
@@ -1968,5 +1970,5 @@ async fn test_delete_unmatched_brace(cx: &mut gpui::TestAppContext) {
     });
     cx.shared_clipboard()
         .await
-        .assert_eq("  dbg!(wow)\n  dbg!(wow)\n");
+        .assert_eq("  oth(wow)\n  oth(wow)\n");
 }

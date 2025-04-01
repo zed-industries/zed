@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{Arc, atomic::AtomicBool};
 
 use anyhow::Result;
 use async_trait::async_trait;

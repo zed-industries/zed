@@ -1,14 +1,14 @@
 use crate::{
+    Vim,
     motion::{self, Motion, MotionKind},
     object::Object,
     state::Mode,
-    Vim,
 };
 use editor::{
+    Bias, DisplayPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
     scroll::Autoscroll,
-    Bias, DisplayPoint,
 };
 use gpui::{Context, Window};
 use language::Selection;

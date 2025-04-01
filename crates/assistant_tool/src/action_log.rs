@@ -402,7 +402,14 @@ impl ActionLog {
     pub fn stale_buffers<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a Entity<Buffer>> {
         self.tracked_buffers
             .iter()
-            .filter(|(buffer, tracked)| tracked.version != buffer.read(cx).version)
+            .filter(|(buffer, tracked)| {
+                let buffer = buffer.read(cx);
+
+                tracked.version != buffer.version
+                    && buffer
+                        .file()
+                        .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+            })
             .map(|(buffer, _)| buffer)
     }
 
@@ -483,7 +490,7 @@ impl TrackedBuffer {
                 buffer_without_edits
                     .update(cx, |buffer, cx| buffer.undo_operations(edits_to_undo, cx));
                 let primary_diff_update = self.diff.update(cx, |diff, cx| {
-                    diff.set_base_text(
+                    diff.set_base_text_buffer(
                         buffer_without_edits,
                         self.buffer.read(cx).text_snapshot(),
                         cx,
@@ -500,7 +507,7 @@ impl TrackedBuffer {
                     buffer.undo_operations(unreviewed_edits_to_undo, cx)
                 });
                 let secondary_diff_update = self.secondary_diff.update(cx, |diff, cx| {
-                    diff.set_base_text(
+                    diff.set_base_text_buffer(
                         buffer_without_unreviewed_edits.clone(),
                         self.buffer.read(cx).text_snapshot(),
                         cx,
@@ -559,13 +566,7 @@ impl TrackedBuffer {
                     if let Ok(primary_diff_snapshot) = primary_diff_snapshot {
                         primary_diff
                             .update(cx, |diff, cx| {
-                                diff.set_snapshot(
-                                    &buffer_snapshot,
-                                    primary_diff_snapshot,
-                                    false,
-                                    None,
-                                    cx,
-                                )
+                                diff.set_snapshot(primary_diff_snapshot, &buffer_snapshot, None, cx)
                             })
                             .ok();
                     }
@@ -574,9 +575,8 @@ impl TrackedBuffer {
                         secondary_diff
                             .update(cx, |diff, cx| {
                                 diff.set_snapshot(
-                                    &buffer_snapshot,
                                     secondary_diff_snapshot,
-                                    false,
+                                    &buffer_snapshot,
                                     None,
                                     cx,
                                 )

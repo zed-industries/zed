@@ -1,17 +1,18 @@
 use std::{rc::Rc, time::Duration};
 
-use gpui::{pulsating_between, Animation, AnimationExt as _, ClickEvent};
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use file_icons::FileIcons;
+use gpui::ClickEvent;
+use gpui::{Animation, AnimationExt as _, pulsating_between};
+use ui::{IconButtonShape, Tooltip, prelude::*};
 
-use crate::context::{ContextKind, ContextSnapshot};
+use crate::context::{AssistantContext, ContextId, ContextKind};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
     Added {
-        context: ContextSnapshot,
+        context: AddedContext,
         dupe_name: bool,
         focused: bool,
-        summarizing: bool,
         on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     },
@@ -26,10 +27,9 @@ pub enum ContextPill {
 
 impl ContextPill {
     pub fn added(
-        context: ContextSnapshot,
+        context: AddedContext,
         dupe_name: bool,
         focused: bool,
-        summarizing: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     ) -> Self {
         Self::Added {
@@ -37,7 +37,6 @@ impl ContextPill {
             dupe_name,
             on_remove,
             focused,
-            summarizing,
             on_click: None,
         }
     }
@@ -80,17 +79,21 @@ impl ContextPill {
 
     pub fn icon(&self) -> Icon {
         match self {
-            Self::Added { context, .. } => match &context.icon_path {
-                Some(icon_path) => Icon::from_path(icon_path),
-                None => Icon::new(context.kind.icon()),
-            },
             Self::Suggested {
                 icon_path: Some(icon_path),
                 ..
+            }
+            | Self::Added {
+                context:
+                    AddedContext {
+                        icon_path: Some(icon_path),
+                        ..
+                    },
+                ..
             } => Icon::from_path(icon_path),
-            Self::Suggested {
-                kind,
-                icon_path: None,
+            Self::Suggested { kind, .. }
+            | Self::Added {
+                context: AddedContext { kind, .. },
                 ..
             } => Icon::new(kind.icon()),
         }
@@ -115,7 +118,6 @@ impl RenderOnce for ContextPill {
                 context,
                 dupe_name,
                 on_remove,
-                summarizing,
                 focused,
                 on_click,
             } => base_pill
@@ -148,7 +150,7 @@ impl RenderOnce for ContextPill {
                                 element
                             }
                         })
-                        .when_some(context.tooltip.clone(), |element, tooltip| {
+                        .when_some(context.tooltip.as_ref(), |element, tooltip| {
                             element.tooltip(Tooltip::text(tooltip.clone()))
                         }),
                 )
@@ -171,7 +173,7 @@ impl RenderOnce for ContextPill {
                         .on_click(move |event, window, cx| on_click(event, window, cx))
                 })
                 .map(|element| {
-                    if *summarizing {
+                    if context.summarizing {
                         element
                             .tooltip(ui::Tooltip::text("Summarizing..."))
                             .with_animation(
@@ -237,6 +239,103 @@ impl RenderOnce for ContextPill {
                     element.on_click(move |event, window, cx| on_click(event, window, cx))
                 })
                 .into_any(),
+        }
+    }
+}
+
+pub struct AddedContext {
+    pub id: ContextId,
+    pub kind: ContextKind,
+    pub name: SharedString,
+    pub parent: Option<SharedString>,
+    pub tooltip: Option<SharedString>,
+    pub icon_path: Option<SharedString>,
+    pub summarizing: bool,
+}
+
+impl AddedContext {
+    pub fn new(context: &AssistantContext, cx: &App) -> AddedContext {
+        match context {
+            AssistantContext::File(file_context) => {
+                let full_path = file_context.context_buffer.file.full_path(cx);
+                let full_path_string: SharedString =
+                    full_path.to_string_lossy().into_owned().into();
+                let name = full_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned().into())
+                    .unwrap_or_else(|| full_path_string.clone());
+                let parent = full_path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned().into());
+                AddedContext {
+                    id: file_context.id,
+                    kind: ContextKind::File,
+                    name,
+                    parent,
+                    tooltip: Some(full_path_string),
+                    icon_path: FileIcons::get_icon(&full_path, cx),
+                    summarizing: false,
+                }
+            }
+
+            AssistantContext::Directory(directory_context) => {
+                // TODO: handle worktree disambiguation. Maybe by storing an `Arc<dyn File>` to also
+                // handle renames?
+                let full_path = &directory_context.project_path.path;
+                let full_path_string: SharedString =
+                    full_path.to_string_lossy().into_owned().into();
+                let name = full_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned().into())
+                    .unwrap_or_else(|| full_path_string.clone());
+                let parent = full_path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned().into());
+                AddedContext {
+                    id: directory_context.id,
+                    kind: ContextKind::Directory,
+                    name,
+                    parent,
+                    tooltip: Some(full_path_string),
+                    icon_path: None,
+                    summarizing: false,
+                }
+            }
+
+            AssistantContext::Symbol(symbol_context) => AddedContext {
+                id: symbol_context.id,
+                kind: ContextKind::Symbol,
+                name: symbol_context.context_symbol.id.name.clone(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                summarizing: false,
+            },
+
+            AssistantContext::FetchedUrl(fetched_url_context) => AddedContext {
+                id: fetched_url_context.id,
+                kind: ContextKind::FetchedUrl,
+                name: fetched_url_context.url.clone(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                summarizing: false,
+            },
+
+            AssistantContext::Thread(thread_context) => AddedContext {
+                id: thread_context.id,
+                kind: ContextKind::Thread,
+                name: thread_context.summary(cx),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                summarizing: thread_context
+                    .thread
+                    .read(cx)
+                    .is_generating_detailed_summary(),
+            },
         }
     }
 }

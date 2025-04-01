@@ -5,11 +5,11 @@ use language::{Bias, Point, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 
 use crate::{
+    Vim,
     motion::Motion,
     normal::{ChangeCase, ConvertToLowerCase, ConvertToUpperCase},
     object::Object,
     state::Mode,
-    Vim,
 };
 
 pub enum CaseTarget {

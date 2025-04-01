@@ -28,7 +28,7 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
-use gpui::{actions, impl_actions, App};
+use gpui::{App, actions, impl_actions};
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;

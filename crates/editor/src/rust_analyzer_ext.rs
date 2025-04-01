@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use anyhow::Context as _;
 use gpui::{App, AppContext as _, Context, Entity, Window};
-use language::{proto::serialize_anchor, Capability, Language};
+use language::{Capability, Language, proto::serialize_anchor};
 use multi_buffer::MultiBuffer;
 use project::lsp_store::{
     lsp_ext_command::{DocsUrls, ExpandMacro, ExpandedMacro},
@@ -12,8 +12,8 @@ use rpc::proto;
 use text::ToPointUtf16;
 
 use crate::{
-    element::register_action, lsp_ext::find_specific_language_server_in_selection, Editor,
-    ExpandMacroRecursively, OpenDocs,
+    Editor, ExpandMacroRecursively, OpenDocs, element::register_action,
+    lsp_ext::find_specific_language_server_in_selection,
 };
 
 fn is_rust_language(language: &Language) -> bool {

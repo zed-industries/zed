@@ -10,14 +10,14 @@ use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
 use collections::VecDeque;
 use editor::{
-    actions::{MoveDown, MoveUp},
     Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, GutterDimensions, MultiBuffer,
+    actions::{MoveDown, MoveUp},
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
 use gpui::{
-    anchored, deferred, point, AnyElement, App, ClickEvent, Context, CursorStyle, Entity,
-    EventEmitter, FocusHandle, Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window,
+    AnyElement, App, ClickEvent, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
+    Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window, anchored, deferred, point,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
@@ -28,7 +28,7 @@ use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::utils::WithRemSize;
 use ui::{
-    prelude::*, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, PopoverMenuHandle, Tooltip,
+    CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::Workspace;
@@ -455,47 +455,55 @@ impl<T: 'static> PromptEditor<T> {
 
         match codegen_status {
             CodegenStatus::Idle => {
-                vec![Button::new("start", mode.start_label())
-                    .label_size(LabelSize::Small)
-                    .icon(IconName::Return)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::StartRequested)))
-                    .into_any_element()]
+                vec![
+                    Button::new("start", mode.start_label())
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::Return)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(
+                            cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
+                        )
+                        .into_any_element(),
+                ]
             }
-            CodegenStatus::Pending => vec![IconButton::new("stop", IconName::Stop)
-                .icon_color(Color::Error)
-                .shape(IconButtonShape::Square)
-                .tooltip(move |window, cx| {
-                    Tooltip::with_meta(
-                        mode.tooltip_interrupt(),
-                        Some(&menu::Cancel),
-                        "Changes won't be discarded",
-                        window,
-                        cx,
-                    )
-                })
-                .on_click(cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
-                .into_any_element()],
+            CodegenStatus::Pending => vec![
+                IconButton::new("stop", IconName::Stop)
+                    .icon_color(Color::Error)
+                    .shape(IconButtonShape::Square)
+                    .tooltip(move |window, cx| {
+                        Tooltip::with_meta(
+                            mode.tooltip_interrupt(),
+                            Some(&menu::Cancel),
+                            "Changes won't be discarded",
+                            window,
+                            cx,
+                        )
+                    })
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
+                    .into_any_element(),
+            ],
             CodegenStatus::Done | CodegenStatus::Error(_) => {
                 let has_error = matches!(codegen_status, CodegenStatus::Error(_));
                 if has_error || self.edited_since_done {
-                    vec![IconButton::new("restart", IconName::RotateCw)
-                        .icon_color(Color::Info)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(move |window, cx| {
-                            Tooltip::with_meta(
-                                mode.tooltip_restart(),
-                                Some(&menu::Confirm),
-                                "Changes will be discarded",
-                                window,
-                                cx,
-                            )
-                        })
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            cx.emit(PromptEditorEvent::StartRequested);
-                        }))
-                        .into_any_element()]
+                    vec![
+                        IconButton::new("restart", IconName::RotateCw)
+                            .icon_color(Color::Info)
+                            .shape(IconButtonShape::Square)
+                            .tooltip(move |window, cx| {
+                                Tooltip::with_meta(
+                                    mode.tooltip_restart(),
+                                    Some(&menu::Confirm),
+                                    "Changes will be discarded",
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(PromptEditorEvent::StartRequested);
+                            }))
+                            .into_any_element(),
+                    ]
                 } else {
                     let accept = IconButton::new("accept", IconName::Check)
                         .icon_color(Color::Info)

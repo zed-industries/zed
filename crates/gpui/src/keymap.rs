@@ -4,7 +4,7 @@ mod context;
 pub use binding::*;
 pub use context::*;
 
-use crate::{is_no_action, Action, Keystroke};
+use crate::{Action, Keystroke, is_no_action};
 use collections::HashMap;
 use smallvec::SmallVec;
 use std::any::TypeId;
@@ -219,7 +219,7 @@ impl Keymap {
 mod tests {
     use super::*;
     use crate as gpui;
-    use gpui::{actions, NoAction};
+    use gpui::{NoAction, actions};
 
     actions!(
         keymap_test,
@@ -265,38 +265,46 @@ mod tests {
         keymap.add_bindings(bindings.clone());
 
         // binding is only enabled in a specific context
-        assert!(keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-a").unwrap()],
-                &[KeyContext::parse("barf").unwrap()],
-            )
-            .0
-            .is_empty());
-        assert!(!keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-a").unwrap()],
-                &[KeyContext::parse("editor").unwrap()],
-            )
-            .0
-            .is_empty());
+        assert!(
+            keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse("barf").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
+        assert!(
+            !keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse("editor").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
 
         // binding is disabled in a more specific context
-        assert!(keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-a").unwrap()],
-                &[KeyContext::parse("editor mode=full").unwrap()],
-            )
-            .0
-            .is_empty());
+        assert!(
+            keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse("editor mode=full").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
 
         // binding is globally disabled
-        assert!(keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-b").unwrap()],
-                &[KeyContext::parse("barf").unwrap()],
-            )
-            .0
-            .is_empty());
+        assert!(
+            keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-b").unwrap()],
+                    &[KeyContext::parse("barf").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
     }
 
     #[test]

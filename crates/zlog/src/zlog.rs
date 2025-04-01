@@ -275,8 +275,8 @@ pub mod scope_map {
         collections::{HashMap, VecDeque},
         hash::{DefaultHasher, Hasher},
         sync::{
-            atomic::{AtomicU64, Ordering},
             RwLock,
+            atomic::{AtomicU64, Ordering},
         },
         usize,
     };

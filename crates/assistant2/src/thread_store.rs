@@ -2,25 +2,26 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
-use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt as _;
+use futures::future::{self, BoxFuture, Shared};
 use gpui::{
-    prelude::*, App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Task,
+    App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Subscription, Task,
+    prelude::*,
 };
-use heed::types::SerdeBincode;
 use heed::Database;
+use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
-use settings::Settings as _;
+use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
 
 use crate::thread::{
@@ -38,6 +39,7 @@ pub struct ThreadStore {
     context_server_manager: Entity<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ThreadStore {
@@ -52,6 +54,10 @@ impl ThreadStore {
             let context_server_manager = cx.new(|cx| {
                 ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
             });
+            let settings_subscription =
+                cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
+                    this.load_default_profile(cx);
+                });
 
             let this = Self {
                 project,
@@ -60,6 +66,7 @@ impl ThreadStore {
                 context_server_manager,
                 context_server_tool_ids: HashMap::default(),
                 threads: Vec::new(),
+                _subscriptions: vec![settings_subscription],
             };
             this.load_default_profile(cx);
             this.register_context_server_handlers(cx);
@@ -199,11 +206,11 @@ impl ThreadStore {
         let assistant_settings = AssistantSettings::get_global(cx);
 
         if let Some(profile) = assistant_settings.profiles.get(profile_id) {
-            self.load_profile(profile);
+            self.load_profile(profile, cx);
         }
     }
 
-    pub fn load_profile(&self, profile: &AgentProfile) {
+    pub fn load_profile(&self, profile: &AgentProfile, cx: &Context<Self>) {
         self.tools.disable_all_tools();
         self.tools.enable(
             ToolSource::Native,
@@ -214,17 +221,28 @@ impl ThreadStore {
                 .collect::<Vec<_>>(),
         );
 
-        for (context_server_id, preset) in &profile.context_servers {
-            self.tools.enable(
-                ToolSource::ContextServer {
-                    id: context_server_id.clone().into(),
-                },
-                &preset
-                    .tools
-                    .iter()
-                    .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
-                    .collect::<Vec<_>>(),
-            )
+        if profile.enable_all_context_servers {
+            for context_server in self.context_server_manager.read(cx).all_servers() {
+                self.tools.enable_source(
+                    ToolSource::ContextServer {
+                        id: context_server.id().into(),
+                    },
+                    cx,
+                );
+            }
+        } else {
+            for (context_server_id, preset) in &profile.context_servers {
+                self.tools.enable(
+                    ToolSource::ContextServer {
+                        id: context_server_id.clone().into(),
+                    },
+                    &preset
+                        .tools
+                        .iter()
+                        .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                        .collect::<Vec<_>>(),
+                )
+            }
         }
     }
 
@@ -275,8 +293,9 @@ impl ThreadStore {
                                         })
                                         .collect::<Vec<_>>();
 
-                                    this.update(cx, |this, _cx| {
+                                    this.update(cx, |this, cx| {
                                         this.context_server_tool_ids.insert(server_id, tool_ids);
+                                        this.load_default_profile(cx);
                                     })
                                     .log_err();
                                 }
@@ -289,6 +308,7 @@ impl ThreadStore {
             context_server::manager::Event::ServerStopped { server_id } => {
                 if let Some(tool_ids) = self.context_server_tool_ids.remove(server_id) {
                     tool_working_set.remove(&tool_ids);
+                    self.load_default_profile(cx);
                 }
             }
         }

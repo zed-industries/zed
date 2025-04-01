@@ -1,23 +1,23 @@
-use crate::headless_project::HeadlessAppState;
 use crate::HeadlessProject;
-use anyhow::{anyhow, Context as _, Result};
+use crate::headless_project::HeadlessAppState;
+use anyhow::{Context as _, Result, anyhow};
 use chrono::Utc;
-use client::{telemetry, ProxySettings};
+use client::{ProxySettings, telemetry};
 use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
-use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
+use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, select_biased};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
 use gpui_tokio::Tokio;
-use http_client::{read_proxy_from_env, Uri};
+use http_client::{Uri, read_proxy_from_env};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
 
-use release_channel::{AppVersion, ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -27,7 +27,7 @@ use remote::{
 use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
-use settings::{watch_config_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore, watch_config_file};
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 

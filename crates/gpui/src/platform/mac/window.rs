@@ -1,11 +1,11 @@
-use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
+use super::{MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
-    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayLink,
-    ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    RequestFrameOptions, ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowKind, WindowParams,
+    AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
+    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformWindow, Point, PromptLevel, RequestFrameOptions, ScaledPixels, Size, Timer,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
+    platform::PlatformInputHandler, point, px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -28,7 +28,7 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{Class, Object, Protocol, Sel, BOOL, NO, YES},
+    runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
 use parking_lot::Mutex;
@@ -36,7 +36,7 @@ use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
     cell::Cell,
-    ffi::{c_void, CStr},
+    ffi::{CStr, c_void},
     mem,
     ops::Range,
     path::PathBuf,
@@ -1198,11 +1198,7 @@ fn get_scale_factor(native_window: id) -> f32 {
     // (if it is off-screen), though we'd expect to see viewDidChangeBackingProperties before
     // it was rendered for real.
     // Regardless, attempt to avoid the issue here.
-    if factor == 0.0 {
-        2.
-    } else {
-        factor
-    }
+    if factor == 0.0 { 2. } else { factor }
 }
 
 unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> {

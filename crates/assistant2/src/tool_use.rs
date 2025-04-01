@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_tool::{Tool, ToolWorkingSet};
 use collections::HashMap;
-use futures::future::Shared;
 use futures::FutureExt as _;
+use futures::future::Shared;
 use gpui::{App, SharedString, Task};
 use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,

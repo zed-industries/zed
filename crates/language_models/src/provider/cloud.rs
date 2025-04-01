@@ -1,14 +1,14 @@
 use anthropic::{AnthropicError, AnthropicModelMode};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use client::{
-    zed_urls, Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME,
-    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
+    Client, EXPIRED_LLM_TOKEN_HEADER_NAME, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
+    PerformCompletionParams, UserStore, zed_urls,
 };
 use collections::BTreeMap;
 use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
 use futures::{
-    future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, Stream, StreamExt,
-    TryStreamExt as _,
+    AsyncBufReadExt, FutureExt, Stream, StreamExt, TryStreamExt as _, future::BoxFuture,
+    stream::BoxStream,
 };
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
@@ -23,25 +23,23 @@ use language_model::{
     MaxMonthlySpendReachedError, PaymentRequiredError, RefreshLlmTokenListener,
 };
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::value::RawValue;
 use settings::{Settings, SettingsStore};
-use smol::io::{AsyncReadExt, BufReader};
 use smol::Timer;
+use smol::io::{AsyncReadExt, BufReader};
 use std::{
     future,
     sync::{Arc, LazyLock},
     time::Duration,
 };
 use strum::IntoEnumIterator;
-use ui::{prelude::*, TintColor};
+use ui::{TintColor, prelude::*};
 
-use crate::provider::anthropic::{
-    count_anthropic_tokens, into_anthropic, map_to_language_model_completion_events,
-};
+use crate::AllLanguageModelSettings;
+use crate::provider::anthropic::{count_anthropic_tokens, into_anthropic};
 use crate::provider::google::into_google;
 use crate::provider::open_ai::{count_open_ai_tokens, into_open_ai};
-use crate::AllLanguageModelSettings;
 
 pub const PROVIDER_NAME: &str = "Zed";
 
@@ -410,7 +408,11 @@ fn render_accept_terms(
         .icon_size(IconSize::XSmall)
         .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
-    let text = "To start using Zed AI, please read and accept the";
+    let thread_view = match view_kind {
+        LanguageModelProviderTosView::ThreadEmptyState => true,
+        LanguageModelProviderTosView::PromptEditorPopup => false,
+        LanguageModelProviderTosView::Configuration => false,
+    };
 
     let form = v_flex()
         .w_full()
@@ -418,14 +420,20 @@ fn render_accept_terms(
         .child(
             h_flex()
                 .flex_wrap()
-                .items_start()
-                .child(Label::new(text))
+                .when(thread_view, |this| this.justify_center())
+                .child(Label::new(
+                    "To start using Zed AI, please read and accept the",
+                ))
                 .child(terms_button),
         )
         .child({
             let button_container = h_flex().w_full().child(
                 Button::new("accept_terms", "I accept the Terms of Service")
                     .style(ButtonStyle::Tinted(TintColor::Accent))
+                    .icon(IconName::Check)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .full_width()
                     .disabled(accept_terms_disabled)
                     .on_click({
                         let state = state.downgrade();
@@ -439,10 +447,8 @@ fn render_accept_terms(
 
             match view_kind {
                 LanguageModelProviderTosView::PromptEditorPopup => button_container.justify_end(),
-                LanguageModelProviderTosView::Configuration
-                | LanguageModelProviderTosView::ThreadEmptyState => {
-                    button_container.justify_start()
-                }
+                LanguageModelProviderTosView::Configuration => button_container.justify_start(),
+                LanguageModelProviderTosView::ThreadEmptyState => button_container.justify_center(),
             }
         });
 
@@ -640,9 +646,11 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok(map_to_language_model_completion_events(Box::pin(
-                        response_lines(response).map_err(AnthropicError::Other),
-                    )))
+                    Ok(
+                        crate::provider::anthropic::map_to_language_model_completion_events(
+                            Box::pin(response_lines(response).map_err(AnthropicError::Other)),
+                        ),
+                    )
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
@@ -690,17 +698,13 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok(google_ai::extract_text_from_events(response_lines(
-                        response,
-                    )))
+                    Ok(
+                        crate::provider::google::map_to_language_model_completion_events(Box::pin(
+                            response_lines(response),
+                        )),
+                    )
                 });
-                async move {
-                    Ok(future
-                        .await?
-                        .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                        .boxed())
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
         }
     }

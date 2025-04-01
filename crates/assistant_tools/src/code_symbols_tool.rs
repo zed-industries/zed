@@ -2,7 +2,7 @@ use std::fmt::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use collections::IndexMap;
 use gpui::{App, AsyncApp, Entity, Task};
@@ -91,7 +91,7 @@ impl Tool for CodeSymbolsTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Eye
+        IconName::Code
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {

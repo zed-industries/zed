@@ -2,13 +2,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use futures::AsyncReadExt as _;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
-use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
+use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, Context, ListItem, Window};
+use ui::{Context, ListItem, Window, prelude::*};
 use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
@@ -163,11 +163,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
-        if self.url.is_empty() {
-            0
-        } else {
-            1
-        }
+        if self.url.is_empty() { 0 } else { 1 }
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
