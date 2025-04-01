@@ -375,7 +375,7 @@ fn format_commit(commit: &CommitDetails) -> String {
     writeln!(
         &mut result,
         "Author: {} <{}>",
-        commit.committer_name, commit.committer_email
+        commit.author_name, commit.author_email
     )
     .unwrap();
     writeln!(

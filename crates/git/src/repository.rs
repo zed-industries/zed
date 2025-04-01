@@ -133,8 +133,8 @@ pub struct CommitDetails {
     pub sha: SharedString,
     pub message: SharedString,
     pub commit_timestamp: i64,
-    pub committer_email: SharedString,
-    pub committer_name: SharedString,
+    pub author_email: SharedString,
+    pub author_name: SharedString,
 }
 
 #[derive(Debug)]
@@ -410,10 +410,10 @@ impl GitRepository for RealGitRepository {
                         .to_string()
                         .into(),
                     commit_timestamp: commit.time().seconds(),
-                    committer_email: String::from_utf8_lossy(commit.committer().email_bytes())
+                    author_email: String::from_utf8_lossy(commit.author().email_bytes())
                         .to_string()
                         .into(),
-                    committer_name: String::from_utf8_lossy(commit.committer().name_bytes())
+                    author_name: String::from_utf8_lossy(commit.author().name_bytes())
                         .to_string()
                         .into(),
                 };
