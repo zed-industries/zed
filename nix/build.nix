@@ -1,42 +1,45 @@
 {
   lib,
   stdenv,
-  stdenvAdapters,
-  crane,
-  rustToolchain,
-  rustPlatform,
-  cmake,
-  copyDesktopItems,
-  fetchFromGitHub,
-  curl,
-  perl,
-  pkg-config,
-  protobuf,
-  fontconfig,
-  freetype,
-  libgit2,
-  openssl,
-  sqlite,
-  zlib,
-  zstd,
-  alsa-lib,
-  libxkbcommon,
-  wayland,
-  libglvnd,
-  xorg,
-  makeFontsConf,
-  vulkan-loader,
-  envsubst,
-  cargo-about,
-  cargo-bundle,
-  git,
-  livekit-libwebrtc,
-  llvmPackages,
+
   apple-sdk_15,
   darwin,
   darwinMinVersionHook,
+
+  cargo-about,
+  cargo-bundle,
+  crane,
+  rustPlatform,
+  rustToolchain,
+
+  copyDesktopItems,
+  envsubst,
+  fetchFromGitHub,
+  makeFontsConf,
   makeWrapper,
+
+  alsa-lib,
+  cmake,
+  curl,
+  fontconfig,
+  freetype,
+  git,
+  libgit2,
+  libglvnd,
+  libxkbcommon,
+  livekit-libwebrtc,
   nodejs_22,
+  openssl,
+  perl,
+  pkg-config,
+  protobuf,
+  sqlite,
+  vulkan-loader,
+  wayland,
+  xorg,
+  zlib,
+  zstd,
+
   withGLES ? false,
   profile ? "release",
 }:
@@ -91,8 +94,8 @@ let
           cargo-about
           rustPlatform.bindgenHook
         ]
-        ++ lib.optionals stdenv.hostPlatform.isLinux [ makeWrapper ]
-        ++ lib.optionals stdenv.hostPlatform.isDarwin [
+        ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
+        ++ lib.optionals stdenv'.hostPlatform.isDarwin [
           # TODO: move to overlay so it's usable in the shell
           (cargo-bundle.overrideAttrs (
             new: old: {
@@ -127,14 +130,14 @@ let
           zlib
           zstd
         ]
-        ++ lib.optionals stdenv.hostPlatform.isLinux [
+        ++ lib.optionals stdenv'.hostPlatform.isLinux [
           alsa-lib
           libxkbcommon
           wayland
           gpu-lib
           xorg.libxcb
         ]
-        ++ lib.optionals stdenv.hostPlatform.isDarwin [
+        ++ lib.optionals stdenv'.hostPlatform.isDarwin [
           apple-sdk_15
           darwin.apple_sdk.frameworks.System
           (darwinMinVersionHook "10.15")
@@ -143,16 +146,17 @@ let
       cargoExtraArgs = "-p zed -p cli --locked --features=gpui/runtime_shaders";
 
       stdenv =
+        pkgs:
         let
-          base = llvmPackages.stdenv;
+          base = pkgs.llvmPackages.stdenv;
           addBinTools = old: {
             cc = old.cc.override {
-              inherit (llvmPackages) bintools;
+              inherit (pkgs.llvmPackages) bintools;
             };
           };
           custom = lib.pipe base [
             (stdenv: stdenv.override addBinTools)
-            stdenvAdapters.useMoldLinker
+            pkgs.stdenvAdapters.useMoldLinker
           ];
         in
         if stdenv'.hostPlatform.isLinux then custom else base;
@@ -175,7 +179,7 @@ let
 
         # for some reason these deps being in buildInputs isn't enough, the only thing
         # about them that's special is that they're manually dlopened at runtime
-        NIX_LDFLAGS = lib.optionalString stdenv.hostPlatform.isLinux "-rpath ${
+        NIX_LDFLAGS = lib.optionalString stdenv'.hostPlatform.isLinux "-rpath ${
           lib.makeLibraryPath [
             gpu-lib
             wayland
@@ -184,7 +188,7 @@ let
       };
 
       # prevent nix from removing the "unused" wayland/gpu-lib rpaths
-      dontPatchELF = stdenv.hostPlatform.isLinux;
+      dontPatchELF = stdenv'.hostPlatform.isLinux;
 
       # TODO: try craneLib.cargoNextest separate output
       # for now we're not worried about running our test suite (or tests for deps) in the nix sandbox
@@ -199,7 +203,7 @@ let
             # see https://github.com/rust-lang/cargo/issues/5376#issuecomment-2163350032
             glesConfig = builtins.toFile "config.toml" ''
               [target.'cfg(all())']
-              rustflags = ["--cfg", "tokio_unstable"]
+              rustflags = ["--cfg", "gles"]
             '';
 
             # `webrtc-sys` expects a staticlib; nixpkgs' `livekit-webrtc` has been patched to
