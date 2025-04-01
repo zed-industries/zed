@@ -92,7 +92,7 @@ impl VimOption {
 
                 CommandInterceptResult {
                     string: format!(
-                        "set {}",
+                        ":set {}",
                         options.iter().map(|opt| opt.to_string()).join(" ")
                     ),
                     action: VimSet { options }.boxed_clone(),

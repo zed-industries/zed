@@ -191,8 +191,8 @@ impl PickerDelegate for ToolPickerDelegate {
         let active_profile_id = &AssistantSettings::get_global(cx).default_profile;
         if active_profile_id == &self.profile_id {
             self.thread_store
-                .update(cx, |this, _cx| {
-                    this.load_profile(&self.profile);
+                .update(cx, |this, cx| {
+                    this.load_profile(&self.profile, cx);
                 })
                 .log_err();
         }
@@ -212,6 +212,9 @@ impl PickerDelegate for ToolPickerDelegate {
                             .or_insert_with(|| AgentProfileContent {
                                 name: default_profile.name.into(),
                                 tools: default_profile.tools,
+                                enable_all_context_servers: Some(
+                                    default_profile.enable_all_context_servers,
+                                ),
                                 context_servers: default_profile
                                     .context_servers
                                     .into_iter()

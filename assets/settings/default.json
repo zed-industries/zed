@@ -637,6 +637,8 @@
     "profiles": {
       "ask": {
         "name": "Ask",
+        // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
+        // "enable_all_context_servers": true,
         "tools": {
           "diagnostics": true,
           "fetch": true,
@@ -650,6 +652,7 @@
       },
       "write": {
         "name": "Write",
+        "enable_all_context_servers": true,
         "tools": {
           "bash": true,
           "batch-tool": true,

@@ -252,7 +252,8 @@ impl TerminalInlineAssistant {
 
         attach_context_to_message(
             &mut request_message,
-            assist.context_store.read(cx).snapshot(cx),
+            assist.context_store.read(cx).context().iter(),
+            cx,
         );
 
         request_message.content.push(prompt.into());
