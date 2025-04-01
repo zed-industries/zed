@@ -7479,7 +7479,9 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     std::fs::write(root_path.join("project/a.txt"), "b").unwrap();
     git_add("a.txt", &repo);
     git_commit("improve letter", &repo);
+    eprintln!(">>>>>>>>>>> cherry pick");
     git_cherry_pick(&commit, &repo);
+    eprintln!("<<<<<<<<<<< cherry pick");
     std::fs::read_to_string(root_path.join("project/.git/CHERRY_PICK_HEAD"))
         .expect("No CHERRY_PICK_HEAD");
     pretty_assertions::assert_eq!(
