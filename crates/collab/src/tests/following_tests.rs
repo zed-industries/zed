@@ -295,22 +295,8 @@ async fn test_basic_following(
                 .unwrap()
         });
         let mut result = MultiBuffer::new(Capability::ReadWrite);
-        result.push_excerpts(
-            buffer_a1,
-            [ExcerptRange {
-                context: 0..3,
-                primary: None,
-            }],
-            cx,
-        );
-        result.push_excerpts(
-            buffer_a2,
-            [ExcerptRange {
-                context: 4..7,
-                primary: None,
-            }],
-            cx,
-        );
+        result.push_excerpts(buffer_a1, [ExcerptRange::new(0..3)], cx);
+        result.push_excerpts(buffer_a2, [ExcerptRange::new(4..7)], cx);
         result
     });
     let multibuffer_editor_a = workspace_a.update_in(cx_a, |workspace, window, cx| {

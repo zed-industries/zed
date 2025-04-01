@@ -201,13 +201,6 @@ where
         }
     }
 
-    pub fn retain_mut<F>(&mut self, f: F)
-    where
-        F: FnMut(&mut Edit<T>) -> bool,
-    {
-        self.0.retain_mut(f);
-    }
-
     pub fn old_to_new(&self, old: T) -> T {
         let ix = match self.0.binary_search_by(|probe| probe.old.start.cmp(&old)) {
             Ok(ix) => ix,
@@ -228,6 +221,15 @@ where
         } else {
             old
         }
+    }
+}
+
+impl<T> Patch<T> {
+    pub fn retain_mut<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut Edit<T>) -> bool,
+    {
+        self.0.retain_mut(f);
     }
 }
 

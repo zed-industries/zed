@@ -300,6 +300,10 @@ impl LanguageModel for OllamaLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("ollama/{}", self.model.id())
     }

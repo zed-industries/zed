@@ -913,7 +913,7 @@ fn get_diagnostics_excerpts(
                     path: buffer.file().unwrap().path().to_path_buf(),
                     range: ExcerptRange {
                         context: range.context.to_point(buffer),
-                        primary: range.primary.map(|range| range.to_point(buffer)),
+                        primary: range.primary.to_point(buffer),
                     },
                     group_id: usize::MAX,
                     primary: false,

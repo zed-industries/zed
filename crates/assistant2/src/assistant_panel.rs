@@ -26,7 +26,9 @@ use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
-use ui::{ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*};
+use ui::{
+    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*,
+};
 use util::ResultExt as _;
 use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
@@ -607,7 +609,7 @@ impl EventEmitter<PanelEvent> for AssistantPanel {}
 
 impl Panel for AssistantPanel {
     fn persistent_name() -> &'static str {
-        "AssistantPanel2"
+        "AgentPanel"
     }
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
@@ -667,7 +669,7 @@ impl Panel for AssistantPanel {
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Assistant Panel")
+        Some("Agent Panel")
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
@@ -768,7 +770,7 @@ impl AssistantPanel {
                                         IconButton::new("new", IconName::Ellipsis)
                                             .icon_size(IconSize::Small)
                                             .style(ButtonStyle::Subtle),
-                                        Tooltip::text("Toggle Assistant Menu"),
+                                        Tooltip::text("Toggle Agent Menu"),
                                     )
                                     .anchor(Corner::TopRight)
                                     .with_handle(self.assistant_dropdown_menu_handle.clone())
@@ -838,6 +840,7 @@ impl AssistantPanel {
         v_flex()
             .size_full()
             .when(recent_history.is_empty(), |this| {
+                let configuration_error_ref = &configuration_error;
                 this.child(
                     v_flex()
                         .size_full()
@@ -848,94 +851,95 @@ impl AssistantPanel {
                         .gap_1()
                         .child(
                             h_flex().child(
-                                Headline::new("Welcome to the Assistant Panel")
+                                Headline::new("Welcome to the Agent Panel")
                             ),
                         )
                         .when(no_error, |parent| {
-                            parent.child(
-                                h_flex().child(
-                                    Label::new("Ask and build anything.")
-                                        .color(Color::Muted)
-                                        .mb_2p5(),
-                                ),
-                            )
-                            .child(
-                                Button::new("new-thread", "Start New Thread")
-                                    .icon(IconName::Plus)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .full_width()
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &NewThread,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    ))
-                                    .on_click(|_event, window, cx| {
-                                        window.dispatch_action(NewThread.boxed_clone(), cx)
-                                    }),
-                            )
-                            .child(
-                                Button::new("context", "Add Context")
-                                    .icon(IconName::FileCode)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .full_width()
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &ToggleContextPicker,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    ))
-                                    .on_click(|_event, window, cx| {
-                                        window.dispatch_action(ToggleContextPicker.boxed_clone(), cx)
-                                    }),
-                            )
-                            .child(
-                                Button::new("mode", "Switch Model")
-                                    .icon(IconName::DatabaseZap)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .full_width()
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &ToggleModelSelector,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    ))
-                                    .on_click(|_event, window, cx| {
-                                        window.dispatch_action(ToggleModelSelector.boxed_clone(), cx)
-                                    }),
-                            )
-                            .child(
-                                Button::new("settings", "View Settings")
-                                    .icon(IconName::Settings)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .full_width()
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &OpenConfiguration,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    ))
-                                    .on_click(|_event, window, cx| {
-                                        window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
-                                    }),
-                            )
+                            parent
+                                .child(
+                                    h_flex().child(
+                                        Label::new("Ask and build anything.")
+                                            .color(Color::Muted)
+                                            .mb_2p5(),
+                                    ),
+                                )
+                                .child(
+                                    Button::new("new-thread", "Start New Thread")
+                                        .icon(IconName::Plus)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .full_width()
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &NewThread,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        ))
+                                        .on_click(|_event, window, cx| {
+                                            window.dispatch_action(NewThread.boxed_clone(), cx)
+                                        }),
+                                )
+                                .child(
+                                    Button::new("context", "Add Context")
+                                        .icon(IconName::FileCode)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .full_width()
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ToggleContextPicker,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        ))
+                                        .on_click(|_event, window, cx| {
+                                            window.dispatch_action(ToggleContextPicker.boxed_clone(), cx)
+                                        }),
+                                )
+                                .child(
+                                    Button::new("mode", "Switch Model")
+                                        .icon(IconName::DatabaseZap)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .full_width()
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ToggleModelSelector,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        ))
+                                        .on_click(|_event, window, cx| {
+                                            window.dispatch_action(ToggleModelSelector.boxed_clone(), cx)
+                                        }),
+                                )
+                                .child(
+                                    Button::new("settings", "View Settings")
+                                        .icon(IconName::Settings)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .full_width()
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &OpenConfiguration,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        ))
+                                        .on_click(|_event, window, cx| {
+                                            window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
+                                        }),
+                                )
                         })
                         .map(|parent| {
-                            match configuration_error {
+                            match configuration_error_ref {
                                 Some(ConfigurationError::ProviderNotAuthenticated)
                                 | Some(ConfigurationError::NoProvider) => {
                                     parent
                                         .child(
                                             h_flex().child(
-                                                Label::new("To start using the assistant, configure at least one LLM provider.")
+                                                Label::new("To start using the agent, configure at least one LLM provider.")
                                                     .color(Color::Muted)
                                                     .mb_2p5()
                                             )
@@ -958,23 +962,27 @@ impl AssistantPanel {
                                                 }),
                                         )
                                 }
-                                Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => parent
-                                    .children(
+                                Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
+                                    parent.children(
                                         provider.render_accept_terms(
-                                            LanguageModelProviderTosView::ThreadEmptyState,
+                                            LanguageModelProviderTosView::ThreadFreshStart,
                                             cx,
                                         ),
-                                    ),
+                                    )
+                                }
                                 None => parent,
                             }
                         })
                 )
             })
             .when(!recent_history.is_empty(), |parent| {
+                let focus_handle = focus_handle.clone();
+                let configuration_error_ref = &configuration_error;
+
                 parent
                     .p_1p5()
-                          .justify_end()
-                          .gap_1()
+                    .justify_end()
+                    .gap_1()
                     .child(
                         h_flex()
                             .pl_1p5()
@@ -992,32 +1000,94 @@ impl AssistantPanel {
                                 Button::new("view-history", "View All")
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::Small)
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &OpenHistory,
-                                        &self.focus_handle(cx),
-                                        window,
-                                        cx,
-                                    ).map(|kb| kb.size(rems_from_px(12.))),)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &OpenHistory,
+                                            &self.focus_handle(cx),
+                                            window,
+                                            cx,
+                                        ).map(|kb| kb.size(rems_from_px(12.))),
+                                    )
                                     .on_click(move |_event, window, cx| {
                                         window.dispatch_action(OpenHistory.boxed_clone(), cx);
                                     }),
                             ),
                     )
-                    .child(v_flex().gap_1().children(
-                        recent_history.into_iter().map(|entry| {
-                             // TODO: Add keyboard navigation.
-                            match entry {
-                                HistoryEntry::Thread(thread) => {
-                                    PastThread::new(thread, cx.entity().downgrade(), false)
-                                        .into_any_element()
-                                }
-                                HistoryEntry::Context(context) => {
-                                    PastContext::new(context, cx.entity().downgrade(), false)
-                                        .into_any_element()
-                                }
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .children(
+                                recent_history.into_iter().map(|entry| {
+                                    // TODO: Add keyboard navigation.
+                                    match entry {
+                                        HistoryEntry::Thread(thread) => {
+                                            PastThread::new(thread, cx.entity().downgrade(), false)
+                                                .into_any_element()
+                                        }
+                                        HistoryEntry::Context(context) => {
+                                            PastContext::new(context, cx.entity().downgrade(), false)
+                                                .into_any_element()
+                                        }
+                                    }
+                                }),
+                            )
+                    )
+                    .map(|parent| {
+                        match configuration_error_ref {
+                            Some(ConfigurationError::ProviderNotAuthenticated)
+                            | Some(ConfigurationError::NoProvider) => {
+                                parent
+                                    .child(
+                                        Banner::new()
+                                            .severity(ui::Severity::Warning)
+                                            .children(
+                                                Label::new(
+                                                    "Configure at least one LLM provider to start using the panel.",
+                                                )
+                                                .size(LabelSize::Small),
+                                            )
+                                            .action_slot(
+                                                Button::new("settings", "Configure Provider")
+                                                    .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                                    .label_size(LabelSize::Small)
+                                                    .key_binding(
+                                                        KeyBinding::for_action_in(
+                                                            &OpenConfiguration,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                                    )
+                                                    .on_click(|_event, window, cx| {
+                                                        window.dispatch_action(
+                                                            OpenConfiguration.boxed_clone(),
+                                                            cx,
+                                                        )
+                                                    }),
+                                            ),
+                                    )
                             }
-                        }),
-                    ))
+                            Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
+                                parent
+                                    .child(
+                                        Banner::new()
+                                            .severity(ui::Severity::Warning)
+                                            .children(
+                                                h_flex()
+                                                    .w_full()
+                                                    .children(
+                                                        provider.render_accept_terms(
+                                                            LanguageModelProviderTosView::ThreadtEmptyState,
+                                                            cx,
+                                                        ),
+                                                    ),
+                                            ),
+                                    )
+                            }
+                            None => parent,
+                        }
+                    })
             })
     }
 
@@ -1182,7 +1252,7 @@ impl AssistantPanel {
 
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
-        key_context.add("AssistantPanel2");
+        key_context.add("AgentPanel");
         if matches!(self.active_view, ActiveView::PromptEditor) {
             key_context.add("prompt_editor");
         }
@@ -1278,7 +1348,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
-            return Task::ready(Err(anyhow!("Assistant panel not found")));
+            return Task::ready(Err(anyhow!("Agent panel not found")));
         };
 
         panel.update(cx, |panel, cx| {

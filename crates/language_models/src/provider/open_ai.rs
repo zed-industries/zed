@@ -290,6 +290,10 @@ impl LanguageModel for OpenAiLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }

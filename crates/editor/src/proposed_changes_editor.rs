@@ -51,7 +51,7 @@ struct RecalculateDiff {
 struct BranchBufferSemanticsProvider(Rc<dyn SemanticsProvider>);
 
 impl ProposedChangesEditor {
-    pub fn new<T: ToOffset>(
+    pub fn new<T: Clone + ToOffset>(
         title: impl Into<SharedString>,
         locations: Vec<ProposedChangeLocation<T>>,
         project: Option<Entity<Project>>,
@@ -140,7 +140,7 @@ impl ProposedChangesEditor {
         cx.notify();
     }
 
-    pub fn reset_locations<T: ToOffset>(
+    pub fn reset_locations<T: Clone + ToOffset>(
         &mut self,
         locations: Vec<ProposedChangeLocation<T>>,
         window: &mut Window,
@@ -202,10 +202,10 @@ impl ProposedChangesEditor {
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.push_excerpts(
                     branch_buffer,
-                    location.ranges.into_iter().map(|range| ExcerptRange {
-                        context: range,
-                        primary: None,
-                    }),
+                    location
+                        .ranges
+                        .into_iter()
+                        .map(|range| ExcerptRange::new(range)),
                     cx,
                 );
             });

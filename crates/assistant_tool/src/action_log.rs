@@ -267,12 +267,21 @@ impl ActionLog {
         cx.notify();
     }
 
-    pub fn keep_edits_in_range<T: language::ToPoint>(
+    pub fn keep_edits_in_range<T>(
         &mut self,
         buffer: Entity<Buffer>,
         buffer_range: Range<T>,
         cx: &mut Context<Self>,
-    ) {
+    ) where
+        T: 'static + language::ToPoint, // + Clone
+                                        // + Copy
+                                        // + Ord
+                                        // + Sub<T, Output = T>
+                                        // + Add<T, Output = T>
+                                        // + AddAssign
+                                        // + Default
+                                        // + PartialEq,
+    {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
             return;
         };
