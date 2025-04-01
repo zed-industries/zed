@@ -1,22 +1,13 @@
-mod failed;
 pub mod running;
-mod starting;
-
-use std::time::Duration;
 
 use dap::client::SessionId;
-use failed::FailedState;
-use gpui::{
-    Animation, AnimationExt, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, Transformation, WeakEntity, percentage,
-};
+use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use project::Project;
 use project::debugger::{dap_store::DapStore, session::Session};
 use project::worktree_store::WorktreeStore;
 use rpc::proto::{self, PeerId};
 use running::RunningState;
-use starting::{StartingEvent, StartingState};
-use ui::{Indicator, prelude::*};
+use ui::prelude::*;
 use workspace::{
     FollowableItem, ViewId, Workspace,
     item::{self, Item},
@@ -25,8 +16,6 @@ use workspace::{
 use crate::debugger_panel::DebugPanel;
 
 pub(crate) enum DebugSessionState {
-    Starting(Entity<StartingState>),
-    Failed(Entity<FailedState>),
     Running(Entity<running::RunningState>),
 }
 
@@ -34,7 +23,6 @@ impl DebugSessionState {
     pub(crate) fn as_running(&self) -> Option<&Entity<running::RunningState>> {
         match &self {
             DebugSessionState::Running(entity) => Some(entity),
-            _ => None,
         }
     }
 }
@@ -89,16 +77,12 @@ impl DebugSession {
 
     pub(crate) fn session_id(&self, cx: &App) -> Option<SessionId> {
         match &self.mode {
-            DebugSessionState::Starting(entity) => Some(entity.read(cx).session_id),
-            DebugSessionState::Failed(_) => None,
             DebugSessionState::Running(entity) => Some(entity.read(cx).session_id()),
         }
     }
 
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
         match &self.mode {
-            DebugSessionState::Starting(_entity) => {} // todo(debugger): we need to shutdown the starting process in this case (or recreate it on a breakpoint being hit)
-            DebugSessionState::Failed(_) => {}
             DebugSessionState::Running(state) => state.update(cx, |state, cx| state.shutdown(cx)),
         }
     }
@@ -107,27 +91,8 @@ impl DebugSession {
         &self.mode
     }
 
-    fn on_starting_event(
-        &mut self,
-        _: &Entity<StartingState>,
-        event: &StartingEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let StartingEvent::Finished(session) = event {
-            let mode =
-                cx.new(|cx| RunningState::new(session.clone(), self.workspace.clone(), window, cx));
-            self.mode = DebugSessionState::Running(mode);
-        } else if let StartingEvent::Failed(id) = event {
-            self.mode = DebugSessionState::Failed(cx.new(|cx| FailedState::new(*id, cx)));
-        };
-        cx.notify();
-    }
-
     pub(crate) fn label(&self, cx: &App) -> String {
         let session_id = match &self.mode {
-            DebugSessionState::Starting(starting_state) => starting_state.read(cx).session_id(),
-            DebugSessionState::Failed(failed_state) => failed_state.read(cx).session_id(),
             DebugSessionState::Running(running_state) => running_state.read(cx).session_id(),
         };
         let Ok(Some(session)) = self
@@ -149,8 +114,6 @@ impl EventEmitter<DebugPanelItemEvent> for DebugSession {}
 impl Focusable for DebugSession {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.mode {
-            DebugSessionState::Starting(starting_state) => starting_state.focus_handle(cx),
-            DebugSessionState::Failed(failed_state) => failed_state.focus_handle(cx),
             DebugSessionState::Running(running_state) => running_state.focus_handle(cx),
         }
     }
@@ -158,60 +121,6 @@ impl Focusable for DebugSession {
 
 impl Item for DebugSession {
     type Event = DebugPanelItemEvent;
-    fn tab_content(&self, _: item::TabContentParams, _: &Window, cx: &App) -> AnyElement {
-        let (icon, label, color) = match &self.mode {
-            DebugSessionState::Starting(_) => (None, "Starting", Color::Default),
-            DebugSessionState::Failed(_) => (
-                Some(Indicator::dot().color(Color::Error)),
-                "Failed",
-                Color::Error,
-            ),
-            DebugSessionState::Running(state) => {
-                if state.read(cx).session().read(cx).is_terminated() {
-                    (
-                        Some(Indicator::dot().color(Color::Error)),
-                        "Terminated",
-                        Color::Error,
-                    )
-                } else {
-                    match state.read(cx).thread_status(cx).unwrap_or_default() {
-                        project::debugger::session::ThreadStatus::Stopped => (
-                            Some(Indicator::dot().color(Color::Conflict)),
-                            state
-                                .read_with(cx, |state, cx| state.thread_status(cx))
-                                .map(|status| status.label())
-                                .unwrap_or("Stopped"),
-                            Color::Conflict,
-                        ),
-                        _ => (
-                            Some(Indicator::dot().color(Color::Success)),
-                            state
-                                .read_with(cx, |state, cx| state.thread_status(cx))
-                                .map(|status| status.label())
-                                .unwrap_or("Running"),
-                            Color::Success,
-                        ),
-                    }
-                }
-            }
-        };
-
-        let is_starting = matches!(self.mode, DebugSessionState::Starting(_));
-
-        h_flex()
-            .gap_2()
-            .children(is_starting.then(|| {
-                Icon::new(IconName::ArrowCircle).with_animation(
-                    "starting-debug-session",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |this, delta| this.transform(Transformation::rotate(percentage(delta))),
-                )
-            }))
-            .when_some(icon, |this, indicator| this.child(indicator))
-            .justify_between()
-            .child(Label::new(label).color(color))
-            .into_any_element()
-    }
 }
 
 impl FollowableItem for DebugSession {
@@ -283,12 +192,6 @@ impl FollowableItem for DebugSession {
 impl Render for DebugSession {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.mode {
-            DebugSessionState::Starting(starting_state) => {
-                starting_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
-            }
-            DebugSessionState::Failed(failed_state) => {
-                failed_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
-            }
             DebugSessionState::Running(running_state) => {
                 running_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
             }

@@ -7,10 +7,10 @@ use settings::Settings;
 use task::DebugTaskDefinition;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, Button, ButtonCommon, ButtonSize, Checkbox, CheckboxWithLabel, Clickable, Color,
-    ContextMenu, Divider, DropdownMenu, FixedWidth, FluentBuilder, InteractiveElement, IntoElement,
-    Label, LabelCommon as _, ParentElement, RenderOnce, SharedString, Styled, StyledExt,
-    ToggleButton, ToggleState, Toggleable, Window, div, h_flex, relative, rems, v_flex,
+    ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color,
+    ContextMenu, DropdownMenu, FluentBuilder, InteractiveElement, IntoElement, Label,
+    LabelCommon as _, ParentElement, RenderOnce, SharedString, Styled, StyledExt, ToggleButton,
+    ToggleState, Toggleable, Window, div, h_flex, relative, rems, v_flex,
 };
 use workspace::{ModalView, Workspace};
 
@@ -207,7 +207,7 @@ impl Focusable for NewSessionMode {
 }
 
 impl RenderOnce for LaunchMode {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
             .w_full()
             .gap_2()
@@ -232,7 +232,7 @@ impl RenderOnce for LaunchMode {
 }
 
 impl RenderOnce for AttachMode {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         v_flex()
             .w_full()
             .gap_2()
