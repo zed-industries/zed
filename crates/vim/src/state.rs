@@ -116,6 +116,7 @@ pub enum Operator {
     Lowercase,
     Uppercase,
     OppositeCase,
+    Rot13,
     Digraph {
         first_char: Option<char>,
     },
@@ -958,6 +959,7 @@ impl Operator {
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
             Operator::OppositeCase => "g~",
+            Operator::Rot13 => "g?",
             Operator::Register => "\"",
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
@@ -1006,6 +1008,7 @@ impl Operator {
             | Operator::ShellCommand
             | Operator::Lowercase
             | Operator::Uppercase
+            | Operator::Rot13
             | Operator::ReplaceWithRegister
             | Operator::Exchange
             | Operator::Object { .. }
@@ -1026,6 +1029,7 @@ impl Operator {
             | Operator::Lowercase
             | Operator::Uppercase
             | Operator::OppositeCase
+            | Operator::Rot13
             | Operator::ToggleComments
             | Operator::ReplaceWithRegister
             | Operator::Rewrap
