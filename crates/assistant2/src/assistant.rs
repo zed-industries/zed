@@ -44,7 +44,7 @@ pub use crate::thread_store::ThreadStore;
 pub use assistant_diff::{AssistantDiff, AssistantDiffToolbar};
 
 actions!(
-    assistant2,
+    agent,
     [
         NewPromptEditor,
         ToggleContextPicker,
@@ -95,9 +95,9 @@ impl ManageProfiles {
     }
 }
 
-impl_actions!(assistant, [ManageProfiles]);
+impl_actions!(agent, [ManageProfiles]);
 
-const NAMESPACE: &str = "assistant2";
+const NAMESPACE: &str = "agent";
 
 /// Initializes the `assistant2` crate.
 pub fn init(

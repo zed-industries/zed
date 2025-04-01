@@ -241,8 +241,8 @@
     "context": "AssistantDiff",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-y": "assistant2::ToggleKeep",
-      "cmd-alt-z": "assistant2::Reject"
+      "cmd-y": "agent::ToggleKeep",
+      "cmd-alt-z": "agent::Reject"
     }
   },
   {
@@ -280,32 +280,32 @@
     "context": "AgentPanel",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "assistant2::NewThread",
-      "cmd-alt-n": "assistant2::NewPromptEditor",
-      "cmd-shift-h": "assistant2::OpenHistory",
-      "cmd-alt-c": "assistant2::OpenConfiguration",
-      "cmd-i": "assistant2::ToggleProfileSelector",
+      "cmd-n": "agent::NewThread",
+      "cmd-alt-n": "agent::NewPromptEditor",
+      "cmd-shift-h": "agent::OpenHistory",
+      "cmd-alt-c": "agent::OpenConfiguration",
+      "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
-      "cmd-shift-a": "assistant2::ToggleContextPicker",
-      "cmd-e": "assistant2::ChatMode",
-      "cmd-alt-e": "assistant2::RemoveAllContext"
+      "cmd-shift-a": "agent::ToggleContextPicker",
+      "cmd-e": "agent::ChatMode",
+      "cmd-alt-e": "agent::RemoveAllContext"
     }
   },
   {
     "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "assistant2::NewPromptEditor",
-      "cmd-alt-t": "assistant2::NewThread"
+      "cmd-n": "agent::NewPromptEditor",
+      "cmd-alt-t": "agent::NewThread"
     }
   },
   {
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "enter": "assistant2::Chat",
-      "cmd-i": "assistant2::ToggleProfileSelector",
-      "shift-ctrl-r": "assistant2::OpenAssistantDiff"
+      "enter": "agent::Chat",
+      "cmd-i": "agent::ToggleProfileSelector",
+      "shift-ctrl-r": "agent::OpenAssistantDiff"
     }
   },
   {
@@ -321,18 +321,18 @@
     "context": "ContextStrip",
     "use_key_equivalents": true,
     "bindings": {
-      "up": "assistant2::FocusUp",
-      "right": "assistant2::FocusRight",
-      "left": "assistant2::FocusLeft",
-      "down": "assistant2::FocusDown",
-      "backspace": "assistant2::RemoveFocusedContext",
-      "enter": "assistant2::AcceptSuggestedContext"
+      "up": "agent::FocusUp",
+      "right": "agent::FocusRight",
+      "left": "agent::FocusLeft",
+      "down": "agent::FocusDown",
+      "backspace": "agent::RemoveFocusedContext",
+      "enter": "agent::AcceptSuggestedContext"
     }
   },
   {
     "context": "ThreadHistory",
     "bindings": {
-      "backspace": "assistant2::RemoveSelectedThread"
+      "backspace": "agent::RemoveSelectedThread"
     }
   },
   {
@@ -708,9 +708,9 @@
     "context": "PromptEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-alt-/": "assistant::ToggleModelSelector",
-      "cmd-alt-e": "assistant2::RemoveAllContext",
+      "cmd-alt-e": "agent::RemoveAllContext",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist"
     }
