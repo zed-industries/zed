@@ -62,7 +62,6 @@ pub struct TaskTemplate {
     pub task_type: TaskType,
     /// Represents the tags which this template attaches to.
     /// Adding this removes this task from other UI and gives you ability to run it by tag.
-    /// Empty tags are ignored.
     #[serde(default, deserialize_with = "non_empty_string_vec")]
     #[schemars(schema_with = "non_empty_string_vec_json_schema")]
     pub tags: Vec<String>,
