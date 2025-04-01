@@ -457,9 +457,14 @@ impl PickerDelegate for TasksModalDelegate {
                     h_flex()
                         .gap_1()
                         .when(template.tags.iter().any(|tag| !tag.is_empty()), |item| {
-                            item.child(Label::new(format!(
-                                "#{}",
-                                truncate_and_trailoff(&template.tags.join(" "), MAX_TAGS_LINE_LEN)
+                            item.child(Label::new(truncate_and_trailoff(
+                                &template
+                                    .tags
+                                    .iter()
+                                    .map(|tag| format!("#{}", tag))
+                                    .collect::<Vec<_>>()
+                                    .join(" "),
+                                MAX_TAGS_LINE_LEN,
                             )))
                         })
                         .flex_none()
