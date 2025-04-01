@@ -40,7 +40,7 @@ use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{Settings, SettingsSources, SettingsStore, update_settings_file};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
-use std::{mem, ops::Range, sync::Arc};
+use std::{borrow::Cow, mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
@@ -48,11 +48,6 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
-
-const VIM_HELP_CONTENT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../docs/src/vim.md"
-));
 
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
@@ -189,6 +184,14 @@ impl_actions!(
     ]
 );
 
+pub fn vim_help() -> Cow<'static, str> {
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/src/vim.md"
+    ))
+    .into()
+}
+
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
     vim_mode_setting::init(cx);
@@ -216,7 +219,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|_, _: &OpenVimHelp, _, cx| {
             cx.emit(workspace::Event::OpenBundledFile {
-                text: VIM_HELP_CONTENT.into(),
+                text: vim_help(),
                 title: "Vim Help",
                 language: "Markdown",
             });
