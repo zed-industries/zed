@@ -24,7 +24,9 @@ use crate::thread_store::ThreadStore;
 
 use super::fetch_context_picker::fetch_url_content;
 use super::thread_context_picker::ThreadContextEntry;
-use super::{ContextPickerMode, recent_context_picker_entries, supported_context_picker_modes};
+use super::{
+    ContextPickerMode, MentionLink, recent_context_picker_entries, supported_context_picker_modes,
+};
 
 pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
@@ -154,7 +156,7 @@ impl ContextPickerCompletionProvider {
         } else {
             IconName::MessageBubbles
         };
-        let new_text = format!("@thread {}", thread_entry.summary);
+        let new_text = MentionLink::for_thread(&thread_entry);
         let new_text_len = new_text.len();
         Completion {
             old_range: source_range.clone(),
@@ -198,7 +200,7 @@ impl ContextPickerCompletionProvider {
         context_store: Entity<ContextStore>,
         http_client: Arc<HttpClientWithUrl>,
     ) -> Completion {
-        let new_text = format!("[@{}]({})", url_to_fetch, url_to_fetch);
+        let new_text = MentionLink::for_fetch(&url_to_fetch);
         let new_text_len = new_text.len();
         Completion {
             old_range: source_range.clone(),
@@ -279,7 +281,7 @@ impl ContextPickerCompletionProvider {
             crease_icon_path.clone()
         };
 
-        let new_text = format!("[@{}](file:{})", file_name, full_path);
+        let new_text = MentionLink::for_file(&file_name, &full_path);
         let new_text_len = new_text.len();
         Completion {
             old_range: source_range.clone(),
@@ -326,17 +328,22 @@ impl ContextPickerCompletionProvider {
             .read(cx)
             .root_name();
 
-        let (file_name, _) = super::file_context_picker::extract_file_name_and_directory(
+        let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
             &symbol.path.path,
             path_prefix,
         );
+        let full_path = if let Some(directory) = directory {
+            format!("{}{}", directory, file_name)
+        } else {
+            file_name.to_string()
+        };
 
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
         let mut label = CodeLabel::plain(symbol.name.clone(), None);
         label.push_str(" ", None);
         label.push_str(&file_name, comment_id);
 
-        let new_text = format!("@symbol {}:{}", file_name, symbol.name);
+        let new_text = MentionLink::for_symbol(&symbol.name, &full_path);
         let new_text_len = new_text.len();
         Some(Completion {
             old_range: source_range.clone(),

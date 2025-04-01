@@ -1,5 +1,6 @@
 use crate::AssistantPanel;
 use crate::context::{AssistantContext, ContextId};
+use crate::context_picker::MentionLink;
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
     ThreadEvent, ThreadFeedback,
@@ -20,9 +21,8 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
-use project::{ProjectItem as _, ProjectPath};
+use project::ProjectItem as _;
 use settings::Settings as _;
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -260,63 +260,39 @@ fn open_markdown_link(
     window: &mut Window,
     cx: &mut App,
 ) {
-    fn extract_project_path_from_link(
-        path: &str,
-        workspace: &Entity<Workspace>,
-        cx: &App,
-    ) -> Option<ProjectPath> {
-        let path = PathBuf::from(path);
-        let worktree_name = path.iter().next()?;
-        let path: PathBuf = path.iter().skip(1).collect();
-        let worktree_id = workspace
-            .read(cx)
-            .visible_worktrees(cx)
-            .find(|worktree| worktree.read(cx).root_name() == worktree_name)
-            .map(|worktree| worktree.read(cx).id())?;
-        Some(ProjectPath {
-            worktree_id,
-            path: path.into(),
-        })
-    }
-
     let Some(workspace) = workspace.upgrade() else {
         cx.open_url(&text);
         return;
     };
 
-    let (prefix, link) = {
-        let mut parts = text.splitn(2, ':');
-        let prefix = parts.next();
-        let link = parts.next();
-        (prefix, link)
-    };
-
-    match (prefix, link) {
-        (Some("file"), Some(path)) => {
-            let Some(project_path) = extract_project_path_from_link(path, &workspace, cx) else {
-                return;
-            };
-            workspace.update(cx, |workspace, cx| {
-                let Some(entry) = workspace
-                    .project()
-                    .read(cx)
-                    .entry_for_path(&project_path, cx)
-                else {
-                    return;
-                };
-
-                if entry.is_dir() {
-                    workspace.project().update(cx, |_, cx| {
-                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
-                    })
-                } else {
-                    workspace
-                        .open_path(project_path, None, true, window, cx)
-                        .detach_and_log_err(cx);
-                }
-            })
-        }
-        _ => cx.open_url(&text),
+    match MentionLink::try_parse(&text, &workspace, cx) {
+        Some(MentionLink::File(path, entry)) => workspace.update(cx, |workspace, cx| {
+            if entry.is_dir() {
+                workspace.project().update(cx, |_, cx| {
+                    cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                })
+            } else {
+                workspace
+                    .open_path(path, None, true, window, cx)
+                    .detach_and_log_err(cx);
+            }
+        }),
+        Some(MentionLink::Symbol(path, _)) => workspace.update(cx, |workspace, cx| {
+            //TODO: Go to symbol
+            workspace
+                .open_path(path, None, true, window, cx)
+                .detach_and_log_err(cx);
+        }),
+        Some(MentionLink::Thread(thread_id)) => workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel
+                        .open_thread(&thread_id, window, cx)
+                        .detach_and_log_err(cx)
+                });
+            }
+        }),
+        None => cx.open_url(&text),
     }
 }
 
