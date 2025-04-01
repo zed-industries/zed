@@ -607,7 +607,7 @@ impl EventEmitter<PanelEvent> for AssistantPanel {}
 
 impl Panel for AssistantPanel {
     fn persistent_name() -> &'static str {
-        "AssistantPanel2"
+        "AgentPanel"
     }
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
@@ -667,7 +667,7 @@ impl Panel for AssistantPanel {
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Assistant Panel")
+        Some("Agent Panel")
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
