@@ -26,7 +26,7 @@ mod test;
 #[cfg(target_os = "windows")]
 mod windows;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
 pub(crate) mod scap_screen_capture;
 
 use crate::{

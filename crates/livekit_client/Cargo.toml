@@ -40,9 +40,11 @@ util.workspace = true
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
 libwebrtc = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks" }
-livekit = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks", features = ["__rustls-tls"] }
+livekit = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks", features = [
+    "__rustls-tls",
+] }
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
 scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

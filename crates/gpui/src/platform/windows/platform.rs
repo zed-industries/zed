@@ -31,7 +31,7 @@ use windows::{
     core::*,
 };
 
-use crate::{platform::blade::BladeContext, *};
+use crate::{platform::blade::BladeContext, scap_screen_capture::scap_screen_sources, *};
 
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
@@ -403,12 +403,7 @@ impl Platform for WindowsPlatform {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        // TODO: Get screen capture working on windows.
-        //
-        // scap_screen_sources()
-        let (sources_tx, sources_rx) = oneshot::channel();
-        sources_tx.send(Err(anyhow!("Windows screen capture not yet implemented.")));
-        sources_rx
+        scap_screen_sources(&self.foreground_executor)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
