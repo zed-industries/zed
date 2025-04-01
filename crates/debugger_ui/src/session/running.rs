@@ -6,7 +6,7 @@ pub mod variable_list;
 
 use super::{DebugPanelItemEvent, ThreadItem};
 use console::Console;
-use dap::{client::SessionId, debugger_settings::DebuggerSettings, Capabilities, Thread};
+use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
 use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity};
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
@@ -15,10 +15,10 @@ use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use ui::{
-    div, h_flex, v_flex, ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Context,
-    ContextMenu, Disableable, Divider, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize,
-    Indicator, InteractiveElement, IntoElement, Label, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Tooltip, Window,
+    ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Context, ContextMenu,
+    Disableable, Divider, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, Indicator,
+    InteractiveElement, IntoElement, Label, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Tooltip, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -61,14 +61,12 @@ impl Render for RunningState {
             this.disabled(thread_status != ThreadStatus::Stopped, cx);
         });
 
-        let is_terminated = self.session.read(cx).is_terminated();
         let active_thread_item = &self.active_thread_item;
 
         let has_no_threads = threads.is_empty();
         let capabilities = self.capabilities(cx);
         let state = cx.entity();
         h_flex()
-            .when(is_terminated, |this| this.bg(gpui::red()))
             .key_context("DebugPanelItem")
             .track_focus(&self.focus_handle(cx))
             .size_full()

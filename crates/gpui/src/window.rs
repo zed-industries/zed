@@ -1,27 +1,27 @@
 use crate::{
-    point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
-    AnyView, App, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Background,
-    BorderStyle, Bounds, BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
+    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
+    Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
+    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
+    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
+    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS,
+    point, prelude::*, px, size, transparent_black,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
-use derive_more::{Deref, DerefMut};
-use futures::channel::oneshot;
-use futures::FutureExt;
 #[cfg(target_os = "macos")]
-use media::core_video::CVImageBuffer;
+use core_video::pixel_buffer::CVPixelBuffer;
+use derive_more::{Deref, DerefMut};
+use futures::FutureExt;
+use futures::channel::oneshot;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasWindowHandle};
 use refineable::Refineable;
@@ -39,13 +39,13 @@ use std::{
     ops::{DerefMut, Range},
     rc::Rc,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
 use util::post_inc;
-use util::{measure, ResultExt};
+use util::{ResultExt, measure};
 use uuid::Uuid;
 
 mod prompts;
@@ -407,7 +407,7 @@ pub(crate) type AnyMouseListener =
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) hitbox_id: HitboxId,
+    pub(crate) hitbox_id: Option<HitboxId>, // None represents whole window
     pub(crate) style: CursorStyle,
 }
 
@@ -936,7 +936,7 @@ impl Window {
     pub(crate) fn new_focus_listener(
         &self,
         value: AnyWindowFocusListener,
-    ) -> (Subscription, impl FnOnce()) {
+    ) -> (Subscription, impl FnOnce() + use<>) {
         self.focus_listeners.insert((), value)
     }
 }
@@ -1009,7 +1009,7 @@ impl Window {
     pub fn replace_root<E>(
         &mut self,
         cx: &mut App,
-        build_view: impl FnOnce(&mut Window, &mut Context<'_, E>) -> E,
+        build_view: impl FnOnce(&mut Window, &mut Context<E>) -> E,
     ) -> Entity<E>
     where
         E: 'static + Render,
@@ -1318,6 +1318,11 @@ impl Window {
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.platform_window.bounds()
+    }
+
+    /// Set the content size of the window.
+    pub fn resize(&mut self, size: Size<Pixels>) {
+        self.platform_window.resize(size);
     }
 
     /// Returns whether or not the window is currently fullscreen
@@ -1928,10 +1933,10 @@ impl Window {
 
     /// Updates the cursor style at the platform level. This method should only be called
     /// during the prepaint phase of element drawing.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: Option<&Hitbox>) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: hitbox.id,
+            hitbox_id: hitbox.map(|hitbox| hitbox.id),
             style,
         });
     }
@@ -2327,25 +2332,23 @@ impl Window {
     /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
+    ///
+    /// Note that the `quad.corner_radii` are allowed to exceed the bounds, creating sharp corners
+    /// where the circular arcs meet. This will not display well when combined with dashed borders.
+    /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
-
-        let bounds = quad.bounds.scale(scale_factor);
-        let corner_radii = quad
-            .corner_radii
-            .scale(scale_factor)
-            .clamp_radii_for_quad_size(bounds.size);
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
-            bounds,
+            bounds: quad.bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
-            corner_radii,
+            corner_radii: quad.corner_radii.scale(scale_factor),
             border_widths: quad.border_widths.scale(scale_factor),
             border_style: quad.border_style,
         });
@@ -2660,7 +2663,7 @@ impl Window {
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(target_os = "macos")]
-    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {
         use crate::PaintSurface;
 
         self.invalidator.debug_assert_paint();
@@ -2986,7 +2989,11 @@ impl Window {
                 .cursor_styles
                 .iter()
                 .rev()
-                .find(|request| request.hitbox_id.is_hovered(self))
+                .find(|request| {
+                    request
+                        .hitbox_id
+                        .map_or(true, |hitbox_id| hitbox_id.is_hovered(self))
+                })
                 .map(|request| request.style)
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
@@ -3243,6 +3250,7 @@ impl Window {
             keystroke,
             &dispatch_path,
         );
+
         if !match_result.to_replay.is_empty() {
             self.replay_pending_input(match_result.to_replay, cx)
         }
@@ -3711,11 +3719,11 @@ impl Window {
     }
 
     /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
-    pub fn handler_for<V: Render>(
+    pub fn handler_for<V: Render, Callback: Fn(&mut V, &mut Window, &mut Context<V>) + 'static>(
         &self,
         view: &Entity<V>,
-        f: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
-    ) -> impl Fn(&mut Window, &mut App) {
+        f: Callback,
+    ) -> impl Fn(&mut Window, &mut App) + use<V, Callback> {
         let view = view.downgrade();
         move |window: &mut Window, cx: &mut App| {
             view.update(cx, |view, cx| f(view, window, cx)).ok();
@@ -3821,7 +3829,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut V, &mut Window, &mut Context<'_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R,
     ) -> Result<R>
     where
         C: AppContext,

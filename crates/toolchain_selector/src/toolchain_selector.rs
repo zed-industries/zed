@@ -2,16 +2,16 @@ mod active_toolchain;
 
 pub use active_toolchain::ActiveToolchain;
 use editor::Editor;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ParentElement, Render, Styled, Task, WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
+    Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{LanguageName, Toolchain, ToolchainList};
 use picker::{Picker, PickerDelegate};
-use project::{Project, WorktreeId};
+use project::{Project, ProjectPath, WorktreeId};
 use std::{path::Path, sync::Arc};
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
@@ -169,7 +169,14 @@ impl ToolchainSelectorDelegate {
                 });
                 let available_toolchains = project
                     .update(cx, |this, cx| {
-                        this.available_toolchains(worktree_id, language_name, cx)
+                        this.available_toolchains(
+                            ProjectPath {
+                                worktree_id,
+                                path: Arc::from("".as_ref()),
+                            },
+                            language_name,
+                            cx,
+                        )
                     })
                     .ok()?
                     .await?;
@@ -241,13 +248,20 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 let worktree_id = self.worktree_id;
                 cx.spawn_in(window, async move |_, cx| {
                     workspace::WORKSPACE_DB
-                        .set_toolchain(workspace_id, worktree_id, toolchain.clone())
+                        .set_toolchain(workspace_id, worktree_id, "".to_owned(), toolchain.clone())
                         .await
                         .log_err();
                     workspace
                         .update(cx, |this, cx| {
                             this.project().update(cx, |this, cx| {
-                                this.activate_toolchain(worktree_id, toolchain, cx)
+                                this.activate_toolchain(
+                                    ProjectPath {
+                                        worktree_id,
+                                        path: Arc::from("".as_ref()),
+                                    },
+                                    toolchain,
+                                    cx,
+                                )
                             })
                         })
                         .ok()?

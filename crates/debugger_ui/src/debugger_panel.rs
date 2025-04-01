@@ -1,31 +1,33 @@
 use crate::session::DebugSession;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
-    client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, DebugAdapterConfig,
-    LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
+    ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
+    client::SessionId, debugger_settings::DebuggerSettings,
 };
-use futures::{channel::mpsc, SinkExt as _};
+use futures::{SinkExt as _, channel::mpsc};
 use gpui::{
-    actions, Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, WeakEntity,
+    Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, Task, WeakEntity, actions,
 };
 use project::{
+    Project,
     debugger::dap_store::{self, DapStore},
     terminals::TerminalKind,
-    Project,
 };
 use rpc::proto::{self};
 use settings::Settings;
 use std::{any::TypeId, path::PathBuf};
+use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::{
+    ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut,
+    StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    pane, ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto,
-    StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
+    pane,
 };
 
 pub enum DebugPanelEvent {
@@ -52,7 +54,7 @@ pub struct DebugPanel {
     project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
-    pub(crate) last_inert_config: Option<DebugAdapterConfig>,
+    pub(crate) last_inert_config: Option<DebugTaskDefinition>,
 }
 
 impl DebugPanel {
@@ -295,7 +297,9 @@ impl DebugPanel {
         match event {
             dap_store::DapStoreEvent::DebugClientStarted(session_id) => {
                 let Some(session) = dap_store.read(cx).session_by_id(session_id) else {
-                    return log::error!("Couldn't get session with id: {session_id:?} from DebugClientStarted event");
+                    return log::error!(
+                        "Couldn't get session with id: {session_id:?} from DebugClientStarted event"
+                    );
                 };
 
                 let Some(project) = self.project.upgrade() else {

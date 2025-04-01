@@ -5,11 +5,11 @@ use std::{
 };
 
 use crate::{
-    black, phi, point, quad, rems, size, AbsoluteLength, App, Background, BackgroundTag,
-    BorderStyle, Bounds, ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength,
-    DevicePixels, Edges, EdgesRefinement, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight,
-    Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled,
-    TextRun, Window,
+    AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
+    CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
+    FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
+    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
+    point, quad, rems, size,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -609,12 +609,12 @@ impl Style {
         }
 
         let rem_size = window.rem_size();
+        let corner_radii = self
+            .corner_radii
+            .to_pixels(rem_size)
+            .clamp_radii_for_quad_size(bounds.size);
 
-        window.paint_shadows(
-            bounds,
-            self.corner_radii.to_pixels(rem_size),
-            &self.box_shadow,
-        );
+        window.paint_shadows(bounds, corner_radii, &self.box_shadow);
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.map_or(false, |color| !color.is_transparent()) {
@@ -633,7 +633,7 @@ impl Style {
             border_color.a = 0.;
             window.paint_quad(quad(
                 bounds,
-                self.corner_radii.to_pixels(rem_size),
+                corner_radii,
                 background_color.unwrap_or_default(),
                 Edges::default(),
                 border_color,
@@ -644,7 +644,6 @@ impl Style {
         continuation(window, cx);
 
         if self.is_border_visible() {
-            let corner_radii = self.corner_radii.to_pixels(rem_size);
             let border_widths = self.border_widths.to_pixels(rem_size);
             let max_border_width = border_widths.max();
             let max_corner_radius = corner_radii.max();

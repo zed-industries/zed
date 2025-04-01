@@ -3,6 +3,8 @@ pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
 use crate::{
+    CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint, LspAction,
+    ProjectItem, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -13,18 +15,16 @@ use crate::{
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
-    CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint, LspAction,
-    ProjectItem, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
-use client::{proto, TypedEnvelope};
-use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
+use client::{TypedEnvelope, proto};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
-    future::{join_all, Shared},
+    AsyncWriteExt, Future, FutureExt, StreamExt,
+    future::{Shared, join_all},
     select, select_biased,
     stream::FuturesUnordered,
-    AsyncWriteExt, Future, FutureExt, StreamExt,
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
@@ -34,23 +34,25 @@ use gpui::{
 use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
+    Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
+    DiagnosticEntry, DiagnosticSet, Diff, File as _, Language, LanguageRegistry,
+    LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{
-        language_settings, FormatOnSave, Formatter, LanguageSettings, SelectedFormatter,
+        FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, range_to_lsp, Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter,
-    CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
-    LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
-    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp,
 };
 use lsp::{
-    notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
-    DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter,
-    FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
-    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
-    LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams,
-    SymbolKind, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
+    CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
+    DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter, FileOperationPatternKind,
+    FileOperationRegistrationOptions, FileRename, FileSystemWatcher, LanguageServer,
+    LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName,
+    LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
+    TextEdit, WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
+    notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -58,8 +60,8 @@ use postage::watch;
 use rand::prelude::*;
 
 use rpc::{
-    proto::{FromProto, ToProto},
     AnyProtoClient,
+    proto::{FromProto, ToProto},
 };
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -83,8 +85,8 @@ use std::{
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
 use url::Url;
 use util::{
-    debug_panic, defer, maybe, merge_json_value_into, paths::SanitizedPath, post_inc, ResultExt,
-    TryFutureExt as _,
+    ResultExt, TryFutureExt as _, debug_panic, defer, maybe, merge_json_value_into,
+    paths::SanitizedPath, post_inc,
 };
 
 pub use fs::*;
@@ -92,8 +94,8 @@ pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::{
-    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, UpdatedEntriesSet,
-    UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings, FS_WATCH_LATENCY,
+    Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
+    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
 };
 
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -974,7 +976,7 @@ impl LocalLspStore {
     fn shutdown_language_servers(
         &mut self,
         _cx: &mut Context<LspStore>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let shutdown_futures = self
             .language_servers
             .drain()
@@ -1228,7 +1230,7 @@ impl LocalLspStore {
                         .await;
                     buffer.handle.update(cx, |buffer, cx| {
                         buffer.start_transaction();
-                        buffer.apply_diff(diff, cx);
+                        buffer.apply_diff(diff, true, cx);
                         transaction_id_format =
                             transaction_id_format.or(buffer.end_transaction(cx));
                         if let Some(transaction_id) = transaction_id_format {
@@ -1362,7 +1364,7 @@ impl LocalLspStore {
                         zlog::trace!(logger => "Applying changes");
                         buffer.handle.update(cx, |buffer, cx| {
                             buffer.start_transaction();
-                            buffer.apply_diff(diff, cx);
+                            buffer.apply_diff(diff, true, cx);
                             transaction_id_format =
                                 transaction_id_format.or(buffer.end_transaction(cx));
                             if let Some(transaction_id) = transaction_id_format {
@@ -1405,7 +1407,7 @@ impl LocalLspStore {
                         zlog::trace!(logger => "Applying changes");
                         buffer.handle.update(cx, |buffer, cx| {
                             buffer.start_transaction();
-                            buffer.apply_diff(diff, cx);
+                            buffer.apply_diff(diff, true, cx);
                             transaction_id_format =
                                 transaction_id_format.or(buffer.end_transaction(cx));
                             if let Some(transaction_id) = transaction_id_format {
@@ -2564,7 +2566,10 @@ impl LocalLspStore {
                         }
                     })?;
                 } else {
-                    log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command)
+                    log::warn!(
+                        "Cannot execute a command {} not listed in the language server capabilities",
+                        command.command
+                    )
                 }
             }
         }
@@ -2960,7 +2965,7 @@ impl LocalLspStore {
     fn remove_worktree(
         &mut self,
         id_to_remove: WorktreeId,
-        cx: &mut Context<'_, LspStore>,
+        cx: &mut Context<LspStore>,
     ) -> Vec<LanguageServerId> {
         self.diagnostics.remove(&id_to_remove);
         self.prettier_store.update(cx, |prettier_store, cx| {
@@ -3230,16 +3235,16 @@ impl LocalLspStore {
 
         if registrations.remove(registration_id).is_some() {
             log::info!(
-                    "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
-                    language_server_id,
-                    registration_id
-                );
+                "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
+                language_server_id,
+                registration_id
+            );
         } else {
             log::warn!(
-                    "language server {}: failed to unregister workspace/DidChangeWatchedFiles capability with id {}. not registered.",
-                    language_server_id,
-                    registration_id
-                );
+                "language server {}: failed to unregister workspace/DidChangeWatchedFiles capability with id {}. not registered.",
+                language_server_id,
+                registration_id
+            );
         }
 
         self.rebuild_watched_paths(language_server_id, cx);
@@ -3425,6 +3430,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
         client.add_entity_request_handler(Self::handle_rename_project_entry);
+        client.add_entity_request_handler(Self::handle_language_server_id_for_name);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCodeActions>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCompletions>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetHover>);
@@ -3432,11 +3438,17 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDeclaration>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetTypeDefinition>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentSymbols>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetReferences>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+
+        client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::OpenDocs>);
+        client.add_entity_request_handler(
+            Self::handle_lsp_command::<lsp_ext_command::SwitchSourceHeader>,
+        );
     }
 
     pub fn as_remote(&self) -> Option<&RemoteLspStore> {
@@ -3551,7 +3563,7 @@ impl LspStore {
             toolchain_store: Some(toolchain_store),
             languages: languages.clone(),
             language_server_statuses: Default::default(),
-            nonce: StdRng::from_entropy().gen(),
+            nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: Default::default(),
             active_entry: None,
 
@@ -3566,7 +3578,7 @@ impl LspStore {
         client: AnyProtoClient,
         upstream_project_id: u64,
         request: R,
-        cx: &mut Context<'_, LspStore>,
+        cx: &mut Context<LspStore>,
     ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
         let message = request.to_proto(upstream_project_id, buffer.read(cx));
         cx.spawn(async move |this, cx| {
@@ -3607,7 +3619,7 @@ impl LspStore {
             worktree_store,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
-            nonce: StdRng::from_entropy().gen(),
+            nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: Default::default(),
             active_entry: None,
             toolchain_store,
@@ -3775,8 +3787,7 @@ impl LspStore {
             irrefutable_let_patterns,
             reason = "Make sure to handle new event types in extension properly"
         )]
-        let extension::Event::ExtensionsInstalledChanged = evt
-        else {
+        let extension::Event::ExtensionsInstalledChanged = evt else {
             return;
         };
         if self.as_local().is_none() {
@@ -3890,7 +3901,7 @@ impl LspStore {
                 *refcount += 1;
             }
 
-            if !ignore_refcounts || *refcount == 1 {
+            if ignore_refcounts || *refcount == 1 {
                 local.register_buffer_with_language_servers(buffer, cx);
             }
             if !ignore_refcounts {
@@ -4296,7 +4307,7 @@ impl LspStore {
         cx.notify();
     }
 
-    fn refresh_server_tree(&mut self, cx: &mut Context<'_, Self>) {
+    fn refresh_server_tree(&mut self, cx: &mut Context<Self>) {
         let buffer_store = self.buffer_store.clone();
         if let Some(local) = self.as_local_mut() {
             let mut adapters = BTreeMap::default();
@@ -5790,48 +5801,57 @@ impl LspStore {
 
                         _ => continue 'next_server,
                     };
+                    let supports_workspace_symbol_request =
+                        match server.capabilities().workspace_symbol_provider {
+                            Some(OneOf::Left(supported)) => supported,
+                            Some(OneOf::Right(_)) => true,
+                            None => false,
+                        };
+                    if !supports_workspace_symbol_request {
+                        continue 'next_server;
+                    }
                     let worktree_abs_path = worktree.abs_path().clone();
                     let worktree_handle = worktree_handle.clone();
                     let server_id = server.server_id();
                     requests.push(
-                            server
-                                .request::<lsp::request::WorkspaceSymbolRequest>(
-                                    lsp::WorkspaceSymbolParams {
-                                        query: query.to_string(),
-                                        ..Default::default()
-                                    },
-                                )
-                                .log_err()
-                                .map(move |response| {
-                                    let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
-                                        lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
-                                            flat_responses.into_iter().map(|lsp_symbol| {
-                                            (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
-                                            }).collect::<Vec<_>>()
-                                        }
-                                        lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
-                                            nested_responses.into_iter().filter_map(|lsp_symbol| {
-                                                let location = match lsp_symbol.location {
-                                                    OneOf::Left(location) => location,
-                                                    OneOf::Right(_) => {
-                                                        log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
-                                                        return None
-                                                    }
-                                                };
-                                                Some((lsp_symbol.name, lsp_symbol.kind, location))
-                                            }).collect::<Vec<_>>()
-                                        }
-                                    }).unwrap_or_default();
-
-                                    WorkspaceSymbolsResult {
-                                        server_id,
-                                        lsp_adapter,
-                                        worktree: worktree_handle.downgrade(),
-                                        worktree_abs_path,
-                                        lsp_symbols,
+                        server
+                            .request::<lsp::request::WorkspaceSymbolRequest>(
+                                lsp::WorkspaceSymbolParams {
+                                    query: query.to_string(),
+                                    ..Default::default()
+                                },
+                            )
+                            .log_err()
+                            .map(move |response| {
+                                let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
+                                    lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
+                                        flat_responses.into_iter().map(|lsp_symbol| {
+                                        (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
+                                        }).collect::<Vec<_>>()
                                     }
-                                }),
-                        );
+                                    lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
+                                        nested_responses.into_iter().filter_map(|lsp_symbol| {
+                                            let location = match lsp_symbol.location {
+                                                OneOf::Left(location) => location,
+                                                OneOf::Right(_) => {
+                                                    log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
+                                                    return None
+                                                }
+                                            };
+                                            Some((lsp_symbol.name, lsp_symbol.kind, location))
+                                        }).collect::<Vec<_>>()
+                                    }
+                                }).unwrap_or_default();
+
+                                WorkspaceSymbolsResult {
+                                    server_id,
+                                    lsp_adapter,
+                                    worktree: worktree_handle.downgrade(),
+                                    worktree_abs_path,
+                                    lsp_symbols,
+                                }
+                            }),
+                    );
                 }
                 requested_servers.append(&mut servers_to_query);
             }
@@ -6633,7 +6653,7 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         position: Option<P>,
         request: R,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Vec<R::Response>>
     where
         P: ToOffset,
@@ -6974,6 +6994,34 @@ impl LspStore {
             Ok(())
         })??;
         Ok(proto::Ack {})
+    }
+
+    async fn handle_language_server_id_for_name(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::LanguageServerIdForName>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::LanguageServerIdForNameResponse> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let name = &envelope.payload.name;
+        lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                let buffer = lsp_store.buffer_store.read(cx).get_existing(buffer_id)?;
+                let server_id = buffer.update(cx, |buffer, cx| {
+                    lsp_store
+                        .language_servers_for_local_buffer(buffer, cx)
+                        .find_map(|(adapter, server)| {
+                            if adapter.name.0.as_ref() == name {
+                                Some(server.server_id())
+                            } else {
+                                None
+                            }
+                        })
+                });
+                Ok(server_id)
+            })?
+            .map(|server_id| proto::LanguageServerIdForNameResponse {
+                server_id: server_id.map(|id| id.to_proto()),
+            })
     }
 
     async fn handle_rename_project_entry(

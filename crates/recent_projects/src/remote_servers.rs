@@ -4,38 +4,40 @@ use std::sync::Arc;
 
 use editor::Editor;
 use file_finder::OpenPathDelegate;
+use futures::FutureExt;
 use futures::channel::oneshot;
 use futures::future::Shared;
-use futures::FutureExt;
-use gpui::canvas;
 use gpui::ClipboardItem;
 use gpui::Task;
 use gpui::WeakEntity;
+use gpui::canvas;
 use gpui::{
     AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     PromptLevel, ScrollHandle, Window,
 };
 use picker::Picker;
 use project::Project;
-use remote::ssh_session::ConnectionIdentifier;
 use remote::SshConnectionOptions;
 use remote::SshRemoteClient;
-use settings::update_settings_file;
+use remote::ssh_session::ConnectionIdentifier;
 use settings::Settings;
+use settings::update_settings_file;
 use ui::Navigable;
 use ui::NavigableEntry;
 use ui::{
-    prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar,
-    ScrollbarState, Section, Tooltip,
+    IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar, ScrollbarState,
+    Section, Tooltip, prelude::*,
 };
 use util::ResultExt;
-use workspace::notifications::NotificationId;
 use workspace::OpenOptions;
 use workspace::Toast;
-use workspace::{notifications::DetachAndPromptErr, ModalView, Workspace};
+use workspace::notifications::NotificationId;
+use workspace::{
+    ModalView, Workspace, notifications::DetachAndPromptErr,
+    open_ssh_project_with_existing_connection,
+};
 
-use crate::ssh_connections::connect_over_ssh;
-use crate::ssh_connections::open_ssh_project;
+use crate::OpenRemote;
 use crate::ssh_connections::RemoteSettingsContent;
 use crate::ssh_connections::SshConnection;
 use crate::ssh_connections::SshConnectionHeader;
@@ -43,7 +45,8 @@ use crate::ssh_connections::SshConnectionModal;
 use crate::ssh_connections::SshProject;
 use crate::ssh_connections::SshPrompt;
 use crate::ssh_connections::SshSettings;
-use crate::OpenRemote;
+use crate::ssh_connections::connect_over_ssh;
+use crate::ssh_connections::open_ssh_project;
 
 mod navigation_base {}
 pub struct RemoteServerProjects {
@@ -157,13 +160,8 @@ impl ProjectPicker {
                     let app_state = workspace
                         .update(cx, |workspace, _| workspace.app_state().clone())
                         .ok()?;
-                    let options = cx
-                        .update(|_, cx| (app_state.build_window_options)(None, cx))
-                        .log_err()?;
 
-                    cx.open_window(options, |window, cx| {
-                        window.activate_window();
-
+                    cx.update(|_, cx| {
                         let fs = app_state.fs.clone();
                         update_settings_file::<SshSettings>(fs, cx, {
                             let paths = paths
@@ -180,32 +178,27 @@ impl ProjectPicker {
                                 }
                             }
                         });
-
-                        let tasks = paths
-                            .into_iter()
-                            .map(|path| {
-                                project.update(cx, |project, cx| {
-                                    project.find_or_create_worktree(&path, true, cx)
-                                })
-                            })
-                            .collect::<Vec<_>>();
-                        window
-                            .spawn(cx, async move |_| {
-                                for task in tasks {
-                                    task.await?;
-                                }
-                                Ok(())
-                            })
-                            .detach_and_prompt_err("Failed to open path", window, cx, |_, _, _| {
-                                None
-                            });
-
-                        cx.new(|cx| {
-                            telemetry::event!("SSH Project Created");
-                            Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                        })
                     })
                     .log_err();
+
+                    let options = cx
+                        .update(|_, cx| (app_state.build_window_options)(None, cx))
+                        .log_err()?;
+                    let window = cx
+                        .open_window(options, |window, cx| {
+                            cx.new(|cx| {
+                                telemetry::event!("SSH Project Created");
+                                Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                            })
+                        })
+                        .log_err()?;
+
+                    open_ssh_project_with_existing_connection(
+                        connection, project, paths, app_state, window, cx,
+                    )
+                    .await
+                    .log_err();
+
                     this.update(cx, |_, cx| {
                         cx.emit(DismissEvent);
                     })

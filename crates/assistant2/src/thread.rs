@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 use std::io::Write;
+use std::ops::Range;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -25,10 +26,10 @@ use prompt_store::{
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use util::{maybe, post_inc, ResultExt as _, TryFutureExt as _};
+use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
 use uuid::Uuid;
 
-use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
+use crate::context::{AssistantContext, ContextId, attach_context_to_message};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse,
@@ -174,7 +175,7 @@ pub struct Thread {
     pending_summary: Task<Option<()>>,
     messages: Vec<Message>,
     next_message_id: MessageId,
-    context: BTreeMap<ContextId, ContextSnapshot>,
+    context: BTreeMap<ContextId, AssistantContext>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     system_prompt_context: Option<AssistantSystemPromptContext>,
     checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
@@ -286,8 +287,7 @@ impl Thread {
             tool_use,
             action_log: cx.new(|_| ActionLog::new()),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
-            // TODO: persist token usage?
-            cumulative_token_usage: TokenUsage::default(),
+            cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
         }
     }
@@ -473,15 +473,15 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
-        let context = self.context_by_message.get(&id)?;
-        Some(
-            context
-                .into_iter()
-                .filter_map(|context_id| self.context.get(&context_id))
-                .cloned()
-                .collect::<Vec<_>>(),
-        )
+    pub fn context_for_message(&self, id: MessageId) -> impl Iterator<Item = &AssistantContext> {
+        self.context_by_message
+            .get(&id)
+            .into_iter()
+            .flat_map(|context| {
+                context
+                    .iter()
+                    .filter_map(|context_id| self.context.get(&context_id))
+            })
     }
 
     /// Returns whether all of the tool uses have finished running.
@@ -513,15 +513,18 @@ impl Thread {
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
-        context: Vec<ContextSnapshot>,
+        context: Vec<AssistantContext>,
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let message_id =
             self.insert_message(Role::User, vec![MessageSegment::Text(text.into())], cx);
-        let context_ids = context.iter().map(|context| context.id).collect::<Vec<_>>();
+        let context_ids = context
+            .iter()
+            .map(|context| context.id())
+            .collect::<Vec<_>>();
         self.context
-            .extend(context.into_iter().map(|context| (context.id, context)));
+            .extend(context.into_iter().map(|context| (context.id(), context)));
         self.context_by_message.insert(message_id, context_ids);
         if let Some(git_checkpoint) = git_checkpoint {
             self.pending_checkpoint = Some(ThreadCheckpoint {
@@ -648,6 +651,7 @@ impl Thread {
                     })
                     .collect(),
                 initial_project_snapshot,
+                cumulative_token_usage: this.cumulative_token_usage.clone(),
             })
         })
     }
@@ -776,7 +780,7 @@ impl Thread {
                 LanguageModelRequestTool {
                     name: tool.name(),
                     description: tool.description(),
-                    input_schema: tool.input_schema(),
+                    input_schema: tool.input_schema(model.tool_input_format()),
                 }
             }));
 
@@ -784,6 +788,18 @@ impl Thread {
         };
 
         self.stream_completion(request, model, cx);
+    }
+
+    pub fn used_tools_since_last_user_message(&self) -> bool {
+        for message in self.messages.iter().rev() {
+            if self.tool_use.message_has_tool_results(message.id) {
+                return true;
+            } else if message.role == Role::User {
+                return false;
+            }
+        }
+
+        false
     }
 
     pub fn to_completion_request(
@@ -835,6 +851,9 @@ impl Thread {
                 }
                 RequestKind::Summarize => {
                     // We don't care about tool use during summarization.
+                    if self.tool_use.message_has_tool_results(message.id) {
+                        continue;
+                    }
                 }
             }
 
@@ -857,6 +876,13 @@ impl Thread {
             request.messages.push(request_message);
         }
 
+        // Set a cache breakpoint at the second-to-last message.
+        // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+        let breakpoint_index = request.messages.len() - 2;
+        for (index, message) in request.messages.iter_mut().enumerate() {
+            message.cache = index == breakpoint_index;
+        }
+
         if !referenced_context_ids.is_empty() {
             let mut context_message = LanguageModelRequestMessage {
                 role: Role::User,
@@ -866,24 +892,29 @@ impl Thread {
 
             let referenced_context = referenced_context_ids
                 .into_iter()
-                .filter_map(|context_id| self.context.get(context_id))
-                .cloned();
-            attach_context_to_message(&mut context_message, referenced_context);
+                .filter_map(|context_id| self.context.get(context_id));
+            attach_context_to_message(&mut context_message, referenced_context, cx);
 
             request.messages.push(context_message);
         }
 
-        self.attach_stale_files(&mut request.messages, cx);
+        self.attached_tracked_files_state(&mut request.messages, cx);
 
         request
     }
 
-    fn attach_stale_files(&self, messages: &mut Vec<LanguageModelRequestMessage>, cx: &App) {
+    fn attached_tracked_files_state(
+        &self,
+        messages: &mut Vec<LanguageModelRequestMessage>,
+        cx: &App,
+    ) {
         const STALE_FILES_HEADER: &str = "These files changed since last read:";
 
         let mut stale_message = String::new();
 
-        for stale_file in self.action_log.read(cx).stale_buffers(cx) {
+        let action_log = self.action_log.read(cx);
+
+        for stale_file in action_log.stale_buffers(cx) {
             let Some(file) = stale_file.read(cx).file() else {
                 continue;
             };
@@ -895,10 +926,25 @@ impl Thread {
             writeln!(&mut stale_message, "- {}", file.path().display()).ok();
         }
 
+        let mut content = Vec::with_capacity(2);
+
         if !stale_message.is_empty() {
+            content.push(stale_message.into());
+        }
+
+        if action_log.has_edited_files_since_project_diagnostics_check() {
+            content.push(
+                "\n\nWhen you're done making changes, make sure to check project diagnostics \
+                and fix all errors AND warnings you introduced! \
+                DO NOT mention you're going to do this until you're done."
+                    .into(),
+            );
+        }
+
+        if !content.is_empty() {
             let context_message = LanguageModelRequestMessage {
                 role: Role::User,
-                content: vec![stale_message.into()],
+                content,
                 cache: false,
             };
 
@@ -989,17 +1035,23 @@ impl Thread {
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                if let Some(last_assistant_message) = thread
+                                let last_assistant_message_id = thread
                                     .messages
                                     .iter()
                                     .rfind(|message| message.role == Role::Assistant)
-                                {
-                                    thread.tool_use.request_tool_use(
-                                        last_assistant_message.id,
-                                        tool_use,
-                                        cx,
-                                    );
-                                }
+                                    .map(|message| message.id)
+                                    .unwrap_or_else(|| {
+                                        thread.insert_message(
+                                            Role::Assistant,
+                                            vec![MessageSegment::Text("Using tool...".to_string())],
+                                            cx,
+                                        )
+                                    });
+                                thread.tool_use.request_tool_use(
+                                    last_assistant_message_id,
+                                    tool_use,
+                                    cx,
+                                );
                             }
                         }
 
@@ -1101,7 +1153,10 @@ impl Thread {
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![
-                "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
+                "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
+                 Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
+                 If the conversation is about a specific subject, include it in the title. \
+                 Be descriptive. DO NOT speak in the first person."
                     .into(),
             ],
             cache: false,
@@ -1142,7 +1197,7 @@ impl Thread {
     pub fn use_pending_tools(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> impl IntoIterator<Item = PendingToolUse> {
+    ) -> impl IntoIterator<Item = PendingToolUse> + use<> {
         let request = self.to_completion_request(RequestKind::Chat, cx);
         let messages = Arc::new(request.messages);
         let pending_tool_uses = self
@@ -1198,7 +1253,7 @@ impl Thread {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         tool: Arc<dyn Tool>,
-        cx: &mut Context<'_, Thread>,
+        cx: &mut Context<Thread>,
     ) {
         let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
         self.tool_use
@@ -1213,6 +1268,7 @@ impl Thread {
         tool: Arc<dyn Tool>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
+        let tool_name: Arc<str> = tool.name().into();
         let run_tool = tool.run(
             input,
             messages,
@@ -1227,9 +1283,11 @@ impl Thread {
 
                 thread
                     .update(cx, |thread, cx| {
-                        let pending_tool_use = thread
-                            .tool_use
-                            .insert_tool_output(tool_use_id.clone(), output);
+                        let pending_tool_use = thread.tool_use.insert_tool_output(
+                            tool_use_id.clone(),
+                            tool_name,
+                            output,
+                        );
 
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
@@ -1244,13 +1302,13 @@ impl Thread {
 
     pub fn attach_tool_results(
         &mut self,
-        updated_context: Vec<ContextSnapshot>,
+        updated_context: Vec<AssistantContext>,
         cx: &mut Context<Self>,
     ) {
         self.context.extend(
             updated_context
                 .into_iter()
-                .map(|context| (context.id, context)),
+                .map(|context| (context.id(), context)),
         );
 
         // Insert a user message to contain the tool results.
@@ -1392,7 +1450,7 @@ impl Thread {
                     git_store
                         .repositories()
                         .values()
-                        .find(|repo| repo.read(cx).worktree_id == snapshot.id())
+                        .find(|repo| repo.read(cx).worktree_id == Some(snapshot.id()))
                         .and_then(|repo| {
                             let repo = repo.read(cx);
                             Some((repo.branch().cloned(), repo.local_repository()?))
@@ -1411,7 +1469,7 @@ impl Thread {
 
                     // Get diff asynchronously
                     let diff = repo
-                        .diff(git::repository::DiffType::HeadToWorktree, cx.clone())
+                        .diff(git::repository::DiffType::HeadToWorktree)
                         .await
                         .ok();
 
@@ -1486,6 +1544,25 @@ impl Thread {
         Ok(String::from_utf8_lossy(&markdown).to_string())
     }
 
+    pub fn review_edits_in_range(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        buffer_range: Range<language::Anchor>,
+        accept: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.action_log.update(cx, |action_log, cx| {
+            action_log.review_edits_in_range(buffer, buffer_range, accept, cx)
+        });
+    }
+
+    /// Keeps all edits across all buffers at once.
+    /// This provides a more performant alternative to calling review_edits_in_range for each buffer.
+    pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
+        self.action_log
+            .update(cx, |action_log, _cx| action_log.keep_all_edits());
+    }
+
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }
@@ -1498,12 +1575,18 @@ impl Thread {
         self.cumulative_token_usage.clone()
     }
 
-    pub fn deny_tool_use(&mut self, tool_use_id: LanguageModelToolUseId, cx: &mut Context<Self>) {
+    pub fn deny_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        cx: &mut Context<Self>,
+    ) {
         let err = Err(anyhow::anyhow!(
             "Permission to run tool action denied by user"
         ));
 
-        self.tool_use.insert_tool_output(tool_use_id.clone(), err);
+        self.tool_use
+            .insert_tool_output(tool_use_id.clone(), tool_name, err);
 
         cx.emit(ThreadEvent::ToolFinished {
             tool_use_id,

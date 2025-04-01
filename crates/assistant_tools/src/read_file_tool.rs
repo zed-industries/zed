@@ -1,15 +1,17 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use itertools::Itertools;
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
@@ -54,17 +56,19 @@ impl Tool for ReadFileTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Eye
+        IconName::FileSearch
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(ReadFileToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<ReadFileToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
-            Ok(input) => format!("Read file `{}`", input.path.display()),
+            Ok(input) => {
+                let path = MarkdownString::inline_code(&input.path.display().to_string());
+                format!("Read file {path}")
+            }
             Err(_) => "Read file".to_string(),
         }
     }

@@ -551,6 +551,16 @@ List of `string` values
 "cursor_shape": "hollow"
 ```
 
+## Hide Mouse
+
+- Description: Determines when the mouse cursor should be hidden in an editor or input box.
+- Setting: `hide_mouse`
+- Default: `on_typing_and_movement`
+
+**Options**
+
+`boolean` values
+
 ## Editor Scrollbar
 
 - Description: Whether or not to show the editor scrollbar and various elements in it.

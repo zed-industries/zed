@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{llm, Cents, Result};
+use crate::{Cents, Result, llm};
 use anyhow::Context as _;
 use chrono::{Datelike, Utc};
 use collections::HashMap;

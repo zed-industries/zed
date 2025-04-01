@@ -9,7 +9,7 @@ use std::sync::Arc;
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
-    div, px, size, AnyView, App, Bounds, Context, Render, Window, WindowBounds, WindowOptions,
+    AnyView, App, Bounds, Context, Render, Window, WindowBounds, WindowOptions, div, px, size,
 };
 use log::LevelFilter;
 use project::Project;
@@ -19,6 +19,7 @@ use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
+use workspace;
 
 use crate::app_menus::app_menus;
 use crate::assets::Assets;
@@ -83,6 +84,7 @@ fn main() {
         language::init(cx);
         editor::init(cx);
         Project::init_settings(cx);
+        workspace::init_settings(cx);
         init(cx);
         load_storybook_keymap(cx);
         cx.set_menus(app_menus());

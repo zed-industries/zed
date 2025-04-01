@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    anchored, deferred, div, px, AnyElement, App, Bounds, Corner, DismissEvent, DispatchPhase,
-    Element, ElementId, Entity, Focusable as _, GlobalElementId, Hitbox, InteractiveElement,
-    IntoElement, LayoutId, ManagedView, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    Window,
+    AnyElement, App, Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, Entity,
+    Focusable as _, GlobalElementId, Hitbox, InteractiveElement, IntoElement, LayoutId,
+    ManagedView, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Window, anchored,
+    deferred, div, px,
 };
 
 pub struct RightClickMenu<M: ManagedView> {

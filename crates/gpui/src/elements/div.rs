@@ -16,12 +16,12 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
-    DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
+    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
+    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+    Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
+    Visibility, Window, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1617,7 +1617,7 @@ impl Interactivity {
 
                                         if !cx.has_active_drag() {
                                             if let Some(mouse_cursor) = style.mouse_cursor {
-                                                window.set_cursor_style(mouse_cursor, hitbox);
+                                                window.set_cursor_style(mouse_cursor, Some(hitbox));
                                             }
                                         }
 

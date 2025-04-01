@@ -4,7 +4,7 @@ use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrevious};
-use project::{RemoveOptions, FS_WATCH_LATENCY};
+use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
 use util::path;
 use workspace::{AppState, OpenOptions, ToggleFileFinder, Workspace};
@@ -839,64 +839,64 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
     let history_after_third =
         open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
     assert_eq!(
-                history_after_third,
-                vec![
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/third.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/third.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/second.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/second.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/first.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/first.rs")))
-                    ),
-                ],
-                "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
+        history_after_third,
+        vec![
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/third.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/third.rs")))
+            ),
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/second.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/second.rs")))
+            ),
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/first.rs")))
+            ),
+        ],
+        "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
     3rd item should be the first in the history, as the last opened."
-            );
+    );
 
     let history_after_second_again =
         open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
     assert_eq!(
-                history_after_second_again,
-                vec![
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/second.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/second.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/third.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/third.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/first.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/first.rs")))
-                    ),
-                ],
-                "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
+        history_after_second_again,
+        vec![
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/second.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/second.rs")))
+            ),
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/third.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/third.rs")))
+            ),
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/first.rs")))
+            ),
+        ],
+        "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
     2nd item, as the last opened, 3rd item should go next as it was opened right before."
-            );
+    );
 }
 
 #[gpui::test]
@@ -1656,15 +1656,15 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     cx.simulate_input("rs");
 
     picker.update(cx, |picker, _| {
-            assert_eq!(
-                collect_search_matches(picker).history,
-                vec![
-                    PathBuf::from("test/first.rs"),
-                    PathBuf::from("test/third.rs"),
-                ],
-                "Should have all opened files in the history, except the ones that do not exist on disk"
-            );
-        });
+        assert_eq!(
+            collect_search_matches(picker).history,
+            vec![
+                PathBuf::from("test/first.rs"),
+                PathBuf::from("test/third.rs"),
+            ],
+            "Should have all opened files in the history, except the ones that do not exist on disk"
+        );
+    });
 }
 
 #[gpui::test]

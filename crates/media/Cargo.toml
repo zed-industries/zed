@@ -20,7 +20,8 @@ core-foundation.workspace = true
 ctor.workspace = true
 foreign-types = "0.5"
 metal.workspace = true
+core-video.workspace = true
 objc = "0.2"
 
 [build-dependencies]
-bindgen = "0.70.0"
+bindgen = "0.71"

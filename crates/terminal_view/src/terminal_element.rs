@@ -1,27 +1,28 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, size, AnyElement, App, AvailableSpace, Bounds, ContentMask,
-    Context, DispatchPhase, Element, ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight,
-    GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point,
-    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase, Element,
+    ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
+    Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UTF16Selection,
+    UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem, div, fill, point, px,
+    relative, size,
 };
 use itertools::Itertools;
 use language::CursorShape;
 use settings::Settings;
 use terminal::{
+    IndexedCell, Terminal, TerminalBounds, TerminalContent,
     alacritty_terminal::{
         grid::Dimensions,
         index::Point as AlacPoint,
-        term::{cell::Flags, TermMode},
+        term::{TermMode, cell::Flags},
         vte::ansi::{
             Color::{self as AnsiColor, Named},
             CursorShape as AlacCursorShape, NamedColor,
         },
     },
     terminal_settings::TerminalSettings,
-    IndexedCell, Terminal, TerminalBounds, TerminalContent,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::{ParentElement, Tooltip};
@@ -886,9 +887,9 @@ impl Element for TerminalElement {
                 && bounds.contains(&window.mouse_position())
                 && self.terminal_view.read(cx).hover_target_tooltip.is_some()
             {
-                window.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
+                window.set_cursor_style(gpui::CursorStyle::PointingHand, Some(&layout.hitbox));
             } else {
-                window.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
+                window.set_cursor_style(gpui::CursorStyle::IBeam, Some(&layout.hitbox));
             }
 
             let cursor = layout.cursor.take();
