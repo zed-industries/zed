@@ -53,8 +53,6 @@ pub struct MessageEditor {
     _subscriptions: Vec<Subscription>,
 }
 
-const EDITOR_PLACEHOLDER: &str = "Ask anything, @ to mention, ↑ to select";
-
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
@@ -71,7 +69,7 @@ impl MessageEditor {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(10, window, cx);
-            editor.set_placeholder_text(EDITOR_PLACEHOLDER, cx);
+            editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
