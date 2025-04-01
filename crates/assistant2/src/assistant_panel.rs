@@ -768,7 +768,7 @@ impl AssistantPanel {
                                         IconButton::new("new", IconName::Ellipsis)
                                             .icon_size(IconSize::Small)
                                             .style(ButtonStyle::Subtle),
-                                        Tooltip::text("Toggle Assistant Menu"),
+                                        Tooltip::text("Toggle Agent Menu"),
                                     )
                                     .anchor(Corner::TopRight)
                                     .with_handle(self.assistant_dropdown_menu_handle.clone())
@@ -848,7 +848,7 @@ impl AssistantPanel {
                         .gap_1()
                         .child(
                             h_flex().child(
-                                Headline::new("Welcome to the Assistant Panel")
+                                Headline::new("Welcome to the Agent Panel")
                             ),
                         )
                         .when(no_error, |parent| {
@@ -935,7 +935,7 @@ impl AssistantPanel {
                                     parent
                                         .child(
                                             h_flex().child(
-                                                Label::new("To start using the assistant, configure at least one LLM provider.")
+                                                Label::new("To start using the agent, configure at least one LLM provider.")
                                                     .color(Color::Muted)
                                                     .mb_2p5()
                                             )
@@ -1278,7 +1278,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
-            return Task::ready(Err(anyhow!("Assistant panel not found")));
+            return Task::ready(Err(anyhow!("Agent panel not found")));
         };
 
         panel.update(cx, |panel, cx| {
