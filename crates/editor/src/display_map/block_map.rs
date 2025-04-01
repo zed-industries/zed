@@ -2125,26 +2125,17 @@ mod tests {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer1.clone(),
-                [ExcerptRange {
-                    context: 0..buffer1.read(cx).len(),
-                    primary: None,
-                }],
+                [ExcerptRange::new(0..buffer1.read(cx).len())],
                 cx,
             ));
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer2.clone(),
-                [ExcerptRange {
-                    context: 0..buffer2.read(cx).len(),
-                    primary: None,
-                }],
+                [ExcerptRange::new(0..buffer2.read(cx).len())],
                 cx,
             ));
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer3.clone(),
-                [ExcerptRange {
-                    context: 0..buffer3.read(cx).len(),
-                    primary: None,
-                }],
+                [ExcerptRange::new(0..buffer3.read(cx).len())],
                 cx,
             ));
 
