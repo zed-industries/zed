@@ -180,14 +180,15 @@ impl ContextStore {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
-        let already_included = if let Some(context_id) = self.includes_directory(&project_path.path)
-        {
-            if remove_if_exists {
-                self.remove_context(context_id);
+        let already_included = match self.includes_directory(&project_path.path) {
+            Some(FileInclusion::Direct(context_id)) => {
+                if remove_if_exists {
+                    self.remove_context(context_id);
+                }
+                true
             }
-            true
-        } else {
-            false
+            Some(FileInclusion::InDirectory(_)) => true,
+            None => false,
         };
         if already_included {
             return Task::ready(Ok(()));
@@ -509,8 +510,12 @@ impl ContextStore {
         None
     }
 
-    pub fn includes_directory(&self, path: &Path) -> Option<ContextId> {
-        self.directories.get(path).copied()
+    pub fn includes_directory(&self, path: &Path) -> Option<FileInclusion> {
+        if let Some(context_id) = self.directories.get(path) {
+            return Some(FileInclusion::Direct(*context_id));
+        }
+
+        self.will_include_file_path_via_directory(path)
     }
 
     pub fn included_symbol(&self, symbol_id: &ContextSymbolId) -> Option<ContextId> {
