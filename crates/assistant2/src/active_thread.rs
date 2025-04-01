@@ -1420,26 +1420,31 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        let status_icons = div().child({
-            let (icon_name, color, animated) = match &tool_use.status {
-                ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
-                    (IconName::Warning, Color::Warning, false)
-                }
-                ToolUseStatus::Running => (IconName::ArrowCircle, Color::Accent, true),
-                ToolUseStatus::Finished(_) => (IconName::Check, Color::Success, false),
-                ToolUseStatus::Error(_) => (IconName::Close, Color::Error, false),
-            };
+        let is_status_finished = matches!(&tool_use.status, ToolUseStatus::Finished(_));
 
-            let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
-
-            if animated {
+        let status_icons = div().child(match &tool_use.status {
+            ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
+                let icon = Icon::new(IconName::Warning)
+                    .color(Color::Warning)
+                    .size(IconSize::Small);
+                icon.into_any_element()
+            }
+            ToolUseStatus::Running => {
+                let icon = Icon::new(IconName::ArrowCircle)
+                    .color(Color::Accent)
+                    .size(IconSize::Small);
                 icon.with_animation(
                     "arrow-circle",
                     Animation::new(Duration::from_secs(2)).repeat(),
                     |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
                 )
                 .into_any_element()
-            } else {
+            }
+            ToolUseStatus::Finished(_) => div().w_0().into_any_element(),
+            ToolUseStatus::Error(_) => {
+                let icon = Icon::new(IconName::Close)
+                    .color(Color::Error)
+                    .size(IconSize::Small);
                 icon.into_any_element()
             }
         });
@@ -1531,23 +1536,29 @@ impl ActiveThread {
                 ),
             });
 
-        fn gradient_overlay(color: Hsla) -> impl IntoElement {
+        let gradient_overlay = |color: Hsla| {
             div()
                 .h_full()
                 .absolute()
                 .w_8()
                 .bottom_0()
-                .right_12()
+                .map(|element| {
+                    if is_status_finished {
+                        element.right_7()
+                    } else {
+                        element.right_12()
+                    }
+                })
                 .bg(linear_gradient(
                     90.,
                     linear_color_stop(color, 1.),
                     linear_color_stop(color.opacity(0.2), 0.),
                 ))
-        }
+        };
 
-        div().map(|this| {
+        div().map(|element| {
             if !tool_use.needs_confirmation {
-                this.py_2p5().child(
+                element.py_2p5().child(
                     v_flex()
                         .child(
                             h_flex()
@@ -1557,7 +1568,7 @@ impl ActiveThread {
                                 .justify_between()
                                 .opacity(0.8)
                                 .hover(|style| style.opacity(1.))
-                                .pr_2()
+                                .when(!is_status_finished, |this| this.pr_2())
                                 .child(
                                     h_flex()
                                         .id("tool-label-container")
@@ -1619,7 +1630,7 @@ impl ActiveThread {
                         }),
                 )
             } else {
-                this.py_2().child(
+                element.py_2().child(
                     v_flex()
                         .rounded_lg()
                         .border_1()
@@ -1632,7 +1643,13 @@ impl ActiveThread {
                                 .gap_1p5()
                                 .justify_between()
                                 .py_1()
-                                .px_2()
+                                .map(|element| {
+                                    if is_status_finished {
+                                        element.pl_2().pr_0p5()
+                                    } else {
+                                        element.px_2()
+                                    }
+                                })
                                 .bg(self.tool_card_header_bg(cx))
                                 .map(|element| {
                                     if is_open {
