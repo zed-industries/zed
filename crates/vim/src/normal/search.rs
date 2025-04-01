@@ -783,6 +783,7 @@ mod test {
     async fn test_non_vim_search(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, false).await;
         cx.cx.set_state("ˇone one one one");
+        cx.run_until_parked();
         cx.simulate_keystrokes("cmd-f");
         cx.run_until_parked();
 

@@ -11,7 +11,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
-use git;
+use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -19,7 +19,7 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
-use project::git_store::{GitStore, GitStoreCheckpoint};
+use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
@@ -1446,48 +1446,61 @@ impl Thread {
                 (path, snapshot)
             });
 
-            let Ok((worktree_path, snapshot)) = worktree_info else {
+            let Ok((worktree_path, _snapshot)) = worktree_info else {
                 return WorktreeSnapshot {
                     worktree_path: String::new(),
                     git_state: None,
                 };
             };
 
-            let repo_info = git_store
+            let git_state = git_store
                 .update(cx, |git_store, cx| {
                     git_store
                         .repositories()
                         .values()
-                        .find(|repo| repo.read(cx).worktree_id == Some(snapshot.id()))
-                        .and_then(|repo| {
-                            let repo = repo.read(cx);
-                            Some((repo.branch().cloned(), repo.local_repository()?))
+                        .find(|repo| {
+                            repo.read(cx)
+                                .abs_path_to_repo_path(&worktree.read(cx).abs_path())
+                                .is_some()
                         })
+                        .cloned()
                 })
                 .ok()
-                .flatten();
+                .flatten()
+                .map(|repo| {
+                    repo.read_with(cx, |repo, _| {
+                        let current_branch =
+                            repo.branch.as_ref().map(|branch| branch.name.to_string());
+                        repo.send_job(|state, _| async move {
+                            let RepositoryState::Local { backend, .. } = state else {
+                                return GitState {
+                                    remote_url: None,
+                                    head_sha: None,
+                                    current_branch,
+                                    diff: None,
+                                };
+                            };
 
-            // Extract git information
-            let git_state = match repo_info {
-                None => None,
-                Some((branch, repo)) => {
-                    let current_branch = branch.map(|branch| branch.name.to_string());
-                    let remote_url = repo.remote_url("origin");
-                    let head_sha = repo.head_sha();
+                            let remote_url = backend.remote_url("origin");
+                            let head_sha = backend.head_sha();
+                            let diff = backend.diff(DiffType::HeadToWorktree).await.ok();
 
-                    // Get diff asynchronously
-                    let diff = repo
-                        .diff(git::repository::DiffType::HeadToWorktree)
-                        .await
-                        .ok();
-
-                    Some(GitState {
-                        remote_url,
-                        head_sha,
-                        current_branch,
-                        diff,
+                            GitState {
+                                remote_url,
+                                head_sha,
+                                current_branch,
+                                diff,
+                            }
+                        })
                     })
-                }
+                });
+
+            let git_state = match git_state {
+                Some(git_state) => match git_state.ok() {
+                    Some(git_state) => git_state.await.ok(),
+                    None => None,
+                },
+                None => None,
             };
 
             WorktreeSnapshot {

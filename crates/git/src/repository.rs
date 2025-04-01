@@ -188,7 +188,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         path: RepoPath,
         content: Option<String>,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<anyhow::Result<()>>;
 
     /// Returns the URL of the remote with the given name.
@@ -199,7 +199,9 @@ pub trait GitRepository: Send + Sync {
 
     fn merge_head_shas(&self) -> Vec<String>;
 
-    fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
+    fn merge_message(&self) -> BoxFuture<Option<String>>;
+
+    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<Result<GitStatus>>;
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>>;
 
@@ -210,14 +212,14 @@ pub trait GitRepository: Send + Sync {
         &self,
         commit: String,
         mode: ResetMode,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>>;
 
     fn checkout_files(
         &self,
         commit: String,
         paths: Vec<RepoPath>,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>>;
 
     fn show(&self, commit: String) -> BoxFuture<Result<CommitDetails>>;
@@ -243,7 +245,7 @@ pub trait GitRepository: Send + Sync {
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>>;
     /// Updates the index to match HEAD at the given paths.
     ///
@@ -251,14 +253,14 @@ pub trait GitRepository: Send + Sync {
     fn unstage_paths(
         &self,
         paths: Vec<RepoPath>,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>>;
 
     fn commit(
         &self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>>;
 
     fn push(
@@ -267,7 +269,7 @@ pub trait GitRepository: Send + Sync {
         upstream_name: String,
         options: Option<PushOptions>,
         askpass: AskPassDelegate,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
         cx: AsyncApp,
@@ -278,7 +280,7 @@ pub trait GitRepository: Send + Sync {
         branch_name: String,
         upstream_name: String,
         askpass: AskPassDelegate,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
         cx: AsyncApp,
@@ -287,7 +289,7 @@ pub trait GitRepository: Send + Sync {
     fn fetch(
         &self,
         askpass: AskPassDelegate,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
         cx: AsyncApp,
@@ -528,7 +530,7 @@ impl GitRepository for RealGitRepository {
         &self,
         commit: String,
         mode: ResetMode,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         async move {
             let working_directory = self.working_directory();
@@ -539,7 +541,7 @@ impl GitRepository for RealGitRepository {
             };
 
             let output = new_smol_command(&self.git_binary_path)
-                .envs(env)
+                .envs(env.iter())
                 .current_dir(&working_directory?)
                 .args(["reset", mode_flag, &commit])
                 .output()
@@ -559,7 +561,7 @@ impl GitRepository for RealGitRepository {
         &self,
         commit: String,
         paths: Vec<RepoPath>,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
@@ -570,7 +572,7 @@ impl GitRepository for RealGitRepository {
 
             let output = new_smol_command(&git_binary_path)
                 .current_dir(&working_directory?)
-                .envs(env)
+                .envs(env.iter())
                 .args(["checkout", &commit, "--"])
                 .args(paths.iter().map(|path| path.as_ref()))
                 .output()
@@ -640,7 +642,7 @@ impl GitRepository for RealGitRepository {
         &self,
         path: RepoPath,
         content: Option<String>,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<anyhow::Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
@@ -650,7 +652,7 @@ impl GitRepository for RealGitRepository {
                 if let Some(content) = content {
                     let mut child = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
-                        .envs(&env)
+                        .envs(env.iter())
                         .args(["hash-object", "-w", "--stdin"])
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
@@ -668,7 +670,7 @@ impl GitRepository for RealGitRepository {
 
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
-                        .envs(env)
+                        .envs(env.iter())
                         .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
                         .arg(path.to_unix_style())
                         .output()
@@ -683,7 +685,7 @@ impl GitRepository for RealGitRepository {
                 } else {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
-                        .envs(env)
+                        .envs(env.iter())
                         .args(["update-index", "--force-remove"])
                         .arg(path.to_unix_style())
                         .output()
@@ -733,18 +735,30 @@ impl GitRepository for RealGitRepository {
         shas
     }
 
-    fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
-        let output = new_std_command(&self.git_binary_path)
-            .current_dir(self.working_directory()?)
-            .args(git_status_args(path_prefixes))
-            .output()?;
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            stdout.parse()
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(anyhow!("git status failed: {}", stderr))
-        }
+    fn merge_message(&self) -> BoxFuture<Option<String>> {
+        let path = self.path().join("MERGE_MSG");
+        async move { std::fs::read_to_string(&path).ok() }.boxed()
+    }
+
+    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<Result<GitStatus>> {
+        let git_binary_path = self.git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let path_prefixes = path_prefixes.to_owned();
+        self.executor
+            .spawn(async move {
+                let output = new_std_command(&git_binary_path)
+                    .current_dir(working_directory?)
+                    .args(git_status_args(&path_prefixes))
+                    .output()?;
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    stdout.parse()
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    Err(anyhow!("git status failed: {}", stderr))
+                }
+            })
+            .boxed()
     }
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
@@ -891,7 +905,7 @@ impl GitRepository for RealGitRepository {
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
@@ -900,7 +914,7 @@ impl GitRepository for RealGitRepository {
                 if !paths.is_empty() {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory?)
-                        .envs(env)
+                        .envs(env.iter())
                         .args(["update-index", "--add", "--remove", "--"])
                         .args(paths.iter().map(|p| p.to_unix_style()))
                         .output()
@@ -921,7 +935,7 @@ impl GitRepository for RealGitRepository {
     fn unstage_paths(
         &self,
         paths: Vec<RepoPath>,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
@@ -931,7 +945,7 @@ impl GitRepository for RealGitRepository {
                 if !paths.is_empty() {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory?)
-                        .envs(env)
+                        .envs(env.iter())
                         .args(["reset", "--quiet", "--"])
                         .args(paths.iter().map(|p| p.as_ref()))
                         .output()
@@ -953,14 +967,14 @@ impl GitRepository for RealGitRepository {
         &self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {
                 let mut cmd = new_smol_command("git");
                 cmd.current_dir(&working_directory?)
-                    .envs(env)
+                    .envs(env.iter())
                     .args(["commit", "--quiet", "-m"])
                     .arg(&message.to_string())
                     .arg("--cleanup=strip");
@@ -988,7 +1002,7 @@ impl GitRepository for RealGitRepository {
         remote_name: String,
         options: Option<PushOptions>,
         ask_pass: AskPassDelegate,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
@@ -997,7 +1011,7 @@ impl GitRepository for RealGitRepository {
             let working_directory = working_directory?;
             let mut command = new_smol_command("git");
             command
-                .envs(&env)
+                .envs(env.iter())
                 .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory)
                 .args(["push"])
@@ -1021,7 +1035,7 @@ impl GitRepository for RealGitRepository {
         branch_name: String,
         remote_name: String,
         ask_pass: AskPassDelegate,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
@@ -1029,7 +1043,7 @@ impl GitRepository for RealGitRepository {
         async move {
             let mut command = new_smol_command("git");
             command
-                .envs(&env)
+                .envs(env.iter())
                 .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory?)
                 .args(["pull"])
@@ -1046,7 +1060,7 @@ impl GitRepository for RealGitRepository {
     fn fetch(
         &self,
         ask_pass: AskPassDelegate,
-        env: HashMap<String, String>,
+        env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
@@ -1054,7 +1068,7 @@ impl GitRepository for RealGitRepository {
         async move {
             let mut command = new_smol_command("git");
             command
-                .envs(&env)
+                .envs(env.iter())
                 .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory?)
                 .args(["fetch", "--all"])
@@ -1467,7 +1481,7 @@ struct GitBinaryCommandError {
 }
 
 async fn run_git_command(
-    env: HashMap<String, String>,
+    env: Arc<HashMap<String, String>>,
     ask_pass: AskPassDelegate,
     mut command: smol::process::Command,
     executor: &BackgroundExecutor,
@@ -1769,12 +1783,19 @@ mod tests {
 
         let repo =
             RealGitRepository::new(&repo_dir.path().join(".git"), None, cx.executor()).unwrap();
-        repo.stage_paths(vec![RepoPath::from_str("file")], HashMap::default())
-            .await
-            .unwrap();
-        repo.commit("Initial commit".into(), None, checkpoint_author_envs())
-            .await
-            .unwrap();
+        repo.stage_paths(
+            vec![RepoPath::from_str("file")],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
 
         smol::fs::write(&file_path, "modified before checkpoint")
             .await
@@ -1791,13 +1812,16 @@ mod tests {
         smol::fs::write(&file_path, "modified after checkpoint")
             .await
             .unwrap();
-        repo.stage_paths(vec![RepoPath::from_str("file")], HashMap::default())
-            .await
-            .unwrap();
+        repo.stage_paths(
+            vec![RepoPath::from_str("file")],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
         repo.commit(
             "Commit after checkpoint".into(),
             None,
-            checkpoint_author_envs(),
+            Arc::new(checkpoint_author_envs()),
         )
         .await
         .unwrap();
@@ -1889,12 +1913,19 @@ mod tests {
 
         let repo =
             RealGitRepository::new(&repo_dir.path().join(".git"), None, cx.executor()).unwrap();
-        repo.stage_paths(vec![RepoPath::from_str("file")], HashMap::default())
-            .await
-            .unwrap();
-        repo.commit("Initial commit".into(), None, checkpoint_author_envs())
-            .await
-            .unwrap();
+        repo.stage_paths(
+            vec![RepoPath::from_str("file")],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
 
         let initial_commit_sha = repo.head_sha().unwrap();
 
@@ -1912,13 +1943,17 @@ mod tests {
                 RepoPath::from_str("new_file1"),
                 RepoPath::from_str("new_file2"),
             ],
-            HashMap::default(),
+            Arc::new(HashMap::default()),
         )
         .await
         .unwrap();
-        repo.commit("Commit new files".into(), None, checkpoint_author_envs())
-            .await
-            .unwrap();
+        repo.commit(
+            "Commit new files".into(),
+            None,
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
 
         repo.restore_checkpoint(checkpoint).await.unwrap();
         assert_eq!(repo.head_sha().unwrap(), initial_commit_sha);
@@ -1935,7 +1970,7 @@ mod tests {
             "content2"
         );
         assert_eq!(
-            repo.status_blocking(&[]).unwrap().entries.as_ref(),
+            repo.status(&[]).await.unwrap().entries.as_ref(),
             &[
                 (RepoPath::from_str("new_file1"), FileStatus::Untracked),
                 (RepoPath::from_str("new_file2"), FileStatus::Untracked)

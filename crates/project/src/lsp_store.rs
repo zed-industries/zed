@@ -8078,9 +8078,7 @@ impl LspStore {
         });
 
         if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
-            environment.update(cx, |env, cx| {
-                env.get_environment(worktree_id, worktree_abs_path, cx)
-            })
+            environment.update(cx, |env, cx| env.get_environment(worktree_abs_path, cx))
         } else {
             Task::ready(None).shared()
         }
@@ -9864,13 +9862,10 @@ impl LocalLspAdapterDelegate {
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let (worktree_id, worktree_abs_path) = {
-            let worktree = worktree.read(cx);
-            (worktree.id(), worktree.abs_path())
-        };
+        let worktree_abs_path = worktree.read(cx).abs_path();
 
         let load_shell_env_task = environment.update(cx, |env, cx| {
-            env.get_environment(Some(worktree_id), Some(worktree_abs_path), cx)
+            env.get_environment(Some(worktree_abs_path), cx)
         });
 
         Arc::new(Self {

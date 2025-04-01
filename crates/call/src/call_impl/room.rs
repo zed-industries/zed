@@ -469,7 +469,7 @@ impl Room {
                         let repository = repository.read(cx);
                         repositories.push(proto::RejoinRepository {
                             id: entry_id.to_proto(),
-                            scan_id: repository.completed_scan_id as u64,
+                            scan_id: repository.scan_id,
                         });
                     }
 

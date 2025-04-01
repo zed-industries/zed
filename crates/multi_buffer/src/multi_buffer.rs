@@ -2475,6 +2475,7 @@ impl MultiBuffer {
         let buffer_id = diff.buffer_id;
         let buffers = self.buffers.borrow();
         let Some(buffer_state) = buffers.get(&buffer_id) else {
+            eprintln!("no buffer");
             return;
         };
 
