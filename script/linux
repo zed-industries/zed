@@ -29,6 +29,7 @@ if [[ -n $apt ]]; then
     libfontconfig-dev
     libwayland-dev
     libxkbcommon-x11-dev
+    libdbus-1-dev
     libssl-dev
     libzstd-dev
     libvulkan1
@@ -77,6 +78,7 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     fontconfig-devel
     wayland-devel
     libxkbcommon-x11-devel
+    dbus-devel
     openssl-devel
     libzstd-devel
     vulkan-loader
@@ -137,6 +139,7 @@ if [[ -n $zyp ]]; then
     alsa-devel
     clang
     cmake
+    dbus-1-devel
     fontconfig-devel
     gcc
     gcc-c++
@@ -175,6 +178,7 @@ if [[ -n $pacman ]]; then
     wayland
     libgit2
     libxkbcommon-x11
+    dbus
     openbsd-netcat
     openssl
     zstd
@@ -204,6 +208,7 @@ if [[ -n $xbps ]]; then
     fontconfig-devel
     libxcb-devel
     libxkbcommon-devel
+    dbus-devel
     libzstd-devel
     openbsd-netcat
     openssl-devel
