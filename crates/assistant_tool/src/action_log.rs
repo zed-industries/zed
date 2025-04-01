@@ -1029,7 +1029,7 @@ mod tests {
             let start = rng.gen_range(last_edit_end..=end);
             let old_len = end - start;
 
-            let mut new_len = rng.gen_range(0..=3);
+            let mut new_len: usize = rng.gen_range(0..=3);
             if start == end && new_len == 0 {
                 new_len += 1;
             }
