@@ -1,27 +1,29 @@
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ManagedView,
-    Render, TextStyle, div,
+    Render, TextStyle, WeakEntity, div,
 };
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Divider, FixedWidth,
-    InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, StyledExt,
-    ToggleButton, Toggleable, Window, h_flex, relative, v_flex,
+    ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, ContextMenu, Divider, DropdownMenu,
+    FixedWidth, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
+    StyledExt, ToggleButton, Toggleable, Window, h_flex, relative, v_flex,
 };
-use workspace::ModalView;
+use workspace::{ModalView, Workspace};
 
 #[derive(Clone)]
 pub(super) struct NewSessionModal {
+    workspace: WeakEntity<Workspace>,
     mode: NewSessionMode,
     focus_handle: FocusHandle,
 }
 
 impl NewSessionModal {
-    pub(super) fn new(window: &mut Window, cx: &mut App) -> Self {
+    pub(super) fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Self {
         Self {
-            mode: NewSessionMode::launch(window, cx),
+            workspace: workspace.clone(),
+            mode: NewSessionMode::launch(workspace, window, cx),
             focus_handle: cx.focus_handle(),
         }
     }
@@ -32,10 +34,11 @@ struct LaunchMode {
     program: Entity<Editor>,
     cwd: Entity<Editor>,
     debugger: Option<SharedString>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl LaunchMode {
-    fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
+    fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Entity<Self> {
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
             this.set_placeholder_text("Program path", cx);
@@ -48,17 +51,64 @@ impl LaunchMode {
             program,
             cwd,
             debugger: None,
+            workspace,
         })
     }
 }
-
+static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
 impl Render for LaunchMode {
     fn render(&mut self, window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
+        let weak = cx.weak_entity();
+        let workspace = self.workspace.clone();
         v_flex()
             .w_full()
             .gap_2()
             .child(render_editor(&self.program, cx))
             .child(render_editor(&self.cwd, cx))
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .child(DropdownMenu::new(
+                        "dap-adapter-picker",
+                        self.debugger
+                            .as_ref()
+                            .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
+                            .clone(),
+                        ContextMenu::build(window, cx, move |mut this, _, cx| {
+                            let setter_for_name = |name: SharedString| {
+                                let weak = weak.clone();
+                                move |_: &mut Window, cx: &mut App| {
+                                    let name = name.clone();
+                                    weak.update(cx, move |this, cx| {
+                                        this.debugger = Some(name.clone());
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }
+                            };
+                            let available_adapters = workspace
+                                .update(cx, |this, cx| {
+                                    this.project()
+                                        .read(cx)
+                                        .debug_adapters()
+                                        .enumerate_adapters()
+                                })
+                                .ok()
+                                .unwrap_or_default();
+
+                            for adapter in available_adapters {
+                                this = this.entry(
+                                    adapter.0.clone(),
+                                    None,
+                                    setter_for_name(adapter.0.clone()),
+                                );
+                            }
+                            this
+                        }),
+                    ))
+                    .child(Button::new("debugger-launch-spawn", "Launch")),
+            )
     }
 }
 #[derive(Clone)]
@@ -78,8 +128,8 @@ impl RenderOnce for NewSessionMode {
 }
 
 impl NewSessionMode {
-    fn launch(window: &mut Window, cx: &mut App) -> Self {
-        Self::Launch(LaunchMode::new(window, cx))
+    fn launch(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Self {
+        Self::Launch(LaunchMode::new(workspace, window, cx))
     }
 }
 fn render_editor(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
@@ -131,7 +181,11 @@ impl Render for NewSessionModal {
                                     .style(ui::ButtonStyle::Filled)
                                     .toggle_state(matches!(self.mode, NewSessionMode::Launch(_)))
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.mode = NewSessionMode::launch(window, cx);
+                                        this.mode = NewSessionMode::launch(
+                                            this.workspace.clone(),
+                                            window,
+                                            cx,
+                                        );
                                         cx.notify();
                                     }))
                                     .first(),

@@ -663,8 +663,9 @@ impl DebugPanel {
                                     let workspace = self.workspace.clone();
                                     move |_, window, cx| {
                                         workspace.update(cx, |this, cx| {
+                                            let workspace = cx.weak_entity();
                                             this.toggle_modal(window, cx, |window, cx| {
-                                                NewSessionModal::new(window, cx)
+                                                NewSessionModal::new(workspace, window, cx)
                                             });
                                         });
                                     }

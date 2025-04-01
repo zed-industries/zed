@@ -122,8 +122,6 @@ pub(crate) enum InertEvent {
 
 impl EventEmitter<InertEvent> for InertState {}
 
-static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
-
 impl Render for InertState {
     fn render(
         &mut self,
@@ -177,48 +175,7 @@ impl Render for InertState {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(
-                        h_flex().w_full().gap_2().child(
-                            h_flex().child(DropdownMenu::new(
-                                "dap-adapter-picker",
-                                self.selected_debugger
-                                    .as_ref()
-                                    .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
-                                    .clone(),
-                                ContextMenu::build(window, cx, move |mut this, _, cx| {
-                                    let setter_for_name = |name: SharedString| {
-                                        let weak = weak.clone();
-                                        move |_: &mut Window, cx: &mut App| {
-                                            let name = name.clone();
-                                            weak.update(cx, move |this, cx| {
-                                                this.selected_debugger = Some(name.clone());
-                                                cx.notify();
-                                            })
-                                            .ok();
-                                        }
-                                    };
-                                    let available_adapters = workspace
-                                        .update(cx, |this, cx| {
-                                            this.project()
-                                                .read(cx)
-                                                .debug_adapters()
-                                                .enumerate_adapters()
-                                        })
-                                        .ok()
-                                        .unwrap_or_default();
-
-                                    for adapter in available_adapters {
-                                        this = this.entry(
-                                            adapter.0.clone(),
-                                            None,
-                                            setter_for_name(adapter.0.clone()),
-                                        );
-                                    }
-                                    this
-                                }),
-                            )),
-                        ),
-                    )
+                    .child(h_flex().w_full().gap_2())
                     .child(h_flex().gap_2().map(|this| {
                         let entity = cx.weak_entity();
                         this.child(SplitButton {
