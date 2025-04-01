@@ -331,15 +331,7 @@ pub struct CompletionSettings {
     pub lsp_fetch_timeout_ms: u64,
     /// Controls how the completions are inserted
     ///
-    /// Possible values:
-    /// 1. "insert"
-    ///   Removes text left from the cursor
-    /// 2. "replace"
-    ///   Replace the word
-    /// 3. "auto"
-    ///   removes text left from the cursor and text right from the cursor if the completion ends with it
-    ///
-    /// Default: insert
+    /// Default: "replace"
     #[serde(default = "default_completion_mode")]
     pub completion_mode: CompletionMode,
 }
@@ -358,13 +350,6 @@ pub enum WordsCompletionMode {
     Disabled,
 }
 
-// Controls what range to replace when accepting LSP completions.
-//
-// When LSP servers give an `InsertReplaceEdit` completion, they provides two ranges: `insert` and `replace`. Usually, `insert`
-// contains the word prefix before your cursor and `replace` contains the whole word.
-//
-// Effectively, this setting just changes whether Zed will use the received range for `insert` or `replace`, so the results may
-// differ depending on the underlying LSP server.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CompletionMode {
