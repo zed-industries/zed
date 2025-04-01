@@ -188,7 +188,7 @@ impl Focusable for TasksModal {
 
 impl ModalView for TasksModal {}
 
-const MAX_TAG_LEN: usize = 10;
+const MAX_TAGS_LINE_LEN: usize = 30;
 
 impl PickerDelegate for TasksModalDelegate {
     type ListItem = ListItem;
@@ -400,6 +400,18 @@ impl PickerDelegate for TasksModalDelegate {
                 tooltip_label_text.push_str(&resolved.command_label);
             }
         }
+        if !template.tags.is_empty() {
+            tooltip_label_text.push('\n');
+            tooltip_label_text.push_str(
+                template
+                    .tags
+                    .iter()
+                    .map(|tag| format!("\n#{}", tag))
+                    .collect::<Vec<_>>()
+                    .join("")
+                    .as_str(),
+            );
+        }
         let tooltip_label = if tooltip_label_text.trim().is_empty() {
             None
         } else {
@@ -444,18 +456,12 @@ impl PickerDelegate for TasksModalDelegate {
                 .end_slot::<AnyElement>(
                     h_flex()
                         .gap_1()
-                        .children(
-                            template
-                                .tags
-                                .iter()
-                                .map(|tag| {
-                                    Label::new(format!(
-                                        "#{}",
-                                        truncate_and_trailoff(tag, MAX_TAG_LEN)
-                                    ))
-                                })
-                                .collect::<Vec<_>>(),
-                        )
+                        .when(!template.tags.is_empty(), |item| {
+                            item.child(Label::new(format!(
+                                "#{}",
+                                truncate_and_trailoff(&template.tags.join(" "), MAX_TAGS_LINE_LEN)
+                            )))
+                        })
                         .flex_none()
                         .child(history_run_icon.unwrap())
                         .into_any_element(),
