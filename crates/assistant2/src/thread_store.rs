@@ -197,11 +197,11 @@ impl ThreadStore {
         let assistant_settings = AssistantSettings::get_global(cx);
 
         if let Some(profile) = assistant_settings.profiles.get(profile_id) {
-            self.load_profile(profile);
+            self.load_profile(profile, cx);
         }
     }
 
-    pub fn load_profile(&self, profile: &AgentProfile) {
+    pub fn load_profile(&self, profile: &AgentProfile, cx: &Context<Self>) {
         self.tools.disable_all_tools();
         self.tools.enable(
             ToolSource::Native,
@@ -211,6 +211,12 @@ impl ThreadStore {
                 .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
                 .collect::<Vec<_>>(),
         );
+
+        if profile.enable_all_context_servers {
+            for (source, _) in self.tools.tools_by_source(cx) {
+                self.tools.enable_source(source, cx);
+            }
+        }
 
         for (context_server_id, preset) in &profile.context_servers {
             self.tools.enable(
