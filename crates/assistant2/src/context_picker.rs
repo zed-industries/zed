@@ -569,6 +569,7 @@ pub(crate) fn insert_crease_for_mention(
             return;
         };
 
+        let start = start.bias_right(&snapshot);
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
         let placeholder = FoldPlaceholder {
