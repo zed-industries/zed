@@ -1542,11 +1542,11 @@ impl ActiveThread {
                 .absolute()
                 .w_8()
                 .bottom_0()
-                .map(|this| {
+                .map(|element| {
                     if is_status_finished {
-                        this.right_7()
+                        element.right_7()
                     } else {
-                        this.right_12()
+                        element.right_12()
                     }
                 })
                 .bg(linear_gradient(
@@ -1556,9 +1556,9 @@ impl ActiveThread {
                 ))
         };
 
-        div().map(|this| {
+        div().map(|element| {
             if !tool_use.needs_confirmation {
-                this.py_2p5().child(
+                element.py_2p5().child(
                     v_flex()
                         .child(
                             h_flex()
@@ -1630,7 +1630,7 @@ impl ActiveThread {
                         }),
                 )
             } else {
-                this.py_2().child(
+                element.py_2().child(
                     v_flex()
                         .rounded_lg()
                         .border_1()
@@ -1643,11 +1643,11 @@ impl ActiveThread {
                                 .gap_1p5()
                                 .justify_between()
                                 .py_1()
-                                .map(|this| {
+                                .map(|element| {
                                     if is_status_finished {
-                                        this.pl_2().pr_0p5()
+                                        element.pl_2().pr_0p5()
                                     } else {
-                                        this.px_2()
+                                        element.px_2()
                                     }
                                 })
                                 .bg(self.tool_card_header_bg(cx))
