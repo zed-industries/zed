@@ -1,5 +1,6 @@
 use crate::AssistantPanel;
 use crate::context::{AssistantContext, ContextId};
+use crate::context_picker::MentionLink;
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
     ThreadEvent, ThreadFeedback,
@@ -7,8 +8,10 @@ use crate::thread::{
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
+use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::HashMap;
+use editor::scroll::Autoscroll;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength,
@@ -63,6 +66,7 @@ impl RenderedMessage {
     fn from_segments(
         segments: &[MessageSegment],
         language_registry: Arc<LanguageRegistry>,
+        workspace: WeakEntity<Workspace>,
         window: &Window,
         cx: &mut App,
     ) -> Self {
@@ -71,12 +75,18 @@ impl RenderedMessage {
             segments: Vec::with_capacity(segments.len()),
         };
         for segment in segments {
-            this.push_segment(segment, window, cx);
+            this.push_segment(segment, workspace.clone(), window, cx);
         }
         this
     }
 
-    fn append_thinking(&mut self, text: &String, window: &Window, cx: &mut App) {
+    fn append_thinking(
+        &mut self,
+        text: &String,
+        workspace: WeakEntity<Workspace>,
+        window: &Window,
+        cx: &mut App,
+    ) {
         if let Some(RenderedMessageSegment::Thinking {
             content,
             scroll_handle,
@@ -88,13 +98,25 @@ impl RenderedMessage {
             scroll_handle.scroll_to_bottom();
         } else {
             self.segments.push(RenderedMessageSegment::Thinking {
-                content: render_markdown(text.into(), self.language_registry.clone(), window, cx),
+                content: render_markdown(
+                    text.into(),
+                    self.language_registry.clone(),
+                    workspace,
+                    window,
+                    cx,
+                ),
                 scroll_handle: ScrollHandle::default(),
             });
         }
     }
 
-    fn append_text(&mut self, text: &String, window: &Window, cx: &mut App) {
+    fn append_text(
+        &mut self,
+        text: &String,
+        workspace: WeakEntity<Workspace>,
+        window: &Window,
+        cx: &mut App,
+    ) {
         if let Some(RenderedMessageSegment::Text(markdown)) = self.segments.last_mut() {
             markdown.update(cx, |markdown, cx| markdown.append(text, cx));
         } else {
@@ -102,21 +124,35 @@ impl RenderedMessage {
                 .push(RenderedMessageSegment::Text(render_markdown(
                     SharedString::from(text),
                     self.language_registry.clone(),
+                    workspace,
                     window,
                     cx,
                 )));
         }
     }
 
-    fn push_segment(&mut self, segment: &MessageSegment, window: &Window, cx: &mut App) {
+    fn push_segment(
+        &mut self,
+        segment: &MessageSegment,
+        workspace: WeakEntity<Workspace>,
+        window: &Window,
+        cx: &mut App,
+    ) {
         let rendered_segment = match segment {
             MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking {
-                content: render_markdown(text.into(), self.language_registry.clone(), window, cx),
+                content: render_markdown(
+                    text.into(),
+                    self.language_registry.clone(),
+                    workspace,
+                    window,
+                    cx,
+                ),
                 scroll_handle: ScrollHandle::default(),
             },
             MessageSegment::Text(text) => RenderedMessageSegment::Text(render_markdown(
                 text.into(),
                 self.language_registry.clone(),
+                workspace,
                 window,
                 cx,
             )),
@@ -136,6 +172,7 @@ enum RenderedMessageSegment {
 fn render_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
+    workspace: WeakEntity<Workspace>,
     window: &Window,
     cx: &mut App,
 ) -> Entity<Markdown> {
@@ -210,7 +247,80 @@ fn render_markdown(
         ..Default::default()
     };
 
-    cx.new(|cx| Markdown::new(text, markdown_style, Some(language_registry), None, cx))
+    cx.new(|cx| {
+        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
+            move |text, window, cx| {
+                open_markdown_link(text, workspace.clone(), window, cx);
+            },
+        )
+    })
+}
+
+fn open_markdown_link(
+    text: SharedString,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(workspace) = workspace.upgrade() else {
+        cx.open_url(&text);
+        return;
+    };
+
+    match MentionLink::try_parse(&text, &workspace, cx) {
+        Some(MentionLink::File(path, entry)) => workspace.update(cx, |workspace, cx| {
+            if entry.is_dir() {
+                workspace.project().update(cx, |_, cx| {
+                    cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                })
+            } else {
+                workspace
+                    .open_path(path, None, true, window, cx)
+                    .detach_and_log_err(cx);
+            }
+        }),
+        Some(MentionLink::Symbol(path, symbol_name)) => {
+            let open_task = workspace.update(cx, |workspace, cx| {
+                workspace.open_path(path, None, true, window, cx)
+            });
+            window
+                .spawn(cx, async move |cx| {
+                    let active_editor = open_task
+                        .await?
+                        .downcast::<Editor>()
+                        .context("Item is not an editor")?;
+                    active_editor.update_in(cx, |editor, window, cx| {
+                        let symbol_range = editor
+                            .buffer()
+                            .read(cx)
+                            .snapshot(cx)
+                            .outline(None)
+                            .and_then(|outline| {
+                                outline
+                                    .find_most_similar(&symbol_name)
+                                    .map(|(_, item)| item.range.clone())
+                            })
+                            .context("Could not find matching symbol")?;
+
+                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
+                            s.select_anchor_ranges([symbol_range.start..symbol_range.start])
+                        });
+                        anyhow::Ok(())
+                    })
+                })
+                .detach_and_log_err(cx);
+        }
+        Some(MentionLink::Thread(thread_id)) => workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel
+                        .open_thread(&thread_id, window, cx)
+                        .detach_and_log_err(cx)
+                });
+            }
+        }),
+        None => cx.open_url(&text),
+    }
 }
 
 struct EditMessageState {
@@ -318,8 +428,13 @@ impl ActiveThread {
         self.messages.push(*id);
         self.list_state.splice(old_len..old_len, 1);
 
-        let rendered_message =
-            RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
+        let rendered_message = RenderedMessage::from_segments(
+            segments,
+            self.language_registry.clone(),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
         self.rendered_messages_by_id.insert(*id, rendered_message);
     }
 
@@ -334,8 +449,13 @@ impl ActiveThread {
             return;
         };
         self.list_state.splice(index..index + 1, 1);
-        let rendered_message =
-            RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
+        let rendered_message = RenderedMessage::from_segments(
+            segments,
+            self.language_registry.clone(),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
         self.rendered_messages_by_id.insert(*id, rendered_message);
     }
 
@@ -360,6 +480,7 @@ impl ActiveThread {
             render_markdown(
                 tool_label.into(),
                 self.language_registry.clone(),
+                self.workspace.clone(),
                 window,
                 cx,
             ),
@@ -401,12 +522,12 @@ impl ActiveThread {
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    rendered_message.append_text(text, window, cx);
+                    rendered_message.append_text(text, self.workspace.clone(), window, cx);
                 }
             }
             ThreadEvent::StreamedAssistantThinking(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    rendered_message.append_thinking(text, window, cx);
+                    rendered_message.append_thinking(text, self.workspace.clone(), window, cx);
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
