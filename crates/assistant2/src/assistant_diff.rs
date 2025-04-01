@@ -1,4 +1,4 @@
-use crate::{Thread, ThreadEvent, ToggleKeep};
+use crate::{Thread, ThreadEvent};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
@@ -78,7 +78,7 @@ impl AssistantDiff {
                   hunk_range,
                   is_created_file,
                   line_height,
-                  _editor: &Entity<Editor>,
+                  editor: &Entity<Editor>,
                   window: &mut Window,
                   cx: &mut App| {
                 render_diff_hunk_controls(
@@ -88,6 +88,7 @@ impl AssistantDiff {
                     is_created_file,
                     line_height,
                     &assistant_diff,
+                    editor,
                     window,
                     cx,
                 )
@@ -130,7 +131,7 @@ impl AssistantDiff {
         let changed_buffers = thread.action_log().read(cx).changed_buffers(cx);
         let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
-        for (buffer, changed) in changed_buffers {
+        for (buffer, diff_handle) in changed_buffers {
             let Some(file) = buffer.read(cx).file().cloned() else {
                 continue;
             };
@@ -139,7 +140,7 @@ impl AssistantDiff {
             paths_to_delete.remove(&path_key);
 
             let snapshot = buffer.read(cx).snapshot();
-            let diff = changed.diff.read(cx);
+            let diff = diff_handle.read(cx);
             let diff_hunk_ranges = diff
                 .hunks_intersecting_range(
                     language::Anchor::MIN..language::Anchor::MAX,
@@ -159,7 +160,7 @@ impl AssistantDiff {
                         editor::DEFAULT_MULTIBUFFER_CONTEXT,
                         cx,
                     );
-                    multibuffer.add_diff(changed.diff.clone(), cx);
+                    multibuffer.add_diff(diff_handle, cx);
                     (was_empty, is_excerpt_newly_added)
                 });
 
@@ -221,7 +222,7 @@ impl AssistantDiff {
         }
     }
 
-    fn toggle_keep(&mut self, _: &crate::ToggleKeep, _window: &mut Window, cx: &mut Context<Self>) {
+    fn keep(&mut self, _: &crate::Keep, _window: &mut Window, cx: &mut Context<Self>) {
         let ranges = self
             .editor
             .read(cx)
@@ -240,8 +241,7 @@ impl AssistantDiff {
             let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
             if let Some(buffer) = buffer {
                 self.thread.update(cx, |thread, cx| {
-                    let accept = hunk.status().has_secondary_hunk();
-                    thread.review_edits_in_range(buffer, hunk.buffer_range, accept, cx)
+                    thread.keep_edits_in_range(buffer, hunk.buffer_range, cx)
                 });
             }
         }
@@ -268,10 +268,9 @@ impl AssistantDiff {
             .update(cx, |thread, cx| thread.keep_all_edits(cx));
     }
 
-    fn review_diff_hunks(
+    fn keep_edits_in_ranges(
         &mut self,
         hunk_ranges: Vec<Range<editor::Anchor>>,
-        accept: bool,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
@@ -285,7 +284,7 @@ impl AssistantDiff {
             let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
             if let Some(buffer) = buffer {
                 self.thread.update(cx, |thread, cx| {
-                    thread.review_edits_in_range(buffer, hunk.buffer_range, accept, cx)
+                    thread.keep_edits_in_range(buffer, hunk.buffer_range, cx)
                 });
             }
         }
@@ -479,7 +478,7 @@ impl Render for AssistantDiff {
             } else {
                 "AssistantDiff"
             })
-            .on_action(cx.listener(Self::toggle_keep))
+            .on_action(cx.listener(Self::keep))
             .on_action(cx.listener(Self::reject))
             .on_action(cx.listener(Self::reject_all))
             .on_action(cx.listener(Self::keep_all))
@@ -495,16 +494,16 @@ impl Render for AssistantDiff {
 
 fn render_diff_hunk_controls(
     row: u32,
-    status: &DiffHunkStatus,
+    _status: &DiffHunkStatus,
     hunk_range: Range<editor::Anchor>,
     is_created_file: bool,
     line_height: Pixels,
     assistant_diff: &Entity<AssistantDiff>,
+    editor: &Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let editor = assistant_diff.read(cx).editor.clone();
-
+    let editor = editor.clone();
     h_flex()
         .h(line_height)
         .mr_0p5()
@@ -519,75 +518,47 @@ fn render_diff_hunk_controls(
         .gap_1()
         .occlude()
         .shadow_md()
-        .children(if status.has_secondary_hunk() {
-            vec![
-                Button::new("reject", "Reject")
-                    .disabled(is_created_file)
-                    .key_binding(
-                        KeyBinding::for_action_in(
-                            &crate::Reject,
-                            &editor.read(cx).focus_handle(cx),
-                            window,
-                            cx,
-                        )
-                        .map(|kb| kb.size(rems_from_px(12.))),
-                    )
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                let snapshot = editor.snapshot(window, cx);
-                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                                editor.restore_hunks_in_ranges(vec![point..point], window, cx);
-                            });
-                        }
-                    }),
-                Button::new(("keep", row as u64), "Keep")
-                    .key_binding(
-                        KeyBinding::for_action_in(
-                            &crate::ToggleKeep,
-                            &editor.read(cx).focus_handle(cx),
-                            window,
-                            cx,
-                        )
-                        .map(|kb| kb.size(rems_from_px(12.))),
-                    )
-                    .on_click({
-                        let assistant_diff = assistant_diff.clone();
-                        move |_event, _window, cx| {
-                            assistant_diff.update(cx, |diff, cx| {
-                                diff.review_diff_hunks(
-                                    vec![hunk_range.start..hunk_range.start],
-                                    true,
-                                    cx,
-                                );
-                            });
-                        }
-                    }),
-            ]
-        } else {
-            vec![
-                Button::new(("review", row as u64), "Review")
-                    .key_binding(KeyBinding::for_action_in(
-                        &ToggleKeep,
+        .children(vec![
+            Button::new("reject", "Reject")
+                .disabled(is_created_file)
+                .key_binding(
+                    KeyBinding::for_action_in(
+                        &crate::Reject,
                         &editor.read(cx).focus_handle(cx),
                         window,
                         cx,
-                    ))
-                    .on_click({
-                        let assistant_diff = assistant_diff.clone();
-                        move |_event, _window, cx| {
-                            assistant_diff.update(cx, |diff, cx| {
-                                diff.review_diff_hunks(
-                                    vec![hunk_range.start..hunk_range.start],
-                                    false,
-                                    cx,
-                                );
-                            });
-                        }
-                    }),
-            ]
-        })
+                    )
+                    .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(window, cx);
+                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                            editor.restore_hunks_in_ranges(vec![point..point], window, cx);
+                        });
+                    }
+                }),
+            Button::new(("keep", row as u64), "Keep")
+                .key_binding(
+                    KeyBinding::for_action_in(
+                        &crate::Keep,
+                        &editor.read(cx).focus_handle(cx),
+                        window,
+                        cx,
+                    )
+                    .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click({
+                    let assistant_diff = assistant_diff.clone();
+                    move |_event, _window, cx| {
+                        assistant_diff.update(cx, |diff, cx| {
+                            diff.keep_edits_in_ranges(vec![hunk_range.start..hunk_range.start], cx);
+                        });
+                    }
+                }),
+        ])
         .when(
             !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),
             |el| {

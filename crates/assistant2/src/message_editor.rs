@@ -245,9 +245,6 @@ impl MessageEditor {
             thread
                 .update(cx, |thread, cx| {
                     let context = context_store.read(cx).context().clone();
-                    thread.action_log().update(cx, |action_log, cx| {
-                        action_log.clear_reviewed_changes(cx);
-                    });
                     thread.insert_user_message(user_message, context, checkpoint, cx);
                 })
                 .ok();
@@ -546,7 +543,7 @@ impl Render for MessageEditor {
                             parent.child(
                                 v_flex().bg(cx.theme().colors().editor_background).children(
                                     changed_buffers.into_iter().enumerate().flat_map(
-                                        |(index, (buffer, changed))| {
+                                        |(index, (buffer, _diff))| {
                                             let file = buffer.read(cx).file()?;
                                             let path = file.path();
 
@@ -619,25 +616,13 @@ impl Render for MessageEditor {
                                                                         .color(Color::Deleted),
                                                                 ),
                                                         )
-                                                        .when(!changed.needs_review, |parent| {
-                                                            parent.child(
-                                                                Icon::new(IconName::Check)
-                                                                    .color(Color::Success),
-                                                            )
-                                                        })
                                                         .child(
                                                             div()
                                                                 .h_full()
                                                                 .absolute()
                                                                 .w_8()
                                                                 .bottom_0()
-                                                                .map(|this| {
-                                                                    if !changed.needs_review {
-                                                                        this.right_4()
-                                                                    } else {
-                                                                        this.right_0()
-                                                                    }
-                                                                })
+                                                                .right_0()
                                                                 .bg(linear_gradient(
                                                                     90.,
                                                                     linear_color_stop(

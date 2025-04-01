@@ -1679,23 +1679,20 @@ impl Thread {
         Ok(String::from_utf8_lossy(&markdown).to_string())
     }
 
-    pub fn review_edits_in_range(
+    pub fn keep_edits_in_range(
         &mut self,
         buffer: Entity<language::Buffer>,
         buffer_range: Range<language::Anchor>,
-        accept: bool,
         cx: &mut Context<Self>,
     ) {
         self.action_log.update(cx, |action_log, cx| {
-            action_log.review_edits_in_range(buffer, buffer_range, accept, cx)
+            action_log.keep_edits_in_range(buffer, buffer_range, cx)
         });
     }
 
-    /// Keeps all edits across all buffers at once.
-    /// This provides a more performant alternative to calling review_edits_in_range for each buffer.
     pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
         self.action_log
-            .update(cx, |action_log, _cx| action_log.keep_all_edits());
+            .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {

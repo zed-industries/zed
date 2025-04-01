@@ -1,7 +1,7 @@
 use crate::{replace::replace_with_flexible_indent, schema::json_schema_for};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -165,7 +165,7 @@ impl Tool for FindReplaceFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |cx: &mut AsyncApp| {
             let project_path = project.read_with(cx, |project, cx| {
                 project
                     .find_project_path(&input.path, cx)
@@ -225,20 +225,18 @@ impl Tool for FindReplaceFileTool {
                 return Err(err)
             };
 
-            let (edit_ids, snapshot) = buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction();
-                buffer.apply_diff(diff, false, cx);
-                let transaction = buffer.finalize_last_transaction();
-                let edit_ids = transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone());
-
-                (edit_ids, buffer.snapshot())
+                buffer.apply_diff(diff, cx);
+                buffer.finalize_last_transaction();
+                buffer.snapshot()
             })?;
 
             action_log.update(cx, |log, cx| {
-                log.buffer_edited(buffer.clone(), edit_ids, cx)
+                log.buffer_edited(buffer.clone(), cx)
             })?;
 
-            project.update(cx, |project, cx| {
+            project.update( cx, |project, cx| {
                 project.save_buffer(buffer, cx)
             })?.await?;
 
@@ -249,6 +247,7 @@ impl Tool for FindReplaceFileTool {
 
 
             Ok(format!("Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str))
+
         })
     }
 }

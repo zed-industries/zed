@@ -66,7 +66,7 @@ actions!(
         AcceptSuggestedContext,
         OpenActiveThreadAsMarkdown,
         OpenAssistantDiff,
-        ToggleKeep,
+        Keep,
         Reject,
         RejectAll,
         KeepAll
