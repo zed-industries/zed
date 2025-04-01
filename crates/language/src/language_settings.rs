@@ -339,7 +339,7 @@ pub struct CompletionSettings {
     /// 3. "smart"
     ///   removes text left from the cursor and text right from the cursor if the completion ends with it
     ///
-    /// Default: insert,
+    /// Default: insert
     #[serde(default = "default_completion_mode")]
     pub completion_mode: CompletionMode,
 }
