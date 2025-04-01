@@ -298,7 +298,7 @@ impl std::hash::Hash for KeyPosition {
 }
 
 impl KeyCode {
-    fn basic_parse(input: &str) -> Option<Self> {
+    fn parse_immutable(input: &str) -> Option<Self> {
         Some(match input {
             "fn" => Self::Function,
             "cancel" => Self::Cancel,
@@ -324,32 +324,6 @@ impl KeyCode {
             "delete" => Self::Delete,
             "win" | "cmd" | "super" => Self::Platform(KeyPosition::Any),
             "menu" => Self::ContextMenu,
-            "a" => Self::A,
-            "b" => Self::B,
-            "c" => Self::C,
-            "d" => Self::D,
-            "e" => Self::E,
-            "f" => Self::F,
-            "g" => Self::G,
-            "h" => Self::H,
-            "i" => Self::I,
-            "j" => Self::J,
-            "k" => Self::K,
-            "l" => Self::L,
-            "m" => Self::M,
-            "n" => Self::N,
-            "o" => Self::O,
-            "p" => Self::P,
-            "q" => Self::Q,
-            "r" => Self::R,
-            "s" => Self::S,
-            "t" => Self::T,
-            "u" => Self::U,
-            "v" => Self::V,
-            "w" => Self::W,
-            "x" => Self::X,
-            "y" => Self::Y,
-            "z" => Self::Z,
             // VirtualKeyCode::Numpad0 => "UnImplemented", // TODO: Handle numpad keys
             // VirtualKeyCode::Numpad1 => "UnImplemented",
             // VirtualKeyCode::Numpad2 => "UnImplemented",
@@ -397,10 +371,36 @@ impl KeyCode {
     }
     /// input is standard US English layout key
     pub fn parse(input: &str) -> anyhow::Result<Self> {
-        if let Some(key) = Self::basic_parse(input) {
+        if let Some(key) = Self::parse_immutable(input) {
             return Ok(key);
         }
         match input {
+            "a" => Ok(Self::A),
+            "b" => Ok(Self::B),
+            "c" => Ok(Self::C),
+            "d" => Ok(Self::D),
+            "e" => Ok(Self::E),
+            "f" => Ok(Self::F),
+            "g" => Ok(Self::G),
+            "h" => Ok(Self::H),
+            "i" => Ok(Self::I),
+            "j" => Ok(Self::J),
+            "k" => Ok(Self::K),
+            "l" => Ok(Self::L),
+            "m" => Ok(Self::M),
+            "n" => Ok(Self::N),
+            "o" => Ok(Self::O),
+            "p" => Ok(Self::P),
+            "q" => Ok(Self::Q),
+            "r" => Ok(Self::R),
+            "s" => Ok(Self::S),
+            "t" => Ok(Self::T),
+            "u" => Ok(Self::U),
+            "v" => Ok(Self::V),
+            "w" => Ok(Self::W),
+            "x" => Ok(Self::X),
+            "y" => Ok(Self::Y),
+            "z" => Ok(Self::Z),
             "0" => Ok(Self::Digital0),
             "1" => Ok(Self::Digital1),
             "2" => Ok(Self::Digital2),
@@ -423,36 +423,23 @@ impl KeyCode {
             "]" => Ok(Self::RightBracket),
             "'" => Ok(Self::Quote),
             _ => Err(anyhow::anyhow!(
-                "Error parsing keystroke to virtual keycode: {input}"
+                "Error parsing keystroke to keycode: {input}"
             )),
         }
     }
 
-    // /// TODO:
-    // fn parse_char(input: &str) -> anyhow::Result<(Self, bool, bool, bool)> {
-    //     if let Some(key) = Self::basic_parse(input) {
-    //         return Ok((key, false, false, false));
-    //     }
-    //     if input.chars().count() != 1 {
-    //         return Err(anyhow::anyhow!(
-    //             "Error parsing keystroke to virtual keycode (char based): {input}"
-    //         ));
-    //     }
-    //     let ch = input.chars().next().unwrap();
-    //     let result = unsafe { VkKeyScanW(ch as u16) };
-    //     if result == -1 {
-    //         return Err(anyhow::anyhow!(
-    //             "Error parsing keystroke to virtual keycode (char based): {input}"
-    //         ));
-    //     }
-    //     let high = (result >> 8) as u8;
-    //     let low = result as u8;
-    //     let shift = high & 1;
-    //     let ctrl = (high >> 1) & 1;
-    //     let alt = (high >> 2) & 1;
-    //     let this = VIRTUAL_KEY(low as u16).try_into()?;
-    //     Ok((this, shift != 0, ctrl != 0, alt != 0))
-    // }
+    /// TODO:
+    pub fn parse_char(input: &str) -> anyhow::Result<(Self, Modifiers)> {
+        if let Some(code) = Self::parse_immutable(input) {
+            return Ok((code, Modifiers::default()));
+        }
+        if let Some((code, modifiers)) = CHAR_TO_KEY.get(input) {
+            return Ok((*code, *modifiers));
+        }
+        Err(anyhow::anyhow!(
+            "Error parsing keystroke to keycode: {input}"
+        ))
+    }
 
     // /// TODO:
     // pub fn unparse(&self) -> &str {
@@ -799,3 +786,180 @@ impl KeyCode {
 //     KeyCode::Up,
 //     KeyCode::Unknown, // n/a
 // ];
+static CHAR_TO_KEY: LazyLock<HashMap<String, (KeyCode, Modifiers)>> = LazyLock::new(|| {
+    let mut map = HashMap::default();
+
+    // 0x001d => KeyCode::Digital0,
+    let chars = generate_keymap_info(0x001d);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Digital0, modifiers));
+    }
+    // 0x0012 => KeyCode::Digital1,
+    let chars = generate_keymap_info(0x0012);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Digital1, modifiers));
+    }
+    // 0x0013 => KeyCode::Digital2,
+    let chars = generate_keymap_info(0x0013);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Digital2, modifiers));
+    }
+    // 0x0014 => KeyCode::Digital3,
+    let chars = generate_keymap_info(0x0014);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Digital3, modifiers));
+    }
+    // 0x0015 => KeyCode::Digital4,
+    let chars = generate_keymap_info(0x0015);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Digital4, modifiers));
+    }
+    // 0x0017 => KeyCode::Digital5,
+    let chars = generate_keymap_info(0x0017);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Digital5, modifiers));
+    }
+    // 0x0016 => KeyCode::Digital6,
+    let chars = generate_keymap_info(0x0016);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Digital6, modifiers));
+    }
+    // 0x001a => KeyCode::Digital7,
+    let chars = generate_keymap_info(0x001a);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Digital7, modifiers));
+    }
+    // 0x001c => KeyCode::Digital8,
+    let chars = generate_keymap_info(0x001c);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Digital8, modifiers));
+    }
+    // 0x0019 => KeyCode::Digital9,
+    let chars = generate_keymap_info(0x0019);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Digital9, modifiers));
+    }
+    // 0x0029 => KeyCode::Semicolon,
+    let chars = generate_keymap_info(0x0029);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Semicolon, modifiers));
+    }
+    // 0x0018 => KeyCode::Plus,
+    let chars = generate_keymap_info(0x0018);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Plus, modifiers));
+    }
+    // 0x002b => KeyCode::Comma,
+    let chars = generate_keymap_info(0x002b);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Comma, modifiers));
+    }
+    // 0x001b => KeyCode::Minus,
+    let chars = generate_keymap_info(0x001b);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Minus, modifiers));
+    }
+    // 0x002f => KeyCode::Period,
+    let chars = generate_keymap_info(0x002f);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Period, modifiers));
+    }
+    // 0x002c => KeyCode::Slash,
+    let chars = generate_keymap_info(0x002c);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Slash, modifiers));
+    }
+    // 0x0032 => KeyCode::Tilde,
+    let chars = generate_keymap_info(0x0032);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Tilde, modifiers));
+    }
+    // 0x0021 => KeyCode::LeftBracket,
+    let chars = generate_keymap_info(0x0021);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::LeftBracket, modifiers));
+    }
+    // 0x002a => KeyCode::Backslash,
+    let chars = generate_keymap_info(0x002a);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Backslash, modifiers));
+    }
+    // 0x001e => KeyCode::RightBracket,
+    let chars = generate_keymap_info(0x001e);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::RightBracket, modifiers));
+    }
+    // 0x0027 => KeyCode::Quote,
+    let chars = generate_keymap_info(0x0027);
+    for (c, modifiers) in chars {
+        map.insert(c, (KeyCode::Quote, modifiers));
+    }
+    // 0x0000 => KeyCode::A,
+    // 0x000b => KeyCode::B,
+    // 0x0008 => KeyCode::C,
+    // 0x0002 => KeyCode::D,
+    // 0x000e => KeyCode::E,
+    // 0x0003 => KeyCode::F,
+    // 0x0005 => KeyCode::G,
+    // 0x0004 => KeyCode::H,
+    // 0x0022 => KeyCode::I,
+    // 0x0026 => KeyCode::J,
+    // 0x0028 => KeyCode::K,
+    // 0x0025 => KeyCode::L,
+    // 0x002e => KeyCode::M,
+    // 0x002d => KeyCode::N,
+    // 0x001f => KeyCode::O,
+    // 0x0023 => KeyCode::P,
+    // 0x000c => KeyCode::Q,
+    // 0x000f => KeyCode::R,
+    // 0x0001 => KeyCode::S,
+    // 0x0011 => KeyCode::T,
+    // 0x0020 => KeyCode::U,
+    // 0x0009 => KeyCode::V,
+    // 0x000d => KeyCode::W,
+    // 0x0007 => KeyCode::X,
+    // 0x0010 => KeyCode::Y,
+    // 0x0006 => KeyCode::Z,
+    map
+});
+
+use std::sync::LazyLock;
+
+use collections::HashMap;
+
+use crate::chars_for_modified_key;
+
+use super::Modifiers;
+
+fn generate_keymap_info(scan_code: u16) -> Vec<(String, Modifiers)> {
+    let mut keymap = Vec::new();
+    let no_mod = chars_for_modified_key(scan_code, NO_MOD);
+    if !no_mod.is_empty() {
+        keymap.push((no_mod, Modifiers::none()));
+    }
+    let shift_mod = chars_for_modified_key(scan_code, SHIFT_MOD);
+    if !shift_mod.is_empty() {
+        keymap.push((shift_mod, Modifiers::shift()));
+    }
+    let alt_mod = chars_for_modified_key(scan_code, OPTION_MOD);
+    if !alt_mod.is_empty() {
+        keymap.push((alt_mod, Modifiers::alt()));
+    }
+    let shift_alt_mod = chars_for_modified_key(scan_code, SHIFT_MOD | OPTION_MOD);
+    if !shift_alt_mod.is_empty() {
+        keymap.push((
+            shift_alt_mod,
+            Modifiers {
+                shift: true,
+                alt: true,
+                ..Default::default()
+            },
+        ));
+    }
+    keymap
+}
+
+const NO_MOD: u32 = 0;
+const CMD_MOD: u32 = 1;
+const SHIFT_MOD: u32 = 2;
+const OPTION_MOD: u32 = 8;
