@@ -199,7 +199,9 @@ pub trait GitRepository: Send + Sync {
 
     fn merge_head_shas(&self) -> Vec<String>;
 
-    fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
+    fn merge_message(&self) -> BoxFuture<Option<String>>;
+
+    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<Result<GitStatus>>;
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>>;
 
@@ -733,18 +735,30 @@ impl GitRepository for RealGitRepository {
         shas
     }
 
-    fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
-        let output = new_std_command(&self.git_binary_path)
-            .current_dir(self.working_directory()?)
-            .args(git_status_args(path_prefixes))
-            .output()?;
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            stdout.parse()
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(anyhow!("git status failed: {}", stderr))
-        }
+    fn merge_message(&self) -> BoxFuture<Option<String>> {
+        let path = self.path().join("MERGE_MSG");
+        async move { std::fs::read_to_string(&path).ok() }.boxed()
+    }
+
+    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<Result<GitStatus>> {
+        let git_binary_path = self.git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let path_prefixes = path_prefixes.to_owned();
+        self.executor
+            .spawn(async move {
+                let output = new_std_command(&git_binary_path)
+                    .current_dir(working_directory?)
+                    .args(git_status_args(&path_prefixes))
+                    .output()?;
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    stdout.parse()
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    Err(anyhow!("git status failed: {}", stderr))
+                }
+            })
+            .boxed()
     }
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
@@ -1956,7 +1970,7 @@ mod tests {
             "content2"
         );
         assert_eq!(
-            repo.status_blocking(&[]).unwrap().entries.as_ref(),
+            repo.status(&[]).await.unwrap().entries.as_ref(),
             &[
                 (RepoPath::from_str("new_file1"), FileStatus::Untracked),
                 (RepoPath::from_str("new_file2"), FileStatus::Untracked)

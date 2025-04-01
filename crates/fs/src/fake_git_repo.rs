@@ -179,7 +179,11 @@ impl GitRepository for FakeGitRepository {
         self.path()
     }
 
-    fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
+    fn merge_message(&self) -> BoxFuture<Option<String>> {
+        async move { None }.boxed()
+    }
+
+    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<Result<GitStatus>> {
         let workdir_path = self.dot_git_path.parent().unwrap();
 
         // Load gitignores
@@ -221,7 +225,7 @@ impl GitRepository for FakeGitRepository {
             })
             .collect();
 
-        self.fs.with_git_state(&self.dot_git_path, false, |state| {
+        let result = self.fs.with_git_state(&self.dot_git_path, false, |state| {
             let mut entries = Vec::new();
             let paths = state
                 .head_contents
@@ -302,10 +306,11 @@ impl GitRepository for FakeGitRepository {
                 }
             }
             entries.sort_by(|a, b| a.0.cmp(&b.0));
-            Ok(GitStatus {
+            anyhow::Ok(GitStatus {
                 entries: entries.into(),
             })
-        })?
+        });
+        async move { Ok(result??) }.boxed()
     }
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {

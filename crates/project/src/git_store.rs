@@ -12,7 +12,7 @@ use client::ProjectId;
 use collections::HashMap;
 use fs::Fs;
 use futures::{
-    FutureExt as _, FutureExt as _, StreamExt as _, StreamExt as _,
+    FutureExt as _, StreamExt as _,
     channel::{mpsc, oneshot},
     future::{self, Shared},
 };
@@ -3121,7 +3121,7 @@ impl Repository {
     pub fn fetch(
         &mut self,
         askpass: AskPassDelegate,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
@@ -3165,7 +3165,7 @@ impl Repository {
         remote: SharedString,
         options: Option<PushOptions>,
         askpass: AskPassDelegate,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
@@ -3224,7 +3224,7 @@ impl Repository {
         branch: SharedString,
         remote: SharedString,
         askpass: AskPassDelegate,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
@@ -3584,7 +3584,7 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .update(&mut cx, |this, _| {
+                    .update(&mut cx, |this, cx| {
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),
