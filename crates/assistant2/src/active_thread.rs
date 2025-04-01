@@ -303,7 +303,7 @@ fn open_markdown_link(
                             .context("Could not find matching symbol")?;
 
                         editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                            s.select_anchor_ranges([symbol_range])
+                            s.select_anchor_ranges([symbol_range.start..symbol_range.start])
                         });
                         anyhow::Ok(())
                     })
