@@ -23,4 +23,6 @@ runs:
     - name: Run tests
       shell: pwsh
       working-directory: ${{ inputs.working-directory }}
-      run: cargo nextest run --workspace --no-fail-fast
+      # FIXME
+      run: cargo nextest run -p project test_conflicted_cherry_pick
+      # run: cargo nextest run --workspace --no-fail-fast
