@@ -1,38 +1,38 @@
 use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
+use crate::commit_tooltip::CommitTooltip;
+use crate::commit_view::CommitView;
 use crate::git_panel_settings::StatusStyle;
-use crate::project_diff::Diff;
+use crate::project_diff::{self, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
-
-use crate::{branch_picker, render_remote_button};
+use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
-use crate::{picker_prompt, project_diff, ProjectDiff};
 use anyhow::Result;
 use askpass::AskPassDelegate;
 use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
-use editor::commit_tooltip::CommitTooltip;
 
 use editor::{
-    scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer,
-    ShowScrollbar,
+    Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
+    scroll::ScrollbarAutoHide,
 };
 use futures::StreamExt as _;
+use git::blame::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitSummary, DiffType, PushOptions, Remote, RemoteCommandOutput,
     ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::status::StageStatus;
-use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
+use git::{Commit, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::{
-    actions, anchored, deferred, percentage, uniform_list, Action, Animation, AnimationExt as _,
-    Axis, ClickEvent, Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy, Subscription, Task,
-    Transformation, UniformListScrollHandle, WeakEntity,
+    Action, Animation, AnimationExt as _, Axis, ClickEvent, Corner, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior,
+    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, Point,
+    PromptLevel, ScrollStrategy, Subscription, Task, Transformation, UniformListScrollHandle,
+    WeakEntity, actions, anchored, deferred, percentage, uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -42,13 +42,14 @@ use language_model::{
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
 use panel::{
-    panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
-    panel_icon_button, PanelHeader,
+    PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
+    panel_icon_button,
 };
 use project::git_store::RepositoryEvent;
 use project::{
-    git_store::{GitStoreEvent, Repository},
     Fs, Project, ProjectPath,
+    git_store::{GitEvent, Repository},
+    git_store::{GitStoreEvent, Repository},
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
@@ -60,17 +61,17 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar, ScrollbarState,
-    Tooltip,
+    Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*,
 };
-use util::{maybe, post_inc, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::AppState;
 
 use notifications::status_toast::{StatusToast, ToastIcon};
 use workspace::{
+    Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
-    Workspace,
 };
 
 actions!(
@@ -345,7 +346,7 @@ pub(crate) fn commit_message_editor(
     project: Entity<Project>,
     in_panel: bool,
     window: &mut Window,
-    cx: &mut Context<'_, Editor>,
+    cx: &mut Context<Editor>,
 ) -> Editor {
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
@@ -1553,7 +1554,7 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = Result<bool, anyhow::Error>> {
+    ) -> impl Future<Output = Result<bool, anyhow::Error>> + use<> {
         let repo = self.active_repository.clone();
         let mut cx = window.to_async(cx);
 
@@ -2012,7 +2013,7 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = anyhow::Result<Option<Remote>>> {
+    ) -> impl Future<Output = anyhow::Result<Option<Remote>>> + use<> {
         let repo = self.active_repository.clone();
         let workspace = self.workspace.clone();
         let mut cx = window.to_async(cx);
@@ -2996,6 +2997,7 @@ impl GitPanel {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).branch.as_ref()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
+        let workspace = self.workspace.clone();
 
         let this = cx.entity();
         Some(
@@ -3018,14 +3020,31 @@ impl GitPanel {
                                 .truncate(),
                         )
                         .id("commit-msg-hover")
-                        .hoverable_tooltip(move |window, cx| {
-                            GitPanelMessageTooltip::new(
-                                this.clone(),
-                                commit.sha.clone(),
-                                window,
-                                cx,
-                            )
-                            .into()
+                        .on_click({
+                            let commit = commit.clone();
+                            let repo = active_repository.downgrade();
+                            move |_, window, cx| {
+                                CommitView::open(
+                                    commit.clone(),
+                                    repo.clone(),
+                                    workspace.clone().clone(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                        .hoverable_tooltip({
+                            let repo = active_repository.clone();
+                            move |window, cx| {
+                                GitPanelMessageTooltip::new(
+                                    this.clone(),
+                                    commit.sha.clone(),
+                                    repo.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .into()
+                            }
                         }),
                 )
                 .child(div().flex_1())
@@ -3933,31 +3952,35 @@ impl GitPanelMessageTooltip {
     fn new(
         git_panel: Entity<GitPanel>,
         sha: SharedString,
+        repository: Entity<Repository>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {
             cx.spawn_in(window, async move |this, cx| {
-                let details = git_panel
-                    .update(cx, |git_panel, cx| {
-                        git_panel.load_commit_details(sha.to_string(), cx)
-                    })?
-                    .await?;
+                let (details, workspace) = git_panel.update(cx, |git_panel, cx| {
+                    (
+                        git_panel.load_commit_details(sha.to_string(), cx),
+                        git_panel.workspace.clone(),
+                    )
+                })?;
+                let details = details.await?;
 
-                let commit_details = editor::commit_tooltip::CommitDetails {
+                let commit_details = crate::commit_tooltip::CommitDetails {
                     sha: details.sha.clone(),
-                    committer_name: details.committer_name.clone(),
-                    committer_email: details.committer_email.clone(),
+                    author_name: details.committer_name.clone(),
+                    author_email: details.committer_email.clone(),
                     commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
-                    message: Some(editor::commit_tooltip::ParsedCommitMessage {
+                    message: Some(ParsedCommitMessage {
                         message: details.message.clone(),
                         ..Default::default()
                     }),
                 };
 
                 this.update_in(cx, |this: &mut GitPanelMessageTooltip, window, cx| {
-                    this.commit_tooltip =
-                        Some(cx.new(move |cx| CommitTooltip::new(commit_details, window, cx)));
+                    this.commit_tooltip = Some(cx.new(move |cx| {
+                        CommitTooltip::new(commit_details, repository, workspace, window, cx)
+                    }));
                     cx.notify();
                 })
             })
@@ -3971,7 +3994,7 @@ impl GitPanelMessageTooltip {
 }
 
 impl Render for GitPanelMessageTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(commit_tooltip) = &self.commit_tooltip {
             commit_tooltip.clone().into_any_element()
         } else {
@@ -4239,182 +4262,186 @@ impl ComponentPreview for PanelRepoFooter {
             .gap_6()
             .w_full()
             .flex_none()
-            .children(vec![example_group_with_title(
-                "Action Button States",
-                vec![
-                    single_example(
-                        "No Branch",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                active_repository(1).clone(),
-                                None,
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "Remote status unknown",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                active_repository(2).clone(),
-                                Some(branch(unknown_upstream)),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "No Remote Upstream",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                active_repository(3).clone(),
-                                Some(branch(no_remote_upstream)),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "Not Ahead or Behind",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                active_repository(4).clone(),
-                                Some(branch(not_ahead_or_behind_upstream)),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "Behind remote",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                active_repository(5).clone(),
-                                Some(branch(behind_upstream)),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "Ahead of remote",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                active_repository(6).clone(),
-                                Some(branch(ahead_of_upstream)),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "Ahead and behind remote",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                active_repository(7).clone(),
-                                Some(branch(ahead_and_behind_upstream)),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                ],
-            )
-            .grow()
-            .vertical()])
-            .children(vec![example_group_with_title(
-                "Labels",
-                vec![
-                    single_example(
-                        "Short Branch & Repo",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                SharedString::from("zed"),
-                                Some(custom("main", behind_upstream)),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "Long Branch",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                SharedString::from("zed"),
-                                Some(custom(
-                                    "redesign-and-update-git-ui-list-entry-style",
-                                    behind_upstream,
-                                )),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "Long Repo",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                SharedString::from("zed-industries-community-examples"),
-                                Some(custom("gpui", ahead_of_upstream)),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "Long Repo & Branch",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                SharedString::from("zed-industries-community-examples"),
-                                Some(custom(
-                                    "redesign-and-update-git-ui-list-entry-style",
-                                    behind_upstream,
-                                )),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "Uppercase Repo",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                SharedString::from("LICENSES"),
-                                Some(custom("main", ahead_of_upstream)),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                    single_example(
-                        "Uppercase Branch",
-                        div()
-                            .w(example_width)
-                            .overflow_hidden()
-                            .child(PanelRepoFooter::new_preview(
-                                SharedString::from("zed"),
-                                Some(custom("update-README", behind_upstream)),
-                            ))
-                            .into_any_element(),
-                    )
-                    .grow(),
-                ],
-            )
-            .grow()
-            .vertical()])
+            .children(vec![
+                example_group_with_title(
+                    "Action Button States",
+                    vec![
+                        single_example(
+                            "No Branch",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    active_repository(1).clone(),
+                                    None,
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "Remote status unknown",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    active_repository(2).clone(),
+                                    Some(branch(unknown_upstream)),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "No Remote Upstream",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    active_repository(3).clone(),
+                                    Some(branch(no_remote_upstream)),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "Not Ahead or Behind",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    active_repository(4).clone(),
+                                    Some(branch(not_ahead_or_behind_upstream)),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "Behind remote",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    active_repository(5).clone(),
+                                    Some(branch(behind_upstream)),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "Ahead of remote",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    active_repository(6).clone(),
+                                    Some(branch(ahead_of_upstream)),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "Ahead and behind remote",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    active_repository(7).clone(),
+                                    Some(branch(ahead_and_behind_upstream)),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                    ],
+                )
+                .grow()
+                .vertical(),
+            ])
+            .children(vec![
+                example_group_with_title(
+                    "Labels",
+                    vec![
+                        single_example(
+                            "Short Branch & Repo",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    SharedString::from("zed"),
+                                    Some(custom("main", behind_upstream)),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "Long Branch",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    SharedString::from("zed"),
+                                    Some(custom(
+                                        "redesign-and-update-git-ui-list-entry-style",
+                                        behind_upstream,
+                                    )),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "Long Repo",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    SharedString::from("zed-industries-community-examples"),
+                                    Some(custom("gpui", ahead_of_upstream)),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "Long Repo & Branch",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    SharedString::from("zed-industries-community-examples"),
+                                    Some(custom(
+                                        "redesign-and-update-git-ui-list-entry-style",
+                                        behind_upstream,
+                                    )),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "Uppercase Repo",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    SharedString::from("LICENSES"),
+                                    Some(custom("main", ahead_of_upstream)),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                        single_example(
+                            "Uppercase Branch",
+                            div()
+                                .w(example_width)
+                                .overflow_hidden()
+                                .child(PanelRepoFooter::new_preview(
+                                    SharedString::from("zed"),
+                                    Some(custom("update-README", behind_upstream)),
+                                ))
+                                .into_any_element(),
+                        )
+                        .grow(),
+                    ],
+                )
+                .grow()
+                .vertical(),
+            ])
             .into_any_element()
     }
 }

@@ -6,10 +6,10 @@ use gpui::{
 use itertools::Itertools;
 use std::cmp;
 use theme::ActiveTheme;
-use ui::{prelude::*, ButtonLike, ButtonStyle, Label, Tooltip};
+use ui::{ButtonLike, ButtonStyle, Label, Tooltip, prelude::*};
 use workspace::{
-    item::{BreadcrumbText, ItemEvent, ItemHandle},
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    item::{BreadcrumbText, ItemEvent, ItemHandle},
 };
 
 pub struct Breadcrumbs {

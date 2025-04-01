@@ -1,34 +1,36 @@
+use feature_flags::{Debugger, FeatureFlagAppExt as _};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, px, uniform_list, AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight,
-    ListSizingBehavior, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
-    UniformListScrollHandle,
+    AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight, ListSizingBehavior,
+    ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText, UniformListScrollHandle,
+    div, px, uniform_list,
 };
 use language::Buffer;
 use language::CodeLabel;
 use markdown::Markdown;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
-use project::lsp_store::CompletionDocumentation;
 use project::CompletionSource;
+use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
 
 use std::{
     cell::RefCell,
-    cmp::{min, Reverse},
+    cmp::{Reverse, min},
     iter,
     ops::Range,
     rc::Rc,
 };
 use task::ResolvedTask;
-use ui::{prelude::*, Color, IntoElement, ListItem, Pixels, Popover, Styled};
+use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
 use util::ResultExt;
 
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
+    CodeActionProvider, CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle,
+    ResolvedTasks,
     actions::{ConfirmCodeAction, ConfirmCompletion},
-    split_words, styled_runs_for_code_label, CodeActionProvider, CompletionId, CompletionProvider,
-    DisplayRow, Editor, EditorStyle, ResolvedTasks,
+    split_words, styled_runs_for_code_label,
 };
 
 pub const MENU_GAP: Pixels = px(4.);
@@ -991,6 +993,17 @@ impl CodeActionsMenu {
                     .iter()
                     .skip(range.start)
                     .take(range.end - range.start)
+                    .filter(|action| {
+                        if action
+                            .as_task()
+                            .map(|task| matches!(task.task_type(), task::TaskType::Debug(_)))
+                            .unwrap_or(false)
+                        {
+                            cx.has_flag::<Debugger>()
+                        } else {
+                            true
+                        }
+                    })
                     .enumerate()
                     .map(|(ix, action)| {
                         let item_ix = range.start + ix;

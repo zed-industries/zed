@@ -4,42 +4,42 @@ pub mod terminal_panel;
 pub mod terminal_scrollbar;
 pub mod terminal_tab_tooltip;
 
-use editor::{actions::SelectAll, scroll::ScrollbarAutoHide, Editor, EditorSettings};
+use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
 use gpui::{
-    anchored, deferred, div, impl_actions, AnyElement, App, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity,
+    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
+    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent,
+    Stateful, Styled, Subscription, Task, WeakEntity, anchored, deferred, div, impl_actions,
 };
 use itertools::Itertools;
 use persistence::TERMINAL_DB;
-use project::{search::SearchQuery, terminals::TerminalKind, Entry, Metadata, Project};
+use project::{Entry, Metadata, Project, search::SearchQuery, terminals::TerminalKind};
 use schemars::JsonSchema;
 use terminal::{
-    alacritty_terminal::{
-        index::Point,
-        term::{search::RegexSearch, TermMode},
-    },
-    terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
     ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState, TaskStatus,
     Terminal, TerminalBounds, ToggleViMode,
+    alacritty_terminal::{
+        index::Point,
+        term::{TermMode, search::RegexSearch},
+    },
+    terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
 };
-use terminal_element::{is_blank, TerminalElement};
+use terminal_element::{TerminalElement, is_blank};
 use terminal_panel::TerminalPanel;
 use terminal_scrollbar::TerminalScrollHandle;
 use terminal_tab_tooltip::TerminalTooltip;
 use ui::{
-    h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Scrollbar, ScrollbarState, Tooltip,
+    ContextMenu, Icon, IconName, Label, Scrollbar, ScrollbarState, Tooltip, h_flex, prelude::*,
 };
-use util::{debug_panic, paths::PathWithPosition, ResultExt};
+use util::{ResultExt, debug_panic, paths::PathWithPosition};
 use workspace::{
+    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenOptions, OpenVisible, ToolbarItemLocation,
+    Workspace, WorkspaceId,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
     register_serializable_item,
     searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenOptions, OpenVisible, ToolbarItemLocation,
-    Workspace, WorkspaceId,
 };
 
 use anyhow::Context as _;
@@ -982,6 +982,15 @@ fn subscribe_for_terminal_events(
                 window.invalidate_character_coordinates();
                 cx.emit(SearchEvent::ActiveMatchChanged)
             }
+            Event::TaskLocatorReady { task_id, success } => {
+                if *success {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.debug_task_ready(task_id, cx);
+                        })
+                        .log_err();
+                }
+            }
         },
     );
     vec![terminal_subscription, terminal_events_subscription]
@@ -1080,7 +1089,7 @@ fn possible_open_target(
                         return Task::ready(Some(OpenTarget::Worktree(
                             root_path_with_posiition,
                             root_entry.clone(),
-                        )))
+                        )));
                     }
                     None => paths_to_check.push(root_path_with_posiition),
                 }

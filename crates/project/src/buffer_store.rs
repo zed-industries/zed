@@ -1,32 +1,32 @@
 use crate::{
+    ProjectItem as _, ProjectPath,
     lsp_store::OpenLspBufferHandle,
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    ProjectItem as _, ProjectPath,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use client::Client;
-use collections::{hash_map, HashMap, HashSet};
+use collections::{HashMap, HashSet, hash_map};
 use fs::Fs;
-use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
+use futures::{Future, FutureExt as _, StreamExt, channel::oneshot, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use language::{
+    Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
         split_operations,
     },
-    Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
 };
 use rpc::{
-    proto::{self, ToProto},
     AnyProtoClient, ErrorExt as _, TypedEnvelope,
+    proto::{self, ToProto},
 };
 use smol::channel::Receiver;
 use std::{io, path::Path, pin::pin, sync::Arc, time::Instant};
 use text::BufferId;
-use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
+use util::{ResultExt as _, TryFutureExt, debug_panic, maybe};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
 /// A set of open buffers.

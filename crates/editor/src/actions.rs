@@ -419,6 +419,7 @@ actions!(
         EditLogBreakpoint,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
+        OpenGitBlameCommit,
         ToggleIndentGuides,
         ToggleInlayHints,
         ToggleInlineDiagnostics,

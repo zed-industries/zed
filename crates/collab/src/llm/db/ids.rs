@@ -1,4 +1,4 @@
-use sea_orm::{entity::prelude::*, DbErr};
+use sea_orm::{DbErr, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::id_type;

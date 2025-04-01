@@ -1,11 +1,11 @@
-use crate::{seal::Sealed, App, AppContext, VisualContext, Window};
-use anyhow::{anyhow, Result};
+use crate::{App, AppContext, VisualContext, Window, seal::Sealed};
+use anyhow::{Result, anyhow};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{KeyData, SecondaryMap, SlotMap};
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{Any, TypeId, type_name},
     cell::RefCell,
     cmp::Ordering,
     fmt::{self, Display},
@@ -14,8 +14,8 @@ use std::{
     mem,
     num::NonZeroU64,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
     thread::panicking,
 };
@@ -447,7 +447,7 @@ impl<T: 'static> Entity<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> C::Result<R>
     where
         C: AppContext,
@@ -461,7 +461,7 @@ impl<T: 'static> Entity<T> {
     pub fn update_in<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Window, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> C::Result<R>
     where
         C: VisualContext,
@@ -679,7 +679,7 @@ impl<T: 'static> WeakEntity<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Result<R>
     where
         C: AppContext,
@@ -698,7 +698,7 @@ impl<T: 'static> WeakEntity<T> {
     pub fn update_in<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Window, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Result<R>
     where
         C: VisualContext,

@@ -1,16 +1,19 @@
 use std::sync::Arc;
 
 use assistant_settings::{
-    AgentProfile, AssistantSettings, AssistantSettingsContent, VersionedAssistantSettingsContent,
+    AgentProfile, AgentProfileContent, AssistantSettings, AssistantSettingsContent,
+    ContextServerPresetContent, VersionedAssistantSettingsContent,
 };
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use fs::Fs;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};
-use settings::update_settings_file;
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use settings::{Settings as _, update_settings_file};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt as _;
+
+use crate::ThreadStore;
 
 pub struct ToolPicker {
     picker: Entity<Picker<ToolPickerDelegate>>,
@@ -18,7 +21,7 @@ pub struct ToolPicker {
 
 impl ToolPicker {
     pub fn new(delegate: ToolPickerDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
         Self { picker }
     }
 }
@@ -45,6 +48,7 @@ pub struct ToolEntry {
 
 pub struct ToolPickerDelegate {
     tool_picker: WeakEntity<ToolPicker>,
+    thread_store: WeakEntity<ThreadStore>,
     fs: Arc<dyn Fs>,
     tools: Vec<ToolEntry>,
     profile_id: Arc<str>,
@@ -57,6 +61,7 @@ impl ToolPickerDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
         tool_set: Arc<ToolWorkingSet>,
+        thread_store: WeakEntity<ThreadStore>,
         profile_id: Arc<str>,
         profile: AgentProfile,
         cx: &mut Context<ToolPicker>,
@@ -72,6 +77,7 @@ impl ToolPickerDelegate {
 
         Self {
             tool_picker: cx.entity().downgrade(),
+            thread_store,
             fs,
             tools: tool_entries,
             profile_id,
@@ -182,28 +188,54 @@ impl PickerDelegate for ToolPickerDelegate {
             }
         };
 
+        let active_profile_id = &AssistantSettings::get_global(cx).default_profile;
+        if active_profile_id == &self.profile_id {
+            self.thread_store
+                .update(cx, |this, _cx| {
+                    this.load_profile(&self.profile);
+                })
+                .log_err();
+        }
+
         update_settings_file::<AssistantSettings>(self.fs.clone(), cx, {
             let profile_id = self.profile_id.clone();
+            let default_profile = self.profile.clone();
             let tool = tool.clone();
             move |settings, _cx| match settings {
                 AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(
                     settings,
                 )) => {
-                    if let Some(profiles) = &mut settings.profiles {
-                        if let Some(profile) = profiles.get_mut(&profile_id) {
-                            match tool.source {
-                                ToolSource::Native => {
-                                    *profile.tools.entry(tool.name).or_default() = is_enabled;
-                                }
-                                ToolSource::ContextServer { id } => {
-                                    let preset = profile
-                                        .context_servers
-                                        .entry(id.clone().into())
-                                        .or_default();
-                                    *preset.tools.entry(tool.name.clone()).or_default() =
-                                        is_enabled;
-                                }
-                            }
+                    let profiles = settings.profiles.get_or_insert_default();
+                    let profile =
+                        profiles
+                            .entry(profile_id)
+                            .or_insert_with(|| AgentProfileContent {
+                                name: default_profile.name.into(),
+                                tools: default_profile.tools,
+                                context_servers: default_profile
+                                    .context_servers
+                                    .into_iter()
+                                    .map(|(server_id, preset)| {
+                                        (
+                                            server_id,
+                                            ContextServerPresetContent {
+                                                tools: preset.tools,
+                                            },
+                                        )
+                                    })
+                                    .collect(),
+                            });
+
+                    match tool.source {
+                        ToolSource::Native => {
+                            *profile.tools.entry(tool.name).or_default() = is_enabled;
+                        }
+                        ToolSource::ContextServer { id } => {
+                            let preset = profile
+                                .context_servers
+                                .entry(id.clone().into())
+                                .or_default();
+                            *preset.tools.entry(tool.name.clone()).or_default() = is_enabled;
                         }
                     }
                 }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use fuzzy::StringMatchCandidate;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem};
+use ui::{ListItem, prelude::*};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{self, ContextStore};
@@ -197,7 +197,7 @@ pub fn render_thread_context_entry(
                 .gap_1p5()
                 .max_w_72()
                 .child(
-                    Icon::new(IconName::MessageCircle)
+                    Icon::new(IconName::MessageBubbles)
                         .size(IconSize::XSmall)
                         .color(Color::Muted),
                 )

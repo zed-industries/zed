@@ -5,23 +5,23 @@ use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
 use ec4rs::{
-    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
     Properties as EditorconfigProperties,
+    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
 use schemars::{
-    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
+    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
 };
 use serde::{
-    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize,
+    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
 };
 use serde_json::Value;
 use settings::{
-    add_references_to_properties, Settings, SettingsLocation, SettingsSources, SettingsStore,
+    Settings, SettingsLocation, SettingsSources, SettingsStore, add_references_to_properties,
 };
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
@@ -1300,7 +1300,7 @@ impl settings::Settings for AllLanguageSettings {
     }
 
     fn json_schema(
-        generator: &mut schemars::gen::SchemaGenerator,
+        generator: &mut schemars::r#gen::SchemaGenerator,
         params: &settings::SettingsJsonSchemaParams,
         _: &App,
     ) -> schemars::schema::RootSchema {
@@ -1308,9 +1308,11 @@ impl settings::Settings for AllLanguageSettings {
 
         // Create a schema for a 'languages overrides' object, associating editor
         // settings with specific languages.
-        assert!(root_schema
-            .definitions
-            .contains_key("LanguageSettingsContent"));
+        assert!(
+            root_schema
+                .definitions
+                .contains_key("LanguageSettingsContent")
+        );
 
         let languages_object_schema = SchemaObject {
             instance_type: Some(InstanceType::Object.into()),

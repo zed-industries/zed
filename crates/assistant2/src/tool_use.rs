@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_tool::{Tool, ToolWorkingSet};
 use collections::HashMap;
-use futures::future::Shared;
 use futures::FutureExt as _;
+use futures::future::Shared;
 use gpui::{App, SharedString, Task};
 use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
@@ -23,6 +23,7 @@ pub struct ToolUse {
     pub status: ToolUseStatus,
     pub input: serde_json::Value,
     pub icon: ui::IconName,
+    pub needs_confirmation: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +113,7 @@ impl ToolUseState {
                                 tool_use_id.clone(),
                                 LanguageModelToolResult {
                                     tool_use_id,
+                                    tool_name: tool_use.clone(),
                                     is_error: tool_result.is_error,
                                     content: tool_result.content.clone(),
                                 },
@@ -133,6 +135,7 @@ impl ToolUseState {
                 tool_use_id.clone(),
                 LanguageModelToolResult {
                     tool_use_id,
+                    tool_name: tool_use.name.clone(),
                     content: "Tool canceled by user".into(),
                     is_error: true,
                 },
@@ -181,10 +184,11 @@ impl ToolUseState {
                 }
             })();
 
-            let icon = if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                tool.icon()
+            let (icon, needs_confirmation) = if let Some(tool) = self.tools.tool(&tool_use.name, cx)
+            {
+                (tool.icon(), tool.needs_confirmation())
             } else {
-                IconName::Cog
+                (IconName::Cog, false)
             };
 
             tool_uses.push(ToolUse {
@@ -194,6 +198,7 @@ impl ToolUseState {
                 input: tool_use.input.clone(),
                 status,
                 icon,
+                needs_confirmation,
             })
         }
 
@@ -209,7 +214,7 @@ impl ToolUseState {
         if let Some(tool) = self.tools.tool(tool_name, cx) {
             tool.ui_text(input).into()
         } else {
-            "Unknown tool".into()
+            format!("Unknown tool {tool_name:?}").into()
         }
     }
 
@@ -310,6 +315,7 @@ impl ToolUseState {
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
         output: Result<String>,
     ) -> Option<PendingToolUse> {
         match output {
@@ -318,6 +324,7 @@ impl ToolUseState {
                     tool_use_id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
+                        tool_name,
                         content: tool_result.into(),
                         is_error: false,
                     },
@@ -329,6 +336,7 @@ impl ToolUseState {
                     tool_use_id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
+                        tool_name,
                         content: err.to_string().into(),
                         is_error: true,
                     },
@@ -376,6 +384,7 @@ impl ToolUseState {
                     request_message.content.push(MessageContent::ToolResult(
                         LanguageModelToolResult {
                             tool_use_id: tool_use_id.clone(),
+                            tool_name: tool_result.tool_name.clone(),
                             is_error: tool_result.is_error,
                             content: if tool_result.content.is_empty() {
                                 // Surprisingly, the API fails if we return an empty string here.

@@ -4,38 +4,37 @@ use std::sync::Arc;
 
 use editor::Editor;
 use file_finder::OpenPathDelegate;
+use futures::FutureExt;
 use futures::channel::oneshot;
 use futures::future::Shared;
-use futures::FutureExt;
-use gpui::canvas;
 use gpui::ClipboardItem;
 use gpui::Task;
 use gpui::WeakEntity;
+use gpui::canvas;
 use gpui::{
     AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     PromptLevel, ScrollHandle, Window,
 };
 use picker::Picker;
 use project::Project;
-use remote::ssh_session::ConnectionIdentifier;
 use remote::SshConnectionOptions;
 use remote::SshRemoteClient;
-use settings::update_settings_file;
+use remote::ssh_session::ConnectionIdentifier;
 use settings::Settings;
+use settings::update_settings_file;
 use ui::Navigable;
 use ui::NavigableEntry;
 use ui::{
-    prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar,
-    ScrollbarState, Section, Tooltip,
+    IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar, ScrollbarState,
+    Section, Tooltip, prelude::*,
 };
 use util::ResultExt;
-use workspace::notifications::NotificationId;
 use workspace::OpenOptions;
 use workspace::Toast;
-use workspace::{notifications::DetachAndPromptErr, ModalView, Workspace};
+use workspace::notifications::NotificationId;
+use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 
-use crate::ssh_connections::connect_over_ssh;
-use crate::ssh_connections::open_ssh_project;
+use crate::OpenRemote;
 use crate::ssh_connections::RemoteSettingsContent;
 use crate::ssh_connections::SshConnection;
 use crate::ssh_connections::SshConnectionHeader;
@@ -43,7 +42,8 @@ use crate::ssh_connections::SshConnectionModal;
 use crate::ssh_connections::SshProject;
 use crate::ssh_connections::SshPrompt;
 use crate::ssh_connections::SshSettings;
-use crate::OpenRemote;
+use crate::ssh_connections::connect_over_ssh;
+use crate::ssh_connections::open_ssh_project;
 
 mod navigation_base {}
 pub struct RemoteServerProjects {

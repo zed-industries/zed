@@ -1,38 +1,39 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{
-        channel_id, following_tests::join_channel, room_participants, rust_lang, RoomParticipants,
-        TestClient, TestServer,
+        RoomParticipants, TestClient, TestServer, channel_id, following_tests::join_channel,
+        room_participants, rust_lang,
     },
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_context_editor::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
-use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
-use call::{room, ActiveCall, ParticipantLocation, Room};
-use client::{User, RECEIVE_TIMEOUT};
+use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
+use call::{ActiveCall, ParticipantLocation, Room, room};
+use client::{RECEIVE_TIMEOUT, User};
 use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
-use futures::{channel::mpsc, StreamExt as _};
+use futures::{StreamExt as _, channel::mpsc};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
-    px, size, App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent,
-    TestAppContext, UpdateGlobal,
+    App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent, TestAppContext,
+    UpdateGlobal, px, size,
 };
 use language::{
+    Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
+    LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{
         AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
     },
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, FakeLspAdapter,
-    Language, LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
+    tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
+    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
     lsp_store::{FormatTrigger, LspFormatTarget},
     search::{SearchQuery, SearchResult},
-    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
 };
 use prompt_store::PromptBuilder;
 use rand::prelude::*;
@@ -44,8 +45,8 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -244,60 +245,56 @@ async fn test_basic_calls(
         }
     );
 
-    // TODO: Re-enable this test once we can replace our swift Livekit SDK with the rust SDK
-    #[cfg(not(target_os = "macos"))]
-    {
-        // User A shares their screen
-        let display = gpui::TestScreenCaptureSource::new();
-        let events_b = active_call_events(cx_b);
-        let events_c = active_call_events(cx_c);
-        cx_a.set_screen_capture_sources(vec![display]);
-        active_call_a
-            .update(cx_a, |call, cx| {
-                call.room()
-                    .unwrap()
-                    .update(cx, |room, cx| room.share_screen(cx))
-            })
-            .await
-            .unwrap();
+    // User A shares their screen
+    let display = gpui::TestScreenCaptureSource::new();
+    let events_b = active_call_events(cx_b);
+    let events_c = active_call_events(cx_c);
+    cx_a.set_screen_capture_sources(vec![display]);
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room()
+                .unwrap()
+                .update(cx, |room, cx| room.share_screen(cx))
+        })
+        .await
+        .unwrap();
 
-        executor.run_until_parked();
+    executor.run_until_parked();
 
-        // User B observes the remote screen sharing track.
-        assert_eq!(events_b.borrow().len(), 1);
-        let event_b = events_b.borrow().first().unwrap().clone();
-        if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_b {
-            assert_eq!(participant_id, client_a.peer_id().unwrap());
+    // User B observes the remote screen sharing track.
+    assert_eq!(events_b.borrow().len(), 1);
+    let event_b = events_b.borrow().first().unwrap().clone();
+    if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_b {
+        assert_eq!(participant_id, client_a.peer_id().unwrap());
 
-            room_b.read_with(cx_b, |room, _| {
-                assert_eq!(
-                    room.remote_participants()[&client_a.user_id().unwrap()]
-                        .video_tracks
-                        .len(),
-                    1
-                );
-            });
-        } else {
-            panic!("unexpected event")
-        }
+        room_b.read_with(cx_b, |room, _| {
+            assert_eq!(
+                room.remote_participants()[&client_a.user_id().unwrap()]
+                    .video_tracks
+                    .len(),
+                1
+            );
+        });
+    } else {
+        panic!("unexpected event")
+    }
 
-        // User C observes the remote screen sharing track.
-        assert_eq!(events_c.borrow().len(), 1);
-        let event_c = events_c.borrow().first().unwrap().clone();
-        if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_c {
-            assert_eq!(participant_id, client_a.peer_id().unwrap());
+    // User C observes the remote screen sharing track.
+    assert_eq!(events_c.borrow().len(), 1);
+    let event_c = events_c.borrow().first().unwrap().clone();
+    if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_c {
+        assert_eq!(participant_id, client_a.peer_id().unwrap());
 
-            room_c.read_with(cx_c, |room, _| {
-                assert_eq!(
-                    room.remote_participants()[&client_a.user_id().unwrap()]
-                        .video_tracks
-                        .len(),
-                    1
-                );
-            });
-        } else {
-            panic!("unexpected event")
-        }
+        room_c.read_with(cx_c, |room, _| {
+            assert_eq!(
+                room.remote_participants()[&client_a.user_id().unwrap()]
+                    .video_tracks
+                    .len(),
+                1
+            );
+        });
+    } else {
+        panic!("unexpected event")
     }
 
     // User A leaves the room.
@@ -2091,17 +2088,7 @@ async fn test_mute_deafen(
                     audio_tracks_playing: participant
                         .audio_tracks
                         .values()
-                        .map({
-                            #[cfg(target_os = "macos")]
-                            {
-                                |track| track.is_playing()
-                            }
-
-                            #[cfg(not(target_os = "macos"))]
-                            {
-                                |(track, _)| track.rtc_track().enabled()
-                            }
-                        })
+                        .map(|(track, _)| track.enabled())
                         .collect(),
                 })
                 .collect::<Vec<_>>()
@@ -5116,7 +5103,9 @@ async fn test_project_search(
                 results.entry(buffer).or_insert(ranges);
             }
             SearchResult::LimitReached => {
-                panic!("Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call.")
+                panic!(
+                    "Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call."
+                )
             }
         };
     }
@@ -5615,7 +5604,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
 
     let definitions;
     let buffer_b2;
-    if rng.gen() {
+    if rng.r#gen() {
         definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         (buffer_b2, _) = project_b
             .update(cx_b, |p, cx| {
@@ -6217,15 +6206,19 @@ async fn test_contact_requests(
     executor.run_until_parked();
     assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
     assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
-    assert!(client_b
-        .summarize_contacts(cx_b)
-        .incoming_requests
-        .is_empty());
+    assert!(
+        client_b
+            .summarize_contacts(cx_b)
+            .incoming_requests
+            .is_empty()
+    );
     assert!(client_c.summarize_contacts(cx_c).current.is_empty());
-    assert!(client_c
-        .summarize_contacts(cx_c)
-        .outgoing_requests
-        .is_empty());
+    assert!(
+        client_c
+            .summarize_contacts(cx_c)
+            .outgoing_requests
+            .is_empty()
+    );
 
     async fn disconnect_and_reconnect(client: &TestClient, cx: &mut TestAppContext) {
         client.disconnect(&cx.to_async());
@@ -6237,8 +6230,6 @@ async fn test_contact_requests(
     }
 }
 
-// TODO: Re-enable this test once we can replace our swift Livekit SDK with the rust SDK
-#[cfg(not(target_os = "macos"))]
 #[gpui::test(iterations = 10)]
 async fn test_join_call_after_screen_was_shared(
     executor: BackgroundExecutor,

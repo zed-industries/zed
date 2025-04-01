@@ -4,15 +4,15 @@ use collections::HashSet;
 use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
-    App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-    WeakEntity,
+    App, Bounds, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, WeakEntity,
 };
 use itertools::Itertools;
 use language::Buffer;
-use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
-use workspace::{notifications::NotifyResultExt, Workspace};
+use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use workspace::{Workspace, notifications::NotifyResultExt};
 
-use crate::context::ContextKind;
+use crate::context::{ContextId, ContextKind};
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
@@ -92,12 +92,12 @@ impl ContextStrip {
         let active_buffer_entity = editor.buffer().read(cx).as_singleton()?;
         let active_buffer = active_buffer_entity.read(cx);
 
-        let path = active_buffer.file()?.path();
+        let path = active_buffer.file()?.full_path(cx);
 
         if self
             .context_store
             .read(cx)
-            .will_include_buffer(active_buffer.remote_id(), path)
+            .will_include_buffer(active_buffer.remote_id(), &path)
             .is_some()
         {
             return None;
@@ -108,7 +108,7 @@ impl ContextStrip {
             None => path.to_string_lossy().into_owned().into(),
         };
 
-        let icon_path = FileIcons::get_icon(path, cx);
+        let icon_path = FileIcons::get_icon(&path, cx);
 
         Some(SuggestedContext::File {
             name,
@@ -239,11 +239,7 @@ impl ContextStrip {
         let eraser = if bounds.len() < 3 { 0 } else { 1 };
         let pills = &bounds[1..bounds.len() - eraser];
 
-        if pills.is_empty() {
-            None
-        } else {
-            Some(pills)
-        }
+        if pills.is_empty() { None } else { Some(pills) }
     }
 
     fn last_pill_index(&self) -> Option<usize> {
@@ -275,6 +271,14 @@ impl ContextStrip {
         }
 
         best.map(|(index, _, _)| index)
+    }
+
+    fn open_context(&mut self, id: ContextId, window: &mut Window, cx: &mut App) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        crate::active_thread::open_context(id, self.context_store.clone(), workspace, window, cx);
     }
 
     fn remove_focused_context(
@@ -458,6 +462,7 @@ impl Render for ContextStrip {
                 }
             })
             .children(context.iter().enumerate().map(|(i, context)| {
+                let id = context.id;
                 ContextPill::added(
                     context.clone(),
                     dupe_names.contains(&context.name),
@@ -473,10 +478,16 @@ impl Render for ContextStrip {
                         }))
                     }),
                 )
-                .on_click(Rc::new(cx.listener(move |this, _, _window, cx| {
-                    this.focused_index = Some(i);
-                    cx.notify();
-                })))
+                .on_click(Rc::new(cx.listener(
+                    move |this, event: &ClickEvent, window, cx| {
+                        if event.down.click_count > 1 {
+                            this.open_context(id, window, cx);
+                        } else {
+                            this.focused_index = Some(i);
+                        }
+                        cx.notify();
+                    },
+                )))
             }))
             .when_some(suggested_context, |el, suggested| {
                 el.child(

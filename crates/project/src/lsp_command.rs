@@ -1,13 +1,13 @@
 mod signature_help;
 
 use crate::{
-    lsp_store::{LocalLspStore, LspStore},
     CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, DocumentSymbol, Hover,
     HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
     InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent,
     PrepareRenameResponse, ProjectTransaction, ResolveState,
+    lsp_store::{LocalLspStore, LspStore},
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
@@ -15,11 +15,12 @@ use collections::HashSet;
 use futures::future;
 use gpui::{App, AsyncApp, Entity};
 use language::{
-    language_settings::{language_settings, InlayHintKind, LanguageSettings},
+    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
+    language_settings::{InlayHintKind, LanguageSettings, language_settings},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
-    OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp,
 };
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,
@@ -2092,11 +2093,16 @@ impl LspCommand for GetCompletions {
             completions.retain(|lsp_completion| {
                 let lsp_edit = lsp_completion.text_edit.clone().or_else(|| {
                     let default_text_edit = lsp_defaults.as_deref()?.edit_range.as_ref()?;
+                    let new_text = lsp_completion
+                        .insert_text
+                        .as_ref()
+                        .unwrap_or(&lsp_completion.label)
+                        .clone();
                     match default_text_edit {
                         CompletionListItemDefaultsEditRange::Range(range) => {
                             Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                                 range: *range,
-                                new_text: lsp_completion.label.clone(),
+                                new_text,
                             }))
                         }
                         CompletionListItemDefaultsEditRange::InsertAndReplace {
@@ -2104,7 +2110,7 @@ impl LspCommand for GetCompletions {
                             replace,
                         } => Some(lsp::CompletionTextEdit::InsertAndReplace(
                             lsp::InsertReplaceEdit {
-                                new_text: lsp_completion.label.clone(),
+                                new_text,
                                 insert: *insert,
                                 replace: *replace,
                             },
@@ -2167,6 +2173,7 @@ impl LspCommand for GetCompletions {
                                 .clone()
                         };
 
+                        // We already know text_edit is None here
                         let text = lsp_completion
                             .insert_text
                             .as_ref()

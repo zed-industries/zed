@@ -1,6 +1,6 @@
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
@@ -9,9 +9,9 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
-use ui::{prelude::*, ListItem, Tooltip};
+use ui::{ListItem, Tooltip, prelude::*};
 use util::ResultExt as _;
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{ContextStore, FileInclusion};
@@ -273,17 +273,17 @@ pub(crate) fn search_paths(
     }
 }
 
-pub fn render_file_context_entry(
-    id: ElementId,
+pub fn extract_file_name_and_directory(
     path: &Path,
-    path_prefix: &Arc<str>,
-    is_directory: bool,
-    context_store: WeakEntity<ContextStore>,
-    cx: &App,
-) -> Stateful<Div> {
-    let (file_name, directory) = if path == Path::new("") {
+    path_prefix: &str,
+) -> (SharedString, Option<SharedString>) {
+    if path == Path::new("") {
         (
-            SharedString::from(path_prefix.trim_end_matches('/').to_string()),
+            SharedString::from(
+                path_prefix
+                    .trim_end_matches(std::path::MAIN_SEPARATOR)
+                    .to_string(),
+            ),
             None,
         )
     } else {
@@ -294,7 +294,9 @@ pub fn render_file_context_entry(
             .to_string()
             .into();
 
-        let mut directory = path_prefix.to_string();
+        let mut directory = path_prefix
+            .trim_end_matches(std::path::MAIN_SEPARATOR)
+            .to_string();
         if !directory.ends_with('/') {
             directory.push('/');
         }
@@ -303,8 +305,19 @@ pub fn render_file_context_entry(
             directory.push('/');
         }
 
-        (file_name, Some(directory))
-    };
+        (file_name, Some(directory.into()))
+    }
+}
+
+pub fn render_file_context_entry(
+    id: ElementId,
+    path: &Path,
+    path_prefix: &Arc<str>,
+    is_directory: bool,
+    context_store: WeakEntity<ContextStore>,
+    cx: &App,
+) -> Stateful<Div> {
+    let (file_name, directory) = extract_file_name_and_directory(path, path_prefix);
 
     let added = context_store.upgrade().and_then(|context_store| {
         if is_directory {
