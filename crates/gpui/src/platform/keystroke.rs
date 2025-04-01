@@ -193,30 +193,32 @@ impl Keystroke {
             }
         }
 
-        let key = key.ok_or_else(|| InvalidKeystrokeError {
+        let mut key = key.ok_or_else(|| InvalidKeystrokeError {
             keystroke: source.to_owned(),
         })?;
-        let mut code = KeyCode::parse(&key).unwrap_or_default();
-        if code == KeyCode::Unknown {
-            if let Some((key_code, modifier)) = CHAR_TO_KEY.get(&key) {
-                code = *key_code;
-                if modifier.shift {
-                    if shift {
-                        log::error!("Key {} has both shift and alt modifiers", key);
-                    }
-                    shift = true;
-                    println!("shift");
+        if let Some(key_equivalent) = key_equivalents {
+            if key.len() == 1 {
+                if let Some(equivalent) = key_equivalent.get(&key.chars().next().unwrap()) {
+                    key = equivalent.to_string();
                 }
-                if modifier.alt {
-                    if alt {
-                        log::error!("Key {} has both alt and shift modifiers", key);
-                    }
-                    alt = true;
-                    println!("alt");
-                }
-                println!("Key {} -> {:?}", source, key_code);
             }
         }
+        let (code, modifiers) = KeyCode::parse_char(&key).unwrap_or_default();
+        if modifiers.shift {
+            if shift {
+                log::error!("Key {} has both shift and alt modifiers", key);
+            }
+            shift = true;
+            println!("shift");
+        }
+        if modifiers.alt {
+            if alt {
+                log::error!("Key {} has both alt and shift modifiers", key);
+            }
+            alt = true;
+            println!("alt");
+        }
+        println!("Key {} -> {:?}", source, code);
 
         let ret = Ok(Keystroke {
             modifiers: Modifiers {
@@ -560,178 +562,6 @@ impl Modifiers {
             && (other.function || !self.function)
     }
 }
-
-static CHAR_TO_KEY: LazyLock<HashMap<String, (KeyCode, Modifiers)>> = LazyLock::new(|| {
-    let mut map = HashMap::default();
-
-    // 0x001d => KeyCode::Digital0,
-    let chars = generate_keymap_info(0x001d);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Digital0, modifiers));
-    }
-    // 0x0012 => KeyCode::Digital1,
-    let chars = generate_keymap_info(0x0012);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Digital1, modifiers));
-    }
-    // 0x0013 => KeyCode::Digital2,
-    let chars = generate_keymap_info(0x0013);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Digital2, modifiers));
-    }
-    // 0x0014 => KeyCode::Digital3,
-    let chars = generate_keymap_info(0x0014);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Digital3, modifiers));
-    }
-    // 0x0015 => KeyCode::Digital4,
-    let chars = generate_keymap_info(0x0015);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Digital4, modifiers));
-    }
-    // 0x0017 => KeyCode::Digital5,
-    let chars = generate_keymap_info(0x0017);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Digital5, modifiers));
-    }
-    // 0x0016 => KeyCode::Digital6,
-    let chars = generate_keymap_info(0x0016);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Digital6, modifiers));
-    }
-    // 0x001a => KeyCode::Digital7,
-    let chars = generate_keymap_info(0x001a);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Digital7, modifiers));
-    }
-    // 0x001c => KeyCode::Digital8,
-    let chars = generate_keymap_info(0x001c);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Digital8, modifiers));
-    }
-    // 0x0019 => KeyCode::Digital9,
-    let chars = generate_keymap_info(0x0019);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Digital9, modifiers));
-    }
-    // 0x0029 => KeyCode::Semicolon,
-    let chars = generate_keymap_info(0x0029);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Semicolon, modifiers));
-    }
-    // 0x0018 => KeyCode::Plus,
-    let chars = generate_keymap_info(0x0018);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Plus, modifiers));
-    }
-    // 0x002b => KeyCode::Comma,
-    let chars = generate_keymap_info(0x002b);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Comma, modifiers));
-    }
-    // 0x001b => KeyCode::Minus,
-    let chars = generate_keymap_info(0x001b);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Minus, modifiers));
-    }
-    // 0x002f => KeyCode::Period,
-    let chars = generate_keymap_info(0x002f);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Period, modifiers));
-    }
-    // 0x002c => KeyCode::Slash,
-    let chars = generate_keymap_info(0x002c);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Slash, modifiers));
-    }
-    // 0x0032 => KeyCode::Tilde,
-    let chars = generate_keymap_info(0x0032);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Tilde, modifiers));
-    }
-    // 0x0021 => KeyCode::LeftBracket,
-    let chars = generate_keymap_info(0x0021);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::LeftBracket, modifiers));
-    }
-    // 0x002a => KeyCode::Backslash,
-    let chars = generate_keymap_info(0x002a);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Backslash, modifiers));
-    }
-    // 0x001e => KeyCode::RightBracket,
-    let chars = generate_keymap_info(0x001e);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::RightBracket, modifiers));
-    }
-    // 0x0027 => KeyCode::Quote,
-    let chars = generate_keymap_info(0x0027);
-    for (c, modifiers) in chars {
-        map.insert(c, (KeyCode::Quote, modifiers));
-    }
-    // 0x0000 => KeyCode::A,
-    // 0x000b => KeyCode::B,
-    // 0x0008 => KeyCode::C,
-    // 0x0002 => KeyCode::D,
-    // 0x000e => KeyCode::E,
-    // 0x0003 => KeyCode::F,
-    // 0x0005 => KeyCode::G,
-    // 0x0004 => KeyCode::H,
-    // 0x0022 => KeyCode::I,
-    // 0x0026 => KeyCode::J,
-    // 0x0028 => KeyCode::K,
-    // 0x0025 => KeyCode::L,
-    // 0x002e => KeyCode::M,
-    // 0x002d => KeyCode::N,
-    // 0x001f => KeyCode::O,
-    // 0x0023 => KeyCode::P,
-    // 0x000c => KeyCode::Q,
-    // 0x000f => KeyCode::R,
-    // 0x0001 => KeyCode::S,
-    // 0x0011 => KeyCode::T,
-    // 0x0020 => KeyCode::U,
-    // 0x0009 => KeyCode::V,
-    // 0x000d => KeyCode::W,
-    // 0x0007 => KeyCode::X,
-    // 0x0010 => KeyCode::Y,
-    // 0x0006 => KeyCode::Z,
-    map
-});
-
-use crate::chars_for_modified_key;
-
-fn generate_keymap_info(scan_code: u16) -> Vec<(String, Modifiers)> {
-    let mut keymap = Vec::new();
-    let no_mod = chars_for_modified_key(scan_code, NO_MOD);
-    if !no_mod.is_empty() {
-        keymap.push((no_mod, Modifiers::none()));
-    }
-    let shift_mod = chars_for_modified_key(scan_code, SHIFT_MOD);
-    if !shift_mod.is_empty() {
-        keymap.push((shift_mod, Modifiers::shift()));
-    }
-    let alt_mod = chars_for_modified_key(scan_code, OPTION_MOD);
-    if !alt_mod.is_empty() {
-        keymap.push((alt_mod, Modifiers::alt()));
-    }
-    let shift_alt_mod = chars_for_modified_key(scan_code, SHIFT_MOD | OPTION_MOD);
-    if !shift_alt_mod.is_empty() {
-        keymap.push((
-            shift_alt_mod,
-            Modifiers {
-                shift: true,
-                alt: true,
-                ..Default::default()
-            },
-        ));
-    }
-    keymap
-}
-
-const NO_MOD: u32 = 0;
-const CMD_MOD: u32 = 1;
-const SHIFT_MOD: u32 = 2;
-const OPTION_MOD: u32 = 8;
 
 // pub fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
 //     // Values from: https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h#L126
