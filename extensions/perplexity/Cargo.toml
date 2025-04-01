@@ -15,4 +15,3 @@ workspace = true
 [dependencies]
 serde = "1"
 zed_extension_api = { path = "../../crates/extension_api" }
-workspace-hack.workspace = true

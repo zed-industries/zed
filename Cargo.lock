@@ -9898,7 +9898,6 @@ name = "perplexity"
 version = "0.1.0"
 dependencies = [
  "serde",
- "workspace-hack",
  "zed_extension_api 0.4.0",
 ]
 
@@ -13084,7 +13083,6 @@ dependencies = [
 name = "slash_commands_example"
 version = "0.1.0"
 dependencies = [
- "workspace-hack",
  "zed_extension_api 0.1.0",
 ]
 
@@ -17501,6 +17499,7 @@ dependencies = [
  "crc32fast",
  "crossbeam-utils",
  "crypto-common",
+ "deranged",
  "digest",
  "either",
  "euclid",
@@ -17601,6 +17600,8 @@ dependencies = [
  "syn 1.0.109",
  "syn 2.0.100",
  "thiserror 2.0.12",
+ "time",
+ "time-macros",
  "tokio",
  "tokio-rustls 0.24.1",
  "tokio-rustls 0.26.2",
@@ -18090,7 +18091,6 @@ dependencies = [
 name = "zed_emmet"
 version = "0.0.3"
 dependencies = [
- "workspace-hack",
  "zed_extension_api 0.1.0",
 ]
 
@@ -18112,14 +18112,12 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen 0.41.0",
- "workspace-hack",
 ]
 
 [[package]]
 name = "zed_glsl"
 version = "0.1.0"
 dependencies = [
- "workspace-hack",
  "zed_extension_api 0.1.0",
 ]
 
@@ -18127,7 +18125,6 @@ dependencies = [
 name = "zed_html"
 version = "0.2.0"
 dependencies = [
- "workspace-hack",
  "zed_extension_api 0.1.0",
 ]
 
@@ -18146,7 +18143,6 @@ dependencies = [
 name = "zed_proto"
 version = "0.2.2"
 dependencies = [
- "workspace-hack",
  "zed_extension_api 0.1.0",
 ]
 
@@ -18154,7 +18150,6 @@ dependencies = [
 name = "zed_ruff"
 version = "0.1.0"
 dependencies = [
- "workspace-hack",
  "zed_extension_api 0.1.0",
 ]
 
@@ -18163,7 +18158,6 @@ name = "zed_snippets"
 version = "0.0.5"
 dependencies = [
  "serde_json",
- "workspace-hack",
  "zed_extension_api 0.1.0",
 ]
 
@@ -18171,7 +18165,6 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "workspace-hack",
  "zed_extension_api 0.4.0",
 ]
 
@@ -18179,7 +18172,6 @@ dependencies = [
 name = "zed_toml"
 version = "0.1.3"
 dependencies = [
- "workspace-hack",
  "zed_extension_api 0.1.0",
 ]
 

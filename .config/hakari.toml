@@ -20,15 +20,20 @@ platforms = [
 ]
 
 [final-excludes]
-third-party = [
-{ name = "time" },
-]
-
-[traversal-excludes]
 workspace-members = [
-    # "remote_server"
-]
-third-party = [
-    { name = "time" },
-    # { name = "aws-lc-sys" },
+    # "crates/extension_api",
+    # "extensions/test-extension"
+    "zed_extension_api",
+
+    # exclude all extensions
+    "zed_emmet",
+    "zed_glsl",
+    "zed_html",
+    "perplexity",
+    "zed_proto",
+    "zed_ruff",
+    "slash_commands_example",
+    "zed_snippets",
+    "zed_test_extension",
+    "zed_toml",
 ]
