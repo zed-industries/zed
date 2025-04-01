@@ -9220,6 +9220,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
         completion_text: &'static str,
         expected_with_insertion_mode: String,
         expected_with_replace_mode: String,
+        expected_with_auto_mode: String,
     }
 
     let runs = [
@@ -9230,22 +9231,43 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             completion_text: "editor",
             expected_with_insertion_mode: "before editorˇ after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
+            expected_with_auto_mode: "before editorˇ after".into(),
         },
         Run {
-            run_description: "End of word matches completion text",
-            initial_state: "before torˇ after".into(),
-            buffer_marked_text: "before <tor|> after".into(),
-            completion_text: "editor",
-            expected_with_insertion_mode: "before editorˇ after".into(),
-            expected_with_replace_mode: "before editorˇ after".into(),
-        },
-        Run {
-            run_description: "Accept at middle of the word",
+            run_description: "Accept same text at the middle of the word",
             initial_state: "before ediˇtor after".into(),
             buffer_marked_text: "before <edi|tor> after".into(),
             completion_text: "editor",
             expected_with_insertion_mode: "before editorˇtor after".into(),
             expected_with_replace_mode: "before ediˇtor after".into(),
+            expected_with_auto_mode: "before ediˇtor after".into(),
+        },
+        Run {
+            run_description: "End of word matches completion text -- cursor at end",
+            initial_state: "before torˇ after".into(),
+            buffer_marked_text: "before <tor|> after".into(),
+            completion_text: "editor",
+            expected_with_insertion_mode: "before editorˇ after".into(),
+            expected_with_replace_mode: "before editorˇ after".into(),
+            expected_with_auto_mode: "before editorˇ after".into(),
+        },
+        Run {
+            run_description: "End of word matches completion text -- cursor at start",
+            initial_state: "before ˇtor after".into(),
+            buffer_marked_text: "before <|tor> after".into(),
+            completion_text: "editor",
+            expected_with_insertion_mode: "before editorˇtor after".into(),
+            expected_with_replace_mode: "before editorˇ after".into(),
+            expected_with_auto_mode: "before editorˇ after".into(),
+        },
+        Run {
+            run_description: "Prepend text containing whitespace",
+            initial_state: "pˇfield: bool".into(),
+            buffer_marked_text: "<p|field>: bool".into(),
+            completion_text: "pub ",
+            expected_with_insertion_mode: "pub ˇfield: bool".into(),
+            expected_with_replace_mode: "pub ˇ: bool".into(),
+            expected_with_auto_mode: "pub ˇfield: bool".into(),
         },
         Run {
             run_description: "Add element to start of list",
@@ -9254,22 +9276,43 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             completion_text: "element_1",
             expected_with_insertion_mode: "[element_1ˇelement_2]".into(),
             expected_with_replace_mode: "[element_1ˇ]".into(),
+            expected_with_auto_mode: "[element_1ˇelement_2]".into(),
         },
         Run {
-            run_description: "Add element to start of list - shorter range",
+            run_description: "Add element to start of list - first and second elements are equal",
+            initial_state: "[elˇelement]".into(),
+            buffer_marked_text: "[<el|element>]".into(),
+            completion_text: "element",
+            expected_with_insertion_mode: "[elementˇelement]".into(),
+            expected_with_replace_mode: "[elˇement]".into(),
+            expected_with_auto_mode: "[elˇement]".into(),
+        },
+        Run {
+            run_description: "Add element to start of list - LSP server gave a shorter range",
             initial_state: "[element_ˇelement_2]".into(),
             buffer_marked_text: "[e<lement_|element>_2]".into(),
             completion_text: "element_1",
             expected_with_insertion_mode: "[eelement_1ˇelement_2]".into(),
             expected_with_replace_mode: "[eelement_1ˇ_2]".into(),
+            expected_with_auto_mode: "[eelement_1ˇelement_2]".into(),
         },
         Run {
-            run_description: "Prepend text with whitespace",
-            initial_state: "pˇfield: bool,".into(),
-            buffer_marked_text: "<p|field>: bool,".into(),
-            completion_text: "pub ",
-            expected_with_insertion_mode: "pub ˇfield: bool,".into(),
-            expected_with_replace_mode: "pub ˇ: bool,".into(),
+            run_description: "Ends with matching suffix",
+            initial_state: "SubˇError".into(),
+            buffer_marked_text: "<Sub|Error>".into(),
+            completion_text: "SubscriptionError",
+            expected_with_insertion_mode: "SubscriptionErrorˇError".into(),
+            expected_with_replace_mode: "SubscriptionErrorˇ".into(),
+            expected_with_auto_mode: "SubscriptionErrorˇ".into(),
+        },
+        Run {
+            run_description: "Suffix is a subsequence -- contiguous",
+            initial_state: "SubˇErr".into(),
+            buffer_marked_text: "<Sub|Err>".into(),
+            completion_text: "SubscriptionError",
+            expected_with_insertion_mode: "SubscriptionErrorˇErr".into(),
+            expected_with_replace_mode: "SubscriptionErrorˇ".into(),
+            expected_with_auto_mode: "SubscriptionErrorˇErr".into(),
         },
     ];
 
@@ -9277,6 +9320,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
         let run_variations = [
             (CompletionMode::Insert, run.expected_with_insertion_mode),
             (CompletionMode::Replace, run.expected_with_replace_mode),
+            (CompletionMode::Auto, run.expected_with_auto_mode),
         ];
 
         for (completion_mode, expected_text) in run_variations {
@@ -18694,8 +18738,8 @@ pub fn handle_completion_request_with_insert_and_replace(
             async move {
                 assert_eq!(params.text_document_position.text_document.uri, url.clone());
                 assert_eq!(
-                    params.text_document_position.position,
-                    complete_from_position
+                    params.text_document_position.position, complete_from_position,
+                    "marker `|` position doesn't match",
                 );
                 Ok(Some(lsp::CompletionResponse::Array(
                     completions
