@@ -1,3 +1,5 @@
+use std::f32::consts::PI;
+
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ManagedView,
@@ -16,7 +18,6 @@ use workspace::{ModalView, Workspace};
 pub(super) struct NewSessionModal {
     workspace: WeakEntity<Workspace>,
     mode: NewSessionMode,
-    focus_handle: FocusHandle,
 }
 
 impl NewSessionModal {
@@ -24,7 +25,6 @@ impl NewSessionModal {
         Self {
             workspace: workspace.clone(),
             mode: NewSessionMode::launch(workspace, window, cx),
-            focus_handle: cx.focus_handle(),
         }
     }
 }
@@ -47,11 +47,23 @@ impl LaunchMode {
         cwd.update(cx, |this, cx| {
             this.set_placeholder_text("Working Directory", cx);
         });
-        cx.new(move |_| Self {
+        cx.new(|cx| Self {
             program,
             cwd,
             debugger: None,
             workspace,
+        })
+    }
+}
+
+struct AttachMode {
+    focus_handle: FocusHandle,
+}
+
+impl AttachMode {
+    fn new(cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| Self {
+            focus_handle: cx.focus_handle(),
         })
     }
 }
@@ -63,6 +75,7 @@ impl Render for LaunchMode {
         v_flex()
             .w_full()
             .gap_2()
+            .track_focus(&self.program.focus_handle(cx))
             .child(render_editor(&self.program, cx))
             .child(render_editor(&self.cwd, cx))
             .child(
@@ -114,7 +127,16 @@ impl Render for LaunchMode {
 #[derive(Clone)]
 enum NewSessionMode {
     Launch(Entity<LaunchMode>),
-    Attach(),
+    Attach(Entity<AttachMode>),
+}
+
+impl Focusable for NewSessionMode {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match &self {
+            NewSessionMode::Launch(entity) => entity.read(cx).program.focus_handle(cx),
+            NewSessionMode::Attach(entity) => entity.read(cx).focus_handle.clone(),
+        }
+    }
 }
 
 impl RenderOnce for NewSessionMode {
@@ -122,12 +144,15 @@ impl RenderOnce for NewSessionMode {
         match self {
             NewSessionMode::Launch(entity) => div()
                 .child(entity.update(cx, |this, cx| this.render(window, cx).into_any_element())),
-            NewSessionMode::Attach() => div(),
+            NewSessionMode::Attach(entity) => div(),
         }
     }
 }
 
 impl NewSessionMode {
+    fn attach(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Self {
+        Self::Attach(AttachMode::new(cx))
+    }
     fn launch(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Self {
         Self::Launch(LaunchMode::new(workspace, window, cx))
     }
@@ -165,7 +190,9 @@ impl Render for NewSessionModal {
             .size_full()
             .elevation_3(cx)
             .bg(cx.theme().colors().elevated_surface_background)
-            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
+                cx.emit(DismissEvent);
+            }))
             .child(
                 h_flex()
                     .w_full()
@@ -186,6 +213,7 @@ impl Render for NewSessionModal {
                                             window,
                                             cx,
                                         );
+                                        this.mode.focus_handle(cx).focus(window);
                                         cx.notify();
                                     }))
                                     .first(),
@@ -197,10 +225,12 @@ impl Render for NewSessionModal {
                         ToggleButton::new("debugger-session-ui-attach-button", "Attach")
                             .size(ButtonSize::Large)
                             .width(relative(0.5))
-                            .toggle_state(matches!(self.mode, NewSessionMode::Attach()))
+                            .toggle_state(matches!(self.mode, NewSessionMode::Attach(_)))
                             .style(ui::ButtonStyle::Filled)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.mode = NewSessionMode::Attach();
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.mode =
+                                    NewSessionMode::attach(this.workspace.clone(), window, cx);
+                                this.mode.focus_handle(cx).focus(window);
                                 cx.notify();
                             }))
                             .last(),
@@ -213,8 +243,8 @@ impl Render for NewSessionModal {
 
 impl EventEmitter<DismissEvent> for NewSessionModal {}
 impl Focusable for NewSessionModal {
-    fn focus_handle(&self, _: &ui::App) -> gpui::FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &ui::App) -> gpui::FocusHandle {
+        self.mode.focus_handle(cx)
     }
 }
 
