@@ -38,7 +38,7 @@ use std::{
     iter::{self, FromIterator},
     mem,
     ops::{Range, RangeBounds, Sub},
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     str,
     sync::Arc,
@@ -167,13 +167,21 @@ impl MultiBufferDiffHunk {
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
-    namespace: &'static str,
+    namespace: u32,
     path: Arc<Path>,
 }
 
 impl PathKey {
-    pub fn namespaced(namespace: &'static str, path: Arc<Path>) -> Self {
+    pub fn namespaced(namespace: u32, path: Arc<Path>) -> Self {
         Self { namespace, path }
+    }
+
+    pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
+        if let Some(file) = buffer.read(cx).file() {
+            Self::namespaced(1, Arc::from(file.full_path(cx)))
+        } else {
+            Self::namespaced(0, Arc::from(PathBuf::from(buffer.entity_id().to_string())))
+        }
     }
 
     pub fn path(&self) -> &Arc<Path> {
@@ -1448,45 +1456,6 @@ impl MultiBuffer {
         self.insert_excerpts_after(ExcerptId::max(), buffer, ranges, cx)
     }
 
-    pub fn push_excerpts_with_context_lines<O>(
-        &mut self,
-        buffer: Entity<Buffer>,
-        ranges: Vec<Range<O>>,
-        context_line_count: u32,
-        cx: &mut Context<Self>,
-    ) -> Vec<Range<Anchor>>
-    where
-        O: text::ToPoint + text::ToOffset,
-    {
-        let buffer_id = buffer.read(cx).remote_id();
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let (excerpt_ranges, range_counts) =
-            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
-
-        let excerpt_ids = self.push_excerpts(buffer, excerpt_ranges, cx);
-
-        let mut anchor_ranges = Vec::new();
-        let mut ranges = ranges.into_iter();
-        for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.into_iter()) {
-            anchor_ranges.extend(ranges.by_ref().take(range_count).map(|range| {
-                let start = Anchor {
-                    buffer_id: Some(buffer_id),
-                    excerpt_id,
-                    text_anchor: buffer_snapshot.anchor_after(range.start),
-                    diff_base_anchor: None,
-                };
-                let end = Anchor {
-                    buffer_id: Some(buffer_id),
-                    excerpt_id,
-                    text_anchor: buffer_snapshot.anchor_after(range.end),
-                    diff_base_anchor: None,
-                };
-                start..end
-            }))
-        }
-        anchor_ranges
-    }
-
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
         let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
         let snapshot = self.snapshot(cx);
@@ -1589,17 +1558,16 @@ impl MultiBuffer {
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,
-        ranges: Vec<Range<Point>>,
+        ranges: impl IntoIterator<Item = Range<Point>>,
         context_line_count: u32,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) -> (Vec<Range<Anchor>>, bool) {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         let excerpt_ranges = ranges.into_iter().map(|range| {
-            let start = range
-                .start
-                .saturating_sub(Point::new(context_line_count, 0));
-            let end_row = (range.end.row + 2).min(buffer_snapshot.max_point().row);
+            let start_row = range.start.row.saturating_sub(context_line_count);
+            let start = Point::new(start_row, 0);
+            let end_row = (range.end.row + context_line_count).min(buffer_snapshot.max_point().row);
             let end = Point::new(end_row, buffer_snapshot.line_len(end_row));
             ExcerptRange {
                 context: start..end,
@@ -1607,9 +1575,7 @@ impl MultiBuffer {
             }
         });
 
-        let (_, is_new) =
-            self.set_excerpt_ranges_for_path(path, buffer, excerpt_ranges.collect(), cx);
-        is_new
+        self.set_excerpt_ranges_for_path(path, buffer, excerpt_ranges.collect(), cx)
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.

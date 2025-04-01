@@ -61,9 +61,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: &'static str = "0";
-const TRACKED_NAMESPACE: &'static str = "1";
-const NEW_NAMESPACE: &'static str = "2";
+const CONFLICT_NAMESPACE: u32 = 0;
+const TRACKED_NAMESPACE: u32 = 1;
+const NEW_NAMESPACE: u32 = 2;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -404,7 +404,7 @@ impl ProjectDiff {
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
-            let is_newly_added = multibuffer.set_excerpts_for_path(
+            let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
                 diff_hunk_ranges,
