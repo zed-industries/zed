@@ -1273,16 +1273,19 @@ fn wrapping_right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) 
     point
 }
 
-fn wrapping_right_single(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let max_column = map.line_len(point.row()).saturating_sub(1);
-    if point.column() < max_column {
-        *point.column_mut() += 1;
-        point = map.clip_point(point, Bias::Right);
-    } else if point.row() < map.max_point().row() {
-        *point.row_mut() += 1;
-        *point.column_mut() = 0;
+fn wrapping_right_single(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let mut next_point = point;
+    *next_point.column_mut() += 1;
+    next_point = map.clip_point(next_point, Bias::Right);
+    if next_point == point {
+        if next_point.row() == map.max_point().row() {
+            next_point
+        } else {
+            DisplayPoint::new(next_point.row().next_row(), 0)
+        }
+    } else {
+        next_point
     }
-    point
 }
 
 pub(crate) fn start_of_relative_buffer_row(
@@ -3562,5 +3565,33 @@ mod test {
         cx.set_shared_state("ˇπππππ").await;
         cx.simulate_shared_keystrokes("3 space").await;
         cx.shared_state().await.assert_eq("πππˇππ");
+    }
+
+    #[gpui::test]
+    async fn test_space_non_ascii_eol(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ππππˇπ
+            πanotherline"})
+            .await;
+        cx.simulate_shared_keystrokes("4 space").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            πππππ
+            πanˇotherline"});
+    }
+
+    #[gpui::test]
+    async fn test_backspace_non_ascii_bol(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+                        ππππ
+                        πanˇotherline"})
+            .await;
+        cx.simulate_shared_keystrokes("4 backspace").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                        πππˇπ
+                        πanotherline"});
     }
 }

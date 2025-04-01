@@ -189,31 +189,22 @@ impl Tool for FindReplaceFileTool {
             let result = cx
                 .background_spawn(async move {
                     // Try to match exactly
-                    replace_exact(&input.find, &input.replace, &snapshot)
+                    let diff = replace_exact(&input.find, &input.replace, &snapshot)
                     .await
                     // If that fails, try being flexible about indentation
-                    .or_else(|| replace_with_flexible_indent(&input.find, &input.replace, &snapshot))
+                    .or_else(|| replace_with_flexible_indent(&input.find, &input.replace, &snapshot))?;
+
+                    if diff.edits.is_empty() {
+                        return None;
+                    }
+
+                    let old_text = snapshot.text();
+
+                    Some((old_text, diff))
                 })
                 .await;
 
-            if let Some(diff) = result {
-                let edit_ids = buffer.update(cx, |buffer, cx| {
-                    buffer.finalize_last_transaction();
-                    buffer.apply_diff(diff, false, cx);
-                    let transaction = buffer.finalize_last_transaction();
-                    transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
-                })?;
-
-                action_log.update(cx, |log, cx| {
-                    log.buffer_edited(buffer.clone(), edit_ids, cx)
-                })?;
-
-                project.update(cx, |project, cx| {
-                    project.save_buffer(buffer, cx)
-                })?.await?;
-
-                Ok(format!("Edited {}", input.path.display()))
-            } else {
+            let Some((old_text, diff)) = result else {
                 let err = buffer.read_with(cx, |buffer, _cx| {
                     let file_exists = buffer
                         .file()
@@ -231,8 +222,33 @@ impl Tool for FindReplaceFileTool {
                     }
                 })?;
 
-                Err(err)
-            }
+                return Err(err)
+            };
+
+            let (edit_ids, snapshot) = buffer.update(cx, |buffer, cx| {
+                buffer.finalize_last_transaction();
+                buffer.apply_diff(diff, false, cx);
+                let transaction = buffer.finalize_last_transaction();
+                let edit_ids = transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone());
+
+                (edit_ids, buffer.snapshot())
+            })?;
+
+            action_log.update(cx, |log, cx| {
+                log.buffer_edited(buffer.clone(), edit_ids, cx)
+            })?;
+
+            project.update(cx, |project, cx| {
+                project.save_buffer(buffer, cx)
+            })?.await?;
+
+            let diff_str = cx.background_spawn(async move {
+                let new_text = snapshot.text();
+                language::unified_diff(&old_text, &new_text)
+            }).await;
+
+
+            Ok(format!("Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str))
         })
     }
 }

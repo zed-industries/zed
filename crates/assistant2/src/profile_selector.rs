@@ -4,9 +4,10 @@ use assistant_settings::{AgentProfile, AssistantSettings};
 use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
 use indexmap::IndexMap;
+use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use ui::{
-    ButtonLike, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle,
+    ButtonLike, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip,
     prelude::*,
 };
 use util::ResultExt as _;
@@ -127,6 +128,11 @@ impl Render for ProfileSelector {
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let supports_tools = model_registry
+            .active_model()
+            .map_or(false, |model| model.supports_tools());
+
         let icon = match profile_id.as_ref() {
             "write" => IconName::Pencil,
             "ask" => IconName::MessageBubbles,
@@ -139,7 +145,7 @@ impl Render for ProfileSelector {
             .menu(move |window, cx| {
                 Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
             })
-            .trigger(
+            .trigger(if supports_tools {
                 ButtonLike::new("profile-selector-button").child(
                     h_flex()
                         .gap_1()
@@ -164,8 +170,19 @@ impl Render for ProfileSelector {
                             )
                             .map(|kb| kb.size(rems_from_px(10.)))
                         })),
-                ),
-            )
+                )
+            } else {
+                ButtonLike::new("tools-not-supported-button")
+                    .disabled(true)
+                    .child(
+                        h_flex().gap_1().child(
+                            Label::new("No Tools")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .tooltip(Tooltip::text("The current model does not support tools."))
+            })
             .anchor(gpui::Corner::BottomLeft)
             .with_handle(self.menu_handle.clone())
     }

@@ -3364,8 +3364,8 @@ message GitCommitDetails {
     string sha = 1;
     string message = 2;
     int64 commit_timestamp = 3;
-    string committer_email = 4;
-    string committer_name = 5;
+    string author_email = 4;
+    string author_name = 5;
 }
 
 message LoadCommitDiff {

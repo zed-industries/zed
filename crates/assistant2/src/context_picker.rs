@@ -16,7 +16,7 @@ use gpui::{
     App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
 };
 use multi_buffer::MultiBufferRow;
-use project::ProjectPath;
+use project::{Entry, ProjectPath};
 use symbol_context_picker::SymbolContextPicker;
 use thread_context_picker::{ThreadContextEntry, render_thread_context_entry};
 use ui::{
@@ -30,6 +30,7 @@ use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
 use crate::context_store::ContextStore;
+use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
 
 #[derive(Debug, Clone, Copy)]
@@ -568,6 +569,7 @@ pub(crate) fn insert_crease_for_mention(
             return;
         };
 
+        let start = start.bias_right(&snapshot);
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
         let placeholder = FoldPlaceholder {
@@ -675,5 +677,79 @@ fn fold_toggle(
             .toggle_state(is_folded)
             .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
             .into_any_element()
+    }
+}
+
+pub enum MentionLink {
+    File(ProjectPath, Entry),
+    Symbol(ProjectPath, String),
+    Thread(ThreadId),
+}
+
+impl MentionLink {
+    pub fn for_file(file_name: &str, full_path: &str) -> String {
+        format!("[@{}](file:{})", file_name, full_path)
+    }
+
+    pub fn for_symbol(symbol_name: &str, full_path: &str) -> String {
+        format!("[@{}](symbol:{}:{})", symbol_name, full_path, symbol_name)
+    }
+
+    pub fn for_fetch(url: &str) -> String {
+        format!("[@{}]({})", url, url)
+    }
+
+    pub fn for_thread(thread: &ThreadContextEntry) -> String {
+        format!("[@{}](thread:{})", thread.summary, thread.id)
+    }
+
+    pub fn try_parse(link: &str, workspace: &Entity<Workspace>, cx: &App) -> Option<Self> {
+        fn extract_project_path_from_link(
+            path: &str,
+            workspace: &Entity<Workspace>,
+            cx: &App,
+        ) -> Option<ProjectPath> {
+            let path = PathBuf::from(path);
+            let worktree_name = path.iter().next()?;
+            let path: PathBuf = path.iter().skip(1).collect();
+            let worktree_id = workspace
+                .read(cx)
+                .visible_worktrees(cx)
+                .find(|worktree| worktree.read(cx).root_name() == worktree_name)
+                .map(|worktree| worktree.read(cx).id())?;
+            Some(ProjectPath {
+                worktree_id,
+                path: path.into(),
+            })
+        }
+
+        let (prefix, link, target) = {
+            let mut parts = link.splitn(3, ':');
+            let prefix = parts.next();
+            let link = parts.next();
+            let target = parts.next();
+            (prefix, link, target)
+        };
+
+        match (prefix, link, target) {
+            (Some("file"), Some(path), _) => {
+                let project_path = extract_project_path_from_link(path, workspace, cx)?;
+                let entry = workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .entry_for_path(&project_path, cx)?;
+                Some(MentionLink::File(project_path, entry))
+            }
+            (Some("symbol"), Some(path), Some(symbol_name)) => {
+                let project_path = extract_project_path_from_link(path, workspace, cx)?;
+                Some(MentionLink::Symbol(project_path, symbol_name.to_string()))
+            }
+            (Some("thread"), Some(thread_id), _) => {
+                let thread_id = ThreadId::from(thread_id);
+                Some(MentionLink::Thread(thread_id))
+            }
+            _ => None,
+        }
     }
 }

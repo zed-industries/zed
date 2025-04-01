@@ -24,7 +24,9 @@ use crate::thread_store::ThreadStore;
 
 use super::fetch_context_picker::fetch_url_content;
 use super::thread_context_picker::ThreadContextEntry;
-use super::{ContextPickerMode, recent_context_picker_entries, supported_context_picker_modes};
+use super::{
+    ContextPickerMode, MentionLink, recent_context_picker_entries, supported_context_picker_modes,
+};
 
 pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
@@ -154,7 +156,7 @@ impl ContextPickerCompletionProvider {
         } else {
             IconName::MessageBubbles
         };
-        let new_text = format!("@thread {}", thread_entry.summary);
+        let new_text = MentionLink::for_thread(&thread_entry);
         let new_text_len = new_text.len();
         Completion {
             old_range: source_range.clone(),
@@ -198,7 +200,7 @@ impl ContextPickerCompletionProvider {
         context_store: Entity<ContextStore>,
         http_client: Arc<HttpClientWithUrl>,
     ) -> Completion {
-        let new_text = format!("@fetch {}", url_to_fetch);
+        let new_text = MentionLink::for_fetch(&url_to_fetch);
         let new_text_len = new_text.len();
         Completion {
             old_range: source_range.clone(),
@@ -279,7 +281,7 @@ impl ContextPickerCompletionProvider {
             crease_icon_path.clone()
         };
 
-        let new_text = format!("@file {}", full_path);
+        let new_text = MentionLink::for_file(&file_name, &full_path);
         let new_text_len = new_text.len();
         Completion {
             old_range: source_range.clone(),
@@ -326,17 +328,22 @@ impl ContextPickerCompletionProvider {
             .read(cx)
             .root_name();
 
-        let (file_name, _) = super::file_context_picker::extract_file_name_and_directory(
+        let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
             &symbol.path.path,
             path_prefix,
         );
+        let full_path = if let Some(directory) = directory {
+            format!("{}{}", directory, file_name)
+        } else {
+            file_name.to_string()
+        };
 
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
         let mut label = CodeLabel::plain(symbol.name.clone(), None);
         label.push_str(" ", None);
         label.push_str(&file_name, comment_id);
 
-        let new_text = format!("@symbol {}:{}", file_name, symbol.name);
+        let new_text = MentionLink::for_symbol(&symbol.name, &full_path);
         let new_text_len = new_text.len();
         Some(Completion {
             old_range: source_range.clone(),
@@ -400,7 +407,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         };
 
         let snapshot = buffer.read(cx).snapshot();
-        let source_range = snapshot.anchor_after(state.source_range.start)
+        let source_range = snapshot.anchor_before(state.source_range.start)
             ..snapshot.anchor_before(state.source_range.end);
 
         let thread_store = self.thread_store.clone();
@@ -646,6 +653,15 @@ impl MentionCompletion {
         if last_mention_start >= line.len() {
             return Some(Self::default());
         }
+        if last_mention_start > 0
+            && line
+                .chars()
+                .nth(last_mention_start - 1)
+                .map_or(false, |c| !c.is_whitespace())
+        {
+            return None;
+        }
+
         let rest_of_line = &line[last_mention_start + 1..];
 
         let mut mode = None;
@@ -746,6 +762,8 @@ mod tests {
                 argument: Some("main.rs".to_string()),
             })
         );
+
+        assert_eq!(MentionCompletion::try_parse("test@", 0), None);
     }
 
     #[gpui::test]
@@ -914,44 +932,50 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt",);
+            assert_eq!(editor.text(cx), "Lorem [@one.txt](file:dir/a/one.txt)",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 25)]
+                vec![Point::new(0, 6)..Point::new(0, 36)]
             );
         });
 
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt ",);
+            assert_eq!(editor.text(cx), "Lorem [@one.txt](file:dir/a/one.txt) ",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 25)]
+                vec![Point::new(0, 6)..Point::new(0, 36)]
             );
         });
 
         cx.simulate_input("Ipsum ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt Ipsum ",);
+            assert_eq!(
+                editor.text(cx),
+                "Lorem [@one.txt](file:dir/a/one.txt) Ipsum ",
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 25)]
+                vec![Point::new(0, 6)..Point::new(0, 36)]
             );
         });
 
         cx.simulate_input("@file ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt Ipsum @file ",);
+            assert_eq!(
+                editor.text(cx),
+                "Lorem [@one.txt](file:dir/a/one.txt) Ipsum @file ",
+            );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 25)]
+                vec![Point::new(0, 6)..Point::new(0, 36)]
             );
         });
 
@@ -964,14 +988,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt"
+                "Lorem [@one.txt](file:dir/a/one.txt) Ipsum [@seven.txt](file:dir/b/seven.txt)"
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 25),
-                    Point::new(0, 32)..Point::new(0, 53)
+                    Point::new(0, 6)..Point::new(0, 36),
+                    Point::new(0, 43)..Point::new(0, 77)
                 ]
             );
         });
@@ -981,14 +1005,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt\n@"
+                "Lorem [@one.txt](file:dir/a/one.txt) Ipsum [@seven.txt](file:dir/b/seven.txt)\n@"
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 25),
-                    Point::new(0, 32)..Point::new(0, 53)
+                    Point::new(0, 6)..Point::new(0, 36),
+                    Point::new(0, 43)..Point::new(0, 77)
                 ]
             );
         });
@@ -1002,15 +1026,15 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt\n@file dir/b/six.txt"
+                "Lorem [@one.txt](file:dir/a/one.txt) Ipsum [@seven.txt](file:dir/b/seven.txt)\n[@six.txt](file:dir/b/six.txt)"
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 25),
-                    Point::new(0, 32)..Point::new(0, 53),
-                    Point::new(1, 0)..Point::new(1, 19)
+                    Point::new(0, 6)..Point::new(0, 36),
+                    Point::new(0, 43)..Point::new(0, 77),
+                    Point::new(1, 0)..Point::new(1, 30)
                 ]
             );
         });
