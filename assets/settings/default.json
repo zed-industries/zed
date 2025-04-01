@@ -1219,9 +1219,7 @@
     // 4. "replace_suffix"
     //   Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
     //   `"insert"` otherwise.
-    //
-    // Default: replace
-    "completion_mode": "replace"
+    "completion_mode": "replace_suffix"
   },
   // Different settings for specific languages.
   "languages": {
