@@ -2339,6 +2339,10 @@ impl Editor {
             None => {}
         }
 
+        if self.signature_help_state.has_multiple_signatures() {
+            key_context.add("can_scroll_signature_help");
+        }
+
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
         if !self.focus_handle(cx).contains_focused(window, cx)
             || (self.is_focused(window) || self.mouse_menu_is_focused(window, cx))
@@ -12244,6 +12248,40 @@ impl Editor {
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
             context_menu.select_last(self.completion_provider.as_deref(), window, cx);
+        }
+    }
+
+    pub fn signature_help_prev(
+        &mut self,
+        _: &SignatureHelpPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(popover) = self.signature_help_state.popover_mut() {
+            let mut current_signature = popover.current_signature.borrow_mut();
+            if *current_signature + 1 == popover.signature.len() {
+                *current_signature = 0;
+            } else {
+                *current_signature += 1;
+            }
+            cx.notify();
+        }
+    }
+
+    pub fn signature_help_next(
+        &mut self,
+        _: &SignatureHelpNext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(popover) = self.signature_help_state.popover_mut() {
+            let mut current_signature = popover.current_signature.borrow_mut();
+            if *current_signature == 0 {
+                *current_signature = popover.signature.len() - 1;
+            } else {
+                *current_signature -= 1;
+            }
+            cx.notify();
         }
     }
 
