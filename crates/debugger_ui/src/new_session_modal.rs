@@ -160,6 +160,7 @@ impl NewSessionMode {
                                                 let modal = AttachModal::new(
                                                     project,
                                                     this.debug_definition.clone(),
+                                                    false,
                                                     window,
                                                     cx,
                                                 );
@@ -209,6 +210,7 @@ impl Focusable for NewSessionMode {
 impl RenderOnce for LaunchMode {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
+            .p_2()
             .w_full()
             .gap_2()
             .track_focus(&self.program.focus_handle(cx))
@@ -361,7 +363,7 @@ impl Render for NewSessionModal {
                     .border_color(cx.theme().colors().border_variant)
                     .border_b_1(),
             )
-            .child(v_flex().p_2().child(self.mode.clone().render(window, cx)))
+            .child(v_flex().child(self.mode.clone().render(window, cx)))
             .child(
                 h_flex()
                     .border_color(cx.theme().colors().border_variant)
