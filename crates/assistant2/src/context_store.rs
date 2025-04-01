@@ -633,19 +633,15 @@ fn collect_buffer_info_and_text(
 
 pub fn buffer_path_log_err(buffer: &Buffer, cx: &App) -> Option<Arc<Path>> {
     if let Some(file) = buffer.file() {
-        Some(file_path(file, cx))
+        let mut path = file.path().clone();
+        if path.as_os_str().is_empty() {
+            path = file.full_path(cx).into();
+        }
+        Some(path)
     } else {
         log::error!("Buffer that had a path unexpectedly no longer has a path.");
         None
     }
-}
-
-pub fn file_path(file: &Arc<dyn File>, cx: &App) -> Arc<Path> {
-    let mut path = file.path().clone();
-    if path.as_os_str().is_empty() {
-        path = file.full_path(cx).into();
-    }
-    return path;
 }
 
 fn to_fenced_codeblock(path: &Path, content: Rope) -> SharedString {
