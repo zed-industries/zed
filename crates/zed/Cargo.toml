@@ -16,10 +16,10 @@ path = "src/main.rs"
 
 [dependencies]
 activity_indicator.workspace = true
+agent.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
-assistant2.workspace = true
 assistant_context_editor.workspace = true
 assistant_settings.workspace = true
 assistant_tools.workspace = true
