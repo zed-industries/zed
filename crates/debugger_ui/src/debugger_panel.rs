@@ -595,7 +595,19 @@ impl DebugPanel {
                                 IconButton::new("debug-disable-all-breakpoints", IconName::BugOff)
                                     .icon_size(IconSize::XSmall)
                                     .shape(ui::IconButtonShape::Square)
-                                    .disabled(thread_status != ThreadStatus::Stopped),
+                                    .disabled(
+                                        thread_status == ThreadStatus::Exited
+                                            || thread_status == ThreadStatus::Ended,
+                                    )
+                                    .on_click(window.listener_for(
+                                        &running_session,
+                                        |this, _, _window, cx| {
+                                            this.toggle_ignore_breakpoints(cx);
+                                        },
+                                    ))
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::text("Disable all breakpoints")(window, cx)
+                                    }),
                             )
                             .child(Divider::vertical())
                             .child(
