@@ -184,7 +184,7 @@ impl_actions!(
     ]
 );
 
-pub fn vim_help() -> Cow<'static, str> {
+pub fn vim_docs() -> Cow<'static, str> {
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../docs/src/vim.md"
@@ -219,7 +219,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|_, _: &OpenVimHelp, _, cx| {
             cx.emit(workspace::Event::OpenBundledFile {
-                text: vim_help(),
+                text: vim_docs(),
                 title: "Vim Help",
                 language: "Markdown",
             });
