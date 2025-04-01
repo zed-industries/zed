@@ -51,12 +51,6 @@ impl Render for RunningState {
             .map(|thread_id| self.session.read(cx).thread_status(thread_id))
             .unwrap_or(ThreadStatus::Exited);
 
-        let selected_thread_name = threads
-            .iter()
-            .find(|(thread, _)| self.thread_id.map(|id| id.0) == Some(thread.id))
-            .map(|(thread, _)| thread.name.clone())
-            .unwrap_or("Threads".to_owned());
-
         self.variable_list.update(cx, |this, cx| {
             this.disabled(thread_status != ThreadStatus::Stopped, cx);
         });
@@ -246,48 +240,6 @@ impl Render for RunningState {
                                             move |window, cx| {
                                                 Tooltip::text("Ignore breakpoints")(window, cx)
                                             },
-                                        ),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .px_1()
-                                    .py_0p5()
-                                    .gap_2()
-                                    .w_3_4()
-                                    .justify_end()
-                                    .child(Label::new("Thread:"))
-                                    .child(
-                                        DropdownMenu::new(
-                                            ("thread-list", self.session_id.0),
-                                            selected_thread_name,
-                                            ContextMenu::build(
-                                                window,
-                                                cx,
-                                                move |mut this, _, _| {
-                                                    for (thread, _) in threads {
-                                                        let state = state.clone();
-                                                        let thread_id = thread.id;
-                                                        this = this.entry(
-                                                            thread.name,
-                                                            None,
-                                                            move |_, cx| {
-                                                                state.update(cx, |state, cx| {
-                                                                    state.select_thread(
-                                                                        ThreadId(thread_id),
-                                                                        cx,
-                                                                    );
-                                                                });
-                                                            },
-                                                        );
-                                                    }
-                                                    this
-                                                },
-                                            ),
-                                        )
-                                        .disabled(
-                                            has_no_threads
-                                                || thread_status != ThreadStatus::Stopped,
                                         ),
                                     ),
                             ),
@@ -583,7 +535,7 @@ impl RunningState {
         });
     }
 
-    pub fn step_in(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn step_in(&mut self, cx: &mut Context<Self>) {
         let Some(thread_id) = self.thread_id else {
             return;
         };
@@ -595,7 +547,7 @@ impl RunningState {
         });
     }
 
-    pub fn step_out(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn step_out(&mut self, cx: &mut Context<Self>) {
         let Some(thread_id) = self.thread_id else {
             return;
         };
@@ -607,7 +559,7 @@ impl RunningState {
         });
     }
 
-    pub fn step_back(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn step_back(&mut self, cx: &mut Context<Self>) {
         let Some(thread_id) = self.thread_id else {
             return;
         };
@@ -685,6 +637,36 @@ impl RunningState {
         self.session.update(cx, |session, cx| {
             session.toggle_ignore_breakpoints(cx).detach();
         });
+    }
+
+    pub(crate) fn thread_dropdown(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<'_, RunningState>,
+    ) -> DropdownMenu {
+        let state = cx.entity();
+        let threads = self.session.update(cx, |this, cx| this.threads(cx));
+        let selected_thread_name = threads
+            .iter()
+            .find(|(thread, _)| self.thread_id.map(|id| id.0) == Some(thread.id))
+            .map(|(thread, _)| thread.name.clone())
+            .unwrap_or("Threads".to_owned());
+        DropdownMenu::new(
+            ("thread-list", self.session_id.0),
+            selected_thread_name,
+            ContextMenu::build(window, cx, move |mut this, _, _| {
+                for (thread, _) in threads {
+                    let state = state.clone();
+                    let thread_id = thread.id;
+                    this = this.entry(thread.name, None, move |_, cx| {
+                        state.update(cx, |state, cx| {
+                            state.select_thread(ThreadId(thread_id), cx);
+                        });
+                    });
+                }
+                this
+            }),
+        )
     }
 }
 
