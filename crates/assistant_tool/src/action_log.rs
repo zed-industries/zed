@@ -195,7 +195,6 @@ impl ActionLog {
                 })??;
 
             let (new_base_text, new_base_text_rope, unreviewed_changes) = rebase.await;
-            dbg!(&new_base_text, &unreviewed_changes);
             let diff_snapshot = BufferDiff::update_diff(
                 diff.clone(),
                 buffer_snapshot.clone(),
