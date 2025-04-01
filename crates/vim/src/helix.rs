@@ -6,7 +6,7 @@ use language::{CharClassifier, CharKind};
 use crate::motion::MotionKind;
 use crate::{Vim, motion::Motion, state::Mode};
 
-actions!(vim, [HelixNormalAfter, HelixDelete]);
+actions!(vim, [HelixNormalAfter, HelixDelete, HelixYank]);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
@@ -261,23 +261,52 @@ impl Vim {
     pub fn helix_delete(&mut self, _: &HelixDelete, window: &mut Window, cx: &mut Context<Self>) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            // Fixup selections so they have helix's semantics.
-            // Specifically:
-            //  - Make sure that each cursor acts as a 1 character wide selection
-            editor.transact(window, cx, |editor, window, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.move_with(|map, selection| {
-                        if selection.is_empty() && !selection.reversed {
-                            selection.end = movement::right(map, selection.end);
-                        }
-                    });
-                });
-            });
-
+            fixup_selections(editor, window, cx);
             vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
             editor.insert("", window, cx);
         });
     }
+
+    pub fn helix_yank(&mut self, _: &HelixYank, window: &mut Window, cx: &mut Context<Self>) {
+        self.store_visual_marks(window, cx);
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            fixup_selections(editor, window, cx);
+            let motion_kind = if editor.selections.line_mode {
+                MotionKind::Linewise
+            } else {
+                MotionKind::Exclusive
+            };
+            vim.copy_ranges(
+                editor,
+                motion_kind,
+                true,
+                editor
+                    .selections
+                    .all_adjusted(cx)
+                    .iter()
+                    .map(|s| s.range())
+                    .collect(),
+                window,
+                cx,
+            );
+        });
+    }
+
+}
+
+/// Fixup selections so they have helix's semantics.
+/// Specifically:
+///  - Make sure that each cursor acts as a 1 character wide selection
+fn fixup_selections(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
+    editor.transact(window, cx, |editor, window, cx| {
+        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_with(|map, selection| {
+                if selection.is_empty() && !selection.reversed {
+                    selection.end = movement::right(map, selection.end);
+                }
+            });
+        });
+    });
 }
 
 #[cfg(test)]

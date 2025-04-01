@@ -341,6 +341,7 @@
       "b": "vim::PreviousWordStart",
       "x": "vim::CurrentLine",
       "X": "vim::CurrentLine",
+      "y": "vim::HelixYank",
 
       "h": "vim::Left",
       "j": "vim::Down",
