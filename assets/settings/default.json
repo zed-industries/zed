@@ -1212,11 +1212,13 @@
     // 1. "insert"
     //   Replaces text before the cursor, using the `insert` range described in the LSP specification.
     // 2. "replace"
-    //   Replaces the whole word, using the `replace` range described in the LSP specification.
-    // 3. "auto_similar"
-    //   Only replace the whole word if the text after cursor is a subsequence (fuzzy match) of the completion.
-    // 4. "auto_strict"
-    //   Only replace the whole word if the text after cursor is a suffix of the completion.
+    //   Replaces text before and after the cursor, using the `replace` range described in the LSP specification.
+    // 3. "replace_subsequence"
+    //   Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text,
+    //   and like `"insert"` otherwise.
+    // 4. "replace_suffix"
+    //   Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
+    //   `"insert"` otherwise.
     //
     // Default: replace
     "completion_mode": "replace"

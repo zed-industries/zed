@@ -331,7 +331,7 @@ pub struct CompletionSettings {
     pub lsp_fetch_timeout_ms: u64,
     /// Controls how the completions are inserted
     ///
-    /// Default: "replace"
+    /// Default: "replace_suffix"
     #[serde(default = "default_completion_mode")]
     pub completion_mode: CompletionMode,
 }
@@ -355,12 +355,14 @@ pub enum WordsCompletionMode {
 pub enum CompletionMode {
     /// Replaces text before the cursor, using the `insert` range described in the LSP specification.
     Insert,
-    /// Replaces the whole word, using the `replace` range described in the LSP specification.
+    /// Replaces text before and after the cursor, using the `replace` range described in the LSP specification.
     Replace,
-    /// Only replace the whole word if the text after cursor is a subsequence (fuzzy match) of the completion.
-    AutoSimilar,
-    /// Only replace the whole word if the text after cursor is a suffix of the completion.
-    AutoStrict,
+    /// Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text,
+    /// and like `"insert"` otherwise.
+    ReplaceSubsequence,
+    /// Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
+    /// `"insert"` otherwise.
+    ReplaceSuffix,
 }
 
 fn default_words_completion_mode() -> WordsCompletionMode {
