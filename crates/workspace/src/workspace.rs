@@ -988,10 +988,12 @@ impl Workspace {
         cx.subscribe_in(
             &project.read(cx).breakpoint_store(),
             window,
-            |workspace, _, evt, window, cx| {
-                if let BreakpointStoreEvent::BreakpointsUpdated(_, _) = evt {
+            |workspace, _, event, window, cx| match event {
+                BreakpointStoreEvent::BreakpointsUpdated(_, _)
+                | BreakpointStoreEvent::BreakpointsCleared(_) => {
                     workspace.serialize_workspace(window, cx);
                 }
+                BreakpointStoreEvent::ActiveDebugLineChanged => {}
             },
         )
         .detach();
