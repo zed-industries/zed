@@ -4,7 +4,7 @@ use collections::{BTreeMap, HashSet};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::{Buffer, BufferEvent, DiskState, Point};
-use std::{cmp, ops::Range};
+use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
 use util::RangeExt;
 
@@ -148,43 +148,46 @@ impl ActionLog {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         while let Some((author, buffer_snapshot)) = diff_update.next().await {
-            let (diff, base_text, language, language_registry) =
-                this.update(cx, |this, cx| {
+            let (rebase, diff, language, language_registry) =
+                this.read_with(cx, |this, cx| {
                     let tracked_buffer = this
                         .tracked_buffers
-                        .get_mut(&buffer)
+                        .get(&buffer)
                         .context("buffer not tracked")?;
 
-                    let edits = diff_snapshots(&tracked_buffer.snapshot, &buffer_snapshot);
-                    match author {
-                        ChangeAuthor::User => {
-                            tracked_buffer.unreviewed_changes = rebase_patch(
-                                &tracked_buffer.unreviewed_changes,
-                                edits,
-                                &mut tracked_buffer.base_text,
-                                buffer_snapshot.as_rope(),
-                            );
+                    let rebase = cx.background_spawn({
+                        let mut base_text = tracked_buffer.base_text.clone();
+                        let old_snapshot = tracked_buffer.snapshot.clone();
+                        let new_snapshot = buffer_snapshot.clone();
+                        let unreviewed_changes = tracked_buffer.unreviewed_changes.clone();
+                        async move {
+                            let edits = diff_snapshots(&old_snapshot, &new_snapshot);
+                            let unreviewed_changes = match author {
+                                ChangeAuthor::User => rebase_patch(
+                                    &unreviewed_changes,
+                                    edits,
+                                    &mut base_text,
+                                    new_snapshot.as_rope(),
+                                ),
+                                ChangeAuthor::Agent => unreviewed_changes.compose(edits),
+                            };
+                            (base_text, unreviewed_changes)
                         }
-                        ChangeAuthor::Agent => {
-                            tracked_buffer.unreviewed_changes =
-                                tracked_buffer.unreviewed_changes.compose(edits);
-                        }
-                    }
-                    tracked_buffer.snapshot = buffer_snapshot.clone();
+                    });
 
                     anyhow::Ok((
+                        rebase,
                         tracked_buffer.diff.clone(),
-                        tracked_buffer.base_text.clone(),
                         tracked_buffer.buffer.read(cx).language().cloned(),
                         tracked_buffer.buffer.read(cx).language_registry(),
                     ))
                 })??;
 
+            let (new_base_text, unreviewed_changes) = rebase.await;
             let diff_snapshot = BufferDiff::update_diff(
                 diff.clone(),
                 buffer_snapshot.clone(),
-                // todo!("use a rope here")
-                Some(std::sync::Arc::new(base_text.to_string())),
+                Some(Arc::new(new_base_text.to_string())),
                 true,
                 false,
                 language,
@@ -197,7 +200,17 @@ impl ActionLog {
                     diff.set_snapshot(diff_snapshot, &buffer_snapshot, None, cx)
                 })?;
             }
-            this.update(cx, |_this, cx| cx.notify())?;
+            this.update(cx, |this, cx| {
+                let tracked_buffer = this
+                    .tracked_buffers
+                    .get_mut(&buffer)
+                    .context("buffer not tracked")?;
+                tracked_buffer.base_text = new_base_text.clone();
+                tracked_buffer.snapshot = buffer_snapshot.clone();
+                tracked_buffer.unreviewed_changes = unreviewed_changes;
+                cx.notify();
+                anyhow::Ok(())
+            })??;
         }
 
         Ok(())
