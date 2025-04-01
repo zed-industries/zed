@@ -718,13 +718,14 @@ impl Panel for AssistantPanel {
 impl AssistantPanel {
     fn render_toolbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = self.thread.read(cx);
+        let is_empty = thread.is_empty();
 
         let thread_id = thread.thread().read(cx).id().clone();
         let focus_handle = self.focus_handle(cx);
 
         let title = match self.active_view {
             ActiveView::Thread => {
-                if thread.is_empty() {
+                if is_empty {
                     thread.summary_or_default(cx)
                 } else {
                     thread
@@ -824,13 +825,14 @@ impl AssistantPanel {
                                                     "New Prompt Editor",
                                                     NewPromptEditor.boxed_clone(),
                                                 )
-                                                // todo! only render this if thread isn't empty
-                                                .action(
-                                                    "Continue in New Thread",
-                                                    Box::new(NewThread {
-                                                        from_thread_id: Some(thread_id.clone()),
-                                                    }),
-                                                )
+                                                .when(!is_empty, |menu| {
+                                                    menu.action(
+                                                        "Continue in New Thread",
+                                                        Box::new(NewThread {
+                                                            from_thread_id: Some(thread_id.clone()),
+                                                        }),
+                                                    )
+                                                })
                                                 .separator()
                                                 .action("History", OpenHistory.boxed_clone())
                                                 .action("Settings", OpenConfiguration.boxed_clone())
