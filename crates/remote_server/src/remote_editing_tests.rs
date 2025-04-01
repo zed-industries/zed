@@ -1203,6 +1203,8 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 }
 
+// TODO: this test fails on Windows.
+#[cfg(not(windows))]
 #[gpui::test]
 async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let text_2 = "

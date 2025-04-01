@@ -8204,6 +8204,7 @@ fn git_commit(msg: &'static str, repo: &git2::Repository) {
     }
 }
 
+#[cfg(not(windows))]
 #[track_caller]
 fn git_cherry_pick(commit: &git2::Commit<'_>, repo: &git2::Repository) {
     repo.cherrypick(commit, None).expect("Failed to cherrypick");
@@ -8234,6 +8235,7 @@ fn git_reset(offset: usize, repo: &git2::Repository) {
         .expect("Could not reset");
 }
 
+#[cfg(not(windows))]
 #[track_caller]
 fn git_branch(name: &str, repo: &git2::Repository) {
     let head = repo
@@ -8244,12 +8246,14 @@ fn git_branch(name: &str, repo: &git2::Repository) {
     repo.branch(name, &head, false).expect("Failed to commit");
 }
 
+#[cfg(not(windows))]
 #[track_caller]
 fn git_checkout(name: &str, repo: &git2::Repository) {
     repo.set_head(name).expect("Failed to set head");
     repo.checkout_head(None).expect("Failed to check out head");
 }
 
+#[cfg(not(windows))]
 #[track_caller]
 fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Status> {
     repo.statuses(None)
