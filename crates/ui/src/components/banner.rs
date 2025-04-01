@@ -130,7 +130,7 @@ impl RenderOnce for Banner {
                 .child(content_area)
                 .child(action_slot);
         } else {
-            container = container.px_2().child(content_area);
+            container = container.px_2().child(div().w_full().child(content_area));
         }
 
         container

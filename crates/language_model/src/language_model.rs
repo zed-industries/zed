@@ -353,7 +353,10 @@ pub trait LanguageModelProvider: 'static {
 
 #[derive(PartialEq, Eq)]
 pub enum LanguageModelProviderTosView {
-    ThreadEmptyState,
+    /// When there are some past interactions in the Agent Panel.
+    ThreadtEmptyState,
+    /// When there are no past interactions in the Agent Panel.
+    ThreadFreshStart,
     PromptEditorPopup,
     Configuration,
 }
