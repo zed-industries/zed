@@ -336,7 +336,7 @@ fn new_update_task(
             log::error!("trying to update semantic tokens without visible tokens");
             return;
         };
-        let Some(visible_range_update_results) = editor
+        let visible_range_update_results = editor
             .update(cx, |_, cx| {
                 fetch_and_update_tokens(
                     excerpt_buffer.clone(),
@@ -346,12 +346,12 @@ fn new_update_task(
                     cx,
                 )
             })
-            .log_err()
-        else {
-            return;
-        };
+            .log_err();
 
-        let result = visible_range_update_results.await;
+        let result = match visible_range_update_results {
+            Some(task) => Some(task.await),
+            None => None,
+        };
         let token_delay = cx.background_executor().timer(Duration::from_millis(
             INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS,
         ));
@@ -373,7 +373,7 @@ fn new_update_task(
                     .ok()
             };
 
-        if let Err(e) = result {
+        if let Some(Err(e)) = result {
             query_range_failed(&visible_range, e, cx);
         }
 
