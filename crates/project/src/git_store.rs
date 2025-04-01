@@ -39,7 +39,7 @@ use language::{
 };
 use parking_lot::Mutex;
 use rpc::{
-    proto::{self, git_reset, FromProto, ToProto, SSH_PROJECT_ID},
+    proto::{self, git_reset, split_repository_update, FromProto, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
 use serde::Deserialize;
@@ -218,11 +218,10 @@ pub struct RepositorySnapshot {
     pub merge_message: Option<SharedString>,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
-    pub worktree_scan_id: usize,
-    pub completed_scan_id: usize,
     pub branch: Option<Branch>,
     pub merge_conflicts: TreeSet<RepoPath>,
     pub merge_head_shas: Vec<SharedString>,
+    pub scan_id: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -275,7 +274,7 @@ enum RepositoryState {
 
 #[derive(Clone, Debug)]
 pub enum RepositoryEvent {
-    GitStateUpdated,
+    Updated,
     MergeHeadsChanged,
 }
 
@@ -425,9 +424,10 @@ impl GitStore {
                 ..
             } => {
                 for repo in self.repositories.values() {
-                    client
-                        .send(repo.read(cx).snapshot.initial_update(project_id))
-                        .log_err();
+                    let update = repo.read(cx).snapshot.initial_update(project_id);
+                    for update in split_repository_update(update) {
+                        client.send(update).log_err();
+                    }
                 }
                 *downstream_client = Some((client, ProjectId(project_id)));
             }
@@ -458,10 +458,14 @@ impl GitStore {
                                             let update =
                                                 snapshot.build_update(old_snapshot, project_id);
                                             *old_snapshot = snapshot;
-                                            client.send(update)?;
+                                            for update in split_repository_update(update) {
+                                                client.send(update)?;
+                                            }
                                         } else {
                                             let update = snapshot.initial_update(project_id);
-                                            client.send(update)?;
+                                            for update in split_repository_update(update) {
+                                                client.send(update)?;
+                                            }
                                             snapshots.insert(snapshot.id, snapshot);
                                         }
                                     }
@@ -988,7 +992,7 @@ impl GitStore {
                     .map_err(|_| anyhow!("no permalink available"))
             });
 
-            // FIXME remote case
+            // TODO remote case
         };
 
         let buffer_id = buffer.read(cx).remote_id();
@@ -2538,10 +2542,9 @@ impl BufferDiffState {
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {
                 uncommitted_diff.update(cx, |uncommitted_diff, cx| {
-                    eprintln!("uncommitted set snapshot");
                     uncommitted_diff.set_snapshot(
                         &buffer,
-                        dbg!(new_uncommitted_diff),
+                        new_uncommitted_diff,
                         language_changed,
                         unstaged_changed_range,
                         cx,
@@ -2560,7 +2563,6 @@ impl BufferDiffState {
                 })?;
             }
 
-            eprintln!("!!!!!! finished recalculating diffs");
             Ok(())
         }));
 
@@ -2613,11 +2615,10 @@ impl RepositorySnapshot {
             merge_message: None,
             statuses_by_path: Default::default(),
             work_directory_abs_path,
-            worktree_scan_id: 0,
-            completed_scan_id: 0,
             branch: None,
             merge_conflicts: Default::default(),
             merge_head_shas: Default::default(),
+            scan_id: 0,
         }
     }
 
@@ -2639,9 +2640,8 @@ impl RepositorySnapshot {
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_proto(),
             entry_ids: vec![self.id.to_proto()],
-            // This is also semantically wrong, and should be replaced once we separate git repo updates
-            // from worktree scans.
-            scan_id: self.worktree_scan_id as u64,
+            scan_id: self.scan_id,
+            is_last_update: true,
         }
     }
 
@@ -2699,9 +2699,9 @@ impl RepositorySnapshot {
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_proto(),
-            // TODO populate these
             entry_ids: vec![],
-            scan_id: self.worktree_scan_id as u64,
+            scan_id: self.scan_id,
+            is_last_update: true,
         }
     }
 
@@ -3664,9 +3664,10 @@ impl Repository {
             )
             .collect::<Vec<_>>();
         self.snapshot.statuses_by_path.edit(edits, &());
-        self.snapshot.worktree_scan_id = update.scan_id as usize;
-        self.snapshot.completed_scan_id = update.scan_id as usize;
-        cx.emit(RepositoryEvent::GitStateUpdated);
+        if update.is_last_update {
+            self.snapshot.scan_id = update.scan_id;
+        }
+        cx.emit(RepositoryEvent::Updated);
         Ok(())
     }
 
@@ -4020,11 +4021,12 @@ impl Repository {
                     .await;
 
                 this.update(&mut cx, |this, cx| {
+                    cx.emit(RepositoryEvent::Updated);
                     if !changed_path_statuses.is_empty() {
-                        cx.emit(RepositoryEvent::GitStateUpdated);
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, &());
+                        this.snapshot.scan_id += 1;
                         if let Some(updates_tx) = updates_tx {
                             updates_tx
                                 .unbounded_send(DownstreamUpdate::UpdateRepository(
@@ -4235,50 +4237,6 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
     }
 }
 
-// async fn refresh_statuses() -> (SumTree<StatusEntry>, Option<RepositoryEvent>) {
-//     let mut changed_path_statuses = Vec::new();
-//     let prev_statuses = prev_snapshot.statuses_by_path.clone();
-//     let mut cursor = prev_statuses.cursor::<PathProgress>(&());
-
-//     for (repo_path, status) in &*statuses.entries {
-//         paths.remove(repo_path);
-//         if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
-//             if &cursor.item().unwrap().status == status {
-//                 continue;
-//             }
-//         }
-
-//         changed_path_statuses.push(Edit::Insert(StatusEntry {
-//             repo_path: repo_path.clone(),
-//             status: *status,
-//         }));
-//     }
-
-//     // FIXME diff needs to be computed on background thread. downstream update needs to do this already.
-//     // can we reuse this? hard because we need to emit an event.
-//     let mut cursor = prev_statuses.cursor::<PathProgress>(&());
-//     for path in paths.iter() {
-//         if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
-//             changed_path_statuses.push(Edit::Remove(PathKey(path.0.clone())));
-//         }
-//     }
-
-//     let mut statuses_by_path = SumTree::new(&());
-//     let mut current_merge_conflicts = TreeSet::default();
-//     for (repo_path, status) in statuses.entries.iter() {
-//         if status.is_conflicted() {
-//             current_merge_conflicts.insert(repo_path.clone());
-//         }
-//         statuses_by_path.insert_or_replace(
-//             StatusEntry {
-//                 repo_path: repo_path.clone(),
-//                 status: *status,
-//             },
-//             &(),
-//         );
-//     }
-// }
-
 async fn compute_snapshot(
     id: RepositoryId,
     work_directory_abs_path: Arc<Path>,
@@ -4312,13 +4270,13 @@ async fn compute_snapshot(
         &(),
     );
 
-    let merge_head_shas_changed = merge_head_shas != prev_snapshot.merge_head_shas;
+    let merge_head_shas_changed = &merge_head_shas != &prev_snapshot.merge_head_shas;
 
     if merge_head_shas_changed
         || branch != prev_snapshot.branch
         || statuses_by_path != prev_snapshot.statuses_by_path
     {
-        events.push(RepositoryEvent::GitStateUpdated);
+        events.push(RepositoryEvent::Updated);
     }
 
     let mut current_merge_conflicts = TreeSet::default();
@@ -4341,8 +4299,7 @@ async fn compute_snapshot(
         merge_message,
         statuses_by_path,
         work_directory_abs_path,
-        worktree_scan_id: 0,
-        completed_scan_id: 0,
+        scan_id: prev_snapshot.scan_id + 1,
         branch,
         merge_conflicts,
         merge_head_shas,

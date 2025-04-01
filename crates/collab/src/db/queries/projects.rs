@@ -955,6 +955,7 @@ impl Database {
                         current_merge_conflicts,
                         branch_summary,
                         scan_id: db_repository_entry.scan_id as u64,
+                        is_last_update: true,
                     });
                 }
             }

@@ -24,7 +24,7 @@ mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
-use git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId};
+use git_store::{Repository, RepositoryId};
 pub mod search_history;
 mod yarn;
 
@@ -299,8 +299,6 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
-    GitStateUpdated,
-    ActiveRepositoryChanged,
 }
 
 pub enum DebugAdapterClientState {
@@ -921,7 +919,6 @@ impl Project {
                     cx,
                 )
             });
-            cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -2701,22 +2698,6 @@ impl Project {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
             }
-        }
-    }
-
-    fn on_git_store_event(
-        &mut self,
-        _: Entity<GitStore>,
-        event: &GitStoreEvent,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::GitStateUpdated, _)
-            | GitStoreEvent::RepositoryAdded(_)
-            | GitStoreEvent::RepositoryRemoved(_) => cx.emit(Event::GitStateUpdated),
-            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::MergeHeadsChanged, _) => {}
-            GitStoreEvent::ActiveRepositoryChanged(_) => cx.emit(Event::ActiveRepositoryChanged),
-            GitStoreEvent::IndexWriteError(_) => {}
         }
     }
 

@@ -154,14 +154,12 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, _window, _cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::GitStateUpdated, true) => {
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated, true) => {
                     *this.update_needed.borrow_mut() = ();
                 }
                 _ => {}
             },
         );
-
-        // FIXME worktree store subscription?
 
         let (mut send, recv) = postage::watch::channel::<()>();
         let worker = window.spawn(cx, {
@@ -1496,6 +1494,7 @@ mod tests {
             .unindent(),
         );
 
+        eprintln!(">>>>>>>> git restore");
         let prev_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
@@ -1508,16 +1507,15 @@ mod tests {
             });
         assert_eq!(prev_buffer_hunks.len(), 1);
         cx.run_until_parked();
+        eprintln!("<<<<<<<< git restore");
 
         let new_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
                 let snapshot = &snapshot.buffer_snapshot;
-                let new_buffer_hunks = buffer_editor
+                buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
-                    .collect::<Vec<_>>();
-                buffer_editor.git_restore(&Default::default(), window, cx);
-                new_buffer_hunks
+                    .collect::<Vec<_>>()
             });
         assert_eq!(new_buffer_hunks.as_slice(), &[]);
 
@@ -1531,14 +1529,6 @@ mod tests {
 
         cx.run_until_parked();
         eprintln!("<<<<<<<< modify");
-
-        cx.update_window_entity(&diff_editor, |diff_editor, window, cx| {
-            let snapshot = diff_editor.snapshot(window, cx);
-            dbg!(
-                diff_editor.buffer().entity_id(),
-                &snapshot.buffer_snapshot.diffs
-            );
-        });
 
         cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
             buffer_editor.expand_all_diff_hunks(&Default::default(), window, cx);

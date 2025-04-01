@@ -1949,6 +1949,7 @@ message UpdateRepository {
     repeated string removed_statuses = 7;
     repeated string current_merge_conflicts = 8;
     uint64 scan_id = 9;
+    bool is_last_update = 10;
 }
 
 message RemoveRepository {

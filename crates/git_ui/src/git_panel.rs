@@ -400,7 +400,6 @@ impl GitPanel {
 
         let scroll_handle = UniformListScrollHandle::new();
 
-        // FIXME need a worktree store subscription?
         cx.subscribe_in(
             &git_store,
             window,
@@ -409,7 +408,7 @@ impl GitPanel {
                     this.active_repository = git_store.read(cx).active_repository();
                     this.schedule_update(true, window, cx);
                 }
-                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::GitStateUpdated, true) => {
+                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated, true) => {
                     this.schedule_update(true, window, cx);
                 }
                 GitStoreEvent::RepositoryUpdated(_, _, _) => {}

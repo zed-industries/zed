@@ -273,8 +273,7 @@ pub struct MultiBufferSnapshot {
     singleton: bool,
     excerpts: SumTree<Excerpt>,
     excerpt_ids: SumTree<ExcerptIdMapping>,
-    // FIXME
-    pub diffs: TreeMap<BufferId, BufferDiffSnapshot>,
+    diffs: TreeMap<BufferId, BufferDiffSnapshot>,
     diff_transforms: SumTree<DiffTransform>,
     trailing_excerpt_update_count: usize,
     all_diff_hunks_expanded: bool,
@@ -2254,7 +2253,6 @@ impl MultiBuffer {
         drop(cursor);
         snapshot.excerpts = new_excerpts;
         for buffer_id in removed_buffer_ids {
-            eprintln!("remove diff");
             self.diffs.remove(&buffer_id);
             snapshot.diffs.remove(&buffer_id);
         }
@@ -2368,7 +2366,6 @@ impl MultiBuffer {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) {
-        eprintln!("buffer diff changed");
         self.sync(cx);
         self.buffer_changed_since_sync.replace(true);
 
@@ -2390,7 +2387,6 @@ impl MultiBuffer {
             .get(&buffer_id)
             .map_or(true, |old_diff| !new_diff.base_texts_eq(old_diff));
 
-        eprintln!("insert diff {:?}", cx.entity_id());
         snapshot.diffs.insert(buffer_id, new_diff);
 
         let mut excerpt_edits = Vec::new();

@@ -8,7 +8,10 @@ use gpui::{App, AppContext as _, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
 use language::{Bias, Buffer, BufferSnapshot, Edit};
 use multi_buffer::RowInfo;
-use project::{Project, ProjectItem};
+use project::{
+    git_store::{GitStoreEvent, RepositoryEvent},
+    Project, ProjectItem,
+};
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
@@ -150,13 +153,21 @@ impl GitBlame {
                         this.generate(cx);
                     }
                 }
-                project::Event::GitStateUpdated => {
+                _ => {}
+            }
+        });
+
+        let git_store = project.read(cx).git_store().clone();
+        let git_store_subscription =
+            cx.subscribe(&git_store, move |this, _, event, cx| match event {
+                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated, _)
+                | GitStoreEvent::RepositoryAdded(_)
+                | GitStoreEvent::RepositoryRemoved(_) => {
                     log::debug!("Status of git repositories updated. Regenerating blame data...",);
                     this.generate(cx);
                 }
                 _ => {}
-            }
-        });
+            });
 
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -174,7 +185,11 @@ impl GitBlame {
             task: Task::ready(Ok(())),
             generated: false,
             regenerate_on_edit_task: Task::ready(Ok(())),
-            _regenerate_subscriptions: vec![buffer_subscriptions, project_subscription],
+            _regenerate_subscriptions: vec![
+                buffer_subscriptions,
+                project_subscription,
+                git_store_subscription,
+            ],
         };
         this.generate(cx);
         this

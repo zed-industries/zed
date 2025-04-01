@@ -782,6 +782,7 @@ impl Database {
                             id: db_repository.id as u64,
                             abs_path: db_repository.abs_path,
                             scan_id: db_repository.scan_id as u64,
+                            is_last_update: true,
                         });
                     }
                 }
