@@ -6180,6 +6180,7 @@ impl Editor {
     ) -> Option<IconButton> {
         let color = Color::Muted;
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
+        let show_tooltip = !self.context_menu_visible();
 
         if self.available_code_actions.is_some() {
             Some(
@@ -6188,19 +6189,21 @@ impl Editor {
                     .icon_size(IconSize::XSmall)
                     .icon_color(color)
                     .toggle_state(is_active)
-                    .tooltip({
-                        let focus_handle = self.focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Toggle Code Actions",
-                                &ToggleCodeActions {
-                                    deployed_from_indicator: None,
-                                },
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
+                    .when(show_tooltip, |this| {
+                        this.tooltip({
+                            let focus_handle = self.focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Toggle Code Actions",
+                                    &ToggleCodeActions {
+                                        deployed_from_indicator: None,
+                                    },
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
                     })
                     .on_click(cx.listener(move |editor, _e, window, cx| {
                         window.focus(&editor.focus_handle(cx));
