@@ -5,13 +5,13 @@ pub use supermaven_completion_provider::*;
 
 use anyhow::{Context as _, Result};
 #[allow(unused_imports)]
-use client::{proto, Client};
+use client::{Client, proto};
 use collections::BTreeMap;
 
-use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
-use gpui::{actions, App, AsyncApp, Context, Entity, EntityId, Global, Task, WeakEntity};
+use futures::{AsyncBufReadExt, StreamExt, channel::mpsc, io::BufReader};
+use gpui::{App, AsyncApp, Context, Entity, EntityId, Global, Task, WeakEntity, actions};
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, ToOffset,
+    Anchor, Buffer, BufferSnapshot, ToOffset, language_settings::all_language_settings,
 };
 use messages::*;
 use postage::watch;

@@ -1,16 +1,19 @@
-use anyhow::{anyhow, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{
-    search::{SearchQuery, SearchResult},
     Project,
+    search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, fmt::Write, sync::Arc};
+use ui::IconName;
+use util::markdown::MarkdownString;
 use util::paths::PathMatcher;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -22,13 +25,13 @@ pub struct RegexSearchToolInput {
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
-    pub offset: Option<u32>,
+    pub offset: u32,
 }
 
 impl RegexSearchToolInput {
     /// Which page of search results this is.
     pub fn page(&self) -> u32 {
-        1 + (self.offset.unwrap_or(0) / RESULTS_PER_PAGE)
+        1 + (self.offset / RESULTS_PER_PAGE)
     }
 }
 
@@ -49,23 +52,24 @@ impl Tool for RegexSearchTool {
         include_str!("./regex_search_tool/description.md").into()
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(RegexSearchToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn icon(&self) -> IconName {
+        IconName::Regex
+    }
+
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<RegexSearchToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<RegexSearchToolInput>(input.clone()) {
             Ok(input) => {
                 let page = input.page();
+                let regex = MarkdownString::inline_code(&input.regex);
 
                 if page > 1 {
-                    format!(
-                        "Get page {page} of search results for regex “`{}`”",
-                        input.regex
-                    )
+                    format!("Get page {page} of search results for regex “{regex}”")
                 } else {
-                    format!("Search files for regex “`{}`”", input.regex)
+                    format!("Search files for regex “{regex}”")
                 }
             }
             Err(_) => "Search with regex".to_string(),
@@ -83,7 +87,7 @@ impl Tool for RegexSearchTool {
         const CONTEXT_LINES: u32 = 2;
 
         let (offset, regex) = match serde_json::from_value::<RegexSearchToolInput>(input) {
-            Ok(input) => (input.offset.unwrap_or(0), input.regex),
+            Ok(input) => (input.offset, input.regex),
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 

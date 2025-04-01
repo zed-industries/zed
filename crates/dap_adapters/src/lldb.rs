@@ -1,25 +1,17 @@
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
+use std::{ffi::OsStr, path::PathBuf};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::AsyncApp;
-use sysinfo::{Pid, Process};
-use task::{DebugAdapterConfig, DebugRequestType};
+use task::{DebugAdapterConfig, DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
-pub(crate) struct LldbDebugAdapter {}
+#[derive(Default)]
+pub(crate) struct LldbDebugAdapter;
 
 impl LldbDebugAdapter {
-    const ADAPTER_NAME: &'static str = "lldb";
-
-    pub(crate) fn new() -> Self {
-        LldbDebugAdapter {}
-    }
-
-    pub fn attach_processes(processes: &HashMap<Pid, Process>) -> Vec<(&Pid, &Process)> {
-        processes.iter().collect::<Vec<_>>()
-    }
+    const ADAPTER_NAME: &'static str = "LLDB";
 }
 
 #[async_trait(?Send)]
@@ -31,21 +23,12 @@ impl DebugAdapter for LldbDebugAdapter {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        _: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let lldb_dap_path = if let Some(user_installed_path) = user_installed_path {
             user_installed_path.to_string_lossy().into()
-        } else if cfg!(target_os = "macos") {
-            util::command::new_smol_command("xcrun")
-                .args(&["-f", "lldb-dap"])
-                .output()
-                .await
-                .ok()
-                .and_then(|output| String::from_utf8(output.stdout).ok())
-                .map(|path| path.trim().to_string())
-                .ok_or(anyhow!("Failed to find lldb-dap in user's path"))?
         } else {
             delegate
                 .which(OsStr::new("lldb-dap"))
@@ -57,7 +40,7 @@ impl DebugAdapter for LldbDebugAdapter {
             command: lldb_dap_path,
             arguments: None,
             envs: None,
-            cwd: config.cwd.clone(),
+            cwd: None,
             connection: None,
         })
     }
@@ -84,21 +67,30 @@ impl DebugAdapter for LldbDebugAdapter {
         unimplemented!("LLDB debug adapter cannot be installed by Zed (yet)")
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        let pid = if let DebugRequestType::Attach(attach_config) = &config.request {
-            attach_config.process_id
-        } else {
-            None
-        };
-
-        json!({
-            "program": config.program,
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        let mut args = json!({
             "request": match config.request {
-                DebugRequestType::Launch => "launch",
+                DebugRequestType::Launch(_) => "launch",
                 DebugRequestType::Attach(_) => "attach",
             },
-            "pid": pid,
-            "cwd": config.cwd,
-        })
+        });
+        let map = args.as_object_mut().unwrap();
+        match &config.request {
+            DebugRequestType::Attach(attach) => {
+                map.insert("pid".into(), attach.process_id.into());
+            }
+            DebugRequestType::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+                map.insert(
+                    "cwd".into(),
+                    launch
+                        .cwd
+                        .as_ref()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .into(),
+                );
+            }
+        }
+        args
     }
 }

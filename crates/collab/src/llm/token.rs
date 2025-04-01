@@ -1,8 +1,8 @@
+use crate::Cents;
 use crate::db::user;
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
-use crate::Cents;
-use crate::{db::billing_preference, Config};
-use anyhow::{anyhow, Result};
+use crate::{Config, db::billing_preference};
+use anyhow::{Result, anyhow};
 use chrono::{NaiveDateTime, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};

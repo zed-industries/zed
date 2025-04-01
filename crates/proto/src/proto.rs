@@ -274,6 +274,8 @@ messages!(
     (GetDefinitionResponse, Background),
     (GetDocumentHighlights, Background),
     (GetDocumentHighlightsResponse, Background),
+    (GetDocumentSymbols, Background),
+    (GetDocumentSymbolsResponse, Background),
     (GetHover, Background),
     (GetHoverResponse, Background),
     (GetNotifications, Foreground),
@@ -300,6 +302,8 @@ messages!(
     (GetImplementationResponse, Background),
     (GetLlmToken, Background),
     (GetLlmTokenResponse, Background),
+    (LanguageServerIdForName, Background),
+    (LanguageServerIdForNameResponse, Background),
     (OpenUnstagedDiff, Foreground),
     (OpenUnstagedDiffResponse, Foreground),
     (OpenUncommittedDiff, Foreground),
@@ -336,6 +340,8 @@ messages!(
     (ListRemoteDirectoryResponse, Background),
     (ListToolchains, Foreground),
     (ListToolchainsResponse, Foreground),
+    (LoadCommitDiff, Foreground),
+    (LoadCommitDiffResponse, Foreground),
     (LspExtExpandMacro, Background),
     (LspExtExpandMacroResponse, Background),
     (LspExtOpenDocs, Background),
@@ -504,6 +510,7 @@ request_messages!(
     (GetDeclaration, GetDeclarationResponse),
     (GetImplementation, GetImplementationResponse),
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
+    (GetDocumentSymbols, GetDocumentSymbolsResponse),
     (GetHover, GetHoverResponse),
     (GetLlmToken, GetLlmTokenResponse),
     (GetNotifications, GetNotificationsResponse),
@@ -529,6 +536,7 @@ request_messages!(
     (JoinRoom, JoinRoomResponse),
     (LeaveChannelBuffer, Ack),
     (LeaveRoom, Ack),
+    (LoadCommitDiff, LoadCommitDiffResponse),
     (MarkNotificationRead, Ack),
     (MoveChannel, Ack),
     (OnTypeFormatting, OnTypeFormattingResponse),
@@ -577,6 +585,7 @@ request_messages!(
     (UpdateWorktree, Ack),
     (UpdateRepository, Ack),
     (RemoveRepository, Ack),
+    (LanguageServerIdForName, LanguageServerIdForNameResponse),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (LspExtOpenDocs, LspExtOpenDocsResponse),
     (SetRoomParticipantRole, Ack),
@@ -650,6 +659,7 @@ entity_messages!(
     GetDeclaration,
     GetImplementation,
     GetDocumentHighlights,
+    GetDocumentSymbols,
     GetHover,
     GetProjectSymbols,
     GetReferences,
@@ -661,6 +671,7 @@ entity_messages!(
     JoinProject,
     LeaveProject,
     LinkedEditingRange,
+    LoadCommitDiff,
     MultiLspQuery,
     RestartLanguageServers,
     OnTypeFormatting,
@@ -710,6 +721,7 @@ entity_messages!(
     OpenServerSettings,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
+    LanguageServerIdForName,
     GitGetBranches,
     UpdateGitBranch,
     ListToolchains,
@@ -788,31 +800,6 @@ impl From<Nonce> for u128 {
 pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 2;
 #[cfg(not(any(test, feature = "test-support")))]
 pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 256;
-
-#[derive(Clone, Debug)]
-pub enum WorktreeRelatedMessage {
-    UpdateWorktree(UpdateWorktree),
-    UpdateRepository(UpdateRepository),
-    RemoveRepository(RemoveRepository),
-}
-
-impl From<UpdateWorktree> for WorktreeRelatedMessage {
-    fn from(value: UpdateWorktree) -> Self {
-        Self::UpdateWorktree(value)
-    }
-}
-
-impl From<UpdateRepository> for WorktreeRelatedMessage {
-    fn from(value: UpdateRepository) -> Self {
-        Self::UpdateRepository(value)
-    }
-}
-
-impl From<RemoveRepository> for WorktreeRelatedMessage {
-    fn from(value: RemoveRepository) -> Self {
-        Self::RemoveRepository(value)
-    }
-}
 
 pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item = UpdateWorktree> {
     let mut done = false;
@@ -918,20 +905,6 @@ pub fn split_repository_update(
             ..update.clone()
         })
     })
-}
-
-pub fn split_worktree_related_message(
-    message: WorktreeRelatedMessage,
-) -> Box<dyn Iterator<Item = WorktreeRelatedMessage> + Send> {
-    match message {
-        WorktreeRelatedMessage::UpdateWorktree(message) => {
-            Box::new(split_worktree_update(message).map(WorktreeRelatedMessage::UpdateWorktree))
-        }
-        WorktreeRelatedMessage::UpdateRepository(message) => {
-            Box::new(split_repository_update(message).map(WorktreeRelatedMessage::UpdateRepository))
-        }
-        WorktreeRelatedMessage::RemoveRepository(update) => Box::new([update.into()].into_iter()),
-    }
 }
 
 #[cfg(test)]

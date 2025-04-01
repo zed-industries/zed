@@ -1,42 +1,43 @@
 mod project_panel_settings;
 mod utils;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use client::{ErrorCode, ErrorExt};
-use collections::{hash_map, BTreeSet, HashMap};
+use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
+    Editor, EditorEvent, EditorSettings, ShowScrollbar,
     items::{
         entry_diagnostic_aware_icon_decoration_and_color,
         entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
     scroll::{Autoscroll, ScrollbarAutoHide},
-    Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
 use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
-    DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
-    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window,
+    Action, AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context,
+    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
+    Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions,
+    anchored, deferred, div, impl_actions, point, px, size, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
-    git_store::git_traversal::ChildEntriesGitIter, relativize_path, Entry, EntryKind, Fs, GitEntry,
-    GitEntryRef, GitTraversal, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId,
+    Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
+    ProjectPath, Worktree, WorktreeId, git_store::git_traversal::ChildEntriesGitIter,
+    relativize_path,
 };
 use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use smallvec::SmallVec;
 use std::any::TypeId;
 use std::{
@@ -51,16 +52,16 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
-    ScrollbarState, Tooltip,
+    ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
+    IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
+    Tooltip, prelude::*, v_flex,
 };
-use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyTaskExt},
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     Workspace,
+    dock::{DockPosition, Panel, PanelEvent},
+    notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 
@@ -197,6 +198,7 @@ actions!(
         Open,
         OpenPermanent,
         ToggleFocus,
+        ToggleHideGitIgnore,
         NewSearchInDirectory,
         UnfoldDirectory,
         FoldDirectory,
@@ -232,6 +234,13 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
+        });
+
+        workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {
+            let fs = workspace.app_state().fs.clone();
+            update_settings_file::<ProjectPanelSettings>(fs, cx, move |setting, _| {
+                setting.hide_gitignore = Some(!setting.hide_gitignore.unwrap_or(false));
+            })
         });
     })
     .detach();
@@ -326,7 +335,8 @@ impl ProjectPanel {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
-                project::Event::WorktreeUpdatedGitRepositories(_)
+                project::Event::GitStateUpdated
+                | project::Event::ActiveRepositoryChanged
                 | project::Event::WorktreeUpdatedEntries(_, _)
                 | project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeOrderChanged => {
@@ -414,6 +424,9 @@ impl ProjectPanel {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
+                    if project_panel_settings.hide_gitignore != new_settings.hide_gitignore {
+                        this.update_visible_entries(None, cx);
+                    }
                     project_panel_settings = new_settings;
                     this.update_diagnostics(cx);
                     cx.notify();
@@ -500,6 +513,9 @@ impl ProjectPanel {
                                             "{} is not shared by the host. This could be because it has been marked as `private`",
                                             file_path.display()
                                         )),
+                                        // See note in worktree.rs where this error originates. Returning Some in this case prevents
+                                        // the error popup from saying "Try Again", which is a red herring in this case
+                                        ErrorCode::Internal if e.to_string().contains("File is too large to load") => Some(e.to_string()),
                                         _ => None,
                                     }
                                 });
@@ -1478,7 +1494,9 @@ impl ProjectPanel {
                         } else if dirty_buffers == 1 {
                             "\n\n1 of these has unsaved changes, which will be lost.".to_string()
                         } else {
-                            format!("\n\n{dirty_buffers} of these have unsaved changes, which will be lost.")
+                            format!(
+                                "\n\n{dirty_buffers} of these have unsaved changes, which will be lost."
+                            )
                         };
 
                         format!(
@@ -1533,13 +1551,13 @@ impl ProjectPanel {
         if sanitized_entries.is_empty() {
             return None;
         }
-
         let project = self.project.read(cx);
         let (worktree_id, worktree) = sanitized_entries
             .iter()
             .map(|entry| entry.worktree_id)
             .filter_map(|id| project.worktree_for_id(id, cx).map(|w| (id, w.read(cx))))
             .max_by(|(_, a), (_, b)| a.root_name().cmp(b.root_name()))?;
+        let git_store = project.git_store().read(cx);
 
         let marked_entries_in_worktree = sanitized_entries
             .iter()
@@ -1564,17 +1582,20 @@ impl ProjectPanel {
         let parent_entry = worktree.entry_for_path(parent_path)?;
 
         // Remove all siblings that are being deleted except the last marked entry
-        let snapshot = worktree.snapshot();
-        let mut siblings: Vec<_> = ChildEntriesGitIter::new(&snapshot, parent_path)
-            .filter(|sibling| {
-                sibling.id == latest_entry.id
-                    || !marked_entries_in_worktree.contains(&&SelectedEntry {
-                        worktree_id,
-                        entry_id: sibling.id,
-                    })
-            })
-            .map(|entry| entry.to_owned())
-            .collect();
+        let repo_snapshots = git_store.repo_snapshots(cx);
+        let worktree_snapshot = worktree.snapshot();
+        let hide_gitignore = ProjectPanelSettings::get_global(cx).hide_gitignore;
+        let mut siblings: Vec<_> =
+            ChildEntriesGitIter::new(&repo_snapshots, &worktree_snapshot, parent_path)
+                .filter(|sibling| {
+                    (sibling.id == latest_entry.id)
+                        || (!marked_entries_in_worktree.contains(&&SelectedEntry {
+                            worktree_id,
+                            entry_id: sibling.id,
+                        }) && (!hide_gitignore || !sibling.is_ignored))
+                })
+                .map(|entry| entry.to_owned())
+                .collect();
 
         project::sort_worktree_entries(&mut siblings);
         let sibling_entry_index = siblings
@@ -2587,8 +2608,11 @@ impl ProjectPanel {
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut Context<Self>,
     ) {
-        let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
+        let settings = ProjectPanelSettings::get_global(cx);
+        let auto_collapse_dirs = settings.auto_fold_dirs;
+        let hide_gitignore = settings.hide_gitignore;
         let project = self.project.read(cx);
+        let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
         self.last_worktree_root_id = project
             .visible_worktrees(cx)
             .next_back()
@@ -2599,15 +2623,15 @@ impl ProjectPanel {
         self.visible_entries.clear();
         let mut max_width_item = None;
         for worktree in project.visible_worktrees(cx) {
-            let snapshot = worktree.read(cx).snapshot();
-            let worktree_id = snapshot.id();
+            let worktree_snapshot = worktree.read(cx).snapshot();
+            let worktree_id = worktree_snapshot.id();
 
             let expanded_dir_ids = match self.expanded_dir_ids.entry(worktree_id) {
                 hash_map::Entry::Occupied(e) => e.into_mut(),
                 hash_map::Entry::Vacant(e) => {
                     // The first time a worktree's root entry becomes available,
                     // mark that root entry as expanded.
-                    if let Some(entry) = snapshot.root_entry() {
+                    if let Some(entry) = worktree_snapshot.root_entry() {
                         e.insert(vec![entry.id]).as_slice()
                     } else {
                         &[]
@@ -2629,14 +2653,15 @@ impl ProjectPanel {
             }
 
             let mut visible_worktree_entries = Vec::new();
-            let mut entry_iter = GitTraversal::new(snapshot.entries(true, 0));
+            let mut entry_iter =
+                GitTraversal::new(&repo_snapshots, worktree_snapshot.entries(true, 0));
             let mut auto_folded_ancestors = vec![];
             while let Some(entry) = entry_iter.entry() {
                 if auto_collapse_dirs && entry.kind.is_dir() {
                     auto_folded_ancestors.push(entry.id);
                     if !self.unfolded_dir_ids.contains(&entry.id) {
-                        if let Some(root_path) = snapshot.root_entry() {
-                            let mut child_entries = snapshot.child_entries(&entry.path);
+                        if let Some(root_path) = worktree_snapshot.root_entry() {
+                            let mut child_entries = worktree_snapshot.child_entries(&entry.path);
                             if let Some(child) = child_entries.next() {
                                 if entry.path != root_path.path
                                     && child_entries.next().is_none()
@@ -2672,7 +2697,9 @@ impl ProjectPanel {
                     }
                 }
                 auto_folded_ancestors.clear();
-                visible_worktree_entries.push(entry.to_owned());
+                if !hide_gitignore || !entry.is_ignored {
+                    visible_worktree_entries.push(entry.to_owned());
+                }
                 let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id {
                     entry.id == new_entry_id || {
                         self.ancestors.get(&entry.id).map_or(false, |entries| {
@@ -2685,7 +2712,7 @@ impl ProjectPanel {
                 } else {
                     false
                 };
-                if precedes_new_entry {
+                if precedes_new_entry && (!hide_gitignore || !entry.is_ignored) {
                     visible_worktree_entries.push(GitEntry {
                         entry: Entry {
                             id: NEW_ENTRY_ID,
@@ -3279,10 +3306,16 @@ impl ProjectPanel {
                 .cloned();
         }
 
+        let repo_snapshots = self
+            .project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repo_snapshots(cx);
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         worktree.update(cx, |tree, _| {
             utils::ReversibleIterable::new(
-                GitTraversal::new(tree.entries(true, 0usize)),
+                GitTraversal::new(&repo_snapshots, tree.entries(true, 0usize)),
                 reverse_search,
             )
             .find_single_ended(|ele| predicate(*ele, worktree_id))
@@ -3302,6 +3335,12 @@ impl ProjectPanel {
             .iter()
             .map(|(worktree_id, _, _)| *worktree_id)
             .collect();
+        let repo_snapshots = self
+            .project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repo_snapshots(cx);
 
         let mut last_found: Option<SelectedEntry> = None;
 
@@ -3316,12 +3355,10 @@ impl ProjectPanel {
                 let root_entry = tree.root_entry()?;
                 let tree_id = tree.id();
 
-                let mut first_iter = GitTraversal::new(tree.traverse_from_path(
-                    true,
-                    true,
-                    true,
-                    entry.path.as_ref(),
-                ));
+                let mut first_iter = GitTraversal::new(
+                    &repo_snapshots,
+                    tree.traverse_from_path(true, true, true, entry.path.as_ref()),
+                );
 
                 if reverse_search {
                     first_iter.next();
@@ -3334,7 +3371,7 @@ impl ProjectPanel {
                     .find(|ele| predicate(*ele, tree_id))
                     .map(|ele| ele.to_owned());
 
-                let second_iter = GitTraversal::new(tree.entries(true, 0usize));
+                let second_iter = GitTraversal::new(&repo_snapshots, tree.entries(true, 0usize));
 
                 let second = if reverse_search {
                     second_iter
@@ -4388,26 +4425,28 @@ impl Render for ProjectPanel {
                     return;
                 };
                 let adjustment = point(px(0.), px(vertical_scroll_offset));
-                this.hover_scroll_task = Some(cx.spawn_in(window, async move |this, cx| loop {
-                    let should_stop_scrolling = this
-                        .update(cx, |this, cx| {
-                            this.hover_scroll_task.as_ref()?;
-                            let handle = this.scroll_handle.0.borrow_mut();
-                            let offset = handle.base_handle.offset();
+                this.hover_scroll_task = Some(cx.spawn_in(window, async move |this, cx| {
+                    loop {
+                        let should_stop_scrolling = this
+                            .update(cx, |this, cx| {
+                                this.hover_scroll_task.as_ref()?;
+                                let handle = this.scroll_handle.0.borrow_mut();
+                                let offset = handle.base_handle.offset();
 
-                            handle.base_handle.set_offset(offset + adjustment);
-                            cx.notify();
-                            Some(())
-                        })
-                        .ok()
-                        .flatten()
-                        .is_some();
-                    if should_stop_scrolling {
-                        return;
+                                handle.base_handle.set_offset(offset + adjustment);
+                                cx.notify();
+                                Some(())
+                            })
+                            .ok()
+                            .flatten()
+                            .is_some();
+                        if should_stop_scrolling {
+                            return;
+                        }
+                        cx.background_executor()
+                            .timer(Duration::from_millis(16))
+                            .await;
                     }
-                    cx.background_executor()
-                        .timer(Duration::from_millis(16))
-                        .await;
                 }));
             }
             h_flex()
@@ -4571,9 +4610,9 @@ impl Render for ProjectPanel {
                             .with_render_fn(
                                 cx.entity().clone(),
                                 move |this, params, _, cx| {
-                                    const LEFT_OFFSET: f32 = 14.;
-                                    const PADDING_Y: f32 = 4.;
-                                    const HITBOX_OVERDRAW: f32 = 3.;
+                                    const LEFT_OFFSET: Pixels = px(14.);
+                                    const PADDING_Y: Pixels = px(4.);
+                                    const HITBOX_OVERDRAW: Pixels = px(3.);
 
                                     let active_indent_guide_index =
                                         this.find_active_indent_guide(&params.indent_guides, cx);
@@ -4589,19 +4628,16 @@ impl Render for ProjectPanel {
                                             let offset = if layout.continues_offscreen {
                                                 px(0.)
                                             } else {
-                                                px(PADDING_Y)
+                                                PADDING_Y
                                             };
                                             let bounds = Bounds::new(
                                                 point(
-                                                    px(layout.offset.x as f32) * indent_size
-                                                        + px(LEFT_OFFSET),
-                                                    px(layout.offset.y as f32) * item_height
-                                                        + offset,
+                                                    layout.offset.x * indent_size + LEFT_OFFSET,
+                                                    layout.offset.y * item_height + offset,
                                                 ),
                                                 size(
                                                     px(1.),
-                                                    px(layout.length as f32) * item_height
-                                                        - px(offset.0 * 2.),
+                                                    layout.length * item_height - offset * 2.,
                                                 ),
                                             );
                                             ui::RenderedIndentGuide {
@@ -4610,12 +4646,11 @@ impl Render for ProjectPanel {
                                                 is_active: Some(idx) == active_indent_guide_index,
                                                 hitbox: Some(Bounds::new(
                                                     point(
-                                                        bounds.origin.x - px(HITBOX_OVERDRAW),
+                                                        bounds.origin.x - HITBOX_OVERDRAW,
                                                         bounds.origin.y,
                                                     ),
                                                     size(
-                                                        bounds.size.width
-                                                            + px(2. * HITBOX_OVERDRAW),
+                                                        bounds.size.width + HITBOX_OVERDRAW * 2.,
                                                         bounds.size.height,
                                                     ),
                                                 )),

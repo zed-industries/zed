@@ -1,4 +1,4 @@
-use crate::{chat_panel::ChatPanel, NotificationPanelSettings};
+use crate::{NotificationPanelSettings, chat_panel::ChatPanel};
 use anyhow::Result;
 use channel::ChannelStore;
 use client::{ChannelId, Client, Notification, User, UserStore};
@@ -6,10 +6,10 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, img, list, px, AnyElement, App, AsyncWindowContext, Context, CursorStyle,
-    DismissEvent, Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ListAlignment, ListScrollEvent, ListState, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, WeakEntity, Window,
+    AnyElement, App, AsyncWindowContext, Context, CursorStyle, DismissEvent, Element, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ListAlignment,
+    ListScrollEvent, ListState, ParentElement, Render, StatefulInteractiveElement, Styled, Task,
+    WeakEntity, Window, actions, div, img, list, px,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -19,13 +19,13 @@ use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip,
+    Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip, h_flex, prelude::*, v_flex,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::notifications::{Notification as WorkspaceNotification, NotificationId};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
     Workspace,
+    dock::{DockPosition, Panel, PanelEvent},
 };
 
 const LOADING_THRESHOLD: usize = 30;

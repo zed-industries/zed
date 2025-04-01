@@ -9,12 +9,11 @@ pub struct AgentProfile {
     /// The name of the profile.
     pub name: SharedString,
     pub tools: IndexMap<Arc<str>, bool>,
-    #[allow(dead_code)]
+    pub enable_all_context_servers: bool,
     pub context_servers: IndexMap<Arc<str>, ContextServerPreset>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ContextServerPreset {
-    #[allow(dead_code)]
     pub tools: IndexMap<Arc<str>, bool>,
 }

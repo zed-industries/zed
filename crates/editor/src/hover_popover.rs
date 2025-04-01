@@ -1,15 +1,15 @@
 use crate::{
-    display_map::{invisibles::is_invisible, InlayOffset, ToDisplayPoint},
-    hover_links::{InlayHighlight, RangeInEditor},
-    scroll::{Autoscroll, ScrollAmount},
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     Hover,
+    display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
+    hover_links::{InlayHighlight, RangeInEditor},
+    scroll::{Autoscroll, ScrollAmount},
 };
 use gpui::{
-    div, px, AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
+    AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
     Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement,
-    Window,
+    Window, div, px,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
@@ -22,14 +22,14 @@ use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{prelude::*, theme_is_transparent, Scrollbar, ScrollbarState};
+use ui::{Scrollbar, ScrollbarState, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
-pub const MIN_POPOVER_LINE_HEIGHT: Pixels = px(4.);
+pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
@@ -918,17 +918,17 @@ impl DiagnosticPopover {
 mod tests {
     use super::*;
     use crate::{
+        InlayId, PointForPosition,
         actions::ConfirmCompletion,
         editor_tests::{handle_completion_request, init_test},
         hover_links::update_inlay_link_and_hover_points,
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
-        InlayId, PointForPosition,
     };
     use collections::BTreeSet;
     use gpui::App;
     use indoc::indoc;
-    use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
+    use language::{Diagnostic, DiagnosticSet, language_settings::InlayHintSettings};
     use lsp::LanguageServerId;
     use markdown::parser::MarkdownEvent;
     use smol::stream::StreamExt;

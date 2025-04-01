@@ -2,14 +2,14 @@ use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use dap::{ScopePresentationHint, StackFrameId, VariablePresentationHintKind, VariableReference};
 use editor::Editor;
 use gpui::{
-    actions, anchored, deferred, uniform_list, AnyElement, ClickEvent, ClipboardItem, Context,
-    DismissEvent, Entity, FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent, Point,
-    Stateful, Subscription, TextStyleRefinement, UniformListScrollHandle,
+    AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, FocusHandle, Focusable,
+    Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription, TextStyleRefinement,
+    UniformListScrollHandle, actions, anchored, deferred, uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use ui::{prelude::*, ContextMenu, ListItem, Scrollbar, ScrollbarState};
+use ui::{ContextMenu, ListItem, Scrollbar, ScrollbarState, prelude::*};
 use util::{debug_panic, maybe};
 
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
@@ -18,6 +18,7 @@ actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 pub(crate) struct EntryState {
     depth: usize,
     is_expanded: bool,
+    has_children: bool,
     parent_reference: VariableReference,
 }
 
@@ -246,6 +247,7 @@ impl VariableList {
                 .entry(path.clone())
                 .and_modify(|state| {
                     state.parent_reference = container_reference;
+                    state.has_children = variables_reference != 0;
                 })
                 .or_insert(EntryState {
                     depth: path.indices.len(),
@@ -258,6 +260,7 @@ impl VariableList {
                                 .unwrap_or(scope.name.to_lowercase().starts_with("local"))
                     }),
                     parent_reference: container_reference,
+                    has_children: variables_reference != 0,
                 });
 
             entries.push(ListEntry {
@@ -358,41 +361,45 @@ impl VariableList {
     fn select_prev(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_variable_edit(&Default::default(), window, cx);
         if let Some(selection) = &self.selection {
-            if let Some(var_ix) = self.entries.iter().enumerate().find_map(|(ix, var)| {
-                if &var.path == selection {
+            let index = self.entries.iter().enumerate().find_map(|(ix, var)| {
+                if &var.path == selection && ix > 0 {
                     Some(ix.saturating_sub(1))
                 } else {
                     None
                 }
-            }) {
-                if let Some(new_selection) = self.entries.get(var_ix).map(|var| var.path.clone()) {
-                    self.selection = Some(new_selection);
-                    cx.notify();
-                } else {
-                    self.select_first(&SelectFirst, window, cx);
-                }
+            });
+
+            if let Some(new_selection) =
+                index.and_then(|ix| self.entries.get(ix).map(|var| var.path.clone()))
+            {
+                self.selection = Some(new_selection);
+                cx.notify();
+            } else {
+                self.select_last(&SelectLast, window, cx);
             }
         } else {
-            self.select_first(&SelectFirst, window, cx);
+            self.select_last(&SelectLast, window, cx);
         }
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_variable_edit(&Default::default(), window, cx);
         if let Some(selection) = &self.selection {
-            if let Some(var_ix) = self.entries.iter().enumerate().find_map(|(ix, var)| {
+            let index = self.entries.iter().enumerate().find_map(|(ix, var)| {
                 if &var.path == selection {
                     Some(ix.saturating_add(1))
                 } else {
                     None
                 }
-            }) {
-                if let Some(new_selection) = self.entries.get(var_ix).map(|var| var.path.clone()) {
-                    self.selection = Some(new_selection);
-                    cx.notify();
-                } else {
-                    self.select_first(&SelectFirst, window, cx);
-                }
+            });
+
+            if let Some(new_selection) =
+                index.and_then(|ix| self.entries.get(ix).map(|var| var.path.clone()))
+            {
+                self.selection = Some(new_selection);
+                cx.notify();
+            } else {
+                self.select_first(&SelectFirst, window, cx);
             }
         } else {
             self.select_first(&SelectFirst, window, cx);
@@ -430,14 +437,16 @@ impl VariableList {
         });
 
         if res.is_none() {
-            log::error!("Couldn't confirm variable edit because variable doesn't have a leaf name or a parent reference id");
+            log::error!(
+                "Couldn't confirm variable edit because variable doesn't have a leaf name or a parent reference id"
+            );
         }
     }
 
     fn collapse_selected_entry(
         &mut self,
         _: &CollapseSelectedEntry,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(ref selected_entry) = self.selection {
@@ -446,25 +455,33 @@ impl VariableList {
                 return;
             };
 
-            entry_state.is_expanded = false;
-            cx.notify();
+            if !entry_state.is_expanded || !entry_state.has_children {
+                self.select_prev(&SelectPrevious, window, cx);
+            } else {
+                entry_state.is_expanded = false;
+                cx.notify();
+            }
         }
     }
 
     fn expand_selected_entry(
         &mut self,
         _: &ExpandSelectedEntry,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(ref selected_entry) = self.selection {
+        if let Some(selected_entry) = &self.selection {
             let Some(entry_state) = self.entry_states.get_mut(selected_entry) else {
                 debug_panic!("Trying to toggle variable in variable list that has an no state");
                 return;
             };
 
-            entry_state.is_expanded = true;
-            cx.notify();
+            if entry_state.is_expanded || !entry_state.has_children {
+                self.select_next(&SelectNext, window, cx);
+            } else {
+                entry_state.is_expanded = true;
+                cx.notify();
+            }
         }
     }
 
@@ -649,6 +666,7 @@ impl VariableList {
         } else {
             colors.default
         };
+        let path = entry.path.clone();
 
         div()
             .id(var_ref as usize)
@@ -661,7 +679,8 @@ impl VariableList {
             .h_full()
             .hover(|style| style.bg(bg_hover_color))
             .on_click(cx.listener({
-                move |_this, _, _window, cx| {
+                move |this, _, _window, cx| {
+                    this.selection = Some(path.clone());
                     cx.notify();
                 }
             }))
@@ -832,6 +851,7 @@ impl VariableList {
                                                 .single_line()
                                                 .truncate()
                                                 .size(LabelSize::Small)
+                                                .color(Color::Muted)
                                                 .when_some(variable_color, |this, color| {
                                                     this.color(Color::from(color))
                                                 }),

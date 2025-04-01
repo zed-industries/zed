@@ -8,8 +8,9 @@ use settings::SettingsStore;
 use std::path::{Path, PathBuf};
 use util::{path, separator};
 use workspace::{
+    AppState, Pane,
     item::{Item, ProjectItem},
-    register_project_item, AppState,
+    register_project_item,
 };
 
 #[gpui::test]
@@ -1582,24 +1583,24 @@ async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppConte
     cx.executor().run_until_parked();
 
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v test",
-                "    v dir1  <== marked",
-                "          a.txt",
-                "          b.txt",
-                "    v dir2",
-                "        v dir1",
-                "              a.txt",
-                "              b.txt",
-                "        > dir1 copy  <== selected",
-                "          c.txt",
-                "          c copy.txt",
-                "      c.txt  <== marked",
-                "      d.txt",
-            ],
-            "Should copy dir1 as well as c.txt into dir2 and disambiguate them without opening the rename editor"
-        );
+        visible_entries_as_strings(&panel, 0..15, cx),
+        &[
+            "v test",
+            "    v dir1  <== marked",
+            "          a.txt",
+            "          b.txt",
+            "    v dir2",
+            "        v dir1",
+            "              a.txt",
+            "              b.txt",
+            "        > dir1 copy  <== selected",
+            "          c.txt",
+            "          c copy.txt",
+            "      c.txt  <== marked",
+            "      d.txt",
+        ],
+        "Should copy dir1 as well as c.txt into dir2 and disambiguate them without opening the rename editor"
+    );
 }
 
 #[gpui::test]
@@ -2909,16 +2910,16 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
         });
         cx.run_until_parked();
         assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    "v project_root",
-                    "    > .git",
-                    "    > dir_1  <== selected",
-                    "    > dir_2",
-                    "      .gitignore",
-                ],
-                "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
-            );
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    > dir_1  <== selected",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
+        );
     }
 
     cx.update(|_, cx| {
@@ -2985,23 +2986,23 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        > gitignored_dir",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    v dir_2",
-                "          file_1.py  <== selected  <== marked",
-                "          file_2.py",
-                "          file_3.py",
-                "      .gitignore",
-            ],
-            "When auto reveal is enabled, a gitignored selected entry should not be revealed in the project panel"
-        );
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    > .git",
+            "    v dir_1",
+            "        > gitignored_dir",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    v dir_2",
+            "          file_1.py  <== selected  <== marked",
+            "          file_2.py",
+            "          file_3.py",
+            "      .gitignore",
+        ],
+        "When auto reveal is enabled, a gitignored selected entry should not be revealed in the project panel"
+    );
 
     panel.update(cx, |panel, cx| {
         panel.project.update(cx, |_, cx| {
@@ -3128,24 +3129,24 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v always_included_but_ignored_dir",
-                "          file_a.py  <== selected  <== marked",
-                "          file_b.py",
-                "          file_c.py",
-                "    v dir_1",
-                "        > gitignored_dir",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    > dir_2",
-                "      .gitignore",
-            ],
-            "When auto reveal is enabled, a gitignored but always included selected entry should be revealed in the project panel"
-        );
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    > .git",
+            "    v always_included_but_ignored_dir",
+            "          file_a.py  <== selected  <== marked",
+            "          file_b.py",
+            "          file_c.py",
+            "    v dir_1",
+            "        > gitignored_dir",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    > dir_2",
+            "      .gitignore",
+        ],
+        "When auto reveal is enabled, a gitignored but always included selected entry should be revealed in the project panel"
+    );
 }
 
 #[gpui::test]
@@ -3261,16 +3262,16 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
         });
         cx.run_until_parked();
         assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    "v project_root",
-                    "    > .git",
-                    "    > dir_1  <== selected",
-                    "    > dir_2",
-                    "      .gitignore",
-                ],
-                "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
-            );
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    > dir_1  <== selected",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
+        );
     }
 
     panel.update(cx, |panel, cx| {
@@ -3327,26 +3328,26 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        v gitignored_dir",
-                "              file_a.py  <== selected  <== marked",
-                "              file_b.py",
-                "              file_c.py",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    v dir_2",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "      .gitignore",
-            ],
-            "With no auto reveal, explicit reveal should show the gitignored entry in the project panel"
-        );
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    > .git",
+            "    v dir_1",
+            "        v gitignored_dir",
+            "              file_a.py  <== selected  <== marked",
+            "              file_b.py",
+            "              file_c.py",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    v dir_2",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "      .gitignore",
+        ],
+        "With no auto reveal, explicit reveal should show the gitignored entry in the project panel"
+    );
 }
 
 #[gpui::test]
@@ -3475,10 +3476,10 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..13, cx),
-            &["v root1", "      .dockerignore"],
-            "Should not change the project panel after trying to create an excluded directorya directory with the same name as the excluded file"
-        );
+        visible_entries_as_strings(&panel, 0..13, cx),
+        &["v root1", "      .dockerignore"],
+        "Should not change the project panel after trying to create an excluded directorya directory with the same name as the excluded file"
+    );
     panel.update_in(cx, |panel, window, cx| {
         assert!(
             !panel.filename_editor.read(cx).is_focused(window),
@@ -3732,6 +3733,172 @@ async fn test_basic_file_deletion_scenarios(cx: &mut gpui::TestAppContext) {
             "      file5.txt  <== selected",
         ],
         "Should select prev entry at root level"
+    );
+}
+
+#[gpui::test]
+async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "aa": "// Testing 1",
+            "bb": "// Testing 2",
+            "cc": "// Testing 3",
+            "dd": "// Testing 4",
+            "ee": "// Testing 5",
+            "ff": "// Testing 6",
+            "gg": "// Testing 7",
+            "hh": "// Testing 8",
+            "ii": "// Testing 8",
+            ".gitignore": "bb\ndd\nee\nff\nii\n'",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    // Test 1: Auto selection with one gitignored file next to the deleted file
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_gitignore: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    select_path(&panel, "root/aa", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "      .gitignore",
+            "      aa  <== selected",
+            "      cc",
+            "      gg",
+            "      hh"
+        ],
+        "Initial state should hide files on .gitignore"
+    );
+
+    submit_deletion(&panel, cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "      .gitignore",
+            "      cc  <== selected",
+            "      gg",
+            "      hh"
+        ],
+        "Should select next entry not on .gitignore"
+    );
+
+    // Test 2: Auto selection with many gitignored files next to the deleted file
+    submit_deletion(&panel, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "      .gitignore",
+            "      gg  <== selected",
+            "      hh"
+        ],
+        "Should select next entry not on .gitignore"
+    );
+
+    // Test 3: Auto selection of entry before deleted file
+    select_path(&panel, "root/hh", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "      .gitignore",
+            "      gg",
+            "      hh  <== selected"
+        ],
+        "Should select next entry not on .gitignore"
+    );
+    submit_deletion(&panel, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "      .gitignore", "      gg  <== selected"],
+        "Should select next entry not on .gitignore"
+    );
+}
+
+#[gpui::test]
+async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                "file1": "// Testing",
+                "file2": "// Testing",
+                "file3": "// Testing"
+            },
+            "aa": "// Testing",
+            ".gitignore": "file1\nfile3\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_gitignore: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    // Test 1: Visible items should exclude files on gitignore
+    toggle_expand_dir(&panel, "root/dir1", cx);
+    select_path(&panel, "root/dir1/file2", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    v dir1",
+            "          file2  <== selected",
+            "      .gitignore",
+            "      aa"
+        ],
+        "Initial state should hide files on .gitignore"
+    );
+    submit_deletion(&panel, cx);
+
+    // Test 2: Auto selection should go to the parent
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    v dir1  <== selected",
+            "      .gitignore",
+            "      aa"
+        ],
+        "Initial state should hide files on .gitignore"
     );
 }
 
@@ -4405,23 +4572,23 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                separator!("v root"),
-                separator!("    v dir1  <== selected"),
-                separator!("        v empty1"),
-                separator!("            v empty2"),
-                separator!("                v empty3"),
-                separator!("                      file.txt"),
-                separator!("        > ignored_dir"),
-                separator!("        v subdir1"),
-                separator!("            > ignored_nested"),
-                separator!("              file1.txt"),
-                separator!("              file2.txt"),
-                separator!("      .gitignore"),
-            ],
-            "After expand_all with auto-fold: should not expand ignored_dir, should expand folded dirs, and should not expand ignored_nested"
-        );
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            separator!("v root"),
+            separator!("    v dir1  <== selected"),
+            separator!("        v empty1"),
+            separator!("            v empty2"),
+            separator!("                v empty3"),
+            separator!("                      file.txt"),
+            separator!("        > ignored_dir"),
+            separator!("        v subdir1"),
+            separator!("            > ignored_nested"),
+            separator!("              file1.txt"),
+            separator!("              file2.txt"),
+            separator!("      .gitignore"),
+        ],
+        "After expand_all with auto-fold: should not expand ignored_dir, should expand folded dirs, and should not expand ignored_nested"
+    );
 
     // Test 2: When auto-fold is disabled
     cx.update(|_, cx| {
@@ -4784,11 +4951,7 @@ fn visible_entries_as_strings(
 
             let indent = "    ".repeat(details.depth);
             let icon = if details.kind.is_dir() {
-                if details.is_expanded {
-                    "v "
-                } else {
-                    "> "
-                }
+                if details.is_expanded { "v " } else { "> " }
             } else {
                 "  "
             };
@@ -4929,18 +5092,18 @@ fn ensure_no_open_items_and_panes(workspace: &WindowHandle<Workspace>, cx: &mut 
         "Should have no prompts after deletion operation closes the file"
     );
     workspace
-            .read_with(cx, |workspace, cx| {
-                let open_project_paths = workspace
-                    .panes()
-                    .iter()
-                    .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
-                    .collect::<Vec<_>>();
-                assert!(
-                    open_project_paths.is_empty(),
-                    "Deleted file's buffer should be closed, but got open files: {open_project_paths:?}"
-                );
-            })
-            .unwrap();
+        .read_with(cx, |workspace, cx| {
+            let open_project_paths = workspace
+                .panes()
+                .iter()
+                .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
+                .collect::<Vec<_>>();
+            assert!(
+                open_project_paths.is_empty(),
+                "Deleted file's buffer should be closed, but got open files: {open_project_paths:?}"
+            );
+        })
+        .unwrap();
 }
 
 struct TestProjectItemView {
@@ -4980,6 +5143,7 @@ impl ProjectItem for TestProjectItemView {
 
     fn for_project_item(
         _: Entity<Project>,
+        _: &Pane,
         project_item: Entity<Self::Item>,
         _: &mut Window,
         cx: &mut Context<Self>,

@@ -8,6 +8,10 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+path = "src/debugger_ui.rs"
+doctest = false
+
 [features]
 test-support = [
     "dap/test-support",

@@ -1,25 +1,25 @@
 use anyhow::ensure;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::language_settings::language_settings;
-use language::LanguageName;
 use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
+use language::language_settings::language_settings;
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
+use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+use pet_core::Configuration;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
-use pet_core::Configuration;
-use project::lsp_store::language_server_settings;
 use project::Fs;
-use serde_json::{json, Value};
+use project::lsp_store::language_server_settings;
+use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
@@ -29,11 +29,38 @@ use std::{
     any::Any,
     borrow::Cow,
     ffi::OsString,
+    fmt::Write,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
+
+pub(crate) struct PyprojectTomlManifestProvider;
+
+impl ManifestProvider for PyprojectTomlManifestProvider {
+    fn name(&self) -> ManifestName {
+        SharedString::new_static("pyproject.toml").into()
+    }
+
+    fn search(
+        &self,
+        ManifestQuery {
+            path,
+            depth,
+            delegate,
+        }: ManifestQuery,
+    ) -> Option<Arc<Path>> {
+        for path in path.ancestors().take(depth) {
+            let p = path.join("pyproject.toml");
+            if delegate.exists(&p, Some(false)) {
+                return Some(path.into());
+            }
+        }
+
+        None
+    }
+}
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
@@ -266,7 +293,12 @@ impl LspAdapter for PythonLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
-            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .active_toolchain(
+                adapter.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                cx,
+            )
             .await;
         cx.update(move |cx| {
             let mut user_settings =
@@ -292,6 +324,9 @@ impl LspAdapter for PythonLspAdapter {
             }
             user_settings
         })
+    }
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("pyproject.toml").into())
     }
 }
 
@@ -319,6 +354,10 @@ const PYTHON_TEST_TARGET_TASK_VARIABLE: VariableName =
 
 const PYTHON_ACTIVE_TOOLCHAIN_PATH: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN"));
+
+const PYTHON_MODULE_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_MODULE_NAME"));
+
 impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
@@ -333,11 +372,13 @@ impl ContextProvider for PythonContextProvider {
             TestRunner::PYTEST => self.build_pytest_target(variables),
         };
 
+        let module_target = self.build_module_target(variables);
         let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
+
         cx.spawn(async move |cx| {
             let active_toolchain = if let Some(worktree_id) = worktree_id {
                 toolchains
-                    .active_toolchain(worktree_id, "Python".into(), cx)
+                    .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
                     .await
                     .map_or_else(
                         || "python3".to_owned(),
@@ -347,8 +388,12 @@ impl ContextProvider for PythonContextProvider {
                 String::from("python3")
             };
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
+
             Ok(task::TaskVariables::from_iter(
-                test_target.into_iter().chain([toolchain]),
+                test_target
+                    .into_iter()
+                    .chain(module_target.into_iter())
+                    .chain([toolchain]),
             ))
         })
     }
@@ -376,6 +421,17 @@ impl ContextProvider for PythonContextProvider {
                 label: format!("run '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
+                ..TaskTemplate::default()
+            },
+            // Execute a file as module
+            TaskTemplate {
+                label: format!("run module '{}'", VariableName::File.template_value()),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                args: vec![
+                    "-m".to_owned(),
+                    PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
+                ],
+                tags: vec!["python-module-main-method".to_owned()],
                 ..TaskTemplate::default()
             },
         ];
@@ -515,6 +571,19 @@ impl PythonContextProvider {
 
         Some((PYTHON_TEST_TARGET_TASK_VARIABLE.clone(), pytest_target_str))
     }
+
+    fn build_module_target(
+        &self,
+        variables: &task::TaskVariables,
+    ) -> Result<(VariableName, String)> {
+        let python_module_name = python_module_name_from_relative_path(
+            variables.get(&VariableName::RelativeFile).unwrap_or(""),
+        );
+
+        let module_target = (PYTHON_MODULE_NAME_TASK_VARIABLE.clone(), python_module_name);
+
+        Ok(module_target)
+    }
 }
 
 fn python_module_name_from_relative_path(relative_path: &str) -> String {
@@ -523,6 +592,28 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .strip_suffix(".py")
         .unwrap_or(&path_with_dots)
         .to_string()
+}
+
+fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
+    match k {
+        PythonEnvironmentKind::Conda => "Conda",
+        PythonEnvironmentKind::Pixi => "pixi",
+        PythonEnvironmentKind::Homebrew => "Homebrew",
+        PythonEnvironmentKind::Pyenv => "global (Pyenv)",
+        PythonEnvironmentKind::GlobalPaths => "global",
+        PythonEnvironmentKind::PyenvVirtualEnv => "Pyenv",
+        PythonEnvironmentKind::Pipenv => "Pipenv",
+        PythonEnvironmentKind::Poetry => "Poetry",
+        PythonEnvironmentKind::MacPythonOrg => "global (Python.org)",
+        PythonEnvironmentKind::MacCommandLineTools => "global (Command Line Tools for Xcode)",
+        PythonEnvironmentKind::LinuxGlobal => "global",
+        PythonEnvironmentKind::MacXCode => "global (Xcode)",
+        PythonEnvironmentKind::Venv => "venv",
+        PythonEnvironmentKind::VirtualEnv => "virtualenv",
+        PythonEnvironmentKind::VirtualEnvWrapper => "virtualenvwrapper",
+        PythonEnvironmentKind::WindowsStore => "global (Windows Store)",
+        PythonEnvironmentKind::WindowsRegistry => "global (Windows Registry)",
+    }
 }
 
 pub(crate) struct PythonToolchainProvider {
@@ -620,14 +711,26 @@ impl ToolchainLister for PythonToolchainProvider {
         let mut toolchains: Vec<_> = toolchains
             .into_iter()
             .filter_map(|toolchain| {
-                let name = if let Some(version) = &toolchain.version {
-                    format!("Python {version} ({:?})", toolchain.kind?)
-                } else {
-                    format!("{:?}", toolchain.kind?)
+                let mut name = String::from("Python");
+                if let Some(ref version) = toolchain.version {
+                    _ = write!(name, " {version}");
                 }
-                .into();
+
+                let name_and_kind = match (&toolchain.name, &toolchain.kind) {
+                    (Some(name), Some(kind)) => {
+                        Some(format!("({name}; {})", python_env_kind_display(kind)))
+                    }
+                    (Some(name), None) => Some(format!("({name})")),
+                    (None, Some(kind)) => Some(format!("({})", python_env_kind_display(kind))),
+                    (None, None) => None,
+                };
+
+                if let Some(nk) = name_and_kind {
+                    _ = write!(name, " {nk}");
+                }
+
                 Some(Toolchain {
-                    name,
+                    name: name.into(),
                     path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
                     as_json: serde_json::to_value(toolchain).ok()?,
@@ -802,6 +905,7 @@ impl LspAdapter for PyLspAdapter {
             let venv = toolchains
                 .active_toolchain(
                     delegate.worktree_id(),
+                    Arc::from("".as_ref()),
                     LanguageName::new("Python"),
                     &mut cx.clone(),
                 )
@@ -948,7 +1052,12 @@ impl LspAdapter for PyLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
-            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .active_toolchain(
+                adapter.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                cx,
+            )
             .await;
         cx.update(move |cx| {
             let mut user_settings =
@@ -1010,12 +1119,15 @@ impl LspAdapter for PyLspAdapter {
             user_settings
         })
     }
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("pyproject.toml").into())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
-    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 

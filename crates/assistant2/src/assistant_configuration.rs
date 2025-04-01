@@ -1,3 +1,7 @@
+mod add_context_server_modal;
+mod manage_profiles_modal;
+mod tool_picker;
+
 use std::sync::Arc;
 
 use assistant_tool::{ToolSource, ToolWorkingSet};
@@ -5,12 +9,14 @@ use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use gpui::{Action, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{
-    prelude::*, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, Tooltip,
-};
+use ui::{Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, prelude::*};
 use util::ResultExt as _;
-use zed_actions::assistant::DeployPromptLibrary;
 use zed_actions::ExtensionCategoryFilter;
+
+pub(crate) use add_context_server_modal::AddContextServerModal;
+pub(crate) use manage_profiles_modal::ManageProfilesModal;
+
+use crate::AddContextServer;
 
 pub struct AssistantConfiguration {
     focus_handle: FocusHandle,
@@ -99,7 +105,7 @@ impl AssistantConfiguration {
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let provider_id = provider.id().0.clone();
         let provider_name = provider.name().0.clone();
         let configuration_view = self
@@ -170,7 +176,6 @@ impl AssistantConfiguration {
 
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
-            .mt_1()
             .gap_2()
             .flex_1()
             .child(
@@ -309,8 +314,9 @@ impl AssistantConfiguration {
                                 .icon(IconName::Plus)
                                 .icon_size(IconSize::Small)
                                 .icon_position(IconPosition::Start)
-                                .disabled(true)
-                                .tooltip(Tooltip::text("Not yet implemented")),
+                                .on_click(|_event, window, cx| {
+                                    window.dispatch_action(AddContextServer.boxed_clone(), cx)
+                                }),
                         ),
                     )
                     .child(
@@ -352,33 +358,6 @@ impl Render for AssistantConfiguration {
             .bg(cx.theme().colors().panel_background)
             .size_full()
             .overflow_y_scroll()
-            .child(
-                v_flex()
-                    .p(DynamicSpacing::Base16.rems(cx))
-                    .gap_2()
-                    .child(
-                        v_flex()
-                            .gap_0p5()
-                            .child(Headline::new("Prompt Library").size(HeadlineSize::Small))
-                            .child(
-                                Label::new("Create reusable prompts and tag which ones you want sent in every LLM interaction.")
-                                    .color(Color::Muted),
-                            ),
-                    )
-                    .child(
-                        Button::new("open-prompt-library", "Open Prompt Library")
-                            .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::ModalSurface)
-                            .full_width()
-                            .icon(IconName::Book)
-                            .icon_size(IconSize::Small)
-                            .icon_position(IconPosition::Start)
-                            .on_click(|_event, window, cx| {
-                                window.dispatch_action(DeployPromptLibrary.boxed_clone(), cx)
-                            }),
-                    ),
-            )
-            .child(Divider::horizontal().color(DividerColor::Border))
             .child(self.render_context_servers_section(cx))
             .child(Divider::horizontal().color(DividerColor::Border))
             .child(

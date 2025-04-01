@@ -4,23 +4,24 @@
 use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
+use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
-    language_settings::{language_settings, AllLanguageSettings},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
+    language_settings::{AllLanguageSettings, language_settings},
 };
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{
-    search::{SearchQuery, SearchResult},
     Project, ProjectPath,
+    search::{SearchQuery, SearchResult},
 };
 use remote::SshRemoteClient;
 use serde_json::json;
-use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
+use settings::{Settings, SettingsLocation, SettingsStore, initial_server_settings_content};
 use smol::stream::StreamExt;
 use std::{
     collections::HashSet,
@@ -1445,6 +1446,7 @@ pub async fn init_test(
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
+    let debug_adapters = DapRegistry::default().into();
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new(|cx| {
@@ -1457,6 +1459,7 @@ pub async fn init_test(
                 http_client,
                 node_runtime,
                 languages,
+                debug_adapters,
                 extension_host_proxy: proxy,
             },
             cx,

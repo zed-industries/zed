@@ -5,7 +5,7 @@
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
+use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use collections::HashMap;
 use parking_lot::Mutex;
 use std::{
@@ -465,7 +465,7 @@ mod linux {
             match fork::fork() {
                 Ok(Fork::Parent(_)) => Ok(()),
                 Ok(Fork::Child) => {
-                    std::env::set_var(FORCE_CLI_MODE_ENV_VAR_NAME, "");
+                    unsafe { std::env::set_var(FORCE_CLI_MODE_ENV_VAR_NAME, "") };
                     if let Err(_) = fork::setsid() {
                         eprintln!("failed to setsid: {}", std::io::Error::last_os_error());
                         process::exit(1);
@@ -521,7 +521,7 @@ mod flatpak {
             paths.push(extra_path.into());
         }
 
-        env::set_var("LD_LIBRARY_PATH", env::join_paths(paths).unwrap());
+        unsafe { env::set_var("LD_LIBRARY_PATH", env::join_paths(paths).unwrap()) };
     }
 
     /// Restarts outside of the sandbox if currently running within it
@@ -562,7 +562,9 @@ mod flatpak {
         {
             if args.zed.is_none() {
                 args.zed = Some("/app/libexec/zed-editor".into());
-                env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed");
+                unsafe {
+                    env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed")
+                };
             }
         }
         args
@@ -612,14 +614,14 @@ mod windows {
     use anyhow::Context;
     use release_channel::app_identifier;
     use windows::{
-        core::HSTRING,
         Win32::{
-            Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, GENERIC_WRITE},
+            Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GENERIC_WRITE, GetLastError},
             Storage::FileSystem::{
-                CreateFileW, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING,
+                CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING, WriteFile,
             },
             System::Threading::CreateMutexW,
         },
+        core::HSTRING,
     };
 
     use crate::{Detect, InstalledApp};
@@ -726,13 +728,14 @@ mod windows {
 
 #[cfg(target_os = "macos")]
 mod mac_os {
-    use anyhow::{anyhow, Context as _, Result};
+    use anyhow::{Context as _, Result, anyhow};
     use core_foundation::{
         array::{CFArray, CFIndex},
+        base::TCFType as _,
         string::kCFStringEncodingUTF8,
-        url::{CFURLCreateWithBytes, CFURL},
+        url::{CFURL, CFURLCreateWithBytes},
     };
-    use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec, TCFType};
+    use core_services::{LSLaunchURLSpec, LSOpenFromURLSpec, kLSLaunchDefaults};
     use serde::Deserialize;
     use std::{
         ffi::OsStr,
@@ -759,7 +762,6 @@ mod mac_os {
         },
         LocalPath {
             executable: PathBuf,
-            plist: InfoPlist,
         },
     }
 
@@ -796,34 +798,16 @@ mod mac_os {
                         plist,
                     })
                 }
-                _ => {
-                    println!("Bundle path {bundle_path:?} has no *.app extension, attempting to locate a dev build");
-                    let plist_path = bundle_path
-                        .parent()
-                        .with_context(|| format!("Bundle path {bundle_path:?} has no parent"))?
-                        .join("WebRTC.framework/Resources/Info.plist");
-                    let plist =
-                        plist::from_file::<_, InfoPlist>(&plist_path).with_context(|| {
-                            format!("Reading dev bundle plist file at {plist_path:?}")
-                        })?;
-                    Ok(Bundle::LocalPath {
-                        executable: bundle_path,
-                        plist,
-                    })
-                }
+                _ => Ok(Bundle::LocalPath {
+                    executable: bundle_path,
+                }),
             }
         }
     }
 
     impl InstalledApp for Bundle {
         fn zed_version_string(&self) -> String {
-            let is_dev = matches!(self, Self::LocalPath { .. });
-            format!(
-                "Zed {}{} – {}",
-                self.plist().bundle_short_version_string,
-                if is_dev { " (dev)" } else { "" },
-                self.path().display(),
-            )
+            format!("Zed {} – {}", self.version(), self.path().display(),)
         }
 
         fn launch(&self, url: String) -> anyhow::Result<()> {
@@ -909,10 +893,10 @@ mod mac_os {
     }
 
     impl Bundle {
-        fn plist(&self) -> &InfoPlist {
+        fn version(&self) -> String {
             match self {
-                Self::App { plist, .. } => plist,
-                Self::LocalPath { plist, .. } => plist,
+                Self::App { plist, .. } => plist.bundle_short_version_string.clone(),
+                Self::LocalPath { .. } => "<development>".to_string(),
             }
         }
 

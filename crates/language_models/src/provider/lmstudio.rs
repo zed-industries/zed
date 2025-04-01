@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use anyhow::{Result, anyhow};
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{AuthenticateError, LanguageModelCompletionEvent};
@@ -9,14 +9,14 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use lmstudio::{
-    get_models, preload_model, stream_chat_completion, ChatCompletionRequest, ChatMessage,
-    ModelType,
+    ChatCompletionRequest, ChatMessage, ModelType, get_models, preload_model,
+    stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{prelude::*, ButtonLike, Indicator};
+use ui::{ButtonLike, Indicator, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
@@ -415,8 +415,7 @@ impl Render for ConfigurationView {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let lmstudio_intro = "Run local LLMs like Llama, Phi, and Qwen.";
-        let lmstudio_reqs =
-            "To use LM Studio as a provider for Zed assistant, it needs to be running with at least one model downloaded.";
+        let lmstudio_reqs = "To use LM Studio as a provider for Zed assistant, it needs to be running with at least one model downloaded.";
 
         let inline_code_bg = cx.theme().colors().editor_foreground.opacity(0.05);
 

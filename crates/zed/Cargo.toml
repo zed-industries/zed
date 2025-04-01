@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.180.0"
+version = "0.181.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -41,6 +41,8 @@ command_palette.workspace = true
 command_palette_hooks.workspace = true
 component_preview.workspace = true
 copilot.workspace = true
+dap.workspace = true
+dap_adapters.workspace = true
 debugger_ui.workspace = true
 debugger_tools.workspace = true
 db.workspace = true
@@ -122,6 +124,7 @@ theme.workspace = true
 theme_extension.workspace = true
 theme_selector.workspace = true
 time.workspace = true
+title_bar.workspace = true
 toolchain_selector.workspace = true
 ui.workspace = true
 ui_prompt.workspace = true
@@ -148,6 +151,7 @@ ashpd.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
+dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
