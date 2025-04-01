@@ -1200,15 +1200,21 @@
     //
     // Default: 0
     "lsp_fetch_timeout_ms": 0,
-    // Controls how the completions are inserted.
+    // Controls what range to replace when accepting LSP completions.
+    //
+    // When LSP servers give an `InsertReplaceEdit` completion, they provides two ranges: `insert` and `replace`. Usually, `insert`
+    // contains the word prefix before your cursor and `replace` contains the whole word.
+    //
+    // Effectively, this setting just changes whether Zed will use the received range for `insert` or `replace`, so the results may
+    // differ depending on the underlying LSP server.
     //
     // Possible values:
     // 1. "insert"
-    //   Removes text left from the cursor
+    //   Replaces text before the cursor, using the `insert` range described in the LSP specification.
     // 2. "replace"
-    //   Replace the word
+    //   Replaces the whole word, using the `replace` range described in the LSP specification.
     // 3. "smart"
-    //   removes text left from the cursor and text right from the cursor if the completion ends with it
+    //   Only replace the whole word if the text after cursor is a suffix of the completion.
     //
     // Default: replace
     "completion_mode": "replace"

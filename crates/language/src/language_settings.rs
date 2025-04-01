@@ -358,16 +358,21 @@ pub enum WordsCompletionMode {
     Disabled,
 }
 
-/// Controls what is replaced by the lsp
-
+// Controls what range to replace when accepting LSP completions.
+//
+// When LSP servers give an `InsertReplaceEdit` completion, they provides two ranges: `insert` and `replace`. Usually, `insert`
+// contains the word prefix before your cursor and `replace` contains the whole word.
+//
+// Effectively, this setting just changes whether Zed will use the received range for `insert` or `replace`, so the results may
+// differ depending on the underlying LSP server.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CompletionMode {
-    /// uses lsp insert range
+    /// Replaces text before the cursor, using the `insert` range described in the LSP specification.
     Insert,
-    /// uses lsp replace range
+    /// Replaces the whole word, using the `replace` range described in the LSP specification.
     Replace,
-    /// uses lsp insert range & truncates the right side if the completion ends with it
+    /// Only replace the whole word if the text after cursor is a suffix of the completion.
     Smart,
 }
 
