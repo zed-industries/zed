@@ -834,7 +834,7 @@ impl GitStore {
                 RepositoryState::Local { backend, .. } => backend
                     .blame(repo_path.clone(), content)
                     .await
-                    .with_context(|| format!("Failed to blame {:?}", repo_path))
+                    .with_context(|| format!("Failed to blame {:?}", repo_path.0))
                     .map(Some),
                 RepositoryState::Remote { project_id, client } => {
                     let response = client
