@@ -1335,7 +1335,7 @@ impl LinuxClient for X11Client {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        scap_screen_sources()
+        scap_screen_sources(&self.0.borrow().common.foreground_executor)
     }
 
     fn open_window(

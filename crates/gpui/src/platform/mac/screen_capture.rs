@@ -1,5 +1,5 @@
 use crate::{
-    Pixels, Size,
+    ForegroundExecutor, Pixels, Size,
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
     px, size,
 };
@@ -62,6 +62,7 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
 
     fn stream(
         &self,
+        _foreground_executor: &ForegroundExecutor,
         frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         unsafe {

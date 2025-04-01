@@ -248,7 +248,7 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 }
 
 /// A source of on-screen video content that can be captured.
-pub trait ScreenCaptureSource: Send {
+pub trait ScreenCaptureSource {
     /// Returns the video resolution of this source.
     fn resolution(&self) -> Result<Size<DevicePixels>>;
 
@@ -256,12 +256,13 @@ pub trait ScreenCaptureSource: Send {
     /// with each frame.
     fn stream(
         &self,
+        foreground_executor: &ForegroundExecutor,
         frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
 }
 
 /// A video stream captured from a screen.
-pub trait ScreenCaptureStream: Send {}
+pub trait ScreenCaptureStream {}
 
 /// A frame of video captured from a screen.
 pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
