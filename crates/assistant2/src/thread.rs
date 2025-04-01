@@ -892,9 +892,8 @@ impl Thread {
 
             let referenced_context = referenced_context_ids
                 .into_iter()
-                .filter_map(|context_id| self.context.get(context_id))
-                .cloned();
-            attach_context_to_message(&mut context_message, referenced_context);
+                .filter_map(|context_id| self.context.get(context_id));
+            attach_context_to_message(&mut context_message, referenced_context, cx);
 
             request.messages.push(context_message);
         }

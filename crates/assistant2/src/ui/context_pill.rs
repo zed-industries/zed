@@ -6,6 +6,7 @@ use ui::{prelude::*, IconButtonShape, Tooltip};
 use crate::context::{AssistantContext, ContextKind};
 
 #[derive(IntoElement)]
+#[allow(clippy::large_enum_variant)]
 pub enum ContextPill {
     Added {
         context: AssistantContext,

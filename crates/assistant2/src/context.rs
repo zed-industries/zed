@@ -3,7 +3,7 @@ use std::{ops::Range, sync::Arc};
 use file_icons::FileIcons;
 use gpui::{App, Entity, SharedString};
 use language::{Buffer, File};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, MessageContent};
 use project::ProjectPath;
 use serde::{Deserialize, Serialize};
 use text::{Anchor, BufferId};
@@ -191,7 +191,7 @@ impl FileContext {
 
     pub fn icon(&self, cx: &App) -> Icon {
         FileIcons::get_icon(&self.context_buffer.file.path(), cx)
-            .map(|icon_path| Icon::from_path(icon_path))
+            .map(Icon::from_path)
             .unwrap_or_else(|| IconName::File.into())
     }
 
@@ -262,9 +262,10 @@ impl ThreadContext {
     }
 }
 
-pub fn attach_context_to_message(
+pub fn attach_context_to_message<'a>(
     message: &mut LanguageModelRequestMessage,
-    contexts: impl Iterator<Item = AssistantContext>,
+    contexts: impl Iterator<Item = &'a AssistantContext>,
+    cx: &App,
 ) {
     let mut file_context = Vec::new();
     let mut directory_context = Vec::new();
@@ -272,76 +273,65 @@ pub fn attach_context_to_message(
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
 
-    let mut capacity = 0;
     for context in contexts {
         match context {
-            AssistantContext::File(context) => file_context.push(context.text()),
-            AssistantContext::Directory(context) => directory_context.push(context.text()),
-            AssistantContext::Symbol(context) => symbol_context.push(context.text()),
-            AssistantContext::FetchedUrl(context) => fetch_context.push(context.text()),
-            AssistantContext::Thread(context) => thread_context.push(context.text()),
+            AssistantContext::File(context) => file_context.push(context),
+            AssistantContext::Directory(context) => directory_context.push(context),
+            AssistantContext::Symbol(context) => symbol_context.push(context),
+            AssistantContext::FetchedUrl(context) => fetch_context.push(context),
+            AssistantContext::Thread(context) => thread_context.push(context),
         }
     }
 
     let mut context_chunks = Vec::new();
 
-    //     if !file_context.is_empty() {
-    //         context_chunks.push("The following files are available:\n");
-    //         for context in &file_context {
-    //             for chunk in &context.text {
-    //                 context_chunks.push(&chunk);
-    //             }
-    //         }
-    //     }
+    if !file_context.is_empty() {
+        context_chunks.push("The following files are available:\n");
+        for context in file_context {
+            context_chunks.push(&context.context_buffer.text);
+        }
+    }
 
-    //     if !directory_context.is_empty() {
-    //         context_chunks.push("The following directories are available:\n");
-    //         for context in &directory_context {
-    //             for chunk in &context.text {
-    //                 context_chunks.push(&chunk);
-    //             }
-    //         }
-    //     }
+    if !directory_context.is_empty() {
+        context_chunks.push("The following directories are available:\n");
+        for context in directory_context {
+            for context_buffer in &context.context_buffers {
+                context_chunks.push(&context_buffer.text);
+            }
+        }
+    }
 
-    //     if !symbol_context.is_empty() {
-    //         context_chunks.push("The following symbols are available:\n");
-    //         for context in &symbol_context {
-    //             for chunk in &context.text {
-    //                 context_chunks.push(&chunk);
-    //             }
-    //         }
-    //     }
+    if !symbol_context.is_empty() {
+        context_chunks.push("The following symbols are available:\n");
+        for context in symbol_context {
+            context_chunks.push(&context.context_symbol.text);
+        }
+    }
 
-    //     if !fetch_context.is_empty() {
-    //         context_chunks.push("The following fetched results are available:\n");
-    //         for context in &fetch_context {
-    //             context_chunks.push(&context.name);
-    //             for chunk in &context.text {
-    //                 context_chunks.push(&chunk);
-    //             }
-    //         }
-    //     }
+    if !fetch_context.is_empty() {
+        context_chunks.push("The following fetched results are available:\n");
+        for context in &fetch_context {
+            context_chunks.push(&context.url);
+            context_chunks.push(&context.text);
+        }
+    }
 
-    //     if !thread_context.is_empty() {
-    //         context_chunks.push("The following previous conversation threads are available:\n");
-    //         for context in &thread_context {
-    //             context_chunks.push(&context.name);
-    //             for chunk in &context.text {
-    //                 context_chunks.push(&chunk);
-    //             }
-    //         }
-    //     }
+    // Need to own the SharedString for name so that it can be referenced.
+    let mut thread_context_chunks = Vec::new();
+    if !thread_context.is_empty() {
+        context_chunks.push("The following previous conversation threads are available:\n");
+        for context in &thread_context {
+            thread_context_chunks.push(context.name(cx));
+            thread_context_chunks.push(context.text.clone());
+        }
+    }
+    for chunk in &thread_context_chunks {
+        context_chunks.push(chunk);
+    }
 
-    //     debug_assert!(
-    //         context_chunks.len() == capacity,
-    //         "attach_context_message calculated capacity of {}, but length was {}",
-    //         capacity,
-    //         context_chunks.len()
-    //     );
-
-    //     if !context_chunks.is_empty() {
-    //         message
-    //             .content
-    //             .push(MessageContent::Text(context_chunks.join("\n")));
-    //     }
+    if !context_chunks.is_empty() {
+        message
+            .content
+            .push(MessageContent::Text(context_chunks.join("\n")));
+    }
 }
