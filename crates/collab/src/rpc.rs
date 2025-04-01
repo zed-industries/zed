@@ -3,7 +3,7 @@ mod connection_pool;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::llm::LlmTokenClaims;
 use crate::{
-    auth,
+    AppState, Config, Error, RateLimit, Result, auth,
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
         CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
@@ -11,46 +11,46 @@ use crate::{
         RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
-    AppState, Config, Error, RateLimit, Result,
 };
-use anyhow::{anyhow, bail, Context as _};
+use anyhow::{Context as _, anyhow, bail};
 use async_tungstenite::tungstenite::{
-    protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
+    Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
 };
 use axum::{
+    Extension, Router, TypedHeader,
     body::Body,
     extract::{
-        ws::{CloseFrame as AxumCloseFrame, Message as AxumMessage},
         ConnectInfo, WebSocketUpgrade,
+        ws::{CloseFrame as AxumCloseFrame, Message as AxumMessage},
     },
     headers::{Header, HeaderName},
     http::StatusCode,
     middleware,
     response::IntoResponse,
     routing::get,
-    Extension, Router, TypedHeader,
 };
 use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use http_client::HttpClient;
-use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
+use open_ai::{OPEN_AI_API_URL, OpenAiEmbeddingModel};
 use reqwest_client::ReqwestClient;
+use rpc::proto::split_repository_update;
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
-    channel::oneshot, future::BoxFuture, stream::FuturesUnordered, FutureExt, SinkExt, StreamExt,
-    TryStreamExt,
+    FutureExt, SinkExt, StreamExt, TryStreamExt, channel::oneshot, future::BoxFuture,
+    stream::FuturesUnordered,
 };
-use prometheus::{register_int_gauge, IntGauge};
+use prometheus::{IntGauge, register_int_gauge};
 use rpc::{
+    Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
     proto::{
         self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
         RequestMessage, ShareProject, UpdateChannelBufferCollaborators,
     },
-    Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
 };
 use semantic_version::SemanticVersion;
 use serde::{Serialize, Serializer};
@@ -63,17 +63,18 @@ use std::{
     ops::{Deref, DerefMut},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc, OnceLock,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
 use time::OffsetDateTime;
-use tokio::sync::{watch, MutexGuard, Semaphore};
+use tokio::sync::{MutexGuard, Semaphore, watch};
 use tower::ServiceBuilder;
 use tracing::{
+    Instrument,
     field::{self},
-    info_span, instrument, Instrument,
+    info_span, instrument,
 };
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -291,6 +292,8 @@ impl Server {
             .add_message_handler(leave_project)
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
+            .add_request_handler(update_repository)
+            .add_request_handler(remove_repository)
             .add_message_handler(start_language_server)
             .add_message_handler(update_language_server)
             .add_message_handler(update_diagnostic_summary)
@@ -301,6 +304,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
             .add_request_handler(forward_find_search_candidates_request)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentSymbols>)
             .add_request_handler(forward_read_only_project_request::<proto::GetProjectSymbols>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferForSymbol>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
@@ -312,6 +316,14 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtOpenDocs>)
+            .add_request_handler(
+                forward_read_only_project_request::<proto::LspExtSwitchSourceHeader>,
+            )
+            .add_request_handler(
+                forward_read_only_project_request::<proto::LanguageServerIdForName>,
+            )
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )
@@ -401,6 +413,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
             .add_request_handler(forward_read_only_project_request::<proto::GitShow>)
+            .add_request_handler(forward_read_only_project_request::<proto::LoadCommitDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::GitReset>)
             .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
             .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
@@ -712,7 +725,7 @@ impl Server {
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let this = self.clone();
         let span = info_span!("handle connection", %address,
             connection_id=field::Empty,
@@ -1103,7 +1116,7 @@ pub async fn handle_websocket_request(
             .into_response();
     }
 
-    let Some(version) = app_version_header.map(|header| ZedVersion(header.0 .0)) else {
+    let Some(version) = app_version_header.map(|header| ZedVersion(header.0.0)) else {
         return (
             StatusCode::UPGRADE_REQUIRED,
             "no version header found".to_string(),
@@ -1464,7 +1477,7 @@ fn notify_rejoined_projects(
                 removed_repositories: worktree.removed_repositories,
             };
             for update in proto::split_worktree_update(message) {
-                session.peer.send(session.connection_id, update.clone())?;
+                session.peer.send(session.connection_id, update)?;
             }
 
             // Stream this worktree's diagnostics.
@@ -1493,21 +1506,23 @@ fn notify_rejoined_projects(
             }
         }
 
-        for language_server in &project.language_servers {
+        for repository in mem::take(&mut project.updated_repositories) {
+            for update in split_repository_update(repository) {
+                session.peer.send(session.connection_id, update)?;
+            }
+        }
+
+        for id in mem::take(&mut project.removed_repositories) {
             session.peer.send(
                 session.connection_id,
-                proto::UpdateLanguageServer {
+                proto::RemoveRepository {
                     project_id: project.id.to_proto(),
-                    language_server_id: language_server.id,
-                    variant: Some(
-                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                            proto::LspDiskBasedDiagnosticsUpdated {},
-                        ),
-                    ),
+                    id,
                 },
             )?;
         }
     }
+
     Ok(())
 }
 
@@ -1893,7 +1908,7 @@ fn join_project_internal(
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,
             is_last_update: worktree.scan_id == worktree.completed_scan_id,
-            updated_repositories: worktree.repository_entries.into_values().collect(),
+            updated_repositories: worktree.legacy_repository_entries.into_values().collect(),
             removed_repositories: Default::default(),
         };
         for update in proto::split_worktree_update(message) {
@@ -1923,6 +1938,12 @@ fn join_project_internal(
                     kind: Some(settings_file.kind.to_proto() as i32),
                 },
             )?;
+        }
+    }
+
+    for repository in mem::take(&mut project.repositories) {
+        for update in split_repository_update(repository) {
+            session.peer.send(session.connection_id, update)?;
         }
     }
 
@@ -2003,6 +2024,54 @@ async fn update_worktree(
         .db()
         .await
         .update_worktree(&request, session.connection_id)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())
+        },
+    );
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn update_repository(
+    request: proto::UpdateRepository,
+    response: Response<proto::UpdateRepository>,
+    session: Session,
+) -> Result<()> {
+    let guest_connection_ids = session
+        .db()
+        .await
+        .update_repository(&request, session.connection_id)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())
+        },
+    );
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn remove_repository(
+    request: proto::RemoveRepository,
+    response: Response<proto::RemoveRepository>,
+    session: Session,
+) -> Result<()> {
+    let guest_connection_ids = session
+        .db()
+        .await
+        .remove_repository(&request, session.connection_id)
         .await?;
 
     broadcast(

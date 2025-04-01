@@ -23,7 +23,7 @@ line_comments = ["# "]
 - `name` (required) is the human readable name that will show up in the Select Language dropdown.
 - `grammar` (required) is the name of a grammar. Grammars are registered separately, described below.
 - `path_suffixes` is an array of file suffixes that should be associated with this language. Unlike `file_types` in settings, this does not support glob patterns.
-- `line_comments` is an array of strings that are used to identify line comments in the language. This is used for the `editor::ToggleComments` keybind: `{#kb editor::ToggleComments}` for toggling lines of code.
+- `line_comments` is an array of strings that are used to identify line comments in the language. This is used for the `editor::ToggleComments` keybind: {#kb editor::ToggleComments} for toggling lines of code.
 - `tab_size` defines the indentation/tab size used for this language (default is `4`).
 - `hard_tabs` whether to indent with tabs (`true`) or spaces (`false`, the default).
 - `first_line_pattern` is a regular expression, that in addition to `path_suffixes` (above) or `file_types` in settings can be used to match files which should use this language. For example Zed uses this to identify Shell Scripts by matching the [shebangs lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.

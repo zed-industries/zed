@@ -1,10 +1,10 @@
 use std::{ops::Range, path::Path, sync::Arc};
 
 use editor::{
+    Anchor, Bias, DisplayPoint, Editor, MultiBuffer,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, Editor, MultiBuffer,
 };
 use gpui::{Context, Entity, EntityId, UpdateGlobal, Window};
 use language::SelectionGoal;
@@ -13,9 +13,9 @@ use ui::App;
 use workspace::OpenOptions;
 
 use crate::{
+    Vim,
     motion::{self, Motion},
     state::{Mark, Mode, VimGlobals},
-    Vim,
 };
 
 impl Vim {
@@ -183,10 +183,13 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         line: bool,
+        should_pop_operator: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.pop_operator(window, cx);
+        if should_pop_operator {
+            self.pop_operator(window, cx);
+        }
         let mark = self
             .update_editor(window, cx, |vim, editor, window, cx| {
                 vim.get_mark(&text, editor, window, cx)
@@ -207,6 +210,9 @@ impl Vim {
 
         let Some(mut anchors) = anchors else { return };
 
+        self.update_editor(window, cx, |_, editor, _, cx| {
+            editor.create_nav_history_entry(cx);
+        });
         let is_active_operator = self.active_operator().is_some();
         if is_active_operator {
             if let Some(anchor) = anchors.last() {
@@ -261,7 +267,7 @@ impl Vim {
 
     pub fn set_mark(
         &mut self,
-        name: String,
+        mut name: String,
         anchors: Vec<Anchor>,
         buffer_entity: &Entity<MultiBuffer>,
         window: &mut Window,
@@ -270,6 +276,9 @@ impl Vim {
         let Some(workspace) = self.workspace(window) else {
             return;
         };
+        if name == "`" {
+            name = "'".to_string();
+        }
         let entity_id = workspace.entity_id();
         Vim::update_globals(cx, |vim_globals, cx| {
             let Some(marks_state) = vim_globals.marks.get(&entity_id) else {
@@ -283,11 +292,14 @@ impl Vim {
 
     pub fn get_mark(
         &self,
-        name: &str,
+        mut name: &str,
         editor: &mut Editor,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Mark> {
+        if name == "`" {
+            name = "'";
+        }
         if matches!(name, "{" | "}" | "(" | ")") {
             let (map, selections) = editor.selections.all_display(cx);
             let anchors = selections
@@ -327,4 +339,30 @@ pub fn jump_motion(
     }
 
     (point, SelectionGoal::None)
+}
+
+#[cfg(test)]
+mod test {
+    use gpui::TestAppContext;
+
+    use crate::test::NeovimBackedTestContext;
+
+    #[gpui::test]
+    async fn test_quote_mark(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇHello, world!").await;
+        cx.simulate_shared_keystrokes("w m o").await;
+        cx.shared_state().await.assert_eq("Helloˇ, world!");
+        cx.simulate_shared_keystrokes("$ ` o").await;
+        cx.shared_state().await.assert_eq("Helloˇ, world!");
+        cx.simulate_shared_keystrokes("` `").await;
+        cx.shared_state().await.assert_eq("Hello, worldˇ!");
+        cx.simulate_shared_keystrokes("` `").await;
+        cx.shared_state().await.assert_eq("Helloˇ, world!");
+        cx.simulate_shared_keystrokes("$ m '").await;
+        cx.shared_state().await.assert_eq("Hello, worldˇ!");
+        cx.simulate_shared_keystrokes("^ ` `").await;
+        cx.shared_state().await.assert_eq("Hello, worldˇ!");
+    }
 }

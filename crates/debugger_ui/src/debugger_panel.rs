@@ -1,30 +1,33 @@
 use crate::session::DebugSession;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
-    client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, LoadedSourceEvent,
-    ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
+    ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
+    client::SessionId, debugger_settings::DebuggerSettings,
 };
-use futures::{channel::mpsc, SinkExt as _};
+use futures::{SinkExt as _, channel::mpsc};
 use gpui::{
-    actions, Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, WeakEntity,
+    Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, Task, WeakEntity, actions,
 };
 use project::{
+    Project,
     debugger::dap_store::{self, DapStore},
     terminals::TerminalKind,
-    Project,
 };
 use rpc::proto::{self};
 use settings::Settings;
 use std::{any::TypeId, path::PathBuf};
+use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::prelude::*;
+use util::ResultExt;
 use workspace::{
+    ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut,
+    StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    pane, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut, StepOver, Stop,
-    ToggleIgnoreBreakpoints, Workspace,
+    pane,
 };
 
 pub enum DebugPanelEvent {
@@ -51,6 +54,7 @@ pub struct DebugPanel {
     project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
+    pub(crate) last_inert_config: Option<DebugTaskDefinition>,
 }
 
 impl DebugPanel {
@@ -63,6 +67,7 @@ impl DebugPanel {
             let project = workspace.project().clone();
             let dap_store = project.read(cx).dap_store();
             let weak_workspace = workspace.weak_handle();
+            let debug_panel = cx.weak_entity();
             let pane = cx.new(|cx| {
                 let mut pane = Pane::new(
                     workspace.weak_handle(),
@@ -81,6 +86,7 @@ impl DebugPanel {
                 pane.set_render_tab_bar_buttons(cx, {
                     let project = project.clone();
                     let weak_workspace = weak_workspace.clone();
+                    let debug_panel = debug_panel.clone();
                     move |_, _, cx| {
                         let project = project.clone();
                         let weak_workspace = weak_workspace.clone();
@@ -91,21 +97,34 @@ impl DebugPanel {
                                     .child(
                                         IconButton::new("new-debug-session", IconName::Plus)
                                             .icon_size(IconSize::Small)
-                                            .on_click(cx.listener(move |pane, _, window, cx| {
-                                                pane.add_item(
-                                                    Box::new(DebugSession::inert(
-                                                        project.clone(),
-                                                        weak_workspace.clone(),
+                                            .on_click({
+                                                let debug_panel = debug_panel.clone();
+
+                                                cx.listener(move |pane, _, window, cx| {
+                                                    let config = debug_panel
+                                                        .read_with(cx, |this: &DebugPanel, _| {
+                                                            this.last_inert_config.clone()
+                                                        })
+                                                        .log_err()
+                                                        .flatten();
+
+                                                    pane.add_item(
+                                                        Box::new(DebugSession::inert(
+                                                            project.clone(),
+                                                            weak_workspace.clone(),
+                                                            debug_panel.clone(),
+                                                            config,
+                                                            window,
+                                                            cx,
+                                                        )),
+                                                        false,
+                                                        false,
+                                                        None,
                                                         window,
                                                         cx,
-                                                    )),
-                                                    false,
-                                                    false,
-                                                    None,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })),
+                                                    );
+                                                })
+                                            }),
                                     )
                                     .into_any_element(),
                             ),
@@ -116,6 +135,8 @@ impl DebugPanel {
                     Box::new(DebugSession::inert(
                         project.clone(),
                         weak_workspace.clone(),
+                        debug_panel.clone(),
+                        None,
                         window,
                         cx,
                     )),
@@ -138,6 +159,7 @@ impl DebugPanel {
                 pane,
                 size: px(300.),
                 _subscriptions,
+                last_inert_config: None,
                 project: project.downgrade(),
                 workspace: workspace.weak_handle(),
             };
@@ -153,6 +175,15 @@ impl DebugPanel {
         cx.spawn(async move |cx| {
             workspace.update_in(cx, |workspace, window, cx| {
                 let debug_panel = DebugPanel::new(workspace, window, cx);
+
+                workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
+                    workspace.project().read(cx).breakpoint_store().update(
+                        cx,
+                        |breakpoint_store, cx| {
+                            breakpoint_store.clear_breakpoints(cx);
+                        },
+                    )
+                });
 
                 cx.observe(&debug_panel, |_, debug_panel, cx| {
                     let (has_active_session, supports_restart, support_step_back) = debug_panel
@@ -266,7 +297,9 @@ impl DebugPanel {
         match event {
             dap_store::DapStoreEvent::DebugClientStarted(session_id) => {
                 let Some(session) = dap_store.read(cx).session_by_id(session_id) else {
-                    return log::error!("Couldn't get session with id: {session_id:?} from DebugClientStarted event");
+                    return log::error!(
+                        "Couldn't get session with id: {session_id:?} from DebugClientStarted event"
+                    );
                 };
 
                 let Some(project) = self.project.upgrade() else {
@@ -280,8 +313,14 @@ impl DebugPanel {
                     // We already have an item for this session.
                     return;
                 }
-                let session_item =
-                    DebugSession::running(project, self.workspace.clone(), session, window, cx);
+                let session_item = DebugSession::running(
+                    project,
+                    self.workspace.clone(),
+                    session,
+                    cx.weak_entity(),
+                    window,
+                    cx,
+                );
 
                 self.pane.update(cx, |pane, cx| {
                     pane.add_item(Box::new(session_item), true, true, None, window, cx);
@@ -504,12 +543,16 @@ impl Panel for DebugPanel {
             let Some(project) = self.project.clone().upgrade() else {
                 return;
             };
+            let config = self.last_inert_config.clone();
+            let panel = cx.weak_entity();
             // todo: We need to revisit it when we start adding stopped items to pane (as that'll cause us to add two items).
             self.pane.update(cx, |this, cx| {
                 this.add_item(
                     Box::new(DebugSession::inert(
                         project,
                         self.workspace.clone(),
+                        panel,
+                        config,
                         window,
                         cx,
                     )),

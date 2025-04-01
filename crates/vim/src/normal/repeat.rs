@@ -1,14 +1,14 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
+    Vim,
     insert::NormalBefore,
     motion::Motion,
     normal::InsertBefore,
     state::{Mode, Operator, RecordedSelection, ReplayableAction, VimGlobals},
-    Vim,
 };
 use editor::Editor;
-use gpui::{actions, Action, App, Context, Window};
+use gpui::{Action, App, Context, Window, actions};
 use workspace::Workspace;
 
 actions!(vim, [Repeat, EndRepeat, ToggleRecord, ReplayLastRecording]);
@@ -434,8 +434,8 @@ mod test {
             Mode::Normal,
         );
 
-        let mut request =
-            cx.handle_request::<lsp::request::Completion, _, _>(move |_, params, _| async move {
+        let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(
+            move |_, params, _| async move {
                 let position = params.text_document_position.position;
                 Ok(Some(lsp::CompletionResponse::Array(vec![
                     lsp::CompletionItem {
@@ -455,7 +455,8 @@ mod test {
                         ..Default::default()
                     },
                 ])))
-            });
+            },
+        );
         cx.simulate_keystrokes("a .");
         request.next().await;
         cx.condition(|editor, _| editor.context_menu_visible())

@@ -1,23 +1,26 @@
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
-use assistant_tool::{ToolId, ToolWorkingSet};
+use anyhow::{Result, anyhow};
+use assistant_settings::{AgentProfile, AssistantSettings};
+use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
-use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt as _;
+use futures::future::{self, BoxFuture, Shared};
 use gpui::{
-    prelude::*, App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Task,
+    App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Task, prelude::*,
 };
-use heed::types::{SerdeBincode, SerdeJson};
 use heed::Database;
-use language_model::{LanguageModelToolUseId, Role};
+use heed::types::SerdeBincode;
+use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
+use settings::Settings as _;
 use util::ResultExt as _;
 
 use crate::thread::{MessageId, ProjectSnapshot, Thread, ThreadEvent, ThreadId};
@@ -56,6 +59,7 @@ impl ThreadStore {
                 context_server_tool_ids: HashMap::default(),
                 threads: Vec::new(),
             };
+            this.load_default_profile(cx);
             this.register_context_server_handlers(cx);
             this.reload(cx).detach_and_log_err(cx);
 
@@ -183,6 +187,45 @@ impl ThreadStore {
         })
     }
 
+    fn load_default_profile(&self, cx: &Context<Self>) {
+        let assistant_settings = AssistantSettings::get_global(cx);
+
+        self.load_profile_by_id(&assistant_settings.default_profile, cx);
+    }
+
+    pub fn load_profile_by_id(&self, profile_id: &Arc<str>, cx: &Context<Self>) {
+        let assistant_settings = AssistantSettings::get_global(cx);
+
+        if let Some(profile) = assistant_settings.profiles.get(profile_id) {
+            self.load_profile(profile);
+        }
+    }
+
+    pub fn load_profile(&self, profile: &AgentProfile) {
+        self.tools.disable_all_tools();
+        self.tools.enable(
+            ToolSource::Native,
+            &profile
+                .tools
+                .iter()
+                .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                .collect::<Vec<_>>(),
+        );
+
+        for (context_server_id, preset) in &profile.context_servers {
+            self.tools.enable(
+                ToolSource::ContextServer {
+                    id: context_server_id.clone().into(),
+                },
+                &preset
+                    .tools
+                    .iter()
+                    .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        }
+    }
+
     fn register_context_server_handlers(&self, cx: &mut Context<Self>) {
         cx.subscribe(
             &self.context_server_manager.clone(),
@@ -259,22 +302,63 @@ pub struct SerializedThreadMetadata {
 
 #[derive(Serialize, Deserialize)]
 pub struct SerializedThread {
+    pub version: String,
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
     pub messages: Vec<SerializedMessage>,
     #[serde(default)]
     pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
+    #[serde(default)]
+    pub cumulative_token_usage: TokenUsage,
+}
+
+impl SerializedThread {
+    pub const VERSION: &'static str = "0.1.0";
+
+    pub fn from_json(json: &[u8]) -> Result<Self> {
+        let saved_thread_json = serde_json::from_slice::<serde_json::Value>(json)?;
+        match saved_thread_json.get("version") {
+            Some(serde_json::Value::String(version)) => match version.as_str() {
+                SerializedThread::VERSION => Ok(serde_json::from_value::<SerializedThread>(
+                    saved_thread_json,
+                )?),
+                _ => Err(anyhow!(
+                    "unrecognized serialized thread version: {}",
+                    version
+                )),
+            },
+            None => {
+                let saved_thread =
+                    serde_json::from_value::<LegacySerializedThread>(saved_thread_json)?;
+                Ok(saved_thread.upgrade())
+            }
+            version => Err(anyhow!(
+                "unrecognized serialized thread version: {:?}",
+                version
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SerializedMessage {
     pub id: MessageId,
     pub role: Role,
-    pub text: String,
+    #[serde(default)]
+    pub segments: Vec<SerializedMessageSegment>,
     #[serde(default)]
     pub tool_uses: Vec<SerializedToolUse>,
     #[serde(default)]
     pub tool_results: Vec<SerializedToolResult>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum SerializedMessageSegment {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "thinking")]
+    Thinking { text: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -291,6 +375,51 @@ pub struct SerializedToolResult {
     pub content: Arc<str>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct LegacySerializedThread {
+    pub summary: SharedString,
+    pub updated_at: DateTime<Utc>,
+    pub messages: Vec<LegacySerializedMessage>,
+    #[serde(default)]
+    pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
+}
+
+impl LegacySerializedThread {
+    pub fn upgrade(self) -> SerializedThread {
+        SerializedThread {
+            version: SerializedThread::VERSION.to_string(),
+            summary: self.summary,
+            updated_at: self.updated_at,
+            messages: self.messages.into_iter().map(|msg| msg.upgrade()).collect(),
+            initial_project_snapshot: self.initial_project_snapshot,
+            cumulative_token_usage: TokenUsage::default(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LegacySerializedMessage {
+    pub id: MessageId,
+    pub role: Role,
+    pub text: String,
+    #[serde(default)]
+    pub tool_uses: Vec<SerializedToolUse>,
+    #[serde(default)]
+    pub tool_results: Vec<SerializedToolResult>,
+}
+
+impl LegacySerializedMessage {
+    fn upgrade(self) -> SerializedMessage {
+        SerializedMessage {
+            id: self.id,
+            role: self.role,
+            segments: vec![SerializedMessageSegment::Text { text: self.text }],
+            tool_uses: self.tool_uses,
+            tool_results: self.tool_results,
+        }
+    }
+}
+
 struct GlobalThreadsDatabase(
     Shared<BoxFuture<'static, Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
 );
@@ -300,7 +429,25 @@ impl Global for GlobalThreadsDatabase {}
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
-    threads: Database<SerdeBincode<ThreadId>, SerdeJson<SerializedThread>>,
+    threads: Database<SerdeBincode<ThreadId>, SerializedThread>,
+}
+
+impl heed::BytesEncode<'_> for SerializedThread {
+    type EItem = SerializedThread;
+
+    fn bytes_encode(item: &Self::EItem) -> Result<Cow<[u8]>, heed::BoxedError> {
+        serde_json::to_vec(item).map(Cow::Owned).map_err(Into::into)
+    }
+}
+
+impl<'a> heed::BytesDecode<'a> for SerializedThread {
+    type DItem = SerializedThread;
+
+    fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, heed::BoxedError> {
+        // We implement this type manually because we want to call `SerializedThread::from_json`,
+        // instead of the Deserialize trait implementation for `SerializedThread`.
+        SerializedThread::from_json(bytes).map_err(Into::into)
+    }
 }
 
 impl ThreadsDatabase {

@@ -1,17 +1,18 @@
 use crate::{
+    CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
+    LanguageServerName, LspAdapter, PLAIN_TEXT, ToolchainLister,
     language_settings::{
-        all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
+        AllLanguageSettingsContent, LanguageSettingsContent, all_language_settings,
     },
     task_context::ContextProvider,
-    with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, ToolchainLister, PLAIN_TEXT,
+    with_parser,
 };
-use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, HashMap, HashSet};
+use anyhow::{Context as _, Result, anyhow};
+use collections::{HashMap, HashSet, hash_map};
 
 use futures::{
-    channel::{mpsc, oneshot},
     Future,
+    channel::{mpsc, oneshot},
 };
 use globset::GlobSet;
 use gpui::{App, BackgroundExecutor, SharedString};
@@ -31,7 +32,7 @@ use sum_tree::Bias;
 use text::{Point, Rope};
 use theme::Theme;
 use unicase::UniCase;
-use util::{maybe, post_inc, ResultExt};
+use util::{ResultExt, maybe, post_inc};
 
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
@@ -597,7 +598,7 @@ impl LanguageRegistry {
     pub fn language_for_name(
         self: &Arc<Self>,
         name: &str,
-    ) -> impl Future<Output = Result<Arc<Language>>> {
+    ) -> impl Future<Output = Result<Arc<Language>>> + use<> {
         let name = UniCase::new(name);
         let rx = self.get_or_load_language(|language_name, _| {
             if UniCase::new(&language_name.0) == name {
@@ -910,6 +911,15 @@ impl LanguageRegistry {
             .get(language_name)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn all_lsp_adapters(&self) -> Vec<Arc<CachedLspAdapter>> {
+        self.state
+            .read()
+            .all_lsp_adapters
+            .values()
+            .cloned()
+            .collect()
     }
 
     pub fn adapter_for_name(&self, name: &LanguageServerName) -> Option<Arc<CachedLspAdapter>> {

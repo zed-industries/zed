@@ -2536,7 +2536,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
                 let offset =
                     multibuffer.clip_offset(rng.gen_range(0..=multibuffer.len()), Bias::Left);
-                let bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                let bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
                 log::info!("Creating anchor at {} with bias {:?}", offset, bias);
                 anchors.push(multibuffer.anchor_at(offset, bias));
                 anchors.sort_by(|a, b| a.cmp(b, &multibuffer));

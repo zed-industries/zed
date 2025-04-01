@@ -6,35 +6,35 @@ use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
+    Editor, EditorEvent,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
-    Editor, EditorEvent,
 };
 use futures::StreamExt;
 use git::{
+    Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::FileStatus,
-    Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
 };
 use gpui::{
-    actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
-    EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
+    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
+    FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    git::{GitEvent, GitStore},
     Project, ProjectPath,
+    git_store::{GitEvent, GitStore},
 };
 use std::any::{Any, TypeId};
 use theme::ActiveTheme;
-use ui::{prelude::*, vertical_divider, KeyBinding, Tooltip};
+use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt as _;
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
-    searchable::SearchableItemHandle,
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    searchable::SearchableItemHandle,
 };
 
 actions!(git, [Diff, Add]);
@@ -339,11 +339,12 @@ impl ProjectDiff {
 
         let mut result = vec![];
         repo.update(cx, |repo, cx| {
-            for entry in repo.status() {
+            for entry in repo.cached_status() {
                 if !entry.status.has_changes() {
                     continue;
                 }
-                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
+                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path, cx)
+                else {
                     continue;
                 };
                 let namespace = if repo.has_conflict(&entry.repo_path) {
@@ -1248,41 +1249,43 @@ mod preview {
 
             v_flex()
                 .gap_6()
-                .children(vec![example_group(vec![
-                    single_example(
-                        "No Repo",
-                        div()
-                            .w(width)
-                            .h(height)
-                            .child(no_repo_state)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "No Changes",
-                        div()
-                            .w(width)
-                            .h(height)
-                            .child(no_changes_state)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Unknown Upstream",
-                        div()
-                            .w(width)
-                            .h(height)
-                            .child(unknown_upstream_state)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Ahead of Remote",
-                        div()
-                            .w(width)
-                            .h(height)
-                            .child(ahead_of_upstream_state)
-                            .into_any_element(),
-                    ),
+                .children(vec![
+                    example_group(vec![
+                        single_example(
+                            "No Repo",
+                            div()
+                                .w(width)
+                                .h(height)
+                                .child(no_repo_state)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "No Changes",
+                            div()
+                                .w(width)
+                                .h(height)
+                                .child(no_changes_state)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Unknown Upstream",
+                            div()
+                                .w(width)
+                                .h(height)
+                                .child(unknown_upstream_state)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Ahead of Remote",
+                            div()
+                                .w(width)
+                                .h(height)
+                                .child(ahead_of_upstream_state)
+                                .into_any_element(),
+                        ),
+                    ])
+                    .vertical(),
                 ])
-                .vertical()])
                 .into_any_element()
         }
     }
@@ -1292,7 +1295,7 @@ mod preview {
 #[cfg(test)]
 mod tests {
     use db::indoc;
-    use editor::test::editor_test_context::{assert_state_with_diff, EditorTestContext};
+    use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;

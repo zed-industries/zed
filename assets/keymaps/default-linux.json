@@ -126,7 +126,6 @@
       // "alt-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
-      "ctrl-k ctrl-r": "git::Restore",
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
       "ctrl-\"": "editor::ExpandAllDiffHunks",
       "ctrl-i": "editor::ShowSignatureHelp",
@@ -136,6 +135,22 @@
       "ctrl-shift-e": "editor::ToggleEditPrediction",
       "f9": "editor::ToggleBreakpoint",
       "shift-f9": "editor::EditLogBreakpoint"
+    }
+  },
+  {
+    "context": "Editor && !assistant_diff",
+    "bindings": {
+      "ctrl-k ctrl-r": "git::Restore",
+      "ctrl-alt-y": "git::ToggleStaged",
+      "alt-y": "git::StageAndNext",
+      "alt-shift-y": "git::UnstageAndNext"
+    }
+  },
+  {
+    "context": "AssistantDiff",
+    "bindings": {
+      "ctrl-y": "assistant2::ToggleKeep",
+      "ctrl-k ctrl-r": "assistant2::Reject"
     }
   },
   {
@@ -195,7 +210,7 @@
       "ctrl-shift-g": "search::SelectPreviousMatch",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "assistant::DeployPromptLibrary",
+      "ctrl-k l": "assistant::OpenPromptLibrary",
       "new": "assistant::NewChat",
       "ctrl-t": "assistant::NewChat",
       "ctrl-n": "assistant::NewChat"
@@ -382,9 +397,6 @@
       "ctrl-k v": "markdown::OpenPreviewToTheSide",
       "ctrl-shift-v": "markdown::OpenPreview",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames",
-      "ctrl-alt-y": "git::ToggleStaged",
-      "alt-y": "git::StageAndNext",
-      "alt-shift-y": "git::UnstageAndNext",
       "alt-.": "editor::GoToHunk",
       "alt-,": "editor::GoToPreviousHunk"
     }
@@ -617,7 +629,10 @@
     "bindings": {
       "ctrl-n": "assistant2::NewThread",
       "new": "assistant2::NewThread",
+      "ctrl-alt-n": "assistant2::NewPromptEditor",
       "ctrl-shift-h": "assistant2::OpenHistory",
+      "ctrl-alt-c": "assistant2::OpenConfiguration",
+      "ctrl-i": "assistant2::ToggleProfileSelector",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-shift-a": "assistant2::ToggleContextPicker",
       "ctrl-e": "assistant2::ChatMode",
@@ -635,7 +650,9 @@
   {
     "context": "MessageEditor > Editor",
     "bindings": {
-      "enter": "assistant2::Chat"
+      "enter": "assistant2::Chat",
+      "ctrl-i": "assistant2::ToggleProfileSelector",
+      "shift-ctrl-r": "assistant2::OpenAssistantDiff"
     }
   },
   {
@@ -754,9 +771,11 @@
       "escape": "git_panel::ToggleFocus",
       "ctrl-enter": "git::Commit",
       "alt-enter": "menu::SecondaryConfirm",
-      "delete": "git::RestoreFile",
-      "shift-delete": "git::RestoreFile",
-      "backspace": "git::RestoreFile"
+      "delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "shift-delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "ctrl-backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "ctrl-delete": ["git::RestoreFile", { "skip_prompt": false }]
     }
   },
   {

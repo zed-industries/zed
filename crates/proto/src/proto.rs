@@ -274,6 +274,8 @@ messages!(
     (GetDefinitionResponse, Background),
     (GetDocumentHighlights, Background),
     (GetDocumentHighlightsResponse, Background),
+    (GetDocumentSymbols, Background),
+    (GetDocumentSymbolsResponse, Background),
     (GetHover, Background),
     (GetHoverResponse, Background),
     (GetNotifications, Foreground),
@@ -300,6 +302,8 @@ messages!(
     (GetImplementationResponse, Background),
     (GetLlmToken, Background),
     (GetLlmTokenResponse, Background),
+    (LanguageServerIdForName, Background),
+    (LanguageServerIdForNameResponse, Background),
     (OpenUnstagedDiff, Foreground),
     (OpenUnstagedDiffResponse, Foreground),
     (OpenUncommittedDiff, Foreground),
@@ -336,6 +340,8 @@ messages!(
     (ListRemoteDirectoryResponse, Background),
     (ListToolchains, Foreground),
     (ListToolchainsResponse, Foreground),
+    (LoadCommitDiff, Foreground),
+    (LoadCommitDiffResponse, Foreground),
     (LspExtExpandMacro, Background),
     (LspExtExpandMacroResponse, Background),
     (LspExtOpenDocs, Background),
@@ -445,6 +451,8 @@ messages!(
     (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
+    (UpdateRepository, Foreground),
+    (RemoveRepository, Foreground),
     (UsersResponse, Foreground),
     (GitReset, Background),
     (GitCheckoutFiles, Background),
@@ -502,6 +510,7 @@ request_messages!(
     (GetDeclaration, GetDeclarationResponse),
     (GetImplementation, GetImplementationResponse),
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
+    (GetDocumentSymbols, GetDocumentSymbolsResponse),
     (GetHover, GetHoverResponse),
     (GetLlmToken, GetLlmTokenResponse),
     (GetNotifications, GetNotificationsResponse),
@@ -527,6 +536,7 @@ request_messages!(
     (JoinRoom, JoinRoomResponse),
     (LeaveChannelBuffer, Ack),
     (LeaveRoom, Ack),
+    (LoadCommitDiff, LoadCommitDiffResponse),
     (MarkNotificationRead, Ack),
     (MoveChannel, Ack),
     (OnTypeFormatting, OnTypeFormattingResponse),
@@ -573,6 +583,9 @@ request_messages!(
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
+    (UpdateRepository, Ack),
+    (RemoveRepository, Ack),
+    (LanguageServerIdForName, LanguageServerIdForNameResponse),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (LspExtOpenDocs, LspExtOpenDocsResponse),
     (SetRoomParticipantRole, Ack),
@@ -646,6 +659,7 @@ entity_messages!(
     GetDeclaration,
     GetImplementation,
     GetDocumentHighlights,
+    GetDocumentSymbols,
     GetHover,
     GetProjectSymbols,
     GetReferences,
@@ -657,6 +671,7 @@ entity_messages!(
     JoinProject,
     LeaveProject,
     LinkedEditingRange,
+    LoadCommitDiff,
     MultiLspQuery,
     RestartLanguageServers,
     OnTypeFormatting,
@@ -689,6 +704,8 @@ entity_messages!(
     UpdateProject,
     UpdateProjectCollaborator,
     UpdateWorktree,
+    UpdateRepository,
+    RemoveRepository,
     UpdateWorktreeSettings,
     LspExtExpandMacro,
     LspExtOpenDocs,
@@ -704,6 +721,7 @@ entity_messages!(
     OpenServerSettings,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
+    LanguageServerIdForName,
     GitGetBranches,
     UpdateGitBranch,
     ListToolchains,
@@ -817,7 +835,6 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
 
             updated_repositories.push(RepositoryEntry {
                 work_directory_id: repo.work_directory_id,
-                branch: repo.branch.clone(),
                 branch_summary: repo.branch_summary.clone(),
                 updated_statuses: repo
                     .updated_statuses
@@ -859,6 +876,33 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             is_last_update: done && message.is_last_update,
             updated_repositories,
             removed_repositories,
+        })
+    })
+}
+
+pub fn split_repository_update(
+    mut update: UpdateRepository,
+) -> impl Iterator<Item = UpdateRepository> {
+    let mut updated_statuses_iter = mem::take(&mut update.updated_statuses).into_iter().fuse();
+    let mut removed_statuses_iter = mem::take(&mut update.removed_statuses).into_iter().fuse();
+    let mut is_first = true;
+    std::iter::from_fn(move || {
+        let updated_statuses = updated_statuses_iter
+            .by_ref()
+            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+            .collect::<Vec<_>>();
+        let removed_statuses = removed_statuses_iter
+            .by_ref()
+            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+            .collect::<Vec<_>>();
+        if updated_statuses.is_empty() && removed_statuses.is_empty() && !is_first {
+            return None;
+        }
+        is_first = false;
+        Some(UpdateRepository {
+            updated_statuses,
+            removed_statuses,
+            ..update.clone()
         })
     })
 }

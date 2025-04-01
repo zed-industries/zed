@@ -1,20 +1,20 @@
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
-    GrammarManifestEntry, SchemaVersion, RELOAD_DEBOUNCE_DURATION,
+    GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION, SchemaVersion,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
-use futures::{io::BufReader, AsyncReadExt, StreamExt};
+use futures::{AsyncReadExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, SemanticVersion, SharedString, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
-use project::{Project, DEFAULT_COMPLETION_CONTEXT};
+use project::{DEFAULT_COMPLETION_CONTEXT, Project};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
@@ -477,7 +477,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let test_extension_id = "test-extension";
     let test_extension_dir = root_dir.join("extensions").join(test_extension_id);
 
-    let fs = Arc::new(RealFs::default());
+    let fs = Arc::new(RealFs::new(None, cx.executor()));
     let extensions_dir = TempTree::new(json!({
         "installed": {},
         "work": {}
@@ -670,7 +670,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     );
 
     // The extension creates custom labels for completion items.
-    fake_server.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+    fake_server.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(lsp::CompletionResponse::Array(vec![
             lsp::CompletionItem {
                 label: "foo".into(),

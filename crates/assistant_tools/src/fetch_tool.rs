@@ -2,16 +2,19 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Entity, Task};
-use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
+use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ContentType {
@@ -113,13 +116,27 @@ impl Tool for FetchTool {
         "fetch".to_string()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./fetch_tool/description.md").to_string()
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(FetchToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn icon(&self) -> IconName {
+        IconName::Globe
+    }
+
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<FetchToolInput>(format)
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<FetchToolInput>(input.clone()) {
+            Ok(input) => format!("Fetch {}", MarkdownString::escape(&input.url)),
+            Err(_) => "Fetch URL".to_string(),
+        }
     }
 
     fn run(

@@ -3,6 +3,7 @@ use dap::requests::StackTrace;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use serde_json::json;
+use task::LaunchConfig;
 use tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -29,8 +30,10 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         .unwrap();
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(dap::DebugRequestType::Launch, None, None),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            None,
+            false,
             cx,
         )
     });

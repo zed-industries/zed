@@ -1,34 +1,36 @@
+use feature_flags::{Debugger, FeatureFlagAppExt as _};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, px, uniform_list, AnyElement, BackgroundExecutor, Div, Entity, Focusable, FontWeight,
-    ListSizingBehavior, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
-    UniformListScrollHandle,
+    AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight, ListSizingBehavior,
+    ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText, UniformListScrollHandle,
+    div, px, uniform_list,
 };
 use language::Buffer;
 use language::CodeLabel;
 use markdown::Markdown;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
-use project::lsp_store::CompletionDocumentation;
 use project::CompletionSource;
+use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
 
 use std::{
     cell::RefCell,
-    cmp::{min, Reverse},
+    cmp::{Reverse, min},
     iter,
     ops::Range,
     rc::Rc,
 };
 use task::ResolvedTask;
-use ui::{prelude::*, Color, IntoElement, ListItem, Pixels, Popover, Styled};
+use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
 use util::ResultExt;
 
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
+    CodeActionProvider, CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle,
+    ResolvedTasks,
     actions::{ConfirmCodeAction, ConfirmCompletion},
-    split_words, styled_runs_for_code_label, CodeActionProvider, CompletionId, CompletionProvider,
-    DisplayRow, Editor, EditorStyle, ResolvedTasks,
+    split_words, styled_runs_for_code_label,
 };
 
 pub const MENU_GAP: Pixels = px(4.);
@@ -236,6 +238,7 @@ impl CompletionsMenu {
                     runs: Default::default(),
                     filter_range: Default::default(),
                 },
+                icon_path: None,
                 documentation: None,
                 confirm: None,
                 source: CompletionSource::Custom,
@@ -539,9 +542,25 @@ impl CompletionsMenu {
                         } else {
                             None
                         };
-                        let color_swatch = completion
+
+                        let start_slot = completion
                             .color()
-                            .map(|color| div().size_4().bg(color).rounded_xs());
+                            .map(|color| {
+                                div()
+                                    .flex_shrink_0()
+                                    .size_3p5()
+                                    .rounded_xs()
+                                    .bg(color)
+                                    .into_any_element()
+                            })
+                            .or_else(|| {
+                                completion.icon_path.as_ref().map(|path| {
+                                    Icon::from_path(path)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted)
+                                        .into_any_element()
+                                })
+                            });
 
                         div().min_w(px(280.)).max_w(px(540.)).child(
                             ListItem::new(mat.candidate_id)
@@ -559,7 +578,7 @@ impl CompletionsMenu {
                                         task.detach_and_log_err(cx)
                                     }
                                 }))
-                                .start_slot::<Div>(color_swatch)
+                                .start_slot::<AnyElement>(start_slot)
                                 .child(h_flex().overflow_hidden().child(completion_label))
                                 .end_slot::<Label>(documentation_label),
                         )
@@ -665,10 +684,11 @@ impl CompletionsMenu {
                 .collect()
         };
 
-        // Remove all candidates where the query's start does not match the start of any word in the candidate
+        let mut additional_matches = Vec::new();
+        // Deprioritize all candidates where the query's start does not match the start of any word in the candidate
         if let Some(query) = query {
             if let Some(query_start) = query.chars().next() {
-                matches.retain(|string_match| {
+                let (primary, secondary) = matches.into_iter().partition(|string_match| {
                     split_words(&string_match.string).any(|word| {
                         // Check that the first codepoint of the word as lowercase matches the first
                         // codepoint of the query as lowercase
@@ -678,6 +698,8 @@ impl CompletionsMenu {
                             .all(|(word_cp, query_cp)| word_cp == query_cp)
                     })
                 });
+                matches = primary;
+                additional_matches = secondary;
             }
         }
 
@@ -739,6 +761,8 @@ impl CompletionsMenu {
             });
         }
         drop(completions);
+
+        matches.extend(additional_matches);
 
         *self.entries.borrow_mut() = matches;
         self.selected_item = 0;
@@ -969,6 +993,17 @@ impl CodeActionsMenu {
                     .iter()
                     .skip(range.start)
                     .take(range.end - range.start)
+                    .filter(|action| {
+                        if action
+                            .as_task()
+                            .map(|task| matches!(task.task_type(), task::TaskType::Debug(_)))
+                            .unwrap_or(false)
+                        {
+                            cx.has_flag::<Debugger>()
+                        } else {
+                            true
+                        }
+                    })
                     .enumerate()
                     .map(|(ix, action)| {
                         let item_ix = range.start + ix;

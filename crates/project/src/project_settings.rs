@@ -2,29 +2,34 @@ use anyhow::Context as _;
 use collections::HashMap;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
-use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter};
+use futures::StreamExt as _;
+use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Task};
 use lsp::LanguageServerName;
 use paths::{
-    local_debug_file_relative_path, local_settings_file_relative_path,
-    local_tasks_file_relative_path, local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
+    EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path, local_vscode_tasks_file_relative_path,
 };
 use rpc::{
-    proto::{self, FromProto, ToProto},
     AnyProtoClient, TypedEnvelope,
+    proto::{self, FromProto, ToProto},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
-    SettingsSources, SettingsStore, TaskKind,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
+    SettingsStore, TaskKind, parse_json_with_comments, watch_config_file,
 };
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use task::{TaskTemplates, VsCodeTaskFile};
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
-    task_store::TaskStore,
+    task_store::{TaskSettingsLocation, TaskStore},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
@@ -268,6 +273,8 @@ const fn true_value() -> bool {
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
+    // this can't be an FxHashMap because the extension APIs require the default SipHash
+    pub env: Option<std::collections::HashMap<String, String, std::hash::RandomState>>,
     pub ignore_system_version: Option<bool>,
 }
 
@@ -315,7 +322,8 @@ pub enum SettingsObserverMode {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SettingsObserverEvent {
-    LocalSettingsUpdated(Result<(), InvalidSettingsError>),
+    LocalSettingsUpdated(Result<PathBuf, InvalidSettingsError>),
+    LocalTasksUpdated(Result<PathBuf, InvalidSettingsError>),
 }
 
 impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}
@@ -326,6 +334,7 @@ pub struct SettingsObserver {
     worktree_store: Entity<WorktreeStore>,
     project_id: u64,
     task_store: Entity<TaskStore>,
+    _global_task_config_watchers: (Task<()>, Task<()>),
 }
 
 /// SettingsObserver observers changes to .zed/{settings, task}.json files in local worktrees
@@ -350,16 +359,31 @@ impl SettingsObserver {
         Self {
             worktree_store,
             task_store,
-            mode: SettingsObserverMode::Local(fs),
+            mode: SettingsObserverMode::Local(fs.clone()),
             downstream_client: None,
             project_id: 0,
+            _global_task_config_watchers: (
+                Self::subscribe_to_global_task_file_changes(
+                    fs.clone(),
+                    TaskKind::Script,
+                    paths::tasks_file().clone(),
+                    cx,
+                ),
+                Self::subscribe_to_global_task_file_changes(
+                    fs,
+                    TaskKind::Debug,
+                    paths::debug_tasks_file().clone(),
+                    cx,
+                ),
+            ),
         }
     }
 
     pub fn new_remote(
+        fs: Arc<dyn Fs>,
         worktree_store: Entity<WorktreeStore>,
         task_store: Entity<TaskStore>,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self {
             worktree_store,
@@ -367,6 +391,20 @@ impl SettingsObserver {
             mode: SettingsObserverMode::Remote,
             downstream_client: None,
             project_id: 0,
+            _global_task_config_watchers: (
+                Self::subscribe_to_global_task_file_changes(
+                    fs.clone(),
+                    TaskKind::Script,
+                    paths::tasks_file().clone(),
+                    cx,
+                ),
+                Self::subscribe_to_global_task_file_changes(
+                    fs.clone(),
+                    TaskKind::Debug,
+                    paths::debug_tasks_file().clone(),
+                    cx,
+                ),
+            ),
         }
     }
 
@@ -622,11 +660,7 @@ impl SettingsObserver {
 
                         match result {
                             Err(InvalidSettingsError::LocalSettings { path, message }) => {
-                                log::error!(
-                                    "Failed to set local settings in {:?}: {:?}",
-                                    path,
-                                    message
-                                );
+                                log::error!("Failed to set local settings in {path:?}: {message}");
                                 cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Err(
                                     InvalidSettingsError::LocalSettings { path, message },
                                 )));
@@ -634,15 +668,17 @@ impl SettingsObserver {
                             Err(e) => {
                                 log::error!("Failed to set local settings: {e}");
                             }
-                            Ok(_) => {
-                                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(())));
+                            Ok(()) => {
+                                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(
+                                    directory.join(local_settings_file_relative_path())
+                                )));
                             }
                         }
                     }),
-                LocalSettingsKind::Tasks(task_kind) => task_store.update(cx, |task_store, cx| {
-                    task_store
-                        .update_user_tasks(
-                            Some(SettingsLocation {
+                LocalSettingsKind::Tasks(task_kind) => {
+                    let result = task_store.update(cx, |task_store, cx| {
+                        task_store.update_user_tasks(
+                            TaskSettingsLocation::Worktree(SettingsLocation {
                                 worktree_id,
                                 path: directory.as_ref(),
                             }),
@@ -650,8 +686,25 @@ impl SettingsObserver {
                             task_kind,
                             cx,
                         )
-                        .log_err();
-                }),
+                    });
+
+                    match result {
+                        Err(InvalidSettingsError::Tasks { path, message }) => {
+                            log::error!("Failed to set local tasks in {path:?}: {message:?}");
+                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Err(
+                                InvalidSettingsError::Tasks { path, message },
+                            )));
+                        }
+                        Err(e) => {
+                            log::error!("Failed to set local tasks: {e}");
+                        }
+                        Ok(()) => {
+                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(
+                                task_kind.config_in_dir(&directory)
+                            )));
+                        }
+                    }
+                }
             };
 
             if let Some(downstream_client) = &self.downstream_client {
@@ -666,6 +719,65 @@ impl SettingsObserver {
                     .log_err();
             }
         }
+    }
+
+    fn subscribe_to_global_task_file_changes(
+        fs: Arc<dyn Fs>,
+        task_kind: TaskKind,
+        file_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let mut user_tasks_file_rx =
+            watch_config_file(&cx.background_executor(), fs, file_path.clone());
+        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let weak_entry = cx.weak_entity();
+        cx.spawn(async move |settings_observer, cx| {
+            let Ok(task_store) = settings_observer.update(cx, |settings_observer, _| {
+                settings_observer.task_store.clone()
+            }) else {
+                return;
+            };
+            if let Some(user_tasks_content) = user_tasks_content {
+                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                    task_store
+                        .update_user_tasks(
+                            TaskSettingsLocation::Global(&file_path),
+                            Some(&user_tasks_content),
+                            task_kind,
+                            cx,
+                        )
+                        .log_err();
+                }) else {
+                    return;
+                };
+            }
+            while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
+                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                    task_store.update_user_tasks(
+                        TaskSettingsLocation::Global(&file_path),
+                        Some(&user_tasks_content),
+                        task_kind,
+                        cx,
+                    )
+                }) else {
+                    break;
+                };
+
+                weak_entry
+                    .update(cx, |_, cx| match result {
+                        Ok(()) => cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(
+                            file_path.clone()
+                        ))),
+                        Err(err) => cx.emit(SettingsObserverEvent::LocalTasksUpdated(Err(
+                            InvalidSettingsError::Tasks {
+                                path: file_path.clone(),
+                                message: err.to_string(),
+                            },
+                        ))),
+                    })
+                    .ok();
+            }
+        })
     }
 }
 

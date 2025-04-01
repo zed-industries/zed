@@ -1,7 +1,7 @@
 use crate::{
-    black, fill, point, px, size, App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
-    WrappedLineLayout,
+    App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result, SharedString, StrikethroughStyle,
+    TextAlign, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill, point, px,
+    size,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -202,7 +202,7 @@ fn paint_line(
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
-                if glyph_ix == 0 {
+                if glyph_ix == 0 && run_ix == 0 {
                     first_glyph_x = glyph_origin.x;
                 }
 

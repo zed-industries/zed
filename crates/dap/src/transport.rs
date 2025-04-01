@@ -1,14 +1,14 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use dap_types::{
-    messages::{Message, Response},
     ErrorResponse,
+    messages::{Message, Response},
 };
-use futures::{channel::oneshot, select, AsyncRead, AsyncReadExt as _, AsyncWrite, FutureExt as _};
+use futures::{AsyncRead, AsyncReadExt as _, AsyncWrite, FutureExt as _, channel::oneshot, select};
 use gpui::AsyncApp;
 use settings::Settings as _;
 use smallvec::SmallVec;
 use smol::{
-    channel::{unbounded, Receiver, Sender},
+    channel::{Receiver, Sender, unbounded},
     io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader},
     lock::Mutex,
     net::{TcpListener, TcpStream},
@@ -261,8 +261,6 @@ impl TransportDelegate {
                     }
                 }
             }
-
-            smol::future::yield_now().await;
         };
 
         log::debug!("Handle adapter log dropped");
@@ -319,8 +317,6 @@ impl TransportDelegate {
                 }
                 Err(error) => break Err(error.into()),
             }
-
-            smol::future::yield_now().await;
         };
 
         log::debug!("Handle adapter input dropped");
@@ -360,8 +356,6 @@ impl TransportDelegate {
                 }
                 Err(e) => break Err(e),
             }
-
-            smol::future::yield_now().await;
         };
 
         drop(client_tx);
@@ -393,8 +387,6 @@ impl TransportDelegate {
                 }
                 Err(error) => break Err(error.into()),
             }
-
-            smol::future::yield_now().await;
         };
 
         log::debug!("Handle adapter error dropped");

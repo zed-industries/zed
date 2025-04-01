@@ -14,7 +14,7 @@ use futures::Future;
 use gpui::{Context, Entity, Focusable as _, VisualTestContext, Window};
 use indoc::indoc;
 use language::{
-    point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
+    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries, point_to_lsp,
 };
 use lsp::{notification, request};
 use multi_buffer::ToPointUtf16;
@@ -337,7 +337,7 @@ impl EditorLspTestContext {
         self.workspace.update_in(&mut self.cx.cx, update)
     }
 
-    pub fn handle_request<T, F, Fut>(
+    pub fn set_request_handler<T, F, Fut>(
         &self,
         mut handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
@@ -348,7 +348,7 @@ impl EditorLspTestContext {
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
         let url = self.buffer_lsp_url.clone();
-        self.lsp.handle_request::<T, _, _>(move |params, cx| {
+        self.lsp.set_request_handler::<T, _, _>(move |params, cx| {
             let url = url.clone();
             handler(url, params, cx)
         })

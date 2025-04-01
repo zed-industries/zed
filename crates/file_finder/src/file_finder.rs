@@ -16,9 +16,9 @@ use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
-    WeakEntity, Window,
+    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
+    Window, actions,
 };
 use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
@@ -31,19 +31,19 @@ use std::{
     ops::Range,
     path::{Component, Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool},
         Arc,
+        atomic::{self, AtomicBool},
     },
 };
 use text::Point;
 use ui::{
-    prelude::*, ContextMenu, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenu,
-    PopoverMenuHandle,
+    ContextMenu, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle,
+    prelude::*,
 };
-use util::{maybe, paths::PathWithPosition, post_inc, ResultExt};
+use util::{ResultExt, maybe, paths::PathWithPosition, post_inc};
 use workspace::{
-    item::PreviewTabsSettings, notifications::NotifyResultExt, pane, ModalView, OpenOptions,
-    OpenVisible, SplitDirection, Workspace,
+    ModalView, OpenOptions, OpenVisible, SplitDirection, Workspace, item::PreviewTabsSettings,
+    notifications::NotifyResultExt, pane,
 };
 
 actions!(file_finder, [SelectPrevious, ToggleMenu]);
@@ -1067,7 +1067,7 @@ fn full_path_budget(
     small_em: Pixels,
     max_width: Pixels,
 ) -> usize {
-    ((px(max_width / px(0.8)) - px(file_name.len() as f32) * normal_em) / small_em) as usize
+    (((max_width / 0.8) - file_name.len() * normal_em) / small_em) as usize
 }
 
 impl PickerDelegate for FileFinderDelegate {

@@ -188,7 +188,7 @@ pub mod assistant {
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    actions!(assistant, [ToggleFocus, DeployPromptLibrary]);
+    actions!(assistant, [ToggleFocus, OpenPromptLibrary]);
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -275,7 +275,7 @@ impl_actions!(task, [Spawn, Rerun]);
 pub mod outline {
     use std::sync::OnceLock;
 
-    use gpui::{action_as, AnyView, App, Window};
+    use gpui::{AnyView, App, Window, action_as};
 
     action_as!(outline, ToggleOutline as Toggle);
     /// A pointer to outline::toggle function, exposed here to sewer the breadcrumbs <-> outline dependency.

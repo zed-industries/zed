@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{App, Global, ReadGlobal, UpdateGlobal};
 use parking_lot::RwLock;
 
-use crate::{file_stem_to_key, Snippet, SnippetKind};
+use crate::{Snippet, SnippetKind, file_stem_to_key};
 
 struct GlobalSnippetRegistry(Arc<SnippetRegistry>);
 

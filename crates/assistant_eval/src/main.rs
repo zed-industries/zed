@@ -6,13 +6,20 @@ mod judge;
 mod templates_eval;
 
 use clap::Parser;
-use eval::{run_exercise_eval, save_eval_results};
+use eval::{run_exercise_eval, save_eval_results, Eval, EvalOutput};
 use futures::stream::{self, StreamExt};
+use futures::future;
 use get_exercise::{find_exercises, get_exercise_language, get_exercise_name};
 use git_commands::read_base_sha;
-use gpui::Application;
-use headless_assistant::{authenticate_model_provider, find_model};
-use language_model::LanguageModelRegistry;
+use gpui::{Application, AsyncApp};
+use headless_assistant::{HeadlessAppState, authenticate_model_provider, find_model};
+use itertools::Itertools;
+use judge::Judge;
+use language_model::{LanguageModel, LanguageModelRegistry};
+use regex::Regex;
+use reqwest_client::ReqwestClient;
+use std::{path::PathBuf, sync::Arc};
+use templates_eval::all_templates
 use reqwest_client::ReqwestClient;
 use std::{path::PathBuf, sync::Arc};
 use templates_eval::all_templates;

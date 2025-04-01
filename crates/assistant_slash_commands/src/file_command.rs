@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent,
     SlashCommandOutput, SlashCommandOutputSection, SlashCommandResult,
 };
-use futures::channel::mpsc;
 use futures::Stream;
+use futures::channel::mpsc;
 use fuzzy::PathMatch;
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
@@ -15,7 +15,7 @@ use std::{
     fmt::Write,
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
 use util::ResultExt;
@@ -221,7 +221,7 @@ fn collect_files(
     project: Entity<Project>,
     glob_inputs: &[String],
     cx: &mut App,
-) -> impl Stream<Item = Result<SlashCommandEvent>> {
+) -> impl Stream<Item = Result<SlashCommandEvent>> + use<> {
     let Ok(matchers) = glob_inputs
         .into_iter()
         .map(|glob_input| {
@@ -694,15 +694,21 @@ mod test {
         assert_eq!(result.sections.len(), 7);
 
         // Ensure that full file paths are included in the real output
-        assert!(result
-            .text
-            .contains(separator!("zed/assets/themes/andromeda/LICENSE")));
-        assert!(result
-            .text
-            .contains(separator!("zed/assets/themes/ayu/LICENSE")));
-        assert!(result
-            .text
-            .contains(separator!("zed/assets/themes/summercamp/LICENSE")));
+        assert!(
+            result
+                .text
+                .contains(separator!("zed/assets/themes/andromeda/LICENSE"))
+        );
+        assert!(
+            result
+                .text
+                .contains(separator!("zed/assets/themes/ayu/LICENSE"))
+        );
+        assert!(
+            result
+                .text
+                .contains(separator!("zed/assets/themes/summercamp/LICENSE"))
+        );
 
         assert_eq!(result.sections[5].label, "summercamp");
 
@@ -782,7 +788,12 @@ mod test {
         assert_eq!(result.sections[6].label, "summercamp");
         assert_eq!(result.sections[7].label, separator!("zed/assets/themes"));
 
-        assert_eq!(result.text, separator!("zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n"));
+        assert_eq!(
+            result.text,
+            separator!(
+                "zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n"
+            )
+        );
 
         // Ensure that the project lasts until after the last await
         drop(project);

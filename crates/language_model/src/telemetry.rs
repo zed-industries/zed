@@ -1,5 +1,5 @@
-use anthropic::{AnthropicError, ANTHROPIC_API_URL};
-use anyhow::{anyhow, Context as _, Result};
+use anthropic::{ANTHROPIC_API_URL, AnthropicError};
+use anyhow::{Context as _, Result, anyhow};
 use client::telemetry::Telemetry;
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
