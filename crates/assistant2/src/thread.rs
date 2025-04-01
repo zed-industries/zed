@@ -780,18 +780,20 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         let mut request = self.to_completion_request(request_kind, cx);
-        request.tools = {
-            let mut tools = Vec::new();
-            tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
-                LanguageModelRequestTool {
-                    name: tool.name(),
-                    description: tool.description(),
-                    input_schema: tool.input_schema(model.tool_input_format()),
-                }
-            }));
+        if model.supports_tools() {
+            request.tools = {
+                let mut tools = Vec::new();
+                tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
+                    LanguageModelRequestTool {
+                        name: tool.name(),
+                        description: tool.description(),
+                        input_schema: tool.input_schema(model.tool_input_format()),
+                    }
+                }));
 
-            tools
-        };
+                tools
+            };
+        }
 
         self.stream_completion(request, model, cx);
     }
