@@ -4,15 +4,15 @@ pub(crate) mod scroll_amount;
 
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
+    Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
+    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::DB,
-    Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
-use gpui::{point, px, App, Axis, Context, Global, Pixels, Task, Window};
+use gpui::{App, Axis, Context, Global, Pixels, Task, Window, point, px};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
 use settings::Settings;

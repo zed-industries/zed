@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_context_editor::{
-    make_lsp_adapter_delegate, render_remaining_tokens, AssistantPanelDelegate, ConfigurationError,
-    ContextEditor, SlashCommandCompletionProvider,
+    AssistantPanelDelegate, ConfigurationError, ContextEditor, SlashCommandCompletionProvider,
+    make_lsp_adapter_delegate, render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -14,21 +14,21 @@ use client::zed_urls;
 use editor::{Editor, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    action_with_deprecated_aliases, prelude::*, Action, AnyElement, App, AsyncWindowContext,
-    Corner, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
-    Subscription, Task, UpdateGlobal, WeakEntity,
+    Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle,
+    Focusable, FontWeight, KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
+    action_with_deprecated_aliases, prelude::*,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use project::Project;
-use prompt_library::{open_prompt_library, PromptLibrary};
+use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
-use settings::{update_settings_file, Settings};
+use settings::{Settings, update_settings_file};
 use time::UtcOffset;
-use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip};
+use ui::{ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*};
 use util::ResultExt as _;
-use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
+use workspace::dock::{DockPosition, Panel, PanelEvent};
 use zed_actions::assistant::ToggleFocus;
 
 use crate::active_thread::ActiveThread;
@@ -39,8 +39,8 @@ use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
-    InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown, OpenConfiguration,
-    OpenHistory,
+    AssistantDiff, InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown,
+    OpenAssistantDiff, OpenConfiguration, OpenHistory,
 };
 
 action_with_deprecated_aliases!(
@@ -89,6 +89,14 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
+                    }
+                })
+                .register_action(|workspace, _: &OpenAssistantDiff, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.open_assistant_diff(&OpenAssistantDiff, window, cx);
+                        });
                     }
                 });
         },
@@ -430,6 +438,16 @@ impl AssistantPanel {
                 this.message_editor.focus_handle(cx).focus(window);
             })
         })
+    }
+
+    pub fn open_assistant_diff(
+        &mut self,
+        _: &OpenAssistantDiff,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let thread = self.thread.read(cx).thread().clone();
+        AssistantDiff::deploy(thread, self.workspace.clone(), window, cx).log_err();
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1105,6 +1123,7 @@ impl Render for AssistantPanel {
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
             .on_action(cx.listener(Self::deploy_prompt_library))
+            .on_action(cx.listener(Self::open_assistant_diff))
             .child(self.render_toolbar(window, cx))
             .map(|parent| match self.active_view {
                 ActiveView::Thread => parent

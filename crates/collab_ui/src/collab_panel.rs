@@ -2,26 +2,26 @@ mod channel_modal;
 mod contact_finder;
 
 use self::channel_modal::ChannelModal;
-use crate::{channel_view::ChannelView, chat_panel::ChatPanel, CollaborationPanelSettings};
+use crate::{CollaborationPanelSettings, channel_view::ChannelView, chat_panel::ChatPanel};
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
-use fuzzy::{match_strings, StringMatchCandidate};
+use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement, App,
-    AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, DismissEvent, Div, Entity,
-    EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement, ListOffset,
-    ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString,
-    Styled, Subscription, Task, TextStyle, WeakEntity, Window,
+    AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, DismissEvent,
+    Div, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement,
+    ListOffset, ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
+    SharedString, Styled, Subscription, Task, TextStyle, WeakEntity, Window, actions, anchored,
+    canvas, deferred, div, fill, list, point, prelude::*, px,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
 use rpc::{
-    proto::{self, ChannelVisibility, PeerId},
     ErrorCode, ErrorExt,
+    proto::{self, ChannelVisibility, PeerId},
 };
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
@@ -29,15 +29,15 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    prelude::*, tooltip_container, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu,
-    Facepile, Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem,
-    Tooltip,
+    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Facepile, Icon, IconButton,
+    IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tooltip, prelude::*,
+    tooltip_container,
 };
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
+    OpenChannelNotes, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
-    OpenChannelNotes, Workspace,
 };
 
 actions!(
@@ -2519,12 +2519,14 @@ impl CollabPanel {
             ]
         } else {
             let github_login = github_login.clone();
-            vec![IconButton::new("remove_contact", IconName::Close)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.remove_contact(user_id, &github_login, window, cx);
-                }))
-                .icon_color(color)
-                .tooltip(Tooltip::text("Cancel invite"))]
+            vec![
+                IconButton::new("remove_contact", IconName::Close)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.remove_contact(user_id, &github_login, window, cx);
+                    }))
+                    .icon_color(color)
+                    .tooltip(Tooltip::text("Cancel invite")),
+            ]
         };
 
         ListItem::new(github_login.clone())

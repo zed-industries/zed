@@ -1,17 +1,17 @@
 use anyhow::Result;
-use editor::{scroll::Autoscroll, Editor};
+use editor::{Editor, scroll::Autoscroll};
 use gpui::{
-    actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, App, ClickEvent,
-    Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Length,
-    ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render, ScrollHandle, ScrollStrategy,
-    Stateful, Task, UniformListScrollHandle, Window,
+    AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
+    ScrollHandle, ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div,
+    impl_actions, list, prelude::*, uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use ui::{
-    prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
+    Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, prelude::*, v_flex,
 };
 use util::ResultExt;
 use workspace::ModalView;
@@ -526,7 +526,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Head::Editor(ref editor) = &self.head else {
+        let Head::Editor(editor) = &self.head else {
             panic!("unexpected call");
         };
         match event {
@@ -617,7 +617,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn set_query(&self, query: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
-        if let Head::Editor(ref editor) = &self.head {
+        if let Head::Editor(editor) = &self.head {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, window, cx);
                 let editor_offset = editor.buffer().read(cx).len(cx);
@@ -642,7 +642,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
         ix: usize,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<D> {
         div()
             .id(("item", ix))
             .cursor_pointer()

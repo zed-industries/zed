@@ -1,5 +1,5 @@
 use crate::Oid;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use std::path::Path;
 

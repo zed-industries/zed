@@ -1,7 +1,7 @@
 mod async_body;
 pub mod github;
 
-pub use anyhow::{anyhow, Result};
+pub use anyhow::{Result, anyhow};
 pub use async_body::{AsyncBody, Inner};
 use derive_more::Deref;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};

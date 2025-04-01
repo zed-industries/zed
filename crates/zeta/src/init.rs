@@ -8,7 +8,7 @@ use settings::update_settings_file;
 use ui::App;
 use workspace::Workspace;
 
-use crate::{onboarding_modal::ZedPredictModal, RateCompletionModal};
+use crate::{RateCompletionModal, onboarding_modal::ZedPredictModal};
 
 actions!(edit_prediction, [ResetOnboarding, RateCompletions]);
 

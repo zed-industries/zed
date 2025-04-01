@@ -1,25 +1,25 @@
 use anyhow::ensure;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::language_settings::language_settings;
 use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
+use language::language_settings::language_settings;
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+use pet_core::Configuration;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
-use pet_core::Configuration;
-use project::lsp_store::language_server_settings;
 use project::Fs;
-use serde_json::{json, Value};
+use project::lsp_store::language_server_settings;
+use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
@@ -293,7 +293,12 @@ impl LspAdapter for PythonLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
-            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .active_toolchain(
+                adapter.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                cx,
+            )
             .await;
         cx.update(move |cx| {
             let mut user_settings =
@@ -373,7 +378,7 @@ impl ContextProvider for PythonContextProvider {
         cx.spawn(async move |cx| {
             let active_toolchain = if let Some(worktree_id) = worktree_id {
                 toolchains
-                    .active_toolchain(worktree_id, "Python".into(), cx)
+                    .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
                     .await
                     .map_or_else(
                         || "python3".to_owned(),
@@ -900,6 +905,7 @@ impl LspAdapter for PyLspAdapter {
             let venv = toolchains
                 .active_toolchain(
                     delegate.worktree_id(),
+                    Arc::from("".as_ref()),
                     LanguageName::new("Python"),
                     &mut cx.clone(),
                 )
@@ -1046,7 +1052,12 @@ impl LspAdapter for PyLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
-            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .active_toolchain(
+                adapter.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                cx,
+            )
             .await;
         cx.update(move |cx| {
             let mut user_settings =
@@ -1116,7 +1127,7 @@ impl LspAdapter for PyLspAdapter {
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
-    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 

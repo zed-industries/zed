@@ -1,13 +1,13 @@
 use crate::{
-    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, StatusEntry,
-    WorkDirectory, Worktree, WorktreeModelHandle,
+    Entry, EntryKind, Event, PathChange, StatusEntry, WorkDirectory, Worktree, WorktreeModelHandle,
+    worktree_settings::WorktreeSettings,
 };
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::{
+    GITIGNORE,
     repository::RepoPath,
     status::{FileStatus, StatusCode, TrackedStatus},
-    GITIGNORE,
 };
 use git2::RepositoryInitOptions;
 use gpui::{AppContext as _, BorrowAppContext, Context, Task, TestAppContext};
@@ -25,7 +25,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{path, test::TempTree, ResultExt};
+use util::{ResultExt, path, test::TempTree};
 
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
@@ -1096,12 +1096,14 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
     tree.flush_fs_events(cx).await;
 
     tree.read_with(cx, |tree, _| {
-        assert!(tree
-            .entry_for_path("node_modules")
-            .is_some_and(|f| f.is_always_included));
-        assert!(tree
-            .entry_for_path("node_modules/prettier/package.json")
-            .is_some_and(|f| f.is_always_included));
+        assert!(
+            tree.entry_for_path("node_modules")
+                .is_some_and(|f| f.is_always_included)
+        );
+        assert!(
+            tree.entry_for_path("node_modules/prettier/package.json")
+                .is_some_and(|f| f.is_always_included)
+        );
     });
 
     cx.update(|cx| {
@@ -1117,12 +1119,14 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
     tree.flush_fs_events(cx).await;
 
     tree.read_with(cx, |tree, _| {
-        assert!(tree
-            .entry_for_path("node_modules")
-            .is_some_and(|f| !f.is_always_included));
-        assert!(tree
-            .entry_for_path("node_modules/prettier/package.json")
-            .is_some_and(|f| !f.is_always_included));
+        assert!(
+            tree.entry_for_path("node_modules")
+                .is_some_and(|f| !f.is_always_included)
+        );
+        assert!(
+            tree.entry_for_path("node_modules/prettier/package.json")
+                .is_some_and(|f| !f.is_always_included)
+        );
     });
 }
 
@@ -1958,7 +1962,7 @@ async fn randomly_mutate_fs(
         let path = dirs.choose(rng).unwrap();
         let new_path = path.join(random_filename(rng));
 
-        if rng.gen() {
+        if rng.r#gen() {
             log::info!(
                 "creating dir {:?}",
                 new_path.strip_prefix(root_path).unwrap()
@@ -2026,7 +2030,7 @@ async fn randomly_mutate_fs(
             file_path.into_iter().chain(dir_path).choose(rng).unwrap()
         };
 
-        let is_rename = rng.gen();
+        let is_rename = rng.r#gen();
         if is_rename {
             let new_path_parent = dirs
                 .iter()
