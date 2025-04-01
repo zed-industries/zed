@@ -1091,11 +1091,11 @@ mod tests {
                     [
                         ExcerptRange {
                             context: Point::new(0, 0)..Point::new(1, 4),
-                            primary: None,
+                            primary: Point::new(0, 0)..Point::new(1, 4),
                         },
                         ExcerptRange {
                             context: Point::new(2, 0)..Point::new(3, 2),
-                            primary: None,
+                            primary: Point::new(2, 0)..Point::new(3, 2),
                         },
                     ],
                     cx,

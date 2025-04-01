@@ -122,7 +122,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             buffer_1.clone(),
             [ExcerptRange {
                 context: Point::new(1, 2)..Point::new(2, 5),
-                primary: None,
+                primary: Point::new(1, 2)..Point::new(2, 5),
             }],
             cx,
         );
@@ -138,7 +138,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             buffer_1.clone(),
             [ExcerptRange {
                 context: Point::new(3, 3)..Point::new(4, 4),
-                primary: None,
+                primary: Point::new(3, 3)..Point::new(4, 4),
             }],
             cx,
         );
@@ -146,7 +146,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             buffer_2.clone(),
             [ExcerptRange {
                 context: Point::new(3, 1)..Point::new(3, 3),
-                primary: None,
+                primary: Point::new(3, 1)..Point::new(3, 3),
             }],
             cx,
         );
@@ -660,11 +660,11 @@ fn test_excerpt_events(cx: &mut App) {
             [
                 ExcerptRange {
                     context: 0..8,
-                    primary: None,
+                    primary: 0..8,
                 },
                 ExcerptRange {
                     context: 12..16,
-                    primary: None,
+                    primary: 12..16,
                 },
             ],
             cx,
@@ -675,11 +675,11 @@ fn test_excerpt_events(cx: &mut App) {
             [
                 ExcerptRange {
                     context: 0..5,
-                    primary: None,
+                    primary: 0..5,
                 },
                 ExcerptRange {
                     context: 10..15,
-                    primary: None,
+                    primary: 10..15,
                 },
             ],
             cx,
@@ -971,7 +971,7 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
             buffer.clone(),
             [ExcerptRange {
                 context: 0..0,
-                primary: None,
+                primary: 0..0,
             }],
             cx,
         );
@@ -996,7 +996,7 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
             buf2,
             [ExcerptRange {
                 context: 0..1,
-                primary: None,
+                primary: 0..1,
             }],
             cx,
         );
@@ -1057,7 +1057,7 @@ fn test_multibuffer_anchors(cx: &mut App) {
             buffer_1.clone(),
             [ExcerptRange {
                 context: 0..4,
-                primary: None,
+                primary: 0..4,
             }],
             cx,
         );
@@ -1065,7 +1065,7 @@ fn test_multibuffer_anchors(cx: &mut App) {
             buffer_2.clone(),
             [ExcerptRange {
                 context: 0..5,
-                primary: None,
+                primary: 0..5,
             }],
             cx,
         );
@@ -1120,7 +1120,7 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
                 buffer_1.clone(),
                 [ExcerptRange {
                     context: 0..7,
-                    primary: None,
+                    primary: 0..7,
                 }],
                 cx,
             )
@@ -1140,15 +1140,15 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
                 [
                     ExcerptRange {
                         context: 0..4,
-                        primary: None,
+                        primary: 0..4,
                     },
                     ExcerptRange {
                         context: 6..10,
-                        primary: None,
+                        primary: 6..10,
                     },
                     ExcerptRange {
                         context: 12..16,
-                        primary: None,
+                        primary: 12..16,
                     },
                 ],
                 cx,
@@ -1199,7 +1199,7 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
                 buffer_2.clone(),
                 [ExcerptRange {
                     context: 5..8,
-                    primary: None,
+                    primary: 5..8,
                 }],
                 cx,
             )
@@ -1914,7 +1914,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
             buffer_1.clone(),
             [ExcerptRange {
                 context: text::Anchor::MIN..text::Anchor::MAX,
-                primary: None,
+                primary: text::Anchor::MIN..text::Anchor::MAX,
             }],
             cx,
         );
@@ -1922,7 +1922,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
             buffer_2.clone(),
             [ExcerptRange {
                 context: text::Anchor::MIN..text::Anchor::MAX,
-                primary: None,
+                primary: text::Anchor::MIN..text::Anchor::MAX,
             }],
             cx,
         );
@@ -2668,8 +2668,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                             prev_excerpt_id,
                             buffer_handle.clone(),
                             [ExcerptRange {
-                                context: range,
-                                primary: None,
+                                context: range.clone(),
+                                primary: range,
                             }],
                             cx,
                         )
@@ -2877,7 +2877,7 @@ fn test_history(cx: &mut App) {
             buffer_1.clone(),
             [ExcerptRange {
                 context: 0..buffer_1.read(cx).len(),
-                primary: None,
+                primary: 0..buffer_1.read(cx).len(),
             }],
             cx,
         );
@@ -2885,7 +2885,7 @@ fn test_history(cx: &mut App) {
             buffer_2.clone(),
             [ExcerptRange {
                 context: 0..buffer_2.read(cx).len(),
-                primary: None,
+                primary: 0..buffer_2.read(cx).len(),
             }],
             cx,
         );
@@ -3131,7 +3131,7 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
             buffer_1.clone(),
             [ExcerptRange {
                 context: text::Anchor::MIN..text::Anchor::MAX,
-                primary: None,
+                primary: text::Anchor::MIN..text::Anchor::MAX,
             }],
             cx,
         ));
@@ -3139,7 +3139,7 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
             buffer_2.clone(),
             [ExcerptRange {
                 context: text::Anchor::MIN..text::Anchor::MAX,
-                primary: None,
+                primary: text::Anchor::MIN..text::Anchor::MAX,
             }],
             cx,
         ));
@@ -3237,7 +3237,7 @@ fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
             buffer_2.clone(),
             [ExcerptRange {
                 context: Point::new(0, 0)..Point::new(1, 0),
-                primary: None,
+                primary: Point::new(0, 0)..Point::new(1, 0),
             }],
             cx,
         );

@@ -5628,10 +5628,7 @@ fn header_jump_data(
 ) -> JumpData {
     let range = &for_excerpt.range;
     let buffer = &for_excerpt.buffer;
-    let jump_anchor = range
-        .primary
-        .as_ref()
-        .map_or(range.context.start, |primary| primary.start);
+    let jump_anchor = range.primary.start;
 
     let excerpt_start = range.context.start;
     let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);

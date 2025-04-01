@@ -424,7 +424,16 @@ pub struct ExcerptRange<T> {
     pub context: Range<T>,
     /// The primary range of text to be highlighted in the excerpt.
     /// In a multi-buffer search, this would be the text that matched the search
-    pub primary: Option<Range<T>>,
+    pub primary: Range<T>,
+}
+
+impl<T: Clone> ExcerptRange<T> {
+    pub fn new(context: Range<T>) -> Self {
+        Self {
+            context: context.clone(),
+            primary: context,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -667,10 +676,7 @@ impl MultiBuffer {
         this.singleton = true;
         this.push_excerpts(
             buffer,
-            [ExcerptRange {
-                context: text::Anchor::MIN..text::Anchor::MAX,
-                primary: None,
-            }],
+            [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
             cx,
         );
         this.snapshot.borrow_mut().singleton = true;
@@ -1544,11 +1550,7 @@ impl MultiBuffer {
 
                 Some(ExcerptRange {
                     context,
-                    primary: excerpt
-                        .range
-                        .primary
-                        .as_ref()
-                        .map(|range| range.to_point(&excerpt.buffer)),
+                    primary: excerpt.range.primary.to_point(&excerpt.buffer),
                 })
             });
             let mut merged_ranges: Vec<ExcerptRange<Point>> = Vec::new();
@@ -1601,7 +1603,7 @@ impl MultiBuffer {
             let end = Point::new(end_row, buffer_snapshot.line_len(end_row));
             ExcerptRange {
                 context: start..end,
-                primary: Some(range),
+                primary: range,
             }
         });
 
@@ -1631,9 +1633,8 @@ impl MultiBuffer {
                 let range = Anchor::range_in_buffer(
                     excerpt_id,
                     buffer_snapshot.remote_id(),
-                    // todo!(Remove this unwrap by making primary non-optional)
-                    buffer_snapshot.anchor_before(range.primary.as_ref().unwrap().start)
-                        ..buffer_snapshot.anchor_after(range.primary.as_ref().unwrap().end),
+                    buffer_snapshot.anchor_before(&range.primary.start)
+                        ..buffer_snapshot.anchor_after(&range.primary.end),
                 );
                 result.push(range)
             }
@@ -2011,10 +2012,8 @@ impl MultiBuffer {
             let range = ExcerptRange {
                 context: buffer_snapshot.anchor_before(&range.context.start)
                     ..buffer_snapshot.anchor_after(&range.context.end),
-                primary: range.primary.map(|primary| {
-                    buffer_snapshot.anchor_before(&primary.start)
-                        ..buffer_snapshot.anchor_after(&primary.end)
-                }),
+                primary: buffer_snapshot.anchor_before(&range.primary.start)
+                    ..buffer_snapshot.anchor_after(&range.primary.end),
             };
             excerpts.push((id, range.clone()));
             let excerpt = Excerpt::new(
@@ -3495,8 +3494,8 @@ impl MultiBuffer {
         for (text, ranges) in excerpts {
             let buffer = cx.new(|cx| Buffer::local(text, cx));
             let excerpt_ranges = ranges.into_iter().map(|range| ExcerptRange {
-                context: range,
-                primary: None,
+                context: range.clone(),
+                primary: range,
             });
             multi.update(cx, |multi, cx| {
                 multi.push_excerpts(buffer, excerpt_ranges, cx)
@@ -3627,7 +3626,7 @@ impl MultiBuffer {
                         let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
                         ExcerptRange {
                             context: start_ix..end_ix,
-                            primary: None,
+                            primary: start_ix..end_ix,
                         }
                     })
                     .collect::<Vec<_>>();
@@ -7841,7 +7840,7 @@ where
 
         excerpt_ranges.push(ExcerptRange {
             context: excerpt_start..excerpt_end,
-            primary: Some(range),
+            primary: range,
         });
         range_counts.push(ranges_in_excerpt);
     }

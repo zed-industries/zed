@@ -731,7 +731,7 @@ mod tests {
                 buffer_1.clone(),
                 [ExcerptRange {
                     context: Point::new(0, 0)..Point::new(2, 0),
-                    primary: None,
+                    primary: Point::new(0, 0)..Point::new(2, 0),
                 }],
                 cx,
             );
@@ -739,7 +739,7 @@ mod tests {
                 buffer_2.clone(),
                 [ExcerptRange {
                     context: Point::new(0, 0)..Point::new(2, 0),
-                    primary: None,
+                    primary: Point::new(0, 0)..Point::new(2, 0),
                 }],
                 cx,
             );
@@ -983,7 +983,7 @@ mod tests {
                 private_buffer.clone(),
                 [ExcerptRange {
                     context: Point::new(0, 0)..Point::new(1, 0),
-                    primary: None,
+                    primary: Point::new(0, 0)..Point::new(1, 0),
                 }],
                 cx,
             );
@@ -991,7 +991,7 @@ mod tests {
                 public_buffer.clone(),
                 [ExcerptRange {
                     context: Point::new(0, 0)..Point::new(6, 0),
-                    primary: None,
+                    primary: Point::new(0, 0)..Point::new(6, 0),
                 }],
                 cx,
             );

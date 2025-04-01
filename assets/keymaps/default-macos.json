@@ -705,14 +705,6 @@
     }
   },
   {
-    "context": "ProposedChangesEditor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-shift-y": "editor::ApplyDiffHunk",
-      "cmd-shift-a": "editor::ApplyAllDiffHunks"
-    }
-  },
-  {
     "context": "PromptEditor",
     "use_key_equivalents": true,
     "bindings": {

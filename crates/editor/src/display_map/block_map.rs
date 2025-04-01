@@ -2127,7 +2127,7 @@ mod tests {
                 buffer1.clone(),
                 [ExcerptRange {
                     context: 0..buffer1.read(cx).len(),
-                    primary: None,
+                    primary: 0..buffer1.read(cx).len(),
                 }],
                 cx,
             ));
@@ -2135,7 +2135,7 @@ mod tests {
                 buffer2.clone(),
                 [ExcerptRange {
                     context: 0..buffer2.read(cx).len(),
-                    primary: None,
+                    primary: 0..buffer2.read(cx).len(),
                 }],
                 cx,
             ));
@@ -2143,7 +2143,7 @@ mod tests {
                 buffer3.clone(),
                 [ExcerptRange {
                     context: 0..buffer3.read(cx).len(),
-                    primary: None,
+                    primary: 0..buffer3.read(cx).len(),
                 }],
                 cx,
             ));

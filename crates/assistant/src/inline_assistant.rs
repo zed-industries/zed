@@ -1272,7 +1272,7 @@ impl InlineAssistant {
                             old_buffer.clone(),
                             Some(ExcerptRange {
                                 context: buffer_start..buffer_end,
-                                primary: None,
+                                primary: buffer_start..buffer_end,
                             }),
                             cx,
                         );

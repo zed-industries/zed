@@ -121,8 +121,8 @@ impl EditorTestContext {
                 multibuffer.push_excerpts(
                     buffer,
                     ranges.into_iter().map(|range| ExcerptRange {
-                        context: range,
-                        primary: None,
+                        context: range.clone(),
+                        primary: range,
                     }),
                     cx,
                 );
