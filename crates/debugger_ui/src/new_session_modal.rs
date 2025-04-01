@@ -1,5 +1,3 @@
-use std::process::Child;
-
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
@@ -9,9 +7,10 @@ use settings::Settings;
 use task::DebugTaskDefinition;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, ContextMenu, Divider, DropdownMenu,
-    FixedWidth, FluentBuilder, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, Styled, StyledExt, ToggleButton, Toggleable, Window, h_flex, relative, v_flex,
+    ActiveTheme, Button, ButtonCommon, ButtonSize, Checkbox, CheckboxWithLabel, Clickable, Color,
+    ContextMenu, Divider, DropdownMenu, FixedWidth, FluentBuilder, InteractiveElement, IntoElement,
+    Label, LabelCommon as _, ParentElement, RenderOnce, SharedString, Styled, StyledExt,
+    ToggleButton, ToggleState, Toggleable, Window, div, h_flex, relative, rems, v_flex,
 };
 use workspace::{ModalView, Workspace};
 
@@ -59,6 +58,7 @@ impl LaunchMode {
     }
 }
 
+#[derive(Clone)]
 struct AttachMode {
     workspace: WeakEntity<Workspace>,
     debugger: Option<SharedString>,
@@ -206,39 +206,56 @@ impl Focusable for NewSessionMode {
     }
 }
 
+impl RenderOnce for LaunchMode {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        v_flex()
+            .w_full()
+            .gap_2()
+            .track_focus(&self.program.focus_handle(cx))
+            .child(
+                div().px_1().child(
+                    Label::new("Program")
+                        .size(ui::LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+            )
+            .child(render_editor(&self.program, cx))
+            .child(
+                div().child(
+                    Label::new("Working Directory")
+                        .size(ui::LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+            )
+            .child(render_editor(&self.cwd, cx))
+    }
+}
+
+impl RenderOnce for AttachMode {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        v_flex()
+            .w_full()
+            .gap_2()
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .child(Button::new("debugger-launch-spawn", "Attach")),
+            )
+            .when_some(self.attach_picker.clone(), |this, picker| {
+                this.child(picker)
+            })
+    }
+}
+
 impl RenderOnce for NewSessionMode {
     fn render(self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
         match self {
-            NewSessionMode::Launch(entity) => entity
-                .read_with(cx, |this, cx| {
-                    v_flex()
-                        .w_full()
-                        .gap_2()
-                        .track_focus(&this.program.focus_handle(cx))
-                        .child(render_editor(&this.program, cx))
-                        .child(render_editor(&this.cwd, cx))
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_between()
-                                .child(Button::new("debugger-launch-spawn", "Launch")),
-                        )
-                })
-                .into_any_element(),
-            NewSessionMode::Attach(entity) => entity.read_with(cx, |this, _| {
-                v_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .justify_between()
-                            .child(Button::new("debugger-launch-spawn", "Attach")),
-                    )
-                    .when_some(this.attach_picker.clone(), |this, picker| {
-                        this.child(picker)
-                    })
-                    .into_any_element()
+            NewSessionMode::Launch(entity) => entity.update(cx, |this, cx| {
+                this.clone().render(window, cx).into_any_element()
+            }),
+            NewSessionMode::Attach(entity) => entity.update(cx, |this, cx| {
+                this.clone().render(window, cx).into_any_element()
             }),
         }
     }
@@ -254,6 +271,8 @@ impl NewSessionMode {
 }
 fn render_editor(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
     let settings = ThemeSettings::get_global(cx);
+    let theme = cx.theme();
+
     let text_style = TextStyle {
         color: cx.theme().colors().text,
         font_family: settings.buffer_font.family.clone(),
@@ -261,18 +280,25 @@ fn render_editor(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
         font_size: settings.buffer_font_size(cx).into(),
         font_weight: settings.buffer_font.weight,
         line_height: relative(settings.buffer_line_height.value()),
+        background_color: Some(theme.colors().editor_background),
         ..Default::default()
     };
 
-    EditorElement::new(
+    let element = EditorElement::new(
         editor,
         EditorStyle {
-            background: cx.theme().colors().editor_background,
-            local_player: cx.theme().players().local(),
+            background: theme.colors().editor_background,
+            local_player: theme.players().local(),
             text: text_style,
             ..Default::default()
         },
-    )
+    );
+
+    div()
+        .rounded_md()
+        .border_color(theme.colors().border_variant)
+        .child(element)
+        .bg(theme.colors().editor_background)
 }
 impl Render for NewSessionModal {
     fn render(
@@ -281,8 +307,8 @@ impl Render for NewSessionModal {
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         v_flex()
-            .min_w_80()
             .size_full()
+            .w(rems(34.))
             .elevation_3(cx)
             .bg(cx.theme().colors().elevated_surface_background)
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
@@ -331,11 +357,28 @@ impl Render for NewSessionModal {
                             ),
                     )
                     .justify_between()
-                    .child(self.mode.clone().adapter_drop_down_menu(window, cx)),
+                    .child(self.mode.clone().adapter_drop_down_menu(window, cx))
+                    .border_color(cx.theme().colors().border_variant)
+                    .border_b_1(),
             )
-            .border_b_2()
-            .border_color(cx.theme().colors().border)
             .child(v_flex().p_2().child(self.mode.clone().render(window, cx)))
+            .child(
+                h_flex()
+                    .border_color(cx.theme().colors().border_variant)
+                    .border_b_1()
+                    .w_full()
+                    .justify_end()
+                    .p_2()
+                    .when(matches!(self.mode, NewSessionMode::Launch(_)), |this| {
+                        this.child(CheckboxWithLabel::new(
+                            "debugger-stop-on-entry",
+                            Label::new("Stop on Entry"),
+                            ToggleState::Unselected,
+                            |_, _, _| {},
+                        ))
+                    })
+                    .child(Button::new("debugger-spawn", "Start")),
+            )
     }
 }
 
