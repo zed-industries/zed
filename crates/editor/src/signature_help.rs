@@ -192,12 +192,7 @@ impl Editor {
                                 .hide(SignatureHelpHiddenBy::AutoClose);
                             return;
                         };
-                        if signature_help.signatures.is_empty() {
-                            editor
-                                .signature_help_state
-                                .hide(SignatureHelpHiddenBy::AutoClose);
-                            return;
-                        }
+
                         if let Some(language) = language {
                             for signature in &mut signature_help.signatures {
                                 let text = Rope::from(signature.label.clone());

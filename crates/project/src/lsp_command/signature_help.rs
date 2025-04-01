@@ -19,10 +19,13 @@ pub struct SignatureHelp {
 
 impl SignatureHelps {
     pub fn new(help: lsp::SignatureHelp) -> Option<Self> {
+        if help.signatures.is_empty() {
+            return None;
+        }
         let active_signature = help.active_signature.unwrap_or(0) as usize;
         let active_parameter = help.active_parameter.unwrap_or(0) as usize;
         let mut signatures = Vec::<SignatureHelp>::with_capacity(help.signatures.capacity());
-        for signature in help.signatures.clone() {
+        for signature in &help.signatures {
             let str_for_join = ", ";
             let mut highlights = Vec::new();
             let mut highlight_start = 0;
@@ -58,7 +61,7 @@ impl SignatureHelps {
                 .collect();
 
             let label = parameters.join(str_for_join);
-            let documentation = signature.documentation.map(|doc| match doc {
+            let documentation = signature.documentation.clone().map(|doc| match doc {
                 lsp::Documentation::String(string) => string,
                 lsp::Documentation::MarkupContent(markup) => markup.value,
             });
