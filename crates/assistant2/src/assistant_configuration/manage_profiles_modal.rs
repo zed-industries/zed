@@ -227,6 +227,10 @@ impl ManageProfilesModal {
                         .as_ref()
                         .map(|profile| profile.tools.clone())
                         .unwrap_or_default(),
+                    enable_all_context_servers: base_profile
+                        .as_ref()
+                        .map(|profile| profile.enable_all_context_servers)
+                        .unwrap_or_default(),
                     context_servers: base_profile
                         .map(|profile| profile.context_servers)
                         .unwrap_or_default(),

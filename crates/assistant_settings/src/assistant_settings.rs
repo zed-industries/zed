@@ -352,6 +352,7 @@ impl AssistantSettingsContent {
             AgentProfileContent {
                 name: profile.name.into(),
                 tools: profile.tools,
+                enable_all_context_servers: Some(profile.enable_all_context_servers),
                 context_servers: profile
                     .context_servers
                     .into_iter()
@@ -485,6 +486,8 @@ impl Default for LanguageModelSelection {
 pub struct AgentProfileContent {
     pub name: Arc<str>,
     pub tools: IndexMap<Arc<str>, bool>,
+    /// Whether all context servers are enabled by default.
+    pub enable_all_context_servers: Option<bool>,
     #[serde(default)]
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
 }
@@ -607,6 +610,9 @@ impl Settings for AssistantSettings {
                             AgentProfile {
                                 name: profile.name.into(),
                                 tools: profile.tools,
+                                enable_all_context_servers: profile
+                                    .enable_all_context_servers
+                                    .unwrap_or_default(),
                                 context_servers: profile
                                     .context_servers
                                     .into_iter()
