@@ -49,7 +49,7 @@ pub struct MessageEditor {
     model_selector: Entity<AssistantModelSelector>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
-    waiting_for_summaries: bool,
+    waiting_for_summaries_to_send: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -142,7 +142,7 @@ impl MessageEditor {
                 )
             }),
             edits_expanded: false,
-            waiting_for_summaries: false,
+            waiting_for_summaries_to_send: false,
             profile_selector: cx
                 .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
             _subscriptions: subscriptions,
@@ -257,7 +257,7 @@ impl MessageEditor {
                 .log_err()
             {
                 this.update(cx, |this, cx| {
-                    this.waiting_for_summaries = true;
+                    this.waiting_for_summaries_to_send = true;
                     cx.notify();
                 })
                 .ok();
@@ -265,7 +265,7 @@ impl MessageEditor {
                 wait_for_summaries.await;
 
                 this.update(cx, |this, cx| {
-                    this.waiting_for_summaries = false;
+                    this.waiting_for_summaries_to_send = false;
                     cx.notify();
                 })
                 .ok();
@@ -371,7 +371,7 @@ impl Render for MessageEditor {
 
         v_flex()
             .size_full()
-            .when(self.waiting_for_summaries, |parent| {
+            .when(self.waiting_for_summaries_to_send, |parent| {
                 parent.child(
                     h_flex().py_3().w_full().justify_center().child(
                         h_flex()
@@ -744,7 +744,7 @@ impl Render for MessageEditor {
                                                     is_editor_empty
                                                         || !is_model_selected
                                                         || is_generating
-                                                        || self.waiting_for_summaries
+                                                        || self.waiting_for_summaries_to_send
                                                 )
                                                 .child(
                                                     h_flex()
