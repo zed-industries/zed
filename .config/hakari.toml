@@ -6,7 +6,6 @@ hakari-package = "workspace-hack"
 resolver = "2"
 dep-format-version = "4"
 workspace-hack-line-style = "workspace-dotted"
-unify-target-host = "none"
 
 # this should be the same list as "targets" in ../rust-toolchain.toml
 platforms = [
@@ -15,14 +14,11 @@ platforms = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
     "x86_64-pc-windows-msvc",
-    # "x86_64-unknown-linux-musl", # remote server
-    # "wasm32-wasip1", # extensions
+    "x86_64-unknown-linux-musl", # remote server
 ]
 
 [final-excludes]
 workspace-members = [
-    # "crates/extension_api",
-    # "extensions/test-extension"
     "zed_extension_api",
 
     # exclude all extensions
