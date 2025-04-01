@@ -6,17 +6,13 @@ mod judge;
 mod templates_eval;
 
 use clap::Parser;
-use eval::{run_exercise_eval, save_eval_results, Eval, EvalOutput};
+use eval::{run_exercise_eval, save_eval_results};
 use futures::stream::{self, StreamExt};
-use futures::future;
 use get_exercise::{find_exercises, get_exercise_language, get_exercise_name};
 use git_commands::read_base_sha;
-use gpui::{Application, AsyncApp};
-use headless_assistant::{HeadlessAppState, authenticate_model_provider, find_model};
-use itertools::Itertools;
-use judge::Judge;
-use language_model::{LanguageModel, LanguageModelRegistry};
-use regex::Regex;
+use gpui::{Application};
+use headless_assistant::{authenticate_model_provider, find_model};
+use language_model::{LanguageModelRegistry};
 use reqwest_client::ReqwestClient;
 use std::{path::PathBuf, sync::Arc};
 use templates_eval::all_templates;
@@ -28,7 +24,7 @@ use templates_eval::all_templates;
     before_help = "Tool eval runner"
 )]
 struct Args {
-    /// Regexes to match the names of evals to run.
+    /// Match the names of evals to run.
     #[arg(long)]
     exercise_names: Vec<String>,
     /// Runs all exercises, causes the exercise_names to be ignored.
