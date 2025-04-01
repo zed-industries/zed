@@ -30,11 +30,9 @@ struct Args {
     /// Runs all exercises, causes the exercise_names to be ignored.
     #[arg(long)]
     all: bool,
-    /// Supported language types to evaluate (default: python,go,rust,typescript,javascript,ruby,php,bash,internal)
-    #[arg(
-        long,
-        default_value = "python,go,rust,typescript,javascript,ruby,php,bash,internal"
-    )]
+    /// Supported language types to evaluate (default: internal).
+    /// Internal is data generated from the agent panel
+    #[arg(long, default_value = "internal")]
     languages: String,
     /// Name of the model (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
@@ -137,9 +135,8 @@ fn main() {
             println!("Found {} exercises total", all_exercises.len());
 
             // Filter exercises if specific ones were requested
-            let exercises_to_run = if all_flag {
-                all_exercises
-            } else if !exercise_names.is_empty() {
+            let exercises_to_run = if !exercise_names.is_empty() {
+                // If exercise names are specified, filter by them regardless of --all flag
                 all_exercises
                     .into_iter()
                     .filter(|path| {
@@ -147,7 +144,11 @@ fn main() {
                         exercise_names.iter().any(|filter| name.contains(filter))
                     })
                     .collect()
+            } else if all_flag {
+                // Only use all_flag if no exercise names are specified
+                all_exercises
             } else {
+                // Default behavior (no filters)
                 all_exercises
             };
 
@@ -194,8 +195,13 @@ fn main() {
                         // Run each template sequentially for this exercise
                         for template in templates_clone {
                             // For "multi" or "internal" language, only run the CodeModification template
-                            if (language == "multi" || language == "internal") && template.name != "CodeModification" {
-                                println!("Skipping {} template for {} language", template.name, language);
+                            if (language == "multi" || language == "internal")
+                                && template.name != "CodeModification"
+                            {
+                                println!(
+                                    "Skipping {} template for {} language",
+                                    template.name, language
+                                );
                                 continue;
                             }
 

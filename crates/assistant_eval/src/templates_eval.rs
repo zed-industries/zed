@@ -85,8 +85,6 @@ Evaluate how well the AI assistant modified existing code to meet requirements. 
 - 1.0 = Perfect modifications that correctly implement all requirements.
 - 0.0 = Failed to make appropriate changes or introduced serious errors.
 
-Note: A git diff output is required. If no code changes are provided (i.e., no git diff output), the score must be 0.0.
-
 ## Evaluation Criteria
 
 Please consider the following aspects in order of importance:
