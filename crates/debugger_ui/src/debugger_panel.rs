@@ -21,7 +21,7 @@ use settings::Settings;
 use std::{any::TypeId, path::PathBuf};
 use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
-use ui::prelude::*;
+use ui::{Divider, prelude::*};
 use util::ResultExt;
 use workspace::{
     ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut,
@@ -54,6 +54,8 @@ pub struct DebugPanel {
     project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
+    sessions: Vec<Entity<DebugSession>>,
+    selected_session: Option<Entity<DebugSession>>,
     pub(crate) last_inert_config: Option<DebugTaskDefinition>,
 }
 
@@ -81,7 +83,7 @@ impl DebugPanel {
                 pane.set_can_split(None);
                 pane.set_can_navigate(true, cx);
                 pane.display_nav_history_buttons(None);
-                pane.set_should_display_tab_bar(|_window, _cx| true);
+                pane.set_should_display_tab_bar(|_window, _cx| false);
                 pane.set_close_pane_if_empty(true, cx);
                 pane.set_render_tab_bar_buttons(cx, {
                     let project = project.clone();
@@ -162,6 +164,8 @@ impl DebugPanel {
                 last_inert_config: None,
                 project: project.downgrade(),
                 workspace: workspace.weak_handle(),
+                sessions: vec![],
+                selected_session: None,
             };
 
             debug_panel
@@ -573,7 +577,94 @@ impl Render for DebugPanel {
             .key_context("DebugPanel")
             .track_focus(&self.focus_handle(cx))
             .size_full()
+            .child(
+                h_flex().child(top_controls_strip(
+                    self.pane
+                        .read(cx)
+                        .items()
+                        .next()
+                        .map(|item| item.to_any().downcast::<DebugSession>().ok())
+                        .flatten(),
+                    cx,
+                )),
+            )
             .child(self.pane.clone())
             .into_any()
     }
+}
+
+fn top_controls_strip(active_session: Option<Entity<DebugSession>>, cx: &App) -> Div {
+    h_flex()
+        .border_b_1()
+        .border_color(cx.theme().colors().border)
+        .p_1()
+        .justify_between()
+        .w_full()
+        .child(
+            h_flex()
+                .gap_2()
+                .w_full()
+                .when_some(active_session.as_ref(), |this, session| {
+                    this.child(
+                        IconButton::new("debug-continue", IconName::DebugPause)
+                            .icon_size(IconSize::XSmall)
+                            .shape(ui::IconButtonShape::Square),
+                    )
+                    .child(
+                        IconButton::new("debug-step-over", IconName::ArrowRight)
+                            .icon_size(IconSize::XSmall)
+                            .shape(ui::IconButtonShape::Square),
+                    )
+                    .child(
+                        IconButton::new("debug-step-out", IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .shape(ui::IconButtonShape::Square),
+                    )
+                    .child(
+                        IconButton::new("debug-step-into", IconName::ArrowDownRight)
+                            .icon_size(IconSize::XSmall)
+                            .shape(ui::IconButtonShape::Square),
+                    )
+                    .child(Divider::vertical())
+                    .child(
+                        IconButton::new(
+                            "debug-enable-breakpoint",
+                            IconName::DebugDisabledBreakpoint,
+                        )
+                        .icon_size(IconSize::XSmall),
+                    )
+                    .child(
+                        IconButton::new("debug-disable-breakpoint", IconName::CircleOff)
+                            .icon_size(IconSize::XSmall),
+                    )
+                    .child(
+                        IconButton::new("debug-disable-all-breakpoints", IconName::BugOff)
+                            .icon_size(IconSize::XSmall),
+                    )
+                    .child(Divider::vertical())
+                    .child(
+                        IconButton::new("debug-restart", IconName::DebugRestart)
+                            .icon_size(IconSize::XSmall),
+                    )
+                    .child(
+                        IconButton::new("debug-stop", IconName::Power).icon_size(IconSize::XSmall),
+                    )
+                }),
+        )
+        .child(
+            h_flex()
+                .gap_2()
+                .when_some(active_session, |this, session| {
+                    this.child(Label::new("Threads").size(LabelSize::Small))
+                        .child(Divider::vertical())
+                })
+                .child(
+                    Label::new("luna::canvas_element::test_multiple_selections (lldb)")
+                        .size(LabelSize::Small),
+                )
+                .child(Divider::vertical())
+                .child(
+                    IconButton::new("debug-new-session", IconName::Plus).icon_size(IconSize::Small),
+                ),
+        )
 }
