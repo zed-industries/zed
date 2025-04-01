@@ -28,6 +28,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+#[cfg(not(windows))]
 use unindent::Unindent as _;
 use util::{path, separator};
 
