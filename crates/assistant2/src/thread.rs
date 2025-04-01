@@ -24,6 +24,7 @@ use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
@@ -43,7 +44,9 @@ pub enum RequestKind {
     Summarize,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
+)]
 pub struct ThreadId(Arc<str>);
 
 impl ThreadId {
@@ -173,12 +176,26 @@ impl LastRestoreCheckpoint {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub enum DetailedSummaryState {
+    #[default]
+    NotGenerated,
+    Generating {
+        message_id: MessageId,
+    },
+    Generated {
+        text: SharedString,
+        message_id: MessageId,
+    },
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
     updated_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
+    detailed_summary_state: DetailedSummaryState,
     messages: Vec<Message>,
     next_message_id: MessageId,
     context: BTreeMap<ContextId, AssistantContext>,
@@ -211,6 +228,7 @@ impl Thread {
             updated_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
+            detailed_summary_state: DetailedSummaryState::NotGenerated,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             context: BTreeMap::default(),
@@ -260,6 +278,7 @@ impl Thread {
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
+            detailed_summary_state: serialized.detailed_summary_state,
             messages: serialized
                 .messages
                 .into_iter()
@@ -326,6 +345,19 @@ impl Thread {
     pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.summary = Some(summary.into());
         cx.emit(ThreadEvent::SummaryChanged);
+    }
+
+    pub fn latest_detailed_summary_or_text(&self) -> SharedString {
+        self.latest_detailed_summary()
+            .unwrap_or_else(|| self.text().into())
+    }
+
+    fn latest_detailed_summary(&self) -> Option<SharedString> {
+        if let DetailedSummaryState::Generated { text, .. } = &self.detailed_summary_state {
+            Some(text.clone())
+        } else {
+            None
+        }
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
@@ -658,6 +690,7 @@ impl Thread {
                     .collect(),
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage.clone(),
+                detailed_summary_state: this.detailed_summary_state.clone(),
             })
         })
     }
@@ -1202,6 +1235,87 @@ impl Thread {
         });
     }
 
+    pub fn generate_detailed_summary(&mut self, cx: &mut Context<Self>) -> Option<Task<()>> {
+        let last_message_id = self.messages.last().map(|message| message.id)?;
+
+        match &self.detailed_summary_state {
+            DetailedSummaryState::Generating { message_id, .. }
+            | DetailedSummaryState::Generated { message_id, .. }
+                if *message_id == last_message_id =>
+            {
+                // Already up-to-date
+                return None;
+            }
+            _ => {}
+        }
+
+        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+
+        if !provider.is_authenticated(cx) {
+            return None;
+        }
+
+        let mut request = self.to_completion_request(RequestKind::Summarize, cx);
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                "Generate a detailed summary of this conversation. Include:\n\
+                1. A brief overview of what was discussed\n\
+                2. Key facts or information discovered\n\
+                3. Outcomes or conclusions reached\n\
+                4. Any action items or next steps if any\n\
+                Format it in Markdown with headings and bullet points."
+                    .into(),
+            ],
+            cache: false,
+        });
+
+        let task = cx.spawn(async move |thread, cx| {
+            let stream = model.stream_completion_text(request, &cx);
+            let Some(mut messages) = stream.await.log_err() else {
+                thread
+                    .update(cx, |this, _cx| {
+                        this.detailed_summary_state = DetailedSummaryState::NotGenerated;
+                    })
+                    .log_err();
+
+                return;
+            };
+
+            let mut new_detailed_summary = String::new();
+
+            while let Some(chunk) = messages.stream.next().await {
+                if let Some(chunk) = chunk.log_err() {
+                    new_detailed_summary.push_str(&chunk);
+                }
+            }
+
+            thread
+                .update(cx, |this, _cx| {
+                    this.detailed_summary_state = DetailedSummaryState::Generated {
+                        text: new_detailed_summary.into(),
+                        message_id: last_message_id,
+                    };
+                })
+                .log_err();
+        });
+
+        self.detailed_summary_state = DetailedSummaryState::Generating {
+            message_id: last_message_id,
+        };
+
+        Some(task)
+    }
+
+    pub fn is_generating_detailed_summary(&self) -> bool {
+        matches!(
+            self.detailed_summary_state,
+            DetailedSummaryState::Generating { .. }
+        )
+    }
+
     pub fn use_pending_tools(
         &mut self,
         cx: &mut Context<Self>,
@@ -1594,6 +1708,28 @@ impl Thread {
 
     pub fn cumulative_token_usage(&self) -> TokenUsage {
         self.cumulative_token_usage.clone()
+    }
+
+    pub fn is_getting_too_long(&self, cx: &App) -> bool {
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let Some(model) = model_registry.active_model() else {
+            return false;
+        };
+
+        let max_tokens = model.max_token_count();
+
+        let current_usage =
+            self.cumulative_token_usage.input_tokens + self.cumulative_token_usage.output_tokens;
+
+        #[cfg(debug_assertions)]
+        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
+            .unwrap_or("0.9".to_string())
+            .parse()
+            .unwrap();
+        #[cfg(not(debug_assertions))]
+        let warning_threshold: f32 = 0.9;
+
+        current_usage as f32 >= (max_tokens as f32 * warning_threshold)
     }
 
     pub fn deny_tool_use(

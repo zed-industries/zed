@@ -19,7 +19,7 @@ use ui::{
     ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
     prelude::*,
 };
-use util::ResultExt;
+use util::ResultExt as _;
 use vim_mode_setting::VimModeSetting;
 use workspace::Workspace;
 
@@ -31,7 +31,7 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AssistantDiff, Chat, ChatMode, OpenAssistantDiff, RemoveAllContext, ThreadEvent,
+    AssistantDiff, Chat, ChatMode, NewThread, OpenAssistantDiff, RemoveAllContext, ThreadEvent,
     ToggleContextPicker, ToggleProfileSelector,
 };
 
@@ -49,6 +49,7 @@ pub struct MessageEditor {
     model_selector: Entity<AssistantModelSelector>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
+    waiting_for_summaries_to_send: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -141,6 +142,7 @@ impl MessageEditor {
                 )
             }),
             edits_expanded: false,
+            waiting_for_summaries_to_send: false,
             profile_selector: cx
                 .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
             _subscriptions: subscriptions,
@@ -225,10 +227,12 @@ impl MessageEditor {
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
         let checkpoint = self.project.read(cx).git_store().read(cx).checkpoint(cx);
-        cx.spawn(async move |_, cx| {
+
+        cx.spawn(async move |this, cx| {
             let checkpoint = checkpoint.await.ok();
             refresh_task.await;
             let (system_prompt_context, load_error) = system_prompt_context_task.await;
+
             thread
                 .update(cx, |thread, cx| {
                     thread.set_system_prompt_context(system_prompt_context);
@@ -237,6 +241,7 @@ impl MessageEditor {
                     }
                 })
                 .ok();
+
             thread
                 .update(cx, |thread, cx| {
                     let context = context_store.read(cx).context().clone();
@@ -244,6 +249,31 @@ impl MessageEditor {
                         action_log.clear_reviewed_changes(cx);
                     });
                     thread.insert_user_message(user_message, context, checkpoint, cx);
+                })
+                .ok();
+
+            if let Some(wait_for_summaries) = context_store
+                .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
+                .log_err()
+            {
+                this.update(cx, |this, cx| {
+                    this.waiting_for_summaries_to_send = true;
+                    cx.notify();
+                })
+                .ok();
+
+                wait_for_summaries.await;
+
+                this.update(cx, |this, cx| {
+                    this.waiting_for_summaries_to_send = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+
+            // Send to model after summaries are done
+            thread
+                .update(cx, |thread, cx| {
                     thread.send_to_model(model, request_kind, cx);
                 })
                 .ok();
@@ -309,7 +339,9 @@ impl Render for MessageEditor {
         let focus_handle = self.editor.focus_handle(cx);
         let inline_context_picker = self.inline_context_picker.clone();
 
-        let is_generating = self.thread.read(cx).is_generating();
+        let thread = self.thread.read(cx);
+        let is_generating = thread.is_generating();
+        let is_too_long = thread.is_getting_too_long(cx);
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
         let submit_label_color = if is_editor_empty {
@@ -339,6 +371,41 @@ impl Render for MessageEditor {
 
         v_flex()
             .size_full()
+            .when(self.waiting_for_summaries_to_send, |parent| {
+                parent.child(
+                    h_flex().py_3().w_full().justify_center().child(
+                        h_flex()
+                            .flex_none()
+                            .px_2()
+                            .py_2()
+                            .bg(editor_bg_color)
+                            .border_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .rounded_lg()
+                            .shadow_md()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(gpui::Transformation::rotate(
+                                                gpui::percentage(delta),
+                                            ))
+                                        },
+                                    ),
+                            )
+                            .child(
+                                Label::new("Summarizing context…")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+                )
+            })
             .when(is_generating, |parent| {
                 let focus_handle = self.editor.focus_handle(cx).clone();
                 parent.child(
@@ -622,28 +689,29 @@ impl Render for MessageEditor {
                         v_flex()
                             .gap_5()
                             .child({
-                                let settings = ThemeSettings::get_global(cx);
-                                let text_style = TextStyle {
-                                    color: cx.theme().colors().text,
-                                    font_family: settings.ui_font.family.clone(),
-                                    font_fallbacks: settings.ui_font.fallbacks.clone(),
-                                    font_features: settings.ui_font.features.clone(),
-                                    font_size: font_size.into(),
-                                    font_weight: settings.ui_font.weight,
-                                    line_height: line_height.into(),
-                                    ..Default::default()
-                                };
-
-                                EditorElement::new(
-                                    &self.editor,
-                                    EditorStyle {
-                                        background: editor_bg_color,
-                                        local_player: cx.theme().players().local(),
-                                        text: text_style,
-                                        syntax: cx.theme().syntax().clone(),
+                                    let settings = ThemeSettings::get_global(cx);
+                                    let text_style = TextStyle {
+                                        color: cx.theme().colors().text,
+                                        font_family: settings.ui_font.family.clone(),
+                                        font_fallbacks: settings.ui_font.fallbacks.clone(),
+                                        font_features: settings.ui_font.features.clone(),
+                                        font_size: font_size.into(),
+                                        font_weight: settings.ui_font.weight,
+                                        line_height: line_height.into(),
                                         ..Default::default()
-                                    },
-                                )
+                                    };
+
+                                    EditorElement::new(
+                                        &self.editor,
+                                        EditorStyle {
+                                            background: editor_bg_color,
+                                            local_player: cx.theme().players().local(),
+                                            text: text_style,
+                                            syntax: cx.theme().syntax().clone(),
+                                            ..Default::default()
+                                        },
+                                    ).into_any()
+
                             })
                             .child(
                                 PopoverMenu::new("inline-context-picker")
@@ -675,7 +743,8 @@ impl Render for MessageEditor {
                                                 .disabled(
                                                     is_editor_empty
                                                         || !is_model_selected
-                                                        || is_generating,
+                                                        || is_generating
+                                                        || self.waiting_for_summaries_to_send
                                                 )
                                                 .child(
                                                     h_flex()
@@ -723,7 +792,61 @@ impl Render for MessageEditor {
                                         ),
                                     ),
                             ),
-                    ),
+                    )
             )
+            .when(is_too_long, |parent| {
+                parent.child(
+                    h_flex()
+                        .p_2()
+                        .gap_2()
+                        .flex_wrap()
+                        .justify_between()
+                        .bg(cx.theme().status().warning_background.opacity(0.1))
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_start()
+                                .child(
+                                    h_flex()
+                                        .h(line_height)
+                                        .justify_center()
+                                        .child(
+                                            Icon::new(IconName::Warning)
+                                                .color(Color::Warning)
+                                                .size(IconSize::XSmall),
+                                        ),
+                                )
+                                .child(
+                                    v_flex()
+                                        .mr_auto()
+                                        .child(Label::new("Thread reaching the token limit soon").size(LabelSize::Small))
+                                        .child(
+                                            Label::new(
+                                                "Start a new thread from a summary to continue the conversation.",
+                                            )
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            Button::new("new-thread", "Start New Thread")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let from_thread_id = Some(this.thread.read(cx).id().clone());
+
+                                    window.dispatch_action(Box::new(NewThread {
+                                        from_thread_id
+                                    }), cx);
+                                }))
+                                .icon(IconName::Plus)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                .label_size(LabelSize::Small),
+                        ),
+                )
+            })
     }
 }

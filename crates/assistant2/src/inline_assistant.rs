@@ -424,7 +424,8 @@ impl InlineAssistant {
         let mut assist_to_focus = None;
         for range in codegen_ranges {
             let assist_id = self.next_assist_id.post_inc();
-            let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
+            let context_store =
+                cx.new(|_cx| ContextStore::new(workspace.clone(), thread_store.clone()));
             let codegen = cx.new(|cx| {
                 BufferCodegen::new(
                     editor.read(cx).buffer().clone(),
@@ -536,7 +537,8 @@ impl InlineAssistant {
             range.end = range.end.bias_right(&snapshot);
         }
 
-        let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
+        let context_store =
+            cx.new(|_cx| ContextStore::new(workspace.clone(), thread_store.clone()));
 
         let codegen = cx.new(|cx| {
             BufferCodegen::new(
