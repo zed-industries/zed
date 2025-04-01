@@ -2337,7 +2337,7 @@ pub(crate) fn parse_completion_text_edit(
             let replace = match completion_mode {
                 CompletionMode::Insert => false,
                 CompletionMode::Replace => true,
-                CompletionMode::Smart => {
+                CompletionMode::Auto => {
                     let mut range = edit.replace;
                     range.start = edit.insert.end;
                     let range = range_from_lsp(range);

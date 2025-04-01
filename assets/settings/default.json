@@ -1213,7 +1213,7 @@
     //   Replaces text before the cursor, using the `insert` range described in the LSP specification.
     // 2. "replace"
     //   Replaces the whole word, using the `replace` range described in the LSP specification.
-    // 3. "smart"
+    // 3. "auto"
     //   Only replace the whole word if the text after cursor is a suffix of the completion.
     //
     // Default: replace

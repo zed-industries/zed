@@ -336,7 +336,7 @@ pub struct CompletionSettings {
     ///   Removes text left from the cursor
     /// 2. "replace"
     ///   Replace the word
-    /// 3. "smart"
+    /// 3. "auto"
     ///   removes text left from the cursor and text right from the cursor if the completion ends with it
     ///
     /// Default: insert
@@ -373,7 +373,7 @@ pub enum CompletionMode {
     /// Replaces the whole word, using the `replace` range described in the LSP specification.
     Replace,
     /// Only replace the whole word if the text after cursor is a suffix of the completion.
-    Smart,
+    Auto,
 }
 
 fn default_words_completion_mode() -> WordsCompletionMode {
