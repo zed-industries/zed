@@ -52,20 +52,27 @@ impl ActionLog {
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
+                let base_text;
+                let status;
+                let unreviewed_changes;
+                if created {
+                    base_text = Rope::default();
+                    status = TrackedBufferStatus::Created;
+                    unreviewed_changes = Patch::new(vec![Edit {
+                        old: 0..1,
+                        new: 0..text_snapshot.max_point().row + 1,
+                    }])
+                } else {
+                    base_text = buffer.read(cx).as_rope().clone();
+                    status = TrackedBufferStatus::Modified;
+                    unreviewed_changes = Patch::default();
+                }
                 TrackedBuffer {
                     buffer: buffer.clone(),
-                    base_text: if created {
-                        Rope::default()
-                    } else {
-                        buffer.read(cx).as_rope().clone()
-                    },
-                    unreviewed_changes: Patch::default(),
+                    base_text,
+                    unreviewed_changes,
                     snapshot: text_snapshot.clone(),
-                    status: if created {
-                        TrackedBufferStatus::Created
-                    } else {
-                        TrackedBufferStatus::Modified
-                    },
+                    status,
                     version: buffer.read(cx).version(),
                     diff,
                     diff_update: diff_update_tx,
@@ -188,6 +195,7 @@ impl ActionLog {
                 })??;
 
             let (new_base_text, new_base_text_rope, unreviewed_changes) = rebase.await;
+            dbg!(&new_base_text, &unreviewed_changes);
             let diff_snapshot = BufferDiff::update_diff(
                 diff.clone(),
                 buffer_snapshot.clone(),
@@ -711,6 +719,72 @@ mod tests {
 
         action_log.update(cx, |log, cx| {
             log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_creation(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+
+        let action_log = cx.new(|_| ActionLog::new());
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({})).await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file1", cx))
+            .unwrap();
+
+        // Simulate file2 being recreated by a tool.
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+        cx.update(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.set_text("lorem", cx));
+            action_log.update(cx, |log, cx| log.will_create_buffer(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(0, 0)..Point::new(0, 5),
+                    diff_status: DiffHunkStatusKind::Added,
+                    old_text: "".into(),
+                }],
+            )]
+        );
+
+        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "X")], None, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(0, 0)..Point::new(0, 6),
+                    diff_status: DiffHunkStatusKind::Added,
+                    old_text: "".into(),
+                }],
+            )]
+        );
+
+        action_log.update(cx, |log, cx| {
+            log.keep_edits_in_range(buffer.clone(), 0..5, cx)
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);

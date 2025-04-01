@@ -92,10 +92,12 @@ impl Tool for CreateFileTool {
                 })?
                 .await
                 .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
-            action_log.update(cx, |action_log, cx| {
-                action_log.will_create_buffer(buffer.clone(), cx)
+            cx.update(|cx| {
+                buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
+                action_log.update(cx, |action_log, cx| {
+                    action_log.will_create_buffer(buffer.clone(), cx)
+                });
             })?;
-            buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx))?;
 
             project
                 .update(cx, |project, cx| project.save_buffer(buffer, cx))?
