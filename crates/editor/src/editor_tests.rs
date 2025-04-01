@@ -3165,18 +3165,12 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             toml_buffer.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(2, 0),
-                primary: Point::new(0, 0)..Point::new(2, 0),
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
             cx,
         );
         multibuffer.push_excerpts(
             rust_buffer.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(1, 0),
-                primary: Point::new(0, 0)..Point::new(1, 0),
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
             cx,
         );
         multibuffer
@@ -10658,14 +10652,8 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(0, 4),
-                    primary: Point::new(0, 0)..Point::new(0, 4),
-                },
-                ExcerptRange {
-                    context: Point::new(1, 0)..Point::new(1, 4),
-                    primary: Point::new(1, 0)..Point::new(1, 4),
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(0, 4)),
+                ExcerptRange::new(Point::new(1, 0)..Point::new(1, 4)),
             ],
             cx,
         );
@@ -11356,34 +11344,16 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
             let excerpt_ids = multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [
-                    ExcerptRange {
-                        context: 1..6,
-                        primary: 1..6,
-                    },
-                    ExcerptRange {
-                        context: 12..15,
-                        primary: 12..15,
-                    },
-                    ExcerptRange {
-                        context: 0..3,
-                        primary: 0..3,
-                    },
+                    ExcerptRange::new(1..6),
+                    ExcerptRange::new(12..15),
+                    ExcerptRange::new(0..3),
                 ],
                 cx,
             );
             multibuffer.insert_excerpts_after(
                 excerpt_ids[0],
                 buffer_2.clone(),
-                [
-                    ExcerptRange {
-                        context: 8..12,
-                        primary: 8..12,
-                    },
-                    ExcerptRange {
-                        context: 0..6,
-                        primary: 0..6,
-                    },
-                ],
+                [ExcerptRange::new(8..12), ExcerptRange::new(0..6)],
                 cx,
             );
         });
@@ -16648,23 +16618,17 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
         let mut multi_buffer = MultiBuffer::new(ReadWrite);
         multi_buffer.push_excerpts(
             buffer_1.clone(),
-            [ExcerptRange::new(
-                Point::new(0, 0)..Point::new(3, 0),
-            )],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_2.clone(),
-            [ExcerptRange::new(
-                 Point::new(0, 0)..Point::new(3, 0),
-            )],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_3.clone(),
-            [ExcerptRange::new(
-                 Point::new(0, 0)..Point::new(3, 0),
-            )],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
             cx,
         );
         multi_buffer

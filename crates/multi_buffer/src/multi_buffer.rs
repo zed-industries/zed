@@ -3493,10 +3493,9 @@ impl MultiBuffer {
         let multi = cx.new(|_| Self::new(Capability::ReadWrite));
         for (text, ranges) in excerpts {
             let buffer = cx.new(|cx| Buffer::local(text, cx));
-            let excerpt_ranges = ranges.into_iter().map(|range| ExcerptRange {
-                context: range.clone(),
-                primary: range,
-            });
+            let excerpt_ranges = ranges
+                .into_iter()
+                .map(|range| ExcerptRange::new(range.clone()));
             multi.update(cx, |multi, cx| {
                 multi.push_excerpts(buffer, excerpt_ranges, cx)
             });
@@ -3624,10 +3623,7 @@ impl MultiBuffer {
                         let end_ix =
                             buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
                         let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
-                        ExcerptRange {
-                            context: start_ix..end_ix,
-                            primary: start_ix..end_ix,
-                        }
+                        ExcerptRange::new(start_ix..end_ix)
                     })
                     .collect::<Vec<_>>();
                 log::info!(

@@ -1270,10 +1270,7 @@ impl InlineAssistant {
                     multi_buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.push_excerpts(
                             old_buffer.clone(),
-                            Some(ExcerptRange {
-                                context: buffer_start..buffer_end,
-                                primary: buffer_start..buffer_end,
-                            }),
+                            Some(ExcerptRange::new(buffer_start..buffer_end)),
                             cx,
                         );
                     });
