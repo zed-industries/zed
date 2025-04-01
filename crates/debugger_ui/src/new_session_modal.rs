@@ -1,3 +1,5 @@
+use std::process::Child;
+
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
@@ -206,8 +208,6 @@ impl Focusable for NewSessionMode {
 
 impl RenderOnce for NewSessionMode {
     fn render(self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
-        let adapter_menu = self.adapter_drop_down_menu(window, cx);
-
         match self {
             NewSessionMode::Launch(entity) => entity
                 .read_with(cx, |this, cx| {
@@ -221,7 +221,6 @@ impl RenderOnce for NewSessionMode {
                             h_flex()
                                 .w_full()
                                 .justify_between()
-                                .child(adapter_menu)
                                 .child(Button::new("debugger-launch-spawn", "Launch")),
                         )
                 })
@@ -234,7 +233,6 @@ impl RenderOnce for NewSessionMode {
                         h_flex()
                             .w_full()
                             .justify_between()
-                            .child(adapter_menu)
                             .child(Button::new("debugger-launch-spawn", "Attach")),
                     )
                     .when_some(this.attach_picker.clone(), |this, picker| {
@@ -294,46 +292,49 @@ impl Render for NewSessionModal {
                 h_flex()
                     .w_full()
                     .justify_around()
+                    .p_2()
                     .child(
                         h_flex()
-                            .justify_center()
+                            .justify_start()
                             .w_full()
                             .child(
-                                ToggleButton::new("debugger-session-ui-launch-button", "Launch")
-                                    .full_width()
-                                    .size(ButtonSize::Large)
-                                    .style(ui::ButtonStyle::Filled)
-                                    .toggle_state(matches!(self.mode, NewSessionMode::Launch(_)))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.mode = NewSessionMode::launch(
-                                            this.workspace.clone(),
-                                            window,
-                                            cx,
-                                        );
-                                        this.mode.focus_handle(cx).focus(window);
-                                        cx.notify();
-                                    }))
-                                    .first(),
+                                ToggleButton::new(
+                                    "debugger-session-ui-launch-button",
+                                    "New Session",
+                                )
+                                .size(ButtonSize::Default)
+                                .style(ui::ButtonStyle::Subtle)
+                                .toggle_state(matches!(self.mode, NewSessionMode::Launch(_)))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.mode =
+                                        NewSessionMode::launch(this.workspace.clone(), window, cx);
+                                    this.mode.focus_handle(cx).focus(window);
+                                    cx.notify();
+                                }))
+                                .first(),
                             )
-                            .border_r_1()
-                            .border_color(cx.theme().colors().border),
+                            .child(
+                                ToggleButton::new(
+                                    "debugger-session-ui-attach-button",
+                                    "Attach to Process",
+                                )
+                                .size(ButtonSize::Default)
+                                .toggle_state(matches!(self.mode, NewSessionMode::Attach(_)))
+                                .style(ui::ButtonStyle::Subtle)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.mode =
+                                        NewSessionMode::attach(this.workspace.clone(), window, cx);
+                                    this.mode.focus_handle(cx).focus(window);
+                                    cx.notify();
+                                }))
+                                .last(),
+                            ),
                     )
-                    .child(
-                        ToggleButton::new("debugger-session-ui-attach-button", "Attach")
-                            .size(ButtonSize::Large)
-                            .width(relative(0.5))
-                            .toggle_state(matches!(self.mode, NewSessionMode::Attach(_)))
-                            .style(ui::ButtonStyle::Filled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.mode =
-                                    NewSessionMode::attach(this.workspace.clone(), window, cx);
-                                this.mode.focus_handle(cx).focus(window);
-                                cx.notify();
-                            }))
-                            .last(),
-                    ),
+                    .justify_between()
+                    .child(self.mode.clone().adapter_drop_down_menu(window, cx)),
             )
-            .child(Divider::horizontal())
+            .border_b_2()
+            .border_color(cx.theme().colors().border)
             .child(v_flex().p_2().child(self.mode.clone().render(window, cx)))
     }
 }
