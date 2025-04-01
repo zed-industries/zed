@@ -8,8 +8,10 @@ use crate::thread::{
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
+use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::HashMap;
+use editor::scroll::Autoscroll;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength,
@@ -277,12 +279,37 @@ fn open_markdown_link(
                     .detach_and_log_err(cx);
             }
         }),
-        Some(MentionLink::Symbol(path, _)) => workspace.update(cx, |workspace, cx| {
-            //TODO: Go to symbol
-            workspace
-                .open_path(path, None, true, window, cx)
+        Some(MentionLink::Symbol(path, symbol_name)) => {
+            let open_task = workspace.update(cx, |workspace, cx| {
+                workspace.open_path(path, None, true, window, cx)
+            });
+            window
+                .spawn(cx, async move |cx| {
+                    let active_editor = open_task
+                        .await?
+                        .downcast::<Editor>()
+                        .context("Item is not an editor")?;
+                    active_editor.update_in(cx, |editor, window, cx| {
+                        let symbol_range = editor
+                            .buffer()
+                            .read(cx)
+                            .snapshot(cx)
+                            .outline(None)
+                            .and_then(|outline| {
+                                outline
+                                    .find_most_similar(&symbol_name)
+                                    .map(|(_, item)| item.range.clone())
+                            })
+                            .context("Could not find matching symbol")?;
+
+                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
+                            s.select_anchor_ranges([symbol_range])
+                        });
+                        anyhow::Ok(())
+                    })
+                })
                 .detach_and_log_err(cx);
-        }),
+        }
         Some(MentionLink::Thread(thread_id)) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 panel.update(cx, |panel, cx| {
