@@ -4,7 +4,8 @@
     "command": "./script/clippy",
     "args": [],
     "allow_concurrent_runs": true,
-    "use_new_terminal": false
+    "use_new_terminal": false,
+    "tags": [""]
   },
   {
     "label": "cargo run --profile release-fast",
