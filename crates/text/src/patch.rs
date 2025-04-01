@@ -201,11 +201,11 @@ where
         }
     }
 
-    pub fn retain<F>(&mut self, f: F)
+    pub fn retain_mut<F>(&mut self, f: F)
     where
-        F: FnMut(&Edit<T>) -> bool,
+        F: FnMut(&mut Edit<T>) -> bool,
     {
-        self.0.retain(f);
+        self.0.retain_mut(f);
     }
 
     pub fn old_to_new(&self, old: T) -> T {

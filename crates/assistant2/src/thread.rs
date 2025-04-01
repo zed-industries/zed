@@ -1557,7 +1557,7 @@ impl Thread {
 
     pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
         self.action_log
-            .update(cx, |action_log, _cx| action_log.keep_all_edits());
+            .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {

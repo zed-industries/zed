@@ -175,7 +175,7 @@ impl ActionLog {
                         }
                         ChangeAuthor::Agent => {
                             tracked_buffer.unreviewed_changes =
-                                tracked_buffer.unreviewed_changes.compose(edits)
+                                tracked_buffer.unreviewed_changes.compose(edits);
                         }
                     }
                     tracked_buffer.snapshot = buffer_snapshot.clone();
@@ -276,24 +276,33 @@ impl ActionLog {
                 let buffer_range =
                     buffer_range.start.to_point(buffer)..buffer_range.end.to_point(buffer);
                 let buffer_row_range = buffer_range.start.row..buffer_range.end.row + 1;
-                tracked_buffer.unreviewed_changes.retain(|edit| {
+                let mut delta = 0i32;
+                tracked_buffer.unreviewed_changes.retain_mut(|edit| {
+                    edit.old.start = (edit.old.start as i32 + delta) as u32;
+                    edit.old.end = (edit.old.end as i32 + delta) as u32;
                     if edit.new.overlaps(&buffer_row_range) {
                         let old_bytes = tracked_buffer
                             .base_text
-                            .point_to_offset(Point::new(edit.new.start, 0))
+                            .point_to_offset(Point::new(edit.old.start, 0))
                             ..tracked_buffer.base_text.point_to_offset(cmp::min(
-                                Point::new(edit.new.start + edit.old_len(), 0),
+                                Point::new(edit.old.end, 0),
                                 tracked_buffer.base_text.max_point(),
                             ));
-                        let new_bytes = buffer.point_to_offset(Point::new(edit.new.start, 0))
-                            ..buffer.point_to_offset(cmp::min(
+                        let new_bytes = tracked_buffer
+                            .snapshot
+                            .point_to_offset(Point::new(edit.new.start, 0))
+                            ..tracked_buffer.snapshot.point_to_offset(cmp::min(
                                 Point::new(edit.new.end, 0),
-                                buffer.max_point(),
+                                tracked_buffer.snapshot.max_point(),
                             ));
                         tracked_buffer.base_text.replace(
                             old_bytes,
-                            &buffer.text_for_range(new_bytes).collect::<String>(),
+                            &tracked_buffer
+                                .snapshot
+                                .text_for_range(new_bytes)
+                                .collect::<String>(),
                         );
+                        delta += edit.new_len() as i32 - edit.old_len() as i32;
                         false
                     } else {
                         true
@@ -304,8 +313,18 @@ impl ActionLog {
         }
     }
 
-    pub fn keep_all_edits(&mut self) {
-        todo!();
+    pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
+        self.tracked_buffers
+            .retain(|_buffer, tracked_buffer| match tracked_buffer.status {
+                TrackedBufferStatus::Deleted => false,
+                _ => {
+                    tracked_buffer.unreviewed_changes.clear();
+                    tracked_buffer.base_text = tracked_buffer.snapshot.as_rope().clone();
+                    tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
+                    true
+                }
+            });
+        cx.notify();
     }
 
     /// Returns the set of buffers that contain changes that haven't been reviewed by the user.
@@ -817,18 +836,29 @@ mod tests {
         action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
         for _ in 0..operations {
-            let is_agent_change = rng.gen_bool(0.5);
-            if is_agent_change {
-                log::info!("agent edit");
-            } else {
-                log::info!("user edit");
-            }
-            cx.update(|cx| {
-                buffer.update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
-                if is_agent_change {
-                    action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+            match rng.gen_range(0..100) {
+                0..25 => {
+                    action_log.update(cx, |log, cx| {
+                        let range = buffer.read(cx).random_byte_range(0, &mut rng);
+                        log::info!("keeping all edits in range {:?}", range);
+                        log.keep_edits_in_range(buffer.clone(), range, cx)
+                    });
                 }
-            });
+                _ => {
+                    let is_agent_change = rng.gen_bool(0.5);
+                    if is_agent_change {
+                        log::info!("agent edit");
+                    } else {
+                        log::info!("user edit");
+                    }
+                    cx.update(|cx| {
+                        buffer.update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
+                        if is_agent_change {
+                            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                        }
+                    });
+                }
+            }
 
             if rng.gen_bool(0.2) {
                 quiesce(&action_log, &buffer, cx);
