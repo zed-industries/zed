@@ -3068,33 +3068,43 @@ impl BackgroundScannerState {
 
         let dot_git_abs_path = self.snapshot.abs_path.as_path().join(&dot_git_path);
 
-        // TODO add these watchers without building a whole repository by parsing .git-with-indirection
-        let t0 = Instant::now();
-        let repository = fs.open_repo(&dot_git_abs_path)?;
-        log::info!("opened git repo for {dot_git_abs_path:?}");
+        log::info!("initializing git repo for {dot_git_abs_path:?}");
 
-        let repository_path = repository.path();
-        watcher.add(&repository_path).log_err()?;
-
-        let actual_dot_git_dir_abs_path = repository.main_repository_path();
-        let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path == dot_git_abs_path {
-            None
-        } else {
-            // The two paths could be different because we opened a git worktree.
-            // When that happens:
-            //
-            // * `dot_git_abs_path` is a file that points to the worktree-subdirectory in the actual
-            // .git directory.
-            //
-            // * `repository_path` is the worktree-subdirectory.
-            //
-            // * `actual_dot_git_dir_abs_path` is the path to the actual .git directory. In git
-            // documentation this is called the "commondir".
-            watcher.add(&dot_git_abs_path).log_err()?;
-            Some(Arc::from(dot_git_abs_path.as_path()))
+        let mut dot_git_worktree_abs_path = None;
+        let mut actual_dot_git_dir_abs_path = dot_git_abs_path.as_path().into();
+        // For git submodules and worktrees, .git may be a regular file in a special format that points
+        // to a subdirectory of an original or parent .git directory, e.g. `../../.git/modules/foo`.
+        // In that case we want to make sure to watch this parent .git directory as well.
+        //
+        // * `dot_git_abs_path` is a file that points to the worktree-subdirectory in the actual
+        // .git directory.
+        //
+        // * `repository_path` is the worktree-subdirectory.
+        //
+        // * `actual_dot_git_dir_abs_path` is the path to the actual .git directory. In git
+        // documentation this is called the "commondir".
+        if let Some(dot_git_contents) = smol::block_on(fs.load(&dot_git_abs_path)).ok() {
+            if let Some(path) = dot_git_contents.strip_prefix("gitdir:") {
+                let path = path.trim();
+                log::debug!("following .git indirection to {path}");
+                let path = dot_git_abs_path.join(path);
+                if let Some(path) = smol::block_on(fs.canonicalize(&path)).log_err() {
+                    dot_git_worktree_abs_path = Some(path.as_path().into());
+                    if let Some(ancestor_dot_git) = path
+                        .ancestors()
+                        .find(|ancestor| smol::block_on(is_git_dir(ancestor, fs)))
+                    {
+                        actual_dot_git_dir_abs_path = ancestor_dot_git.into();
+                        log::debug!(
+                            "adding watcher for pointed-to .git directory: {ancestor_dot_git:?}"
+                        );
+                        watcher.add(ancestor_dot_git).log_err();
+                    }
+                }
+            } else {
+                log::error!("failed to parse contents of .git file: {dot_git_contents:?}");
+            }
         };
-
-        log::trace!("constructed libgit2 repo in {:?}", t0.elapsed());
 
         let work_directory_id = work_dir_entry.id;
 
@@ -3103,7 +3113,7 @@ impl BackgroundScannerState {
             work_directory,
             git_dir_scan_id: 0,
             original_dot_git_abs_path: dot_git_abs_path.as_path().into(),
-            dot_git_dir_abs_path: actual_dot_git_dir_abs_path.into(),
+            dot_git_dir_abs_path: actual_dot_git_dir_abs_path,
             work_directory_abs_path: work_directory_abs_path.as_path().into(),
             dot_git_worktree_abs_path,
         };
