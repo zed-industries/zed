@@ -244,11 +244,6 @@ impl ActionLog {
             TrackedBufferStatus::Modified => {
                 buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
                 tracked_buffer.status = TrackedBufferStatus::Deleted;
-                tracked_buffer.unreviewed_changes = Patch::new(vec![Edit {
-                    old: 0..tracked_buffer.base_text.max_point().row + 1,
-                    new: 0..1,
-                }]);
-                tracked_buffer.version = buffer.read(cx).version();
                 tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
             }
             TrackedBufferStatus::Deleted => {}
@@ -465,6 +460,7 @@ fn diff_snapshots(
             } else if edit.old.start.column == 0
                 && edit.old.end.column == 0
                 && edit.new.end.column == 0
+                && edit.old.end != old_snapshot.max_point()
             {
                 Edit {
                     old: edit.old.start.row..edit.old.end.row,
@@ -791,18 +787,19 @@ mod tests {
         // Simulate file1 being recreated externally.
         fs.insert_file(path!("/dir/file1"), "LOREM".as_bytes().to_vec())
             .await;
+
+        // Simulate file2 being recreated by a tool.
         let buffer2 = project
             .update(cx, |project, cx| project.open_buffer(file2_path, cx))
             .await
             .unwrap();
-        cx.run_until_parked();
-        // Simulate file2 being recreated by a tool.
         buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
         action_log.update(cx, |log, cx| log.will_create_buffer(buffer2.clone(), cx));
         project
             .update(cx, |project, cx| project.save_buffer(buffer2.clone(), cx))
             .await
             .unwrap();
+
         cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
