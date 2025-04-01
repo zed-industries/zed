@@ -20359,7 +20359,7 @@ fn render_diff_hunk_controls(
                 })
         })
         .child(
-            Button::new("restore", "Restore")
+            Button::new(("restore", row as u64), "Restore")
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
                     move |window, cx| {
