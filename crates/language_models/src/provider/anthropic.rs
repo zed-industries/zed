@@ -400,6 +400,10 @@ impl LanguageModel for AnthropicModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
     fn telemetry_id(&self) -> String {
         format!("anthropic/{}", self.model.id())
     }

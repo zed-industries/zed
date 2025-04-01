@@ -365,6 +365,10 @@ impl LanguageModel for BedrockModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
     fn telemetry_id(&self) -> String {
         format!("bedrock/{}", self.model.id())
     }

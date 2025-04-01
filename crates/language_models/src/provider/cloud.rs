@@ -557,6 +557,14 @@ impl LanguageModel for CloudLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        match self.model {
+            CloudModel::Anthropic(_) => true,
+            CloudModel::Google(_) => true,
+            CloudModel::OpenAi(_) => false,
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id())
     }

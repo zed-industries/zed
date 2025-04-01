@@ -185,6 +185,9 @@ pub trait LanguageModel: Send + Sync {
         LanguageModelAvailability::Public
     }
 
+    /// Whether this model supports tools.
+    fn supports_tools(&self) -> bool;
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }
