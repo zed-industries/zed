@@ -4069,6 +4069,7 @@ async fn compute_snapshot(
         .merge_message()
         .await
         .and_then(|msg| Some(msg.lines().nth(0)?.to_owned().into()));
+    backend.reload_index();
     let merge_head_shas = backend
         .merge_head_shas()
         .into_iter()
