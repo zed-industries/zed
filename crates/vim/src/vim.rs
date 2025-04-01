@@ -49,6 +49,11 @@ use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
 
+const VIM_HELP_CONTENT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../docs/src/vim.md"
+));
+
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -132,6 +137,7 @@ actions!(
         InnerObject,
         MaximizePane,
         OpenDefaultKeymap,
+        OpenVimHelp,
         ResetPaneSizes,
         ResizePaneRight,
         ResizePaneLeft,
@@ -205,6 +211,14 @@ pub fn init(cx: &mut App) {
                 text: settings::vim_keymap(),
                 title: "Default Vim Bindings",
                 language: "JSON",
+            });
+        });
+
+        workspace.register_action(|_, _: &OpenVimHelp, _, cx| {
+            cx.emit(workspace::Event::OpenBundledFile {
+                text: VIM_HELP_CONTENT.into(),
+                title: "Vim Help",
+                language: "Markdown",
             });
         });
 

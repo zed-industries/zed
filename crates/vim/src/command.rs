@@ -886,6 +886,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
         VimCommand::str(("opt", "ions"), "zed::OpenDefaultSettings"),
         VimCommand::str(("map", ""), "vim::OpenDefaultKeymap"),
+        VimCommand::str(("h", "elp"), "vim::OpenVimHelp"),
     ]
 }
 
