@@ -389,7 +389,7 @@ impl SeekTarget<'_, ItemSummary, ItemSummary> for Anchor {
 #[cfg(test)]
 mod test {
     use super::*;
-    use gpui::{div, App};
+    use gpui::{App, div};
     use multi_buffer::MultiBuffer;
 
     #[gpui::test]
@@ -419,24 +419,32 @@ mod test {
 
         // Verify creases are inserted
         let crease_snapshot = crease_map.snapshot();
-        assert!(crease_snapshot
-            .query_row(MultiBufferRow(1), &snapshot)
-            .is_some());
-        assert!(crease_snapshot
-            .query_row(MultiBufferRow(3), &snapshot)
-            .is_some());
+        assert!(
+            crease_snapshot
+                .query_row(MultiBufferRow(1), &snapshot)
+                .is_some()
+        );
+        assert!(
+            crease_snapshot
+                .query_row(MultiBufferRow(3), &snapshot)
+                .is_some()
+        );
 
         // Remove creases
         crease_map.remove(crease_ids, &snapshot);
 
         // Verify creases are removed
         let crease_snapshot = crease_map.snapshot();
-        assert!(crease_snapshot
-            .query_row(MultiBufferRow(1), &snapshot)
-            .is_none());
-        assert!(crease_snapshot
-            .query_row(MultiBufferRow(3), &snapshot)
-            .is_none());
+        assert!(
+            crease_snapshot
+                .query_row(MultiBufferRow(1), &snapshot)
+                .is_none()
+        );
+        assert!(
+            crease_snapshot
+                .query_row(MultiBufferRow(3), &snapshot)
+                .is_none()
+        );
     }
 
     #[gpui::test]

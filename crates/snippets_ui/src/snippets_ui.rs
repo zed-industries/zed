@@ -1,15 +1,15 @@
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement, Render,
-    Styled, WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement, Render, Styled,
+    WeakEntity, Window, actions,
 };
 use language::LanguageRegistry;
 use paths::config_dir;
 use picker::{Picker, PickerDelegate};
 use std::{borrow::Borrow, fs, sync::Arc};
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, ModalView, OpenOptions, OpenVisible, Workspace};
+use workspace::{ModalView, OpenOptions, OpenVisible, Workspace, notifications::NotifyResultExt};
 
 actions!(snippets, [ConfigureSnippets, OpenFolder]);
 

@@ -2,22 +2,20 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use assistant_settings::{
-    AgentProfile, AgentProfileContent, AssistantSettings, AssistantSettingsContent,
-    ContextServerPresetContent, VersionedAssistantSettingsContent,
-};
+use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::ToolWorkingSet;
 use convert_case::{Case, Casing as _};
 use editor::Editor;
 use fs::Fs;
 use gpui::{
-    prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-    WeakEntity,
+    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity,
+    prelude::*,
 };
-use settings::{update_settings_file, Settings as _};
+use settings::{Settings as _, update_settings_file};
 use ui::{
-    prelude::*, KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry,
+    KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry, prelude::*,
 };
+use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
 use crate::assistant_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
@@ -261,37 +259,8 @@ impl ManageProfilesModal {
 
     fn create_profile(&self, profile_id: Arc<str>, profile: AgentProfile, cx: &mut Context<Self>) {
         update_settings_file::<AssistantSettings>(self.fs.clone(), cx, {
-            move |settings, _cx| match settings {
-                AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(
-                    settings,
-                )) => {
-                    let profiles = settings.profiles.get_or_insert_default();
-                    if profiles.contains_key(&profile_id) {
-                        log::error!("profile with ID '{profile_id}' already exists");
-                        return;
-                    }
-
-                    profiles.insert(
-                        profile_id,
-                        AgentProfileContent {
-                            name: profile.name.into(),
-                            tools: profile.tools,
-                            context_servers: profile
-                                .context_servers
-                                .into_iter()
-                                .map(|(server_id, preset)| {
-                                    (
-                                        server_id,
-                                        ContextServerPresetContent {
-                                            tools: preset.tools,
-                                        },
-                                    )
-                                })
-                                .collect(),
-                        },
-                    );
-                }
-                _ => {}
+            move |settings, _cx| {
+                settings.create_profile(profile_id, profile).log_err();
             }
         });
     }

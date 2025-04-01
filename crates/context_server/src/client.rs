@@ -1,18 +1,18 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use collections::HashMap;
-use futures::{channel::oneshot, select, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, channel::oneshot, select};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::barrier;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{value::RawValue, Value};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, value::RawValue};
 use smol::channel;
 use std::{
     fmt,
     path::PathBuf,
     sync::{
-        atomic::{AtomicI32, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicI32, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };

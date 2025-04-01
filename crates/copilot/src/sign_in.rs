@@ -1,11 +1,11 @@
-use crate::{request::PromptUserDeviceFlow, Copilot, Status};
+use crate::{Copilot, Status, request::PromptUserDeviceFlow};
 use gpui::{
-    div, percentage, svg, Animation, AnimationExt, App, ClipboardItem, Context, DismissEvent,
-    Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    MouseDownEvent, ParentElement, Render, Styled, Subscription, Transformation, Window,
+    Animation, AnimationExt, App, ClipboardItem, Context, DismissEvent, Element, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseDownEvent,
+    ParentElement, Render, Styled, Subscription, Transformation, Window, div, percentage, svg,
 };
 use std::time::Duration;
-use ui::{prelude::*, Button, Label, Vector, VectorName};
+use ui::{Button, Label, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
 use workspace::notifications::NotificationId;
 use workspace::{ModalView, Toast, Workspace};

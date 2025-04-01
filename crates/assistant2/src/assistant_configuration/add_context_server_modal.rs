@@ -1,9 +1,9 @@
 use context_server::{ContextServerSettings, ServerCommand, ServerConfig};
 use editor::Editor;
-use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity};
+use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, prelude::*};
 use serde_json::json;
 use settings::update_settings_file;
-use ui::{prelude::*, Modal, ModalFooter, ModalHeader, Section, Tooltip};
+use ui::{Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*};
 use workspace::{ModalView, Workspace};
 
 use crate::AddContextServer;

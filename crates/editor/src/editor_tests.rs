@@ -1,30 +1,30 @@
 use super::*;
 use crate::{
+    JoinLines,
     scroll::scroll_amount::ScrollAmount,
     test::{
         assert_text_with_selections, build_editor,
-        editor_lsp_test_context::{git_commit_lang, EditorLspTestContext},
+        editor_lsp_test_context::{EditorLspTestContext, git_commit_lang},
         editor_test_context::EditorTestContext,
         select_ranges,
     },
-    JoinLines,
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
-    div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions,
+    BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
+    WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
-    language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
-        LanguageSettingsContent, PrettierSettings,
-    },
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
     Override, Point,
+    language_settings::{
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+        LanguageSettingsContent, PrettierSettings,
+    },
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use lsp::CompletionParams;
@@ -32,9 +32,9 @@ use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
+    FakeFs,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::{LspSettings, ProjectSettings},
-    FakeFs,
 };
 use serde_json::{self, json};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -47,12 +47,12 @@ use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
-    test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
+    test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
     uri,
 };
 use workspace::{
-    item::{FollowEvent, FollowableItem, Item, ItemHandle},
     CloseAllItems, CloseInactiveItems, NavigationEntry, ViewId,
+    item::{FollowEvent, FollowableItem, Item, ItemHandle},
 };
 
 #[gpui::test]
@@ -7985,7 +7985,9 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| !multi_buffer_editor.is_dirty(cx)));
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.text(cx)),
-        uri!("a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"),
+        uri!(
+            "a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"
+        ),
     );
     buffer_1.update(cx, |buffer, _| {
         assert!(!buffer.is_dirty());
@@ -17385,6 +17387,8 @@ fn assert_breakpoint(
                     Breakpoint {
                         message: breakpoint.message.clone(),
                         state: breakpoint.state,
+                        condition: breakpoint.condition.clone(),
+                        hit_condition: breakpoint.hit_condition.clone(),
                     },
                 )
             })
@@ -17413,13 +17417,7 @@ fn add_log_breakpoint_at_cursor(
                 .buffer_snapshot
                 .anchor_before(Point::new(cursor_position.row, 0));
 
-            (
-                breakpoint_position,
-                Breakpoint {
-                    message: Some(Arc::from(log_message)),
-                    state: BreakpointState::Enabled,
-                },
-            )
+            (breakpoint_position, Breakpoint::new_log(&log_message))
         });
 
     editor.edit_breakpoint_at_anchor(
@@ -18669,7 +18667,7 @@ fn assert_selection_ranges(marked_text: &str, editor: &mut Editor, cx: &mut Cont
 pub fn handle_signature_help_request(
     cx: &mut EditorLspTestContext,
     mocked_response: lsp::SignatureHelp,
-) -> impl Future<Output = ()> {
+) -> impl Future<Output = ()> + use<> {
     let mut request =
         cx.set_request_handler::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
             let mocked_response = mocked_response.clone();

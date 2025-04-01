@@ -7,7 +7,7 @@ pub mod status;
 
 pub use crate::hosting_provider::*;
 pub use crate::remote::*;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 pub use git2 as libgit;
 use gpui::action_with_deprecated_aliases;
 use gpui::actions;

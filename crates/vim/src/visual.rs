@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::{
+    Bias, DisplayPoint, Editor, ToOffset,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Bias, DisplayPoint, Editor, ToOffset,
 };
-use gpui::{actions, Context, Window};
+use gpui::{Context, Window, actions};
 use language::{Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use search::BufferSearchBar;
@@ -15,10 +15,10 @@ use util::ResultExt;
 use workspace::searchable::Direction;
 
 use crate::{
-    motion::{first_non_whitespace, next_line_end, start_of_line, Motion, MotionKind},
+    Vim,
+    motion::{Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line},
     object::Object,
     state::{Mark, Mode, Operator},
-    Vim,
 };
 
 actions!(

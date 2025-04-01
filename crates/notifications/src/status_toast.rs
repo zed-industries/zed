@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement};
-use ui::{prelude::*, Tooltip};
+use ui::{Tooltip, prelude::*};
 use workspace::{ToastAction, ToastView};
 
 #[derive(Clone, Copy)]

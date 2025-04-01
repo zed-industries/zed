@@ -9,7 +9,7 @@ use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use gpui::{Action, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{prelude::*, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch};
+use ui::{Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, prelude::*};
 use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
 
@@ -105,7 +105,7 @@ impl AssistantConfiguration {
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let provider_id = provider.id().0.clone();
         let provider_name = provider.name().0.clone();
         let configuration_view = self

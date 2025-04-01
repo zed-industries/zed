@@ -3,23 +3,23 @@ use super::{
     locator_store::LocatorStore,
     session::{self, Session},
 };
-use crate::{debugger, worktree_store::WorktreeStore, ProjectEnvironment};
-use anyhow::{anyhow, Result};
+use crate::{ProjectEnvironment, debugger, worktree_store::WorktreeStore};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
+    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
+    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
+    Source, StartDebuggingRequestArguments,
     adapters::{DapStatus, DebugAdapterName},
     client::SessionId,
     messages::Message,
     requests::{Completions, Evaluate, Request as _, RunInTerminal, StartDebugging},
-    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
-    Source, StartDebuggingRequestArguments,
 };
 use fs::Fs;
 use futures::{
     channel::{mpsc, oneshot},
-    future::{join_all, Shared},
+    future::{Shared, join_all},
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
@@ -28,8 +28,8 @@ use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
 use rpc::{
-    proto::{self},
     AnyProtoClient, TypedEnvelope,
+    proto::{self},
 };
 use serde_json::Value;
 use settings::WorktreeId;
@@ -39,7 +39,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     ffi::OsStr,
     path::PathBuf,
-    sync::{atomic::Ordering::SeqCst, Arc},
+    sync::{Arc, atomic::Ordering::SeqCst},
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
 use task::{DebugAdapterConfig, DebugRequestDisposition};
@@ -566,7 +566,7 @@ impl DapStore {
                         .ok(),
                         cx,
                     )
-                })
+                });
             }
         }
 

@@ -4,7 +4,7 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
 use gpui::App;
@@ -21,7 +21,7 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
 use async_tar::Archive;
-use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
+use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ use text::LineEnding;
 #[cfg(any(test, feature = "test-support"))]
 mod fake_git_repo;
 #[cfg(any(test, feature = "test-support"))]
-use collections::{btree_map, BTreeMap};
+use collections::{BTreeMap, btree_map};
 #[cfg(any(test, feature = "test-support"))]
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
@@ -430,7 +430,7 @@ impl Fs for RealFs {
 
         unsafe {
             unsafe fn ns_string(string: &str) -> id {
-                NSString::alloc(nil).init_str(string).autorelease()
+                unsafe { NSString::alloc(nil).init_str(string).autorelease() }
             }
 
             let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
@@ -466,8 +466,8 @@ impl Fs for RealFs {
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
         use util::paths::SanitizedPath;
         use windows::{
-            core::HSTRING,
             Storage::{StorageDeleteOption, StorageFile},
+            core::HSTRING,
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
@@ -492,8 +492,8 @@ impl Fs for RealFs {
     async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
         use util::paths::SanitizedPath;
         use windows::{
-            core::HSTRING,
             Storage::{StorageDeleteOption, StorageFolder},
+            core::HSTRING,
         };
 
         // todo(windows)
@@ -591,7 +591,7 @@ impl Fs for RealFs {
                     (io::ErrorKind::NotFound, _) => Ok(None),
                     (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
                     _ => Err(anyhow::Error::new(err)),
-                }
+                };
             }
         };
 
@@ -710,7 +710,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use parking_lot::Mutex;
-        use util::{paths::SanitizedPath, ResultExt as _};
+        use util::{ResultExt as _, paths::SanitizedPath};
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -2300,7 +2300,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     use windows::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+            BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, GetFileInformationByHandle,
         },
     };
 

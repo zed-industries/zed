@@ -1,10 +1,10 @@
 use std::{ops::Range, time::Duration};
 
 use crate::{
+    Vim, VimSettings,
     motion::{Motion, MotionKind},
     object::Object,
     state::{Mode, Register},
-    Vim, VimSettings,
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor};

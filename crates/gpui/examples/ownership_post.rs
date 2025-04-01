@@ -1,4 +1,4 @@
-use gpui::{prelude::*, App, Application, Context, Entity, EventEmitter};
+use gpui::{App, Application, Context, Entity, EventEmitter, prelude::*};
 
 struct Counter {
     count: usize,

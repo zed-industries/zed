@@ -1,15 +1,15 @@
-use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{impl_actions, Context, Window};
+use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
+use gpui::{Context, Window, impl_actions};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::cmp;
 
 use crate::{
+    Vim,
     motion::{Motion, MotionKind},
     object::Object,
     state::{Mode, Register},
-    Vim,
 };
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -283,15 +283,15 @@ impl Vim {
 #[cfg(test)]
 mod test {
     use crate::{
+        UseSystemClipboard, VimSettings,
         state::{Mode, Register},
         test::{NeovimBackedTestContext, VimTestContext},
-        UseSystemClipboard, VimSettings,
     };
     use gpui::ClipboardItem;
     use indoc::indoc;
     use language::{
-        language_settings::{AllLanguageSettings, LanguageSettingsContent},
         LanguageName,
+        language_settings::{AllLanguageSettings, LanguageSettingsContent},
     };
     use settings::SettingsStore;
 
