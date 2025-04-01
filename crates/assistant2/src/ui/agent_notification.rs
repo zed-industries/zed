@@ -118,12 +118,13 @@ impl Render for AgentNotification {
                     )
                     .child(
                         v_flex()
+                            .flex_1()
+                            .max_w(px(300.))
                             .child(
                                 div()
                                     .relative()
                                     .text_size(px(14.))
                                     .text_color(cx.theme().colors().text)
-                                    .max_w(px(300.))
                                     .truncate()
                                     .child(self.title.clone())
                                     .child(gradient_overflow()),
@@ -133,7 +134,6 @@ impl Render for AgentNotification {
                                     .relative()
                                     .text_size(px(12.))
                                     .text_color(cx.theme().colors().text_muted)
-                                    .max_w(px(340.))
                                     .truncate()
                                     .child(self.caption.clone())
                                     .child(gradient_overflow()),

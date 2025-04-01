@@ -3117,10 +3117,12 @@ dependencies = [
 name = "command_palette"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "collections",
  "command_palette_hooks",
  "ctor",
+ "db",
  "editor",
  "env_logger 0.11.7",
  "fuzzy",
@@ -3136,6 +3138,7 @@ dependencies = [
  "settings",
  "telemetry",
  "theme",
+ "time",
  "ui",
  "util",
  "workspace",
@@ -10595,6 +10598,7 @@ dependencies = [
  "fuzzy",
  "git",
  "git2",
+ "git_hosting_providers",
  "globset",
  "gpui",
  "http_client",
@@ -17221,7 +17225,6 @@ dependencies = [
  "fuzzy",
  "git",
  "git2",
- "git_hosting_providers",
  "gpui",
  "http_client",
  "ignore",

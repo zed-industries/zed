@@ -33,6 +33,7 @@ use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings as _;
+use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AddContextServerModal, ManageProfilesModal};
@@ -43,9 +44,8 @@ pub use crate::thread_store::ThreadStore;
 pub use assistant_diff::{AssistantDiff, AssistantDiffToolbar};
 
 actions!(
-    assistant2,
+    agent,
     [
-        NewThread,
         NewPromptEditor,
         ToggleContextPicker,
         ToggleProfileSelector,
@@ -73,6 +73,12 @@ actions!(
     ]
 );
 
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema)]
+pub struct NewThread {
+    #[serde(default)]
+    from_thread_id: Option<ThreadId>,
+}
+
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 pub struct ManageProfiles {
     #[serde(default)]
@@ -87,9 +93,9 @@ impl ManageProfiles {
     }
 }
 
-impl_actions!(assistant, [ManageProfiles]);
+impl_actions!(agent, [NewThread, ManageProfiles]);
 
-const NAMESPACE: &str = "assistant2";
+const NAMESPACE: &str = "agent";
 
 /// Initializes the `assistant2` crate.
 pub fn init(

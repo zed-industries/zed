@@ -1,5 +1,4 @@
 {
-  lib,
   mkShell,
   stdenv,
   stdenvAdapters,

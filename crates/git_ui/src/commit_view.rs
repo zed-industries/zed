@@ -44,8 +44,8 @@ struct CommitMetadataFile {
     worktree_id: WorktreeId,
 }
 
-const COMMIT_METADATA_NAMESPACE: &'static str = "0";
-const FILE_NAMESPACE: &'static str = "1";
+const COMMIT_METADATA_NAMESPACE: u32 = 0;
+const FILE_NAMESPACE: u32 = 1;
 
 impl CommitView {
     pub fn open(
