@@ -13,7 +13,7 @@ use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use std::{
     ffi::c_void,
-    ptr::{addr_of, NonNull},
+    ptr::{NonNull, addr_of},
     sync::Arc,
     time::Duration,
 };

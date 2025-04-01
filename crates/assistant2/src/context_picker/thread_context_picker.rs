@@ -3,7 +3,7 @@ use std::sync::Arc;
 use fuzzy::StringMatchCandidate;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem};
+use ui::{ListItem, prelude::*};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{self, ContextStore};

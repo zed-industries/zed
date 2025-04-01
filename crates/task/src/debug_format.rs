@@ -1,11 +1,11 @@
 use dap_types::StartDebuggingRequestArguments;
-use schemars::{gen::SchemaSettings, JsonSchema};
+use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use util::ResultExt;
 
-use crate::{task_template::DebugArgs, TaskTemplate, TaskTemplates, TaskType};
+use crate::{TaskTemplate, TaskTemplates, TaskType, task_template::DebugArgs};
 
 impl Default for DebugConnectionType {
     fn default() -> Self {

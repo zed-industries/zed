@@ -32,8 +32,8 @@
 //! your own custom layout algorithm or rendering a code editor.
 
 use crate::{
-    util::FluentBuilder, App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId,
-    FocusHandle, LayoutId, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
+    App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ELEMENT_ARENA, ElementId,
+    FocusHandle, LayoutId, Pixels, Point, Size, Style, Window, util::FluentBuilder,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;

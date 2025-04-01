@@ -1,5 +1,5 @@
 use crate::SharedString;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::fmt;
 
 /// A datastructure for resolving whether an action should be dispatched
@@ -438,14 +438,8 @@ mod tests {
             actions!(
                 test,
                 [
-                A,
-                B,
-                C,
-                D,
-                E,
-                F,
-                G, // Don't wrap, test the trailing comma
-            ]
+                    A, B, C, D, E, F, G, // Don't wrap, test the trailing comma
+                ]
             );
         }
     }

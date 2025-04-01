@@ -1,5 +1,5 @@
 use crate::FakeFs;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture};
 use git::{
@@ -109,6 +109,14 @@ impl GitRepository for FakeGitRepository {
             .ok()
         }
         .boxed()
+    }
+
+    fn load_commit(
+        &self,
+        _commit: String,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<git::repository::CommitDiff>> {
+        unimplemented!()
     }
 
     fn set_index_text(

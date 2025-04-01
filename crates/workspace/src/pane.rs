@@ -1,4 +1,7 @@
 use crate::{
+    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
+    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    WorkspaceItemBuilder,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
         ProjectItemKind, ShowCloseButton, ShowDiagnostics, TabContentParams, TabTooltipContent,
@@ -8,19 +11,16 @@ use crate::{
     notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
-    actions, anchored, deferred, impl_actions, prelude::*, Action, AnyElement, App,
-    AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div, DragMoveEvent, Entity,
-    EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, Focusable, KeyContext,
-    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
+    Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
+    DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
+    Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
+    PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
+    actions, anchored, deferred, impl_actions, prelude::*,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -36,18 +36,18 @@ use std::{
     path::PathBuf,
     rc::Rc,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, right_click_menu, ButtonSize, Color, ContextMenu, ContextMenuEntry,
-    ContextMenuItem, DecoratedIcon, IconButton, IconButtonShape, IconDecoration,
-    IconDecorationKind, IconName, IconSize, Indicator, Label, PopoverMenu, PopoverMenuHandle, Tab,
-    TabBar, TabPosition, Tooltip,
+    ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
+    IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
+    PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
+    right_click_menu,
 };
-use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
+use util::{ResultExt, debug_panic, maybe, truncate_and_remove_front};
 
 /// A selected entry in e.g. project panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1814,11 +1814,9 @@ impl Pane {
         save_intent: SaveIntent,
         cx: &mut AsyncWindowContext,
     ) -> Result<bool> {
-        const CONFLICT_MESSAGE: &str =
-                "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+        const CONFLICT_MESSAGE: &str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
-        const DELETED_MESSAGE: &str =
-                        "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
+        const DELETED_MESSAGE: &str = "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
 
         if save_intent == SaveIntent::Skip {
             return Ok(true);
@@ -2208,7 +2206,7 @@ impl Pane {
         focus_handle: &FocusHandle,
         window: &mut Window,
         cx: &mut Context<Pane>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let is_active = ix == self.active_item_index;
         let is_preview = self
             .preview_item_id
@@ -3499,7 +3497,7 @@ impl NavHistory {
         let mut state = self.0.lock();
         let entry = match mode {
             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
-                return None
+                return None;
             }
             NavigationMode::GoingBack => &mut state.backward_stack,
             NavigationMode::GoingForward => &mut state.forward_stack,
@@ -3703,8 +3701,8 @@ mod tests {
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         pane.update_in(cx, |pane, window, cx| {
-            assert!(pane
-                .close_active_item(
+            assert!(
+                pane.close_active_item(
                     &CloseActiveItem {
                         save_intent: None,
                         close_pinned: false
@@ -3712,7 +3710,8 @@ mod tests {
                     window,
                     cx
                 )
-                .is_none())
+                .is_none()
+            )
         });
     }
 

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use gpui::{px, AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, Disclosure};
+use crate::{Disclosure, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {

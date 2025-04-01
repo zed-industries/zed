@@ -1,7 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
+use crate::{replace::replace_with_flexible_indent, schema::json_schema_for};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, AppContext, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -65,7 +66,7 @@ pub struct FindReplaceFileToolInput {
     /// <example>
     /// If a file contains this code:
     ///
-    /// ```rust
+    /// ```ignore
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
@@ -83,7 +84,7 @@ pub struct FindReplaceFileToolInput {
     /// Your find string should include at least 3 lines of context before and after the part
     /// you want to change:
     ///
-    /// ```
+    /// ```ignore
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
@@ -100,7 +101,7 @@ pub struct FindReplaceFileToolInput {
     ///
     /// And your replace string might look like:
     ///
-    /// ```
+    /// ```ignore
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
@@ -140,9 +141,8 @@ impl Tool for FindReplaceFileTool {
         IconName::Pencil
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(FindReplaceFileToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<FindReplaceFileToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
@@ -182,9 +182,17 @@ impl Tool for FindReplaceFileTool {
                 return Err(anyhow!("`find` string cannot be empty. Use a different tool if you want to create a file."));
             }
 
+            if input.find == input.replace {
+                return Err(anyhow!("The `find` and `replace` strings are identical, so no changes would be made."));
+            }
+
             let result = cx
                 .background_spawn(async move {
-                    replace_exact(&input.find, &input.replace, &snapshot).await
+                    // Try to match exactly
+                    replace_exact(&input.find, &input.replace, &snapshot)
+                    .await
+                    // If that fails, try being flexible about indentation
+                    .or_else(|| replace_with_flexible_indent(&input.find, &input.replace, &snapshot))
                 })
                 .await;
 

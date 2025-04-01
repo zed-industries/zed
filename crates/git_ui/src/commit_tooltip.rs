@@ -1,21 +1,22 @@
+use crate::commit_view::CommitView;
+use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
-use git::PullRequest;
+use git::repository::CommitSummary;
+use git::{GitRemote, blame::ParsedCommitMessage};
 use gpui::{
     App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
-    StatefulInteractiveElement,
+    StatefulInteractiveElement, WeakEntity, prelude::*,
 };
 use markdown::Markdown;
+use project::git_store::Repository;
 use settings::Settings;
 use std::hash::Hash;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
 use time_format::format_local_timestamp;
-use ui::{prelude::*, tooltip_container, Avatar, Divider, IconButtonShape};
-use url::Url;
-
-use crate::git::blame::GitRemote;
-use crate::hover_popover::hover_markdown_style;
+use ui::{Avatar, Divider, IconButtonShape, prelude::*, tooltip_container};
+use workspace::Workspace;
 
 #[derive(Clone, Debug)]
 pub struct CommitDetails {
@@ -24,14 +25,6 @@ pub struct CommitDetails {
     pub author_email: SharedString,
     pub commit_time: OffsetDateTime,
     pub message: Option<ParsedCommitMessage>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ParsedCommitMessage {
-    pub message: SharedString,
-    pub permalink: Option<Url>,
-    pub pull_request: Option<PullRequest>,
-    pub remote: Option<GitRemote>,
 }
 
 struct CommitAvatar<'a> {
@@ -49,15 +42,15 @@ impl<'a> CommitAvatar<'a> {
         &'a self,
         window: &mut Window,
         cx: &mut Context<CommitTooltip>,
-    ) -> Option<impl IntoElement> {
+    ) -> Option<impl IntoElement + use<>> {
         let remote = self
             .commit
             .message
             .as_ref()
-            .and_then(|details| details.remote.as_ref())
+            .and_then(|details| details.remote.clone())
             .filter(|remote| remote.host_supports_avatars())?;
 
-        let avatar_url = CommitAvatarAsset::new(remote.clone(), self.commit.sha.clone());
+        let avatar_url = CommitAvatarAsset::new(remote, self.commit.sha.clone());
 
         let element = match window.use_asset::<CommitAvatarAsset>(&avatar_url, cx) {
             // Loading or no avatar found
@@ -115,12 +108,16 @@ pub struct CommitTooltip {
     commit: CommitDetails,
     scroll_handle: ScrollHandle,
     markdown: Entity<Markdown>,
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl CommitTooltip {
     pub fn blame_entry(
         blame: &BlameEntry,
         details: Option<ParsedCommitMessage>,
+        repository: Entity<Repository>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -141,12 +138,20 @@ impl CommitTooltip {
                 author_email: blame.author_mail.clone().unwrap_or("".to_string()).into(),
                 message: details,
             },
+            repository,
+            workspace,
             window,
             cx,
         )
     }
 
-    pub fn new(commit: CommitDetails, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        commit: CommitDetails,
+        repository: Entity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut style = hover_markdown_style(window, cx);
         if let Some(code_block) = &style.code_block.text {
             style.base_text_style.refine(code_block);
@@ -166,6 +171,8 @@ impl CommitTooltip {
         });
         Self {
             commit,
+            repository,
+            workspace,
             scroll_handle: ScrollHandle::new(),
             markdown,
         }
@@ -208,6 +215,27 @@ impl Render for CommitTooltip {
 
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
+        let repo = self.repository.clone();
+        let workspace = self.workspace.clone();
+        let commit_summary = CommitSummary {
+            sha: self.commit.sha.clone(),
+            subject: self
+                .commit
+                .message
+                .as_ref()
+                .map_or(Default::default(), |message| {
+                    message
+                        .message
+                        .split('\n')
+                        .next()
+                        .unwrap()
+                        .trim_end()
+                        .to_string()
+                        .into()
+                }),
+            commit_timestamp: self.commit.commit_time.unix_timestamp(),
+            has_parent: false,
+        };
 
         tooltip_container(window, cx, move |this, _, cx| {
             this.occlude()
@@ -283,24 +311,16 @@ impl Render for CommitTooltip {
                                             .icon(IconName::FileGit)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
-                                            .disabled(
-                                                self.commit
-                                                    .message
-                                                    .as_ref()
-                                                    .map_or(true, |details| {
-                                                        details.permalink.is_none()
-                                                    }),
-                                            )
-                                            .when_some(
-                                                self.commit
-                                                    .message
-                                                    .as_ref()
-                                                    .and_then(|details| details.permalink.clone()),
-                                                |this, url| {
-                                                    this.on_click(move |_, _, cx| {
-                                                        cx.stop_propagation();
-                                                        cx.open_url(url.as_str())
-                                                    })
+                                            .on_click(
+                                                move |_, window, cx| {
+                                                    CommitView::open(
+                                                        commit_summary.clone(),
+                                                        repo.downgrade(),
+                                                        workspace.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                    cx.stop_propagation();
                                                 },
                                             ),
                                         )

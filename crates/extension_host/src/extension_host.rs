@@ -5,14 +5,14 @@ pub mod wasm_host;
 #[cfg(test)]
 mod extension_store_test;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::ExtensionProvides;
-use client::{proto, telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
-use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
-use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
+use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy,
     ExtensionIndexedDocsProviderProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
@@ -20,21 +20,22 @@ use extension::{
 };
 use fs::{Fs, RemoveOptions};
 use futures::{
+    AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
     channel::{
-        mpsc::{unbounded, UnboundedSender},
+        mpsc::{UnboundedSender, unbounded},
         oneshot,
     },
     io::BufReader,
-    select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
+    select_biased,
 };
 use gpui::{
-    actions, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task,
-    WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, WeakEntity,
+    actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage, Rope,
-    QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
+    QUERY_FILENAME_PREFIXES, Rope,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -54,8 +55,8 @@ use std::{
 use url::Url;
 use util::ResultExt;
 use wasm_host::{
-    wit::{is_supported_wasm_api_version, wasm_api_version_range},
     WasmExtension, WasmHost,
+    wit::{is_supported_wasm_api_version, wasm_api_version_range},
 };
 
 pub use extension::{
@@ -398,7 +399,7 @@ impl ExtensionStore {
         &mut self,
         modified_extension: Option<Arc<str>>,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let (tx, rx) = oneshot::channel();
         self.reload_complete_senders.push(tx);
         self.reload_tx

@@ -1,23 +1,23 @@
 use collections::{HashMap, VecDeque};
 use copilot::Copilot;
-use editor::{actions::MoveToEnd, scroll::Autoscroll, Editor, EditorEvent};
-use futures::{channel::mpsc, StreamExt};
+use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
+use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    actions, div, AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
+    AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ParentElement, Render, Styled, Subscription, WeakEntity, Window, actions, div,
 };
-use language::{language_settings::SoftWrap, LanguageServerId};
+use language::{LanguageServerId, language_settings::SoftWrap};
 use lsp::{
-    notification::SetTrace, IoKind, LanguageServer, LanguageServerName, MessageType,
-    SetTraceParams, TraceValue,
+    IoKind, LanguageServer, LanguageServerName, MessageType, SetTraceParams, TraceValue,
+    notification::SetTrace,
 };
-use project::{search::SearchQuery, Project, WorktreeId};
+use project::{Project, WorktreeId, search::SearchQuery};
 use std::{any::TypeId, borrow::Cow, sync::Arc};
-use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState};
+use ui::{Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState, prelude::*};
 use workspace::{
+    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemHandle},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
 const SEND_LINE: &str = "// Send:";

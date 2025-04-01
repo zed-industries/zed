@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::{BTreeMap, HashSet};
-use futures::{channel::mpsc, StreamExt};
+use futures::{StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::{Buffer, BufferEvent, DiskState, Point};
 use std::{cmp, ops::Range};
@@ -202,7 +202,7 @@ impl ActionLog {
             .await;
             if let Ok(diff_snapshot) = diff_snapshot {
                 diff.update(cx, |diff, cx| {
-                    diff.set_snapshot(&buffer_snapshot, diff_snapshot, false, None, cx)
+                    diff.set_snapshot(diff_snapshot, &buffer_snapshot, None, cx)
                 })?;
             }
             this.update(cx, |_this, cx| cx.notify())?;
@@ -321,7 +321,14 @@ impl ActionLog {
     pub fn stale_buffers<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a Entity<Buffer>> {
         self.tracked_buffers
             .iter()
-            .filter(|(buffer, tracked)| tracked.version != buffer.read(cx).version)
+            .filter(|(buffer, tracked)| {
+                let buffer = buffer.read(cx);
+
+                tracked.version != buffer.version
+                    && buffer
+                        .file()
+                        .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+            })
             .map(|(buffer, _)| buffer)
     }
 
@@ -525,7 +532,7 @@ mod tests {
     use rand::prelude::*;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::{path, post_inc, RandomCharIter};
+    use util::{RandomCharIter, path, post_inc};
 
     #[ctor::ctor]
     fn init_logger() {
@@ -810,7 +817,7 @@ mod tests {
         action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
         for _ in 0..operations {
-            let is_agent_change = rng.gen();
+            let is_agent_change = rng.gen_bool(0.5);
             if is_agent_change {
                 log::info!("agent edit");
             } else {

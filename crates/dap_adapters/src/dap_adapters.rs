@@ -7,14 +7,14 @@ mod python;
 
 use std::{net::Ipv4Addr, sync::Arc};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use dap::{
+    DapRegistry,
     adapters::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
     },
-    DapRegistry,
 };
 use gdb::GdbDebugAdapter;
 use go::GoDebugAdapter;
@@ -22,7 +22,7 @@ use javascript::JsDebugAdapter;
 use lldb::LldbDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use task::{DebugAdapterConfig, TCPHost};
 
 pub fn init(registry: Arc<DapRegistry>) {

@@ -1,6 +1,6 @@
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
@@ -9,9 +9,9 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
-use ui::{prelude::*, ListItem, Tooltip};
+use ui::{ListItem, Tooltip, prelude::*};
 use util::ResultExt as _;
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{ContextStore, FileInclusion};
@@ -321,10 +321,7 @@ pub fn render_file_context_entry(
 
     let added = context_store.upgrade().and_then(|context_store| {
         if is_directory {
-            context_store
-                .read(cx)
-                .includes_directory(path)
-                .map(FileInclusion::Direct)
+            context_store.read(cx).includes_directory(path)
         } else {
             context_store.read(cx).will_include_file_path(path, cx)
         }
