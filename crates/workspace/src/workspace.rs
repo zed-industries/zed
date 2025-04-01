@@ -6279,7 +6279,7 @@ pub fn create_and_open_local_file(
     })
 }
 
-pub fn open_ssh_project(
+pub fn open_ssh_project_with_new_connection(
     window: WindowHandle<Workspace>,
     connection_options: SshConnectionOptions,
     cancel_rx: oneshot::Receiver<()>,
@@ -6320,68 +6320,118 @@ pub fn open_ssh_project(
             )
         })?;
 
-        let toolchains = DB.toolchains(workspace_id).await?;
-        for (toolchain, worktree_id, path) in toolchains {
-            project
-                .update(cx, |this, cx| {
-                    this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
-                })?
-                .await;
-        }
-        let mut project_paths_to_open = vec![];
-        let mut project_path_errors = vec![];
-
-        for path in paths {
-            let result = cx
-                .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))?
-                .await;
-            match result {
-                Ok((_, project_path)) => {
-                    project_paths_to_open.push((path.clone(), Some(project_path)));
-                }
-                Err(error) => {
-                    project_path_errors.push(error);
-                }
-            };
-        }
-
-        if project_paths_to_open.is_empty() {
-            return Err(project_path_errors
-                .pop()
-                .unwrap_or_else(|| anyhow!("no paths given")));
-        }
-
-        cx.update_window(window.into(), |_, window, cx| {
-            window.replace_root(cx, |window, cx| {
-                telemetry::event!("SSH Project Opened");
-
-                let mut workspace =
-                    Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
-                workspace.set_serialized_ssh_project(serialized_ssh_project);
-                workspace
-            });
-        })?;
-
-        window
-            .update(cx, |_, window, cx| {
-                window.activate_window();
-
-                open_items(serialized_workspace, project_paths_to_open, window, cx)
-            })?
-            .await?;
-
-        window.update(cx, |workspace, _, cx| {
-            for error in project_path_errors {
-                if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
-                    if let Some(path) = error.error_tag("path") {
-                        workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
-                    }
-                } else {
-                    workspace.show_error(&error, cx)
-                }
-            }
-        })
+        open_ssh_project_inner(
+            project,
+            paths,
+            serialized_ssh_project,
+            workspace_id,
+            serialized_workspace,
+            app_state,
+            window,
+            cx,
+        )
+        .await
     })
+}
+
+pub fn open_ssh_project_with_existing_connection(
+    connection_options: SshConnectionOptions,
+    project: Entity<Project>,
+    paths: Vec<PathBuf>,
+    app_state: Arc<AppState>,
+    window: WindowHandle<Workspace>,
+    cx: &mut AsyncApp,
+) -> Task<Result<()>> {
+    cx.spawn(async move |cx| {
+        let (serialized_ssh_project, workspace_id, serialized_workspace) =
+            serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
+
+        open_ssh_project_inner(
+            project,
+            paths,
+            serialized_ssh_project,
+            workspace_id,
+            serialized_workspace,
+            app_state,
+            window,
+            cx,
+        )
+        .await
+    })
+}
+
+async fn open_ssh_project_inner(
+    project: Entity<Project>,
+    paths: Vec<PathBuf>,
+    serialized_ssh_project: SerializedSshProject,
+    workspace_id: WorkspaceId,
+    serialized_workspace: Option<SerializedWorkspace>,
+    app_state: Arc<AppState>,
+    window: WindowHandle<Workspace>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let toolchains = DB.toolchains(workspace_id).await?;
+    for (toolchain, worktree_id, path) in toolchains {
+        project
+            .update(cx, |this, cx| {
+                this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
+            })?
+            .await;
+    }
+    let mut project_paths_to_open = vec![];
+    let mut project_path_errors = vec![];
+
+    for path in paths {
+        let result = cx
+            .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))?
+            .await;
+        match result {
+            Ok((_, project_path)) => {
+                project_paths_to_open.push((path.clone(), Some(project_path)));
+            }
+            Err(error) => {
+                project_path_errors.push(error);
+            }
+        };
+    }
+
+    if project_paths_to_open.is_empty() {
+        return Err(project_path_errors
+            .pop()
+            .unwrap_or_else(|| anyhow!("no paths given")));
+    }
+
+    cx.update_window(window.into(), |_, window, cx| {
+        window.replace_root(cx, |window, cx| {
+            telemetry::event!("SSH Project Opened");
+
+            let mut workspace =
+                Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
+            workspace.set_serialized_ssh_project(serialized_ssh_project);
+            workspace
+        });
+    })?;
+
+    window
+        .update(cx, |_, window, cx| {
+            window.activate_window();
+            open_items(serialized_workspace, project_paths_to_open, window, cx)
+        })?
+        .await?;
+
+    window.update(cx, |workspace, _, cx| {
+        for error in project_path_errors {
+            if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
+                if let Some(path) = error.error_tag("path") {
+                    workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
+                }
+            } else {
+                workspace.show_error(&error, cx)
+            }
+        }
+    })?;
+
+    Ok(())
 }
 
 fn serialize_ssh_project(
