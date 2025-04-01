@@ -1,14 +1,14 @@
 #[derive(Clone, Debug)]
 pub struct Template {
-   pub name: &'static str,
-   pub content: &'static str,
+    pub name: &'static str,
+    pub content: &'static str,
 }
 
 pub fn all_templates() -> Vec<Template> {
-   vec![
-      Template {
-         name: "ProjectCreation",
-         content: r#"
+    vec![
+        Template {
+            name: "ProjectCreation",
+            content: r#"
 # Project Creation Evaluation Template
 
 ## Instructions
@@ -73,10 +73,10 @@ EXAMPLE THREE:
 
 0.78
 "#,
-      },
-      Template {
-         name: "CodeModification",
-         content: r#"
+        },
+        Template {
+            name: "CodeModification",
+            content: r#"
 # Code Modification Evaluation Template
 
 ## Instructions
@@ -136,10 +136,10 @@ EXAMPLE THREE:
 
 0.78
 "#,
-      },
-      Template {
-         name: "ConversationalGuidance",
-         content: r#"
+        },
+        Template {
+            name: "ConversationalGuidance",
+            content: r#"
 # Conversational Guidance Evaluation Template
 
 ## Instructions
@@ -205,6 +205,6 @@ EXAMPLE THREE:
 
 0.78
 "#,
-      },
-   ]
+        },
+    ]
 }
