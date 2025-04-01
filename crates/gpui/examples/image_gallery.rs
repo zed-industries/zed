@@ -1,7 +1,7 @@
 use gpui::{
-    actions, div, img, prelude::*, px, rgb, size, App, AppContext, Application, Bounds, ClickEvent,
-    Context, ImageCache, KeyBinding, Menu, MenuItem, SharedString, TitlebarOptions, Window,
-    WindowBounds, WindowOptions,
+    App, AppContext, Application, Bounds, ClickEvent, Context, ImageCache, KeyBinding, Menu,
+    MenuItem, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div,
+    img, prelude::*, px, rgb, size,
 };
 use reqwest_client::ReqwestClient;
 use std::sync::Arc;
