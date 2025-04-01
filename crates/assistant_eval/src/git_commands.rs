@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use std::{fs, path::Path};
 use tempfile::TempDir;
@@ -47,12 +47,12 @@ pub async fn read_repo_info(exercise_path: &Path) -> Result<RepoInfo> {
     println!("Reading repo info from: {}", repo_info_path.display());
     let repo_info_content = smol::unblock(move || std::fs::read_to_string(&repo_info_path)).await?;
     let repo_info: RepoInfo = serde_json_lenient::from_str_lenient(&repo_info_content)?;
-    
+
     // Remove any quotes from the strings
     let remote_url = repo_info.remote_url.trim_matches('"').to_string();
     let head_sha = repo_info.head_sha.trim_matches('"').to_string();
-    
-    Ok(RepoInfo { 
+
+    Ok(RepoInfo {
         remote_url,
         head_sha,
     })
@@ -95,20 +95,20 @@ pub async fn query_git(repo_path: &Path, args: &[&str]) -> Result<String> {
 
 pub async fn setup_temp_repo(exercise_path: &Path, _base_sha: &str) -> Result<TempDir> {
     let temp_dir = TempDir::new()?;
-    
+
     // Check if this is an internal exercise by looking for repo_info.json
     let repo_info_path = exercise_path.join(".meta").join("repo_info.json");
     if repo_info_path.exists() {
         // This is an internal exercise, handle it differently
         let repo_info = read_repo_info(exercise_path).await?;
-        
+
         // Clone the repository to the temp directory
         clone_repo(&repo_info.remote_url, temp_dir.path()).await?;
-        
+
         // Checkout the specified commit
         println!("Checking out commit: {}", repo_info.head_sha);
         checkout_repo(temp_dir.path(), &repo_info.head_sha).await?;
-        
+
         println!("Successfully set up internal repository");
     } else {
         // Original code for regular exercises

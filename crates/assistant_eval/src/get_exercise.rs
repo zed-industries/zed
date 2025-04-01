@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -66,8 +66,9 @@ pub fn find_exercises(
                                 if *language == "internal" {
                                     // Check for repo_info.json to validate it's an internal exercise
                                     let repo_info_path = path.join(".meta").join("repo_info.json");
-                                    let instructions_path = path.join(".docs").join("instructions.md");
-                                    
+                                    let instructions_path =
+                                        path.join(".docs").join("instructions.md");
+
                                     if repo_info_path.exists() && instructions_path.exists() {
                                         exercises.push(path);
                                     }
@@ -87,7 +88,8 @@ pub fn find_exercises(
                                     };
 
                                     // Check if this is a valid exercise with instructions and example
-                                    let instructions_path = path.join(".docs").join("instructions.md");
+                                    let instructions_path =
+                                        path.join(".docs").join("instructions.md");
                                     let has_instructions = instructions_path.exists();
                                     let example_path = path
                                         .join(".meta")

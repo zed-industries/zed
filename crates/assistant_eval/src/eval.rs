@@ -1,7 +1,7 @@
 use crate::git_commands::{checkout_repo, query_git, run_git, run_git_command, setup_temp_repo};
 use crate::headless_assistant::{HeadlessAppState, HeadlessAssistant};
 use crate::{get_exercise_language, get_exercise_name, templates_eval::Template};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant2::RequestKind;
 use collections::HashMap;
 use gpui::{App, Task};
