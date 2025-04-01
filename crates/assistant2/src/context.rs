@@ -1,13 +1,12 @@
 use std::{ops::Range, sync::Arc};
 
-use file_icons::FileIcons;
 use gpui::{App, Entity, SharedString};
 use language::{Buffer, File};
 use language_model::{LanguageModelRequestMessage, MessageContent};
 use project::ProjectPath;
 use serde::{Deserialize, Serialize};
 use text::{Anchor, BufferId};
-use ui::{Icon, IconName};
+use ui::IconName;
 use util::post_inc;
 
 use crate::thread::Thread;
@@ -61,46 +60,6 @@ impl AssistantContext {
             Self::Thread(thread) => thread.id,
         }
     }
-
-    pub fn name(&self, cx: &App) -> SharedString {
-        match self {
-            Self::File(file) => file.name(),
-            Self::Directory(directory) => directory.name(),
-            Self::Symbol(symbol) => symbol.name(),
-            Self::FetchedUrl(url) => url.name(),
-            Self::Thread(thread) => thread.name(cx),
-        }
-    }
-
-    pub fn tooltip(&self) -> Option<SharedString> {
-        match self {
-            Self::File(file) => file.tooltip(),
-            Self::Directory(directory) => directory.tooltip(),
-            Self::Symbol(_) => None,
-            Self::FetchedUrl(_) => None,
-            Self::Thread(_) => None,
-        }
-    }
-
-    pub fn parent(&self) -> Option<SharedString> {
-        match self {
-            Self::File(file) => file.parent(),
-            Self::Directory(directory) => directory.parent(),
-            Self::Symbol(_) => None,
-            Self::FetchedUrl(_) => None,
-            Self::Thread(_) => None,
-        }
-    }
-
-    pub fn icon(&self, cx: &App) -> Icon {
-        match self {
-            Self::File(file) => file.icon(cx),
-            Self::Directory(_) => IconName::Folder.into(),
-            Self::Symbol(_) => IconName::Code.into(),
-            Self::FetchedUrl(_) => IconName::Globe.into(),
-            Self::Thread(_) => IconName::MessageBubbles.into(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -137,6 +96,15 @@ pub struct ThreadContext {
     pub id: ContextId,
     pub thread: Entity<Thread>,
     pub text: SharedString,
+}
+
+impl ThreadContext {
+    pub fn summary(&self, cx: &App) -> SharedString {
+        self.thread
+            .read(cx)
+            .summary()
+            .unwrap_or("New thread".into())
+    }
 }
 
 // TODO: Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
@@ -178,88 +146,6 @@ pub struct ContextSymbolId {
     pub path: ProjectPath,
     pub name: SharedString,
     pub range: Range<Anchor>,
-}
-
-impl FileContext {
-    pub fn name(&self) -> SharedString {
-        let path = self.context_buffer.file.path();
-        match path.file_name() {
-            Some(name) => name.to_string_lossy().into_owned().into(),
-            None => path.to_string_lossy().into_owned().into(),
-        }
-    }
-
-    pub fn icon(&self, cx: &App) -> Icon {
-        FileIcons::get_icon(&self.context_buffer.file.path(), cx)
-            .map(Icon::from_path)
-            .unwrap_or_else(|| IconName::File.into())
-    }
-
-    pub fn tooltip(&self) -> Option<SharedString> {
-        let path = self.context_buffer.file.path();
-        Some(path.to_string_lossy().into_owned().into())
-    }
-
-    pub fn parent(&self) -> Option<SharedString> {
-        let path = self.context_buffer.file.path();
-        path.parent()
-            .and_then(|p| p.file_name())
-            .map(|p| p.to_string_lossy().into_owned().into())
-    }
-}
-
-impl DirectoryContext {
-    pub fn new(
-        id: ContextId,
-        project_path: ProjectPath,
-        context_buffers: Vec<ContextBuffer>,
-    ) -> DirectoryContext {
-        DirectoryContext {
-            id,
-            project_path,
-            context_buffers,
-        }
-    }
-
-    pub fn name(&self) -> SharedString {
-        match self.project_path.path.file_name() {
-            Some(name) => name.to_string_lossy().into_owned().into(),
-            None => self.project_path.path.to_string_lossy().into_owned().into(),
-        }
-    }
-
-    pub fn tooltip(&self) -> Option<SharedString> {
-        Some(self.project_path.path.to_string_lossy().into_owned().into())
-    }
-
-    pub fn parent(&self) -> Option<SharedString> {
-        self.project_path
-            .path
-            .parent()
-            .and_then(|p| p.file_name())
-            .map(|p| p.to_string_lossy().into_owned().into())
-    }
-}
-
-impl SymbolContext {
-    pub fn name(&self) -> SharedString {
-        self.context_symbol.id.name.clone()
-    }
-}
-
-impl FetchedUrlContext {
-    pub fn name(&self) -> SharedString {
-        self.url.clone()
-    }
-}
-
-impl ThreadContext {
-    pub fn name(&self, cx: &App) -> SharedString {
-        self.thread
-            .read(cx)
-            .summary()
-            .unwrap_or("New thread".into())
-    }
 }
 
 pub fn attach_context_to_message<'a>(
@@ -316,12 +202,12 @@ pub fn attach_context_to_message<'a>(
         }
     }
 
-    // Need to own the SharedString for name so that it can be referenced.
+    // Need to own the SharedString for summary so that it can be referenced.
     let mut thread_context_chunks = Vec::new();
     if !thread_context.is_empty() {
         context_chunks.push("The following previous conversation threads are available:\n");
         for context in &thread_context {
-            thread_context_chunks.push(context.name(cx));
+            thread_context_chunks.push(context.summary(cx));
             thread_context_chunks.push(context.text.clone());
         }
     }

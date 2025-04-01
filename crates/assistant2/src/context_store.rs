@@ -271,11 +271,11 @@ impl ContextStore {
         self.directories.insert(project_path.path.to_path_buf(), id);
 
         self.context
-            .push(AssistantContext::Directory(DirectoryContext::new(
+            .push(AssistantContext::Directory(DirectoryContext {
                 id,
                 project_path,
                 context_buffers,
-            )));
+            }));
     }
 
     pub fn add_symbol(
@@ -633,16 +633,19 @@ fn collect_buffer_info_and_text(
 
 pub fn buffer_path_log_err(buffer: &Buffer, cx: &App) -> Option<Arc<Path>> {
     if let Some(file) = buffer.file() {
-        let mut path = file.path().clone();
-
-        if path.as_os_str().is_empty() {
-            path = file.full_path(cx).into();
-        }
-        Some(path)
+        Some(file_path(file, cx))
     } else {
         log::error!("Buffer that had a path unexpectedly no longer has a path.");
         None
     }
+}
+
+pub fn file_path(file: &Arc<dyn File>, cx: &App) -> Arc<Path> {
+    let mut path = file.path().clone();
+    if path.as_os_str().is_empty() {
+        path = file.full_path(cx).into();
+    }
+    return path;
 }
 
 fn to_fenced_codeblock(path: &Path, content: Rope) -> SharedString {
@@ -813,12 +816,16 @@ fn refresh_directory_text(
     let context_buffers = future::join_all(futures);
 
     let id = directory_context.id;
-    let path = directory_context.project_path.clone();
+    let project_path = directory_context.project_path.clone();
     Some(cx.spawn(async move |cx| {
         let context_buffers = context_buffers.await;
         context_store
             .update(cx, |context_store, _| {
-                let new_directory_context = DirectoryContext::new(id, path, context_buffers);
+                let new_directory_context = DirectoryContext {
+                    id,
+                    project_path,
+                    context_buffers,
+                };
                 context_store.replace_context(AssistantContext::Directory(new_directory_context));
             })
             .ok();

@@ -473,15 +473,15 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn context_for_message(&self, id: MessageId) -> Option<Vec<AssistantContext>> {
-        let context = self.context_by_message.get(&id)?;
-        Some(
-            context
-                .into_iter()
-                .filter_map(|context_id| self.context.get(&context_id))
-                .cloned()
-                .collect::<Vec<_>>(),
-        )
+    pub fn context_for_message(&self, id: MessageId) -> impl Iterator<Item = &AssistantContext> {
+        self.context_by_message
+            .get(&id)
+            .into_iter()
+            .flat_map(|context| {
+                context
+                    .iter()
+                    .filter_map(|context_id| self.context.get(&context_id))
+            })
     }
 
     /// Returns whether all of the tool uses have finished running.
