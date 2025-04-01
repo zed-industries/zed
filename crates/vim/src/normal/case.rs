@@ -7,7 +7,7 @@ use multi_buffer::MultiBufferRow;
 use crate::{
     Vim,
     motion::Motion,
-    normal::{ChangeCase, ConvertToLowerCase, ConvertToRot13, ConvertToUpperCase},
+    normal::{ChangeCase, ConvertToLowerCase, ConvertToRot13, ConvertToRot47, ConvertToUpperCase},
     object::Object,
     state::Mode,
 };
@@ -16,6 +16,11 @@ pub enum CaseTarget {
     Lowercase,
     Uppercase,
     OppositeCase,
+}
+
+pub enum RotTarget {
+    Rot13,
+    Rot47,
 }
 
 impl Vim {
@@ -193,10 +198,11 @@ impl Vim {
         self.switch_mode(Mode::Normal, true, window, cx)
     }
 
-    pub fn change_rot13_motion(
+    pub fn change_rot_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        mode: RotTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -213,7 +219,10 @@ impl Vim {
                         motion.expand_selection(map, selection, times, &text_layout_details);
                     });
                 });
-                editor.convert_to_rot13(&Default::default(), window, cx);
+                match mode {
+                    RotTarget::Rot13 => editor.convert_to_rot13(&Default::default(), window, cx),
+                    RotTarget::Rot47 => editor.convert_to_rot47(&Default::default(), window, cx),
+                }
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = selection_starts.remove(&selection.id).unwrap();
@@ -225,10 +234,11 @@ impl Vim {
         });
     }
 
-    pub fn change_rot13_object(
+    pub fn change_rot_object(
         &mut self,
         object: Object,
         around: bool,
+        mode: RotTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -246,7 +256,10 @@ impl Vim {
                         );
                     });
                 });
-                editor.convert_to_rot13(&Default::default(), window, cx);
+                match mode {
+                    RotTarget::Rot13 => editor.convert_to_rot13(&Default::default(), window, cx),
+                    RotTarget::Rot47 => editor.convert_to_rot47(&Default::default(), window, cx),
+                }
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = original_positions.remove(&selection.id).unwrap();
@@ -270,6 +283,21 @@ impl Vim {
                 'N'..='Z' | 'n'..='z' => ((c as u8) - 13) as char,
                 _ => c,
             }]
+        })
+    }
+
+    pub fn convert_to_rot47(
+        &mut self,
+        _: &ConvertToRot47,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |c| {
+            let code_point = c as u32;
+            if code_point >= 33 && code_point <= 126 {
+                return vec![char::from_u32(33 + ((code_point + 14) % 94)).unwrap()];
+            }
+            vec![c]
         })
     }
 }
