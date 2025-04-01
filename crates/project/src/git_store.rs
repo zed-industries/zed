@@ -1881,8 +1881,8 @@ impl GitStore {
             sha: commit.sha.into(),
             message: commit.message.into(),
             commit_timestamp: commit.commit_timestamp,
-            committer_email: commit.committer_email.into(),
-            committer_name: commit.committer_name.into(),
+            author_email: commit.author_email.into(),
+            author_name: commit.author_name.into(),
         })
     }
 
@@ -2888,8 +2888,8 @@ impl Repository {
                         sha: resp.sha.into(),
                         message: resp.message.into(),
                         commit_timestamp: resp.commit_timestamp,
-                        committer_email: resp.committer_email.into(),
-                        committer_name: resp.committer_name.into(),
+                        author_email: resp.author_email.into(),
+                        author_name: resp.author_name.into(),
                     })
                 }
             }

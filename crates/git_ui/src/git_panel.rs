@@ -3972,8 +3972,8 @@ impl GitPanelMessageTooltip {
 
                 let commit_details = crate::commit_tooltip::CommitDetails {
                     sha: details.sha.clone(),
-                    author_name: details.committer_name.clone(),
-                    author_email: details.committer_email.clone(),
+                    author_name: details.author_name.clone(),
+                    author_email: details.author_email.clone(),
                     commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
                     message: Some(ParsedCommitMessage {
                         message: details.message.clone(),
