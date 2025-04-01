@@ -161,13 +161,11 @@ pub struct Remote {
 }
 
 pub enum ResetMode {
-    // reset the branch pointer, leave index and worktree unchanged
-    // (this will make it look like things that were committed are now
-    // staged)
+    /// Reset the branch pointer, leave index and worktree unchanged (this will make it look like things that were
+    /// committed are now staged).
     Soft,
-    // reset the branch pointer and index, leave worktree unchanged
-    // (this makes it look as though things that were committed are now
-    // unstaged)
+    /// Reset the branch pointer and index, leave worktree unchanged (this makes it look as though things that were
+    /// committed are now unstaged).
     Mixed,
 }
 
