@@ -471,6 +471,7 @@ impl Render for ContextStrip {
                     context.clone(),
                     dupe_names.contains(&context.name),
                     self.focused_index == Some(i),
+                    context.summarizing,
                     Some({
                         let id = context.id;
                         let context_store = self.context_store.clone();

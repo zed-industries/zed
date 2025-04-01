@@ -949,8 +949,8 @@ impl ActiveThread {
                         parent.child(h_flex().flex_wrap().gap_1().children(
                             context.into_iter().map(|context| {
                                 let context_id = context.id;
-                                ContextPill::added(context, false, false, None).on_click(Rc::new(
-                                    cx.listener({
+                                ContextPill::added(context, false, false, false, None).on_click(
+                                    Rc::new(cx.listener({
                                         let workspace = workspace.clone();
                                         let context_store = context_store.clone();
                                         move |_, _, window, cx| {
@@ -965,8 +965,8 @@ impl ActiveThread {
                                                 cx.notify();
                                             }
                                         }
-                                    }),
-                                ))
+                                    })),
+                                )
                             }),
                         ))
                     } else {

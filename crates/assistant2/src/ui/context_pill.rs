@@ -11,6 +11,7 @@ pub enum ContextPill {
         context: ContextSnapshot,
         dupe_name: bool,
         focused: bool,
+        summarizing: bool,
         on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     },
@@ -28,6 +29,7 @@ impl ContextPill {
         context: ContextSnapshot,
         dupe_name: bool,
         focused: bool,
+        summarizing: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     ) -> Self {
         Self::Added {
@@ -35,6 +37,7 @@ impl ContextPill {
             dupe_name,
             on_remove,
             focused,
+            summarizing,
             on_click: None,
         }
     }
@@ -92,13 +95,6 @@ impl ContextPill {
             } => Icon::new(kind.icon()),
         }
     }
-
-    pub fn is_summarizing(&self) -> bool {
-        match self {
-            Self::Added { context, .. } => context.summarizing,
-            Self::Suggested { .. } => false,
-        }
-    }
 }
 
 impl RenderOnce for ContextPill {
@@ -119,6 +115,7 @@ impl RenderOnce for ContextPill {
                 context,
                 dupe_name,
                 on_remove,
+                summarizing,
                 focused,
                 on_click,
             } => base_pill
@@ -174,7 +171,7 @@ impl RenderOnce for ContextPill {
                         .on_click(move |event, window, cx| on_click(event, window, cx))
                 })
                 .map(|element| {
-                    if self.is_summarizing() {
+                    if *summarizing {
                         element
                             .tooltip(ui::Tooltip::text("Summarizing..."))
                             .with_animation(
