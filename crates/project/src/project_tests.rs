@@ -7986,6 +7986,52 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project": {
+                ".git": {},
+                "child1": {
+                    "a.txt": "A",
+                },
+                "child2": {
+                    "b.txt": "B",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            path!("/root/project/child1").as_ref(),
+            path!("/root/project/child2").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    let repos = project.read_with(cx, |project, cx| {
+        project
+            .repositories(cx)
+            .values()
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root/project")).into()]);
+}
+
 async fn search(
     project: &Entity<Project>,
     query: SearchQuery,
