@@ -38,7 +38,7 @@ use std::{
     iter::{self, FromIterator},
     mem,
     ops::{Range, RangeBounds, Sub},
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     str,
     sync::Arc,
@@ -167,13 +167,21 @@ impl MultiBufferDiffHunk {
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
-    namespace: &'static str,
+    namespace: u32,
     path: Arc<Path>,
 }
 
 impl PathKey {
-    pub fn namespaced(namespace: &'static str, path: Arc<Path>) -> Self {
+    pub fn namespaced(namespace: u32, path: Arc<Path>) -> Self {
         Self { namespace, path }
+    }
+
+    pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
+        if let Some(file) = buffer.read(cx).file() {
+            Self::namespaced(1, Arc::from(file.full_path(cx)))
+        } else {
+            Self::namespaced(0, Arc::from(PathBuf::from(buffer.entity_id().to_string())))
+        }
     }
 
     pub fn path(&self) -> &Arc<Path> {
@@ -1592,13 +1600,12 @@ impl MultiBuffer {
         ranges: Vec<Range<Point>>,
         context_line_count: u32,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) -> (Vec<Range<Anchor>>, bool) {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         let excerpt_ranges = ranges.into_iter().map(|range| {
-            let start = range
-                .start
-                .saturating_sub(Point::new(context_line_count, 0));
+            let start_row = range.start.row.saturating_sub(context_line_count);
+            let start = Point::new(start_row, 0);
             let end_row = (range.end.row + 2).min(buffer_snapshot.max_point().row);
             let end = Point::new(end_row, buffer_snapshot.line_len(end_row));
             ExcerptRange {
@@ -1607,9 +1614,7 @@ impl MultiBuffer {
             }
         });
 
-        let (_, is_new) =
-            self.set_excerpt_ranges_for_path(path, buffer, excerpt_ranges.collect(), cx);
-        is_new
+        self.set_excerpt_ranges_for_path(path, buffer, excerpt_ranges.collect(), cx)
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
