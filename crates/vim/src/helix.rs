@@ -235,6 +235,25 @@ impl Vim {
                     found
                 })
             }
+            Motion::CurrentLine => {
+                self.update_editor(window, cx, |vim, editor, window, cx| {
+                    let text_layout_details = editor.text_layout_details(window);
+                    editor.transact(window, cx, |editor, window, cx| {
+                        editor.set_clip_at_line_ends(false, cx);
+                        editor.change_selections(None, window, cx, |s| {
+                            s.move_with(|map, selection| {
+                                motion.expand_selection(
+                                    map,
+                                    selection,
+                                    times,
+                                    &text_layout_details,
+                                );
+                            })
+                        });
+                        editor.selections.line_mode = true;
+                    });
+                });
+            }
             _ => self.helix_move_and_collapse(motion, times, window, cx),
         }
     }

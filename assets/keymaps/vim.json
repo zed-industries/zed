@@ -339,6 +339,8 @@
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
       "b": "vim::PreviousWordStart",
+      "x": "vim::CurrentLine",
+      "X": "vim::CurrentLine",
 
       "h": "vim::Left",
       "j": "vim::Down",
