@@ -1486,13 +1486,11 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
             one
             two
             two.five
-            three
             -----
             four
             five
             six
             seven
-            eight
             -----
             nine
             ten
@@ -1508,8 +1506,8 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
             path1.clone(),
             buf1.clone(),
             vec![
-                Point::row_range(0..2),
-                Point::row_range(5..6),
+                Point::row_range(0..3),
+                Point::row_range(5..7),
                 Point::row_range(10..11),
             ],
             1,
