@@ -3,6 +3,7 @@ use std::any::Any;
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
+mod blame_ui;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
@@ -17,6 +18,8 @@ use workspace::Workspace;
 mod askpass_modal;
 pub mod branch_picker;
 mod commit_modal;
+pub mod commit_tooltip;
+mod commit_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
@@ -29,6 +32,8 @@ actions!(git, [ResetOnboarding]);
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
+
+    editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
         ProjectDiff::register(workspace, cx);
