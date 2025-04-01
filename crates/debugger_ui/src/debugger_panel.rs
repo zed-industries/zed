@@ -25,7 +25,6 @@ use std::{any::TypeId, path::PathBuf};
 use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
-use util::ResultExt;
 use workspace::{
     ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut,
     StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
@@ -86,54 +85,7 @@ impl DebugPanel {
                 pane.display_nav_history_buttons(None);
                 pane.set_should_display_tab_bar(|_window, _cx| false);
                 pane.set_close_pane_if_empty(true, cx);
-                pane.set_render_tab_bar_buttons(cx, {
-                    let project = project.clone();
-                    let weak_workspace = weak_workspace.clone();
-                    let debug_panel = debug_panel.clone();
-                    move |_, _, cx| {
-                        let project = project.clone();
-                        let weak_workspace = weak_workspace.clone();
-                        (
-                            None,
-                            Some(
-                                h_flex()
-                                    .child(
-                                        IconButton::new("new-debug-session", IconName::Plus)
-                                            .icon_size(IconSize::Small)
-                                            .on_click({
-                                                let debug_panel = debug_panel.clone();
 
-                                                cx.listener(move |pane, _, window, cx| {
-                                                    let config = debug_panel
-                                                        .read_with(cx, |this: &DebugPanel, _| {
-                                                            this.last_inert_config.clone()
-                                                        })
-                                                        .log_err()
-                                                        .flatten();
-
-                                                    pane.add_item(
-                                                        Box::new(DebugSession::inert(
-                                                            project.clone(),
-                                                            weak_workspace.clone(),
-                                                            debug_panel.clone(),
-                                                            config,
-                                                            window,
-                                                            cx,
-                                                        )),
-                                                        false,
-                                                        false,
-                                                        None,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                            }),
-                                    )
-                                    .into_any_element(),
-                            ),
-                        )
-                    }
-                });
                 pane.add_item(
                     Box::new(DebugSession::inert(
                         project.clone(),
