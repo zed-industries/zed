@@ -1182,7 +1182,7 @@ impl AssistantPanel {
 
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
-        key_context.add("AssistantPanel2");
+        key_context.add("AgentPanel");
         if matches!(self.active_view, ActiveView::PromptEditor) {
             key_context.add("prompt_editor");
         }

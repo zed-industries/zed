@@ -625,7 +625,7 @@
     }
   },
   {
-    "context": "AssistantPanel2",
+    "context": "AgentPanel",
     "bindings": {
       "ctrl-n": "assistant2::NewThread",
       "new": "assistant2::NewThread",
@@ -640,7 +640,7 @@
     }
   },
   {
-    "context": "AssistantPanel2 && prompt_editor",
+    "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "assistant2::NewPromptEditor",
