@@ -29,7 +29,7 @@ use settings::Settings;
 use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
 use uuid::Uuid;
 
-use crate::context::{ContextId, ContextSnapshot, attach_context_to_message};
+use crate::context::{AssistantContext, ContextId, attach_context_to_message};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse,
@@ -175,7 +175,7 @@ pub struct Thread {
     pending_summary: Task<Option<()>>,
     messages: Vec<Message>,
     next_message_id: MessageId,
-    context: BTreeMap<ContextId, ContextSnapshot>,
+    context: BTreeMap<ContextId, AssistantContext>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     system_prompt_context: Option<AssistantSystemPromptContext>,
     checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
@@ -473,15 +473,15 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
-        let context = self.context_by_message.get(&id)?;
-        Some(
-            context
-                .into_iter()
-                .filter_map(|context_id| self.context.get(&context_id))
-                .cloned()
-                .collect::<Vec<_>>(),
-        )
+    pub fn context_for_message(&self, id: MessageId) -> impl Iterator<Item = &AssistantContext> {
+        self.context_by_message
+            .get(&id)
+            .into_iter()
+            .flat_map(|context| {
+                context
+                    .iter()
+                    .filter_map(|context_id| self.context.get(&context_id))
+            })
     }
 
     /// Returns whether all of the tool uses have finished running.
@@ -513,15 +513,18 @@ impl Thread {
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
-        context: Vec<ContextSnapshot>,
+        context: Vec<AssistantContext>,
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let message_id =
             self.insert_message(Role::User, vec![MessageSegment::Text(text.into())], cx);
-        let context_ids = context.iter().map(|context| context.id).collect::<Vec<_>>();
+        let context_ids = context
+            .iter()
+            .map(|context| context.id())
+            .collect::<Vec<_>>();
         self.context
-            .extend(context.into_iter().map(|context| (context.id, context)));
+            .extend(context.into_iter().map(|context| (context.id(), context)));
         self.context_by_message.insert(message_id, context_ids);
         if let Some(git_checkpoint) = git_checkpoint {
             self.pending_checkpoint = Some(ThreadCheckpoint {
@@ -889,9 +892,8 @@ impl Thread {
 
             let referenced_context = referenced_context_ids
                 .into_iter()
-                .filter_map(|context_id| self.context.get(context_id))
-                .cloned();
-            attach_context_to_message(&mut context_message, referenced_context);
+                .filter_map(|context_id| self.context.get(context_id));
+            attach_context_to_message(&mut context_message, referenced_context, cx);
 
             request.messages.push(context_message);
         }
@@ -932,7 +934,10 @@ impl Thread {
 
         if action_log.has_edited_files_since_project_diagnostics_check() {
             content.push(
-                "When you're done making changes, make sure to check project diagnostics and fix all errors AND warnings you introduced!".into(),
+                "\n\nWhen you're done making changes, make sure to check project diagnostics \
+                and fix all errors AND warnings you introduced! \
+                DO NOT mention you're going to do this until you're done."
+                    .into(),
             );
         }
 
@@ -1297,13 +1302,13 @@ impl Thread {
 
     pub fn attach_tool_results(
         &mut self,
-        updated_context: Vec<ContextSnapshot>,
+        updated_context: Vec<AssistantContext>,
         cx: &mut Context<Self>,
     ) {
         self.context.extend(
             updated_context
                 .into_iter()
-                .map(|context| (context.id, context)),
+                .map(|context| (context.id(), context)),
         );
 
         // Insert a user message to contain the tool results.

@@ -402,7 +402,14 @@ impl ActionLog {
     pub fn stale_buffers<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a Entity<Buffer>> {
         self.tracked_buffers
             .iter()
-            .filter(|(buffer, tracked)| tracked.version != buffer.read(cx).version)
+            .filter(|(buffer, tracked)| {
+                let buffer = buffer.read(cx);
+
+                tracked.version != buffer.version
+                    && buffer
+                        .file()
+                        .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+            })
             .map(|(buffer, _)| buffer)
     }
 

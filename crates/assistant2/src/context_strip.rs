@@ -17,7 +17,7 @@ use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
-use crate::ui::ContextPill;
+use crate::ui::{AddedContext, ContextPill};
 use crate::{
     AcceptSuggestedContext, AssistantPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
     RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
@@ -363,19 +363,19 @@ impl Focusable for ContextStrip {
 impl Render for ContextStrip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let context_store = self.context_store.read(cx);
-        let context = context_store
-            .context()
-            .iter()
-            .flat_map(|context| context.snapshot(cx))
-            .collect::<Vec<_>>();
+        let context = context_store.context();
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
         let suggested_context = self.suggested_context(cx);
 
-        let dupe_names = context
+        let added_contexts = context
             .iter()
-            .map(|context| context.name.clone())
+            .map(|c| AddedContext::new(c, cx))
+            .collect::<Vec<_>>();
+        let dupe_names = added_contexts
+            .iter()
+            .map(|c| c.name.clone())
             .sorted()
             .tuple_windows()
             .filter(|(a, b)| a == b)
@@ -461,34 +461,39 @@ impl Render for ContextStrip {
                     )
                 }
             })
-            .children(context.iter().enumerate().map(|(i, context)| {
-                let id = context.id;
-                ContextPill::added(
-                    context.clone(),
-                    dupe_names.contains(&context.name),
-                    self.focused_index == Some(i),
-                    Some({
-                        let id = context.id;
-                        let context_store = self.context_store.clone();
-                        Rc::new(cx.listener(move |_this, _event, _window, cx| {
-                            context_store.update(cx, |this, _cx| {
-                                this.remove_context(id);
-                            });
-                            cx.notify();
-                        }))
+            .children(
+                added_contexts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, added_context)| {
+                        let name = added_context.name.clone();
+                        let id = added_context.id;
+                        ContextPill::added(
+                            added_context,
+                            dupe_names.contains(&name),
+                            self.focused_index == Some(i),
+                            Some({
+                                let context_store = self.context_store.clone();
+                                Rc::new(cx.listener(move |_this, _event, _window, cx| {
+                                    context_store.update(cx, |this, _cx| {
+                                        this.remove_context(id);
+                                    });
+                                    cx.notify();
+                                }))
+                            }),
+                        )
+                        .on_click({
+                            Rc::new(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                if event.down.click_count > 1 {
+                                    this.open_context(id, window, cx);
+                                } else {
+                                    this.focused_index = Some(i);
+                                }
+                                cx.notify();
+                            }))
+                        })
                     }),
-                )
-                .on_click(Rc::new(cx.listener(
-                    move |this, event: &ClickEvent, window, cx| {
-                        if event.down.click_count > 1 {
-                            this.open_context(id, window, cx);
-                        } else {
-                            this.focused_index = Some(i);
-                        }
-                        cx.notify();
-                    },
-                )))
-            }))
+            )
             .when_some(suggested_context, |el, suggested| {
                 el.child(
                     ContextPill::suggested(

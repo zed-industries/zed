@@ -414,7 +414,11 @@ impl CodegenAlternative {
         };
 
         if let Some(context_store) = &self.context_store {
-            attach_context_to_message(&mut request_message, context_store.read(cx).snapshot(cx));
+            attach_context_to_message(
+                &mut request_message,
+                context_store.read(cx).context().iter(),
+                cx,
+            );
         }
 
         request_message.content.push(prompt.into());

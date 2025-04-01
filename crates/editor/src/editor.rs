@@ -6180,6 +6180,7 @@ impl Editor {
     ) -> Option<IconButton> {
         let color = Color::Muted;
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
+        let show_tooltip = !self.context_menu_visible();
 
         if self.available_code_actions.is_some() {
             Some(
@@ -6188,19 +6189,21 @@ impl Editor {
                     .icon_size(IconSize::XSmall)
                     .icon_color(color)
                     .toggle_state(is_active)
-                    .tooltip({
-                        let focus_handle = self.focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Toggle Code Actions",
-                                &ToggleCodeActions {
-                                    deployed_from_indicator: None,
-                                },
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
+                    .when(show_tooltip, |this| {
+                        this.tooltip({
+                            let focus_handle = self.focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Toggle Code Actions",
+                                    &ToggleCodeActions {
+                                        deployed_from_indicator: None,
+                                    },
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
                     })
                     .on_click(cx.listener(move |editor, _e, window, cx| {
                         window.focus(&editor.focus_handle(cx));
@@ -6246,7 +6249,7 @@ impl Editor {
     /// It's also used to set the color of line numbers with breakpoints to the breakpoint color.
     /// TODO debugger: Use this function to color toggle symbols that house nested breakpoints
     fn active_breakpoints(
-        &mut self,
+        &self,
         range: Range<DisplayRow>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -6317,24 +6320,26 @@ impl Editor {
 
         let breakpoint = self
             .breakpoint_at_row(row, window, cx)
-            .map(|(_, bp)| Arc::from(bp));
+            .map(|(anchor, bp)| (anchor, Arc::from(bp)));
 
-        let log_breakpoint_msg = if breakpoint.as_ref().is_some_and(|bp| bp.message.is_some()) {
+        let log_breakpoint_msg = if breakpoint.as_ref().is_some_and(|bp| bp.1.message.is_some()) {
             "Edit Log Breakpoint"
         } else {
             "Set Log Breakpoint"
         };
 
-        let condition_breakpoint_msg =
-            if breakpoint.as_ref().is_some_and(|bp| bp.condition.is_some()) {
-                "Edit Condition Breakpoint"
-            } else {
-                "Set Condition Breakpoint"
-            };
+        let condition_breakpoint_msg = if breakpoint
+            .as_ref()
+            .is_some_and(|bp| bp.1.condition.is_some())
+        {
+            "Edit Condition Breakpoint"
+        } else {
+            "Set Condition Breakpoint"
+        };
 
         let hit_condition_breakpoint_msg = if breakpoint
             .as_ref()
-            .is_some_and(|bp| bp.hit_condition.is_some())
+            .is_some_and(|bp| bp.1.hit_condition.is_some())
         {
             "Edit Hit Condition Breakpoint"
         } else {
@@ -6347,12 +6352,13 @@ impl Editor {
             "Set Breakpoint"
         };
 
-        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.state {
+        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
             BreakpointState::Enabled => Some("Disable"),
             BreakpointState::Disabled => Some("Enable"),
         });
 
-        let breakpoint = breakpoint.unwrap_or_else(|| Arc::new(Breakpoint::new_standard()));
+        let (anchor, breakpoint) =
+            breakpoint.unwrap_or_else(|| (anchor, Arc::new(Breakpoint::new_standard())));
 
         ui::ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))

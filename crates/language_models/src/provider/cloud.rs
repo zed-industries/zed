@@ -37,9 +37,7 @@ use strum::IntoEnumIterator;
 use ui::{TintColor, prelude::*};
 
 use crate::AllLanguageModelSettings;
-use crate::provider::anthropic::{
-    count_anthropic_tokens, into_anthropic, map_to_language_model_completion_events,
-};
+use crate::provider::anthropic::{count_anthropic_tokens, into_anthropic};
 use crate::provider::google::into_google;
 use crate::provider::open_ai::{count_open_ai_tokens, into_open_ai};
 
@@ -648,9 +646,11 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok(map_to_language_model_completion_events(Box::pin(
-                        response_lines(response).map_err(AnthropicError::Other),
-                    )))
+                    Ok(
+                        crate::provider::anthropic::map_to_language_model_completion_events(
+                            Box::pin(response_lines(response).map_err(AnthropicError::Other)),
+                        ),
+                    )
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
@@ -698,17 +698,13 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok(google_ai::extract_text_from_events(response_lines(
-                        response,
-                    )))
+                    Ok(
+                        crate::provider::google::map_to_language_model_completion_events(Box::pin(
+                            response_lines(response),
+                        )),
+                    )
                 });
-                async move {
-                    Ok(future
-                        .await?
-                        .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                        .boxed())
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
         }
     }

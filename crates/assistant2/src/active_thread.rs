@@ -6,7 +6,7 @@ use crate::thread::{
 };
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
-use crate::ui::{AgentNotification, AgentNotificationEvent, ContextPill};
+use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
@@ -487,14 +487,14 @@ impl ActiveThread {
                             let updated_context_ids = refresh_task.await;
 
                             this.update(cx, |this, cx| {
-                                this.context_store.read_with(cx, |context_store, cx| {
+                                this.context_store.read_with(cx, |context_store, _cx| {
                                     context_store
                                         .context()
                                         .iter()
                                         .filter(|context| {
                                             updated_context_ids.contains(&context.id())
                                         })
-                                        .flat_map(|context| context.snapshot(cx))
+                                        .cloned()
                                         .collect()
                                 })
                             })
@@ -806,7 +806,7 @@ impl ActiveThread {
         let thread = self.thread.read(cx);
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
-        let context = thread.context_for_message(message_id);
+        let context = thread.context_for_message(message_id).collect::<Vec<_>>();
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
 
         // Don't render user messages that are just there for returning tool results.
@@ -926,53 +926,50 @@ impl ActiveThread {
                 .into_any_element(),
         };
 
-        let message_content =
-            v_flex()
-                .gap_1p5()
-                .child(
-                    if let Some(edit_message_editor) = edit_message_editor.clone() {
-                        div()
-                            .key_context("EditMessageEditor")
-                            .on_action(cx.listener(Self::cancel_editing_message))
-                            .on_action(cx.listener(Self::confirm_editing_message))
-                            .min_h_6()
-                            .child(edit_message_editor)
-                    } else {
-                        div()
-                            .min_h_6()
-                            .text_ui(cx)
-                            .child(self.render_message_content(message_id, rendered_message, cx))
-                    },
-                )
-                .when_some(context, |parent, context| {
-                    if !context.is_empty() {
-                        parent.child(h_flex().flex_wrap().gap_1().children(
-                            context.into_iter().map(|context| {
-                                let context_id = context.id;
-                                ContextPill::added(context, false, false, None).on_click(Rc::new(
-                                    cx.listener({
-                                        let workspace = workspace.clone();
-                                        let context_store = context_store.clone();
-                                        move |_, _, window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                open_context(
-                                                    context_id,
-                                                    context_store.clone(),
-                                                    workspace,
-                                                    window,
-                                                    cx,
-                                                );
-                                                cx.notify();
-                                            }
+        let message_content = v_flex()
+            .gap_1p5()
+            .child(
+                if let Some(edit_message_editor) = edit_message_editor.clone() {
+                    div()
+                        .key_context("EditMessageEditor")
+                        .on_action(cx.listener(Self::cancel_editing_message))
+                        .on_action(cx.listener(Self::confirm_editing_message))
+                        .min_h_6()
+                        .child(edit_message_editor)
+                } else {
+                    div()
+                        .min_h_6()
+                        .text_ui(cx)
+                        .child(self.render_message_content(message_id, rendered_message, cx))
+                },
+            )
+            .when(!context.is_empty(), |parent| {
+                parent.child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .children(context.into_iter().map(|context| {
+                            let context_id = context.id();
+                            ContextPill::added(AddedContext::new(context, cx), false, false, None)
+                                .on_click(Rc::new(cx.listener({
+                                    let workspace = workspace.clone();
+                                    let context_store = context_store.clone();
+                                    move |_, _, window, cx| {
+                                        if let Some(workspace) = workspace.upgrade() {
+                                            open_context(
+                                                context_id,
+                                                context_store.clone(),
+                                                workspace,
+                                                window,
+                                                cx,
+                                            );
+                                            cx.notify();
                                         }
-                                    }),
-                                ))
-                            }),
-                        ))
-                    } else {
-                        parent
-                    }
-                });
+                                    }
+                                })))
+                        })),
+                )
+            });
 
         let styled_message = match message.role {
             Role::User => v_flex()
@@ -1423,26 +1420,31 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        let status_icons = div().child({
-            let (icon_name, color, animated) = match &tool_use.status {
-                ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
-                    (IconName::Warning, Color::Warning, false)
-                }
-                ToolUseStatus::Running => (IconName::ArrowCircle, Color::Accent, true),
-                ToolUseStatus::Finished(_) => (IconName::Check, Color::Success, false),
-                ToolUseStatus::Error(_) => (IconName::Close, Color::Error, false),
-            };
+        let is_status_finished = matches!(&tool_use.status, ToolUseStatus::Finished(_));
 
-            let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
-
-            if animated {
+        let status_icons = div().child(match &tool_use.status {
+            ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
+                let icon = Icon::new(IconName::Warning)
+                    .color(Color::Warning)
+                    .size(IconSize::Small);
+                icon.into_any_element()
+            }
+            ToolUseStatus::Running => {
+                let icon = Icon::new(IconName::ArrowCircle)
+                    .color(Color::Accent)
+                    .size(IconSize::Small);
                 icon.with_animation(
                     "arrow-circle",
                     Animation::new(Duration::from_secs(2)).repeat(),
                     |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
                 )
                 .into_any_element()
-            } else {
+            }
+            ToolUseStatus::Finished(_) => div().w_0().into_any_element(),
+            ToolUseStatus::Error(_) => {
+                let icon = Icon::new(IconName::Close)
+                    .color(Color::Error)
+                    .size(IconSize::Small);
                 icon.into_any_element()
             }
         });
@@ -1534,23 +1536,29 @@ impl ActiveThread {
                 ),
             });
 
-        fn gradient_overlay(color: Hsla) -> impl IntoElement {
+        let gradient_overlay = |color: Hsla| {
             div()
                 .h_full()
                 .absolute()
                 .w_8()
                 .bottom_0()
-                .right_12()
+                .map(|element| {
+                    if is_status_finished {
+                        element.right_7()
+                    } else {
+                        element.right_12()
+                    }
+                })
                 .bg(linear_gradient(
                     90.,
                     linear_color_stop(color, 1.),
                     linear_color_stop(color.opacity(0.2), 0.),
                 ))
-        }
+        };
 
-        div().map(|this| {
+        div().map(|element| {
             if !tool_use.needs_confirmation {
-                this.py_2p5().child(
+                element.py_2p5().child(
                     v_flex()
                         .child(
                             h_flex()
@@ -1560,7 +1568,7 @@ impl ActiveThread {
                                 .justify_between()
                                 .opacity(0.8)
                                 .hover(|style| style.opacity(1.))
-                                .pr_2()
+                                .when(!is_status_finished, |this| this.pr_2())
                                 .child(
                                     h_flex()
                                         .id("tool-label-container")
@@ -1622,7 +1630,7 @@ impl ActiveThread {
                         }),
                 )
             } else {
-                this.py_2().child(
+                element.py_2().child(
                     v_flex()
                         .rounded_lg()
                         .border_1()
@@ -1635,7 +1643,13 @@ impl ActiveThread {
                                 .gap_1p5()
                                 .justify_between()
                                 .py_1()
-                                .px_2()
+                                .map(|element| {
+                                    if is_status_finished {
+                                        element.pl_2().pr_0p5()
+                                    } else {
+                                        element.px_2()
+                                    }
+                                })
                                 .bg(self.tool_card_header_bg(cx))
                                 .map(|element| {
                                     if is_open {
@@ -1974,7 +1988,7 @@ pub(crate) fn open_context(
             }
         }
         AssistantContext::Directory(directory_context) => {
-            let path = directory_context.path.clone();
+            let path = directory_context.project_path.clone();
             workspace.update(cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
                     if let Some(entry) = project.entry_for_path(&path, cx) {

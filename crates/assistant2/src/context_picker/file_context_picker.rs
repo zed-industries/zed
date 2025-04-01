@@ -321,10 +321,7 @@ pub fn render_file_context_entry(
 
     let added = context_store.upgrade().and_then(|context_store| {
         if is_directory {
-            context_store
-                .read(cx)
-                .includes_directory(path)
-                .map(FileInclusion::Direct)
+            context_store.read(cx).includes_directory(path)
         } else {
             context_store.read(cx).will_include_file_path(path, cx)
         }
