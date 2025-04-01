@@ -720,8 +720,8 @@ impl WorkspaceDb {
                 }
 
                 for (path, bps) in map.iter() {
-                    log::debug!(
-                        "Got {} breakpoints from path: {}",
+                    log::info!(
+                        "Got {} breakpoints from database at path: {}",
                         bps.len(),
                         path.to_string_lossy()
                     );
@@ -746,9 +746,10 @@ impl WorkspaceDb {
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
+
+                conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1))?(workspace.id).context("Clearing old breakpoints")?;
+
                 for (path, breakpoints) in workspace.breakpoints {
-                    conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1 AND path = ?2))?((workspace.id, path.as_ref()))
-                    .context("Clearing old breakpoints")?;
                     for bp in breakpoints {
                         let state = BreakpointStateWrapper::from(bp.state);
                         match conn.exec_bound(sql!(
