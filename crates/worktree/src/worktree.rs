@@ -3068,7 +3068,7 @@ impl BackgroundScannerState {
 
         let dot_git_abs_path = self.snapshot.abs_path.as_path().join(&dot_git_path);
 
-        // FIXME figure out how to add these watchers without building a whole git2 repo
+        // TODO add these watchers without building a whole repository by parsing .git-with-indirection
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
         log::info!("opened git repo for {dot_git_abs_path:?}");

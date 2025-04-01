@@ -245,7 +245,7 @@ impl std::ops::Deref for Repository {
 }
 
 #[derive(Clone)]
-enum RepositoryState {
+pub enum RepositoryState {
     Local {
         backend: Arc<dyn GitRepository>,
         environment: Arc<HashMap<String, String>>,
@@ -2642,7 +2642,7 @@ impl Repository {
         self.git_store.upgrade()
     }
 
-    fn send_job<F, Fut, R>(&self, job: F) -> oneshot::Receiver<R>
+    pub fn send_job<F, Fut, R>(&self, job: F) -> oneshot::Receiver<R>
     where
         F: FnOnce(RepositoryState, AsyncApp) -> Fut + 'static,
         Fut: Future<Output = R> + 'static,
