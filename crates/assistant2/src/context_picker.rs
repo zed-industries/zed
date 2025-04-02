@@ -360,73 +360,15 @@ impl ContextPicker {
     }
 
     fn recent_entries(&self, cx: &mut App) -> Vec<RecentEntry> {
-        let Some(workspace) = self.workspace.upgrade().map(|w| w.read(cx)) else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return vec![];
         };
 
-        let Some(context_store) = self.context_store.upgrade().map(|cs| cs.read(cx)) else {
+        let Some(context_store) = self.context_store.upgrade() else {
             return vec![];
         };
 
-        let mut recent = Vec::with_capacity(6);
-
-        let mut current_files = context_store.file_paths(cx);
-
-        if let Some(active_path) = active_singleton_buffer_path(&workspace, cx) {
-            current_files.insert(active_path);
-        }
-
-        let project = workspace.project().read(cx);
-
-        recent.extend(
-            workspace
-                .recent_navigation_history_iter(cx)
-                .filter(|(path, _)| !current_files.contains(&path.path.to_path_buf()))
-                .take(4)
-                .filter_map(|(project_path, _)| {
-                    project
-                        .worktree_for_id(project_path.worktree_id, cx)
-                        .map(|worktree| RecentEntry::File {
-                            project_path,
-                            path_prefix: worktree.read(cx).root_name().into(),
-                        })
-                }),
-        );
-
-        let mut current_threads = context_store.thread_ids();
-
-        if let Some(active_thread) = workspace
-            .panel::<AssistantPanel>(cx)
-            .map(|panel| panel.read(cx).active_thread(cx))
-        {
-            current_threads.insert(active_thread.read(cx).id().clone());
-        }
-
-        let Some(thread_store) = self
-            .thread_store
-            .as_ref()
-            .and_then(|thread_store| thread_store.upgrade())
-        else {
-            return recent;
-        };
-
-        thread_store.update(cx, |thread_store, _cx| {
-            recent.extend(
-                thread_store
-                    .threads()
-                    .into_iter()
-                    .filter(|thread| !current_threads.contains(&thread.id))
-                    .take(2)
-                    .map(|thread| {
-                        RecentEntry::Thread(ThreadContextEntry {
-                            id: thread.id,
-                            summary: thread.summary,
-                        })
-                    }),
-            )
-        });
-
-        recent
+        recent_context_picker_entries(context_store, self.thread_store.clone(), workspace, cx)
     }
 }
 
@@ -480,16 +422,6 @@ fn supported_context_picker_modes(
     modes
 }
 
-fn active_singleton_buffer_path(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-    let active_item = workspace.active_item(cx)?;
-
-    let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
-    let buffer = editor.buffer().read(cx).as_singleton()?;
-
-    let path = buffer.read(cx).file()?.path().to_path_buf();
-    Some(path)
-}
-
 fn recent_context_picker_entries(
     context_store: Entity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
@@ -498,14 +430,8 @@ fn recent_context_picker_entries(
 ) -> Vec<RecentEntry> {
     let mut recent = Vec::with_capacity(6);
 
-    let mut current_files = context_store.read(cx).file_paths(cx);
-
+    let current_files = context_store.read(cx).file_paths(cx);
     let workspace = workspace.read(cx);
-
-    if let Some(active_path) = active_singleton_buffer_path(workspace, cx) {
-        current_files.insert(active_path);
-    }
-
     let project = workspace.project().read(cx);
 
     recent.extend(
