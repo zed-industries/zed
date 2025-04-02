@@ -370,12 +370,15 @@ impl KeyCode {
         })
     }
     /// input is standard US English layout key
-    pub fn parse(input: &str, keyboard_mapper: &KeyboardMapper) -> anyhow::Result<Self> {
+    pub fn parse(
+        input: &str,
+        keyboard_mapper: &KeyboardMapper,
+    ) -> anyhow::Result<(Self, Option<String>)> {
         if let Some(key) = Self::parse_immutable(input) {
-            return Ok(key);
+            return Ok((key, None));
         }
         if let Some((code, _)) = keyboard_mapper.parse(input, false) {
-            return Ok(code);
+            return Ok((code, keyboard_mapper.code_to_char(code)));
         }
         Err(anyhow::anyhow!(
             "Error parsing keystroke to keycode: {input}"
@@ -386,12 +389,12 @@ impl KeyCode {
     pub fn parse_char(
         input: &str,
         keyboard_mapper: &KeyboardMapper,
-    ) -> anyhow::Result<(Self, Modifiers)> {
+    ) -> anyhow::Result<(Self, Modifiers, Option<String>)> {
         if let Some(code) = Self::parse_immutable(input) {
-            return Ok((code, Modifiers::default()));
+            return Ok((code, Modifiers::default(), None));
         }
         if let Some((code, modifiers)) = keyboard_mapper.parse(input, true) {
-            return Ok((code, modifiers));
+            return Ok((code, modifiers, keyboard_mapper.code_to_char(code)));
         }
         Err(anyhow::anyhow!(
             "Error parsing keystroke to keycode: {input}"
