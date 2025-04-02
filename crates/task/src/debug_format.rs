@@ -64,6 +64,17 @@ pub enum DebugRequestType {
     Attach(AttachConfig),
 }
 
+impl From<LaunchConfig> for DebugRequestType {
+    fn from(launch_config: LaunchConfig) -> Self {
+        DebugRequestType::Launch(launch_config)
+    }
+}
+
+impl From<AttachConfig> for DebugRequestType {
+    fn from(attach_config: AttachConfig) -> Self {
+        DebugRequestType::Attach(attach_config)
+    }
+}
 /// Represents a request for starting the debugger.
 /// Contrary to `DebugRequestType`, `DebugRequestDisposition` is not Serializable.
 #[derive(PartialEq, Eq, Clone, Debug)]
