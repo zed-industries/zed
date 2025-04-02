@@ -258,7 +258,7 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug)]
 pub enum RepositoryEvent {
-    Updated,
+    Updated { full_scan: bool },
     MergeHeadsChanged,
 }
 
@@ -3512,7 +3512,7 @@ impl Repository {
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
-        cx.emit(RepositoryEvent::Updated);
+        cx.emit(RepositoryEvent::Updated { full_scan: true });
         Ok(())
     }
 
@@ -3856,7 +3856,7 @@ impl Repository {
                                 .ok();
                         }
                     }
-                    cx.emit(RepositoryEvent::Updated);
+                    cx.emit(RepositoryEvent::Updated { full_scan: false });
                 })
             },
         );
@@ -4096,7 +4096,7 @@ async fn compute_snapshot(
         || branch != prev_snapshot.branch
         || statuses_by_path != prev_snapshot.statuses_by_path
     {
-        events.push(RepositoryEvent::Updated);
+        events.push(RepositoryEvent::Updated { full_scan: true });
     }
 
     let mut current_merge_conflicts = TreeSet::default();
