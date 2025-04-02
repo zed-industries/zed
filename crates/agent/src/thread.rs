@@ -2078,4 +2078,84 @@ fn main() {
         assert!(!request.messages[2].string_contents().contains("file2.rs"));
         assert!(request.messages[2].string_contents().contains("file3.rs"));
     }
+
+    #[gpui::test]
+    async fn test_message_without_files(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            AssistantSettings::register(cx);
+            thread_store::init(cx);
+            workspace::init_settings(cx);
+            ThemeSettings::register(cx);
+            ContextServerSettings::register(cx);
+            EditorSettings::register(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+        let (_workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = cx.update(|_window, cx| {
+            ThreadStore::new(
+                project.clone(),
+                Arc::default(),
+                Arc::new(PromptBuilder::new(None).unwrap()),
+                cx,
+            )
+            .unwrap()
+        });
+        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+
+        // Insert user message without any context (empty context vector)
+        let message_id = thread.update(cx, |thread, cx| {
+            thread.insert_user_message("What is the best way to learn Rust?", vec![], None, cx)
+        });
+
+        // Check content and context in message object
+        let message = thread.read_with(cx, |thread, _| thread.message(message_id).unwrap().clone());
+
+        // Context should be empty when no files are included
+        assert_eq!(message.role, Role::User);
+        assert_eq!(message.segments.len(), 1);
+        assert_eq!(
+            message.segments[0],
+            MessageSegment::Text("What is the best way to learn Rust?".to_string())
+        );
+        assert_eq!(message.context, "");
+
+        // Check message in request
+        let request = thread.read_with(cx, |thread, cx| {
+            thread.to_completion_request(RequestKind::Chat, cx)
+        });
+
+        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages[0].string_contents(), "What is the best way to learn Rust?");
+        
+        // Add second message, also without context
+        let message2_id = thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Are there any good books?", vec![], None, cx)
+        });
+        
+        let message2 = thread.read_with(cx, |thread, _| thread.message(message2_id).unwrap().clone());
+        assert_eq!(message2.context, "");
+        
+        // Check that both messages appear in the request
+        let request = thread.read_with(cx, |thread, cx| {
+            thread.to_completion_request(RequestKind::Chat, cx)
+        });
+        
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].string_contents(), "What is the best way to learn Rust?");
+        assert_eq!(request.messages[1].string_contents(), "Are there any good books?");
+    }
 }
