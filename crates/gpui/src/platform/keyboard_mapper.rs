@@ -1,4 +1,4 @@
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use collections::HashMap;
 use parking_lot::RwLock;
@@ -7,37 +7,41 @@ use super::{
     always_use_command_layout, chars_for_modified_key, keyboard_layout, KeyCode, Modifiers,
 };
 
-pub(crate) static KEYBOARD_MAPPER: LazyLock<RwLock<KeyboardMapper>> =
-    LazyLock::new(|| RwLock::new(KeyboardMapper::new()));
+static DEFAULT_MAPPER: LazyLock<KeyboardMapper> = LazyLock::new(KeyboardMapper::new);
 
-pub(crate) struct KeyboardMapper {
-    mapper: HashMap<String, KeyboardMapperInfo>,
+/// TODO:
+pub struct KeyboardMapperManager {
+    mapper: HashMap<String, KeyboardMapper>,
 }
 
-pub(crate) struct KeyboardMapperInfo {
+/// TODO:
+pub struct KeyboardMapper {
     letter: HashMap<String, KeyCode>,
     other: HashMap<String, (KeyCode, Modifiers)>,
 }
 
-impl KeyboardMapper {
+impl KeyboardMapperManager {
     pub(crate) fn new() -> Self {
         let mut mapper = HashMap::default();
         let current_layout = keyboard_layout();
-        mapper.insert(current_layout, KeyboardMapperInfo::new());
+        mapper.insert(current_layout, KeyboardMapper::new());
 
         Self { mapper }
     }
 
-    pub(crate) fn get_mapper(&mut self, layout: &str) -> &KeyboardMapperInfo {
+    pub(crate) fn update(&mut self, layout: &str) {
         if !self.mapper.contains_key(layout) {
-            let info = KeyboardMapperInfo::new();
+            let info = KeyboardMapper::new();
             self.mapper.insert(layout.to_string(), info);
         }
+    }
+
+    pub(crate) fn get_mapper(&self, layout: &str) -> &KeyboardMapper {
         self.mapper.get(layout).unwrap()
     }
 }
 
-impl KeyboardMapperInfo {
+impl KeyboardMapper {
     fn new() -> Self {
         let mut letter = HashMap::default();
         let mut other = HashMap::default();

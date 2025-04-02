@@ -370,15 +370,11 @@ impl KeyCode {
         })
     }
     /// input is standard US English layout key
-    pub fn parse(input: &str) -> anyhow::Result<Self> {
+    pub fn parse(input: &str, keyboard_mapper: &KeyboardMapper) -> anyhow::Result<Self> {
         if let Some(key) = Self::parse_immutable(input) {
             return Ok(key);
         }
-        if let Some((code, _)) = KEYBOARD_MAPPER
-            .write()
-            .get_mapper(&keyboard_layout())
-            .parse(input, false)
-        {
+        if let Some((code, _)) = keyboard_mapper.parse(input, false) {
             return Ok(code);
         }
         Err(anyhow::anyhow!(
@@ -387,15 +383,14 @@ impl KeyCode {
     }
 
     /// TODO:
-    pub fn parse_char(input: &str) -> anyhow::Result<(Self, Modifiers)> {
+    pub fn parse_char(
+        input: &str,
+        keyboard_mapper: &KeyboardMapper,
+    ) -> anyhow::Result<(Self, Modifiers)> {
         if let Some(code) = Self::parse_immutable(input) {
             return Ok((code, Modifiers::default()));
         }
-        if let Some((code, modifiers)) = KEYBOARD_MAPPER
-            .write()
-            .get_mapper(&keyboard_layout())
-            .parse(input, true)
-        {
+        if let Some((code, modifiers)) = keyboard_mapper.parse(input, true) {
             return Ok((code, modifiers));
         }
         Err(anyhow::anyhow!(
@@ -969,7 +964,7 @@ use collections::HashMap;
 
 use crate::chars_for_modified_key;
 
-use super::{always_use_command_layout, keyboard_layout, Modifiers, KEYBOARD_MAPPER};
+use super::{always_use_command_layout, keyboard_layout, KeyboardMapper, Modifiers};
 
 fn generate_keymap_info(scan_code: u16) -> Vec<(String, Modifiers)> {
     let mut keymap = Vec::new();

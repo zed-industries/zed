@@ -67,7 +67,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
-pub(crate) use keyboard_mapper::*;
+pub use keyboard_mapper::*;
 pub use keycodes::*;
 pub use keystroke::*;
 

@@ -270,6 +270,7 @@ pub struct App {
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    pub(crate) keyboard_mapper: KeyboardMapperManager,
 }
 
 impl App {
@@ -331,6 +332,7 @@ impl App {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+                keyboard_mapper: KeyboardMapperManager::new(),
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -344,7 +346,9 @@ impl App {
             move || {
                 if let Some(app) = app.upgrade() {
                     let cx = &mut app.borrow_mut();
-                    cx.keyboard_layout = SharedString::from(cx.platform.keyboard_layout());
+                    let layout = cx.platform.keyboard_layout();
+                    cx.keyboard_mapper.update(&layout);
+                    cx.keyboard_layout = SharedString::from(layout);
                     cx.keyboard_layout_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
@@ -1604,6 +1608,11 @@ impl App {
     /// Returns `true` if the platform file picker supports selecting a mix of files and directories.
     pub fn can_select_mixed_files_and_dirs(&self) -> bool {
         self.platform.can_select_mixed_files_and_dirs()
+    }
+
+    /// TODO:
+    pub fn get_mapper(&self) -> &KeyboardMapper {
+        self.keyboard_mapper.get_mapper(&self.keyboard_layout)
     }
 }
 

@@ -1,8 +1,8 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use collections::HashMap;
 
-use crate::{Action, InvalidKeystrokeError, KeyBindingContextPredicate, Keystroke};
+use crate::{Action, InvalidKeystrokeError, KeyBindingContextPredicate, KeyboardMapper, Keystroke};
 use smallvec::SmallVec;
 
 /// A keybinding and its associated metadata, from the keymap.
@@ -24,13 +24,26 @@ impl Clone for KeyBinding {
 
 impl KeyBinding {
     /// Construct a new keybinding from the given data. Panics on parse error.
-    pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
+    pub fn new<A: Action>(
+        keystrokes: &str,
+        action: A,
+        context: Option<&str>,
+        keyboard_mapper: &KeyboardMapper,
+    ) -> Self {
         let context_predicate = if let Some(context) = context {
             Some(KeyBindingContextPredicate::parse(context).unwrap().into())
         } else {
             None
         };
-        Self::load(keystrokes, Box::new(action), context_predicate, false, None).unwrap()
+        Self::load(
+            keystrokes,
+            Box::new(action),
+            context_predicate,
+            false,
+            None,
+            keyboard_mapper,
+        )
+        .unwrap()
     }
 
     /// Load a keybinding from the given raw data.
@@ -40,10 +53,11 @@ impl KeyBinding {
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         char_matching: bool,
         key_equivalents: Option<&HashMap<char, char>>,
+        keyboard_mapper: &KeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
-            .map(|input| Keystroke::parse(input, char_matching, key_equivalents))
+            .map(|input| Keystroke::parse(input, char_matching, key_equivalents, keyboard_mapper))
             .collect::<std::result::Result<_, _>>()?;
 
         // todo(zjk)
