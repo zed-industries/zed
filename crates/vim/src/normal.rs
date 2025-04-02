@@ -1,5 +1,5 @@
-mod convert;
 mod change;
+mod convert;
 mod delete;
 mod increment;
 pub(crate) mod mark;
@@ -22,8 +22,8 @@ use crate::{
     state::{Mark, Mode, Operator},
     surrounds::SurroundsType,
 };
-use convert::ConvertTarget;
 use collections::BTreeSet;
+use convert::ConvertTarget;
 use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
