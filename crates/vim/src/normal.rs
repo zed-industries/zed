@@ -184,10 +184,10 @@ impl Vim {
                 self.change_case_motion(motion, times, CaseTarget::OppositeCase, window, cx)
             }
             Some(Operator::Rot13) => {
-                self.change_rot_motion(motion, times, RotTarget::Rot13, window, cx)
+                self.change_case_motion(motion, times, CaseTarget::Rot13, window, cx)
             }
             Some(Operator::Rot47) => {
-                self.change_rot_motion(motion, times, RotTarget::Rot47, window, cx)
+                self.change_case_motion(motion, times, CaseTarget::Rot47, window, cx)
             }
             Some(Operator::ToggleComments) => {
                 self.toggle_comments_motion(motion, times, window, cx)
@@ -235,10 +235,10 @@ impl Vim {
                     self.change_case_object(object, around, CaseTarget::OppositeCase, window, cx)
                 }
                 Some(Operator::Rot13) => {
-                    self.change_rot_object(object, around, RotTarget::Rot13, window, cx)
+                    self.change_case_object(object, around, CaseTarget::Rot13, window, cx)
                 }
                 Some(Operator::Rot47) => {
-                    self.change_rot_object(object, around, RotTarget::Rot47, window, cx)
+                    self.change_case_object(object, around, CaseTarget::Rot47, window, cx)
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {

@@ -16,9 +16,6 @@ pub enum CaseTarget {
     Lowercase,
     Uppercase,
     OppositeCase,
-}
-
-pub enum RotTarget {
     Rot13,
     Rot47,
 }
@@ -55,6 +52,8 @@ impl Vim {
                     CaseTarget::OppositeCase => {
                         editor.convert_to_opposite_case(&Default::default(), window, cx)
                     }
+                    CaseTarget::Rot13 => editor.convert_to_rot13(&Default::default(), window, cx),
+                    CaseTarget::Rot47 => editor.convert_to_rot47(&Default::default(), window, cx),
                 }
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -99,6 +98,8 @@ impl Vim {
                     CaseTarget::OppositeCase => {
                         editor.convert_to_opposite_case(&Default::default(), window, cx)
                     }
+                    CaseTarget::Rot13 => editor.convert_to_rot13(&Default::default(), window, cx),
+                    CaseTarget::Rot47 => editor.convert_to_rot47(&Default::default(), window, cx),
                 }
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -137,6 +138,36 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_text(window, cx, |c| c.to_lowercase().collect::<Vec<char>>())
+    }
+
+    pub fn convert_to_rot13(
+        &mut self,
+        _: &ConvertToRot13,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |c| {
+            vec![match c {
+                'A'..='M' | 'a'..='m' => ((c as u8) + 13) as char,
+                'N'..='Z' | 'n'..='z' => ((c as u8) - 13) as char,
+                _ => c,
+            }]
+        })
+    }
+
+    pub fn convert_to_rot47(
+        &mut self,
+        _: &ConvertToRot47,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |c| {
+            let code_point = c as u32;
+            if code_point >= 33 && code_point <= 126 {
+                return vec![char::from_u32(33 + ((code_point + 14) % 94)).unwrap()];
+            }
+            vec![c]
+        })
     }
 
     fn manipulate_text<F>(&mut self, window: &mut Window, cx: &mut Context<Self>, transform: F)
@@ -196,109 +227,6 @@ impl Vim {
             });
         });
         self.switch_mode(Mode::Normal, true, window, cx)
-    }
-
-    pub fn change_rot_motion(
-        &mut self,
-        motion: Motion,
-        times: Option<usize>,
-        mode: RotTarget,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.stop_recording(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.set_clip_at_line_ends(false, cx);
-            let text_layout_details = editor.text_layout_details(window);
-            editor.transact(window, cx, |editor, window, cx| {
-                let mut selection_starts: HashMap<_, _> = Default::default();
-                editor.change_selections(None, window, cx, |s| {
-                    s.move_with(|map, selection| {
-                        let anchor = map.display_point_to_anchor(selection.head(), Bias::Left);
-                        selection_starts.insert(selection.id, anchor);
-                        motion.expand_selection(map, selection, times, &text_layout_details);
-                    });
-                });
-                match mode {
-                    RotTarget::Rot13 => editor.convert_to_rot13(&Default::default(), window, cx),
-                    RotTarget::Rot47 => editor.convert_to_rot47(&Default::default(), window, cx),
-                }
-                editor.change_selections(None, window, cx, |s| {
-                    s.move_with(|map, selection| {
-                        let anchor = selection_starts.remove(&selection.id).unwrap();
-                        selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
-                    });
-                });
-            });
-            editor.set_clip_at_line_ends(true, cx);
-        });
-    }
-
-    pub fn change_rot_object(
-        &mut self,
-        object: Object,
-        around: bool,
-        mode: RotTarget,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.stop_recording(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, cx);
-                let mut original_positions: HashMap<_, _> = Default::default();
-                editor.change_selections(None, window, cx, |s| {
-                    s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around);
-                        original_positions.insert(
-                            selection.id,
-                            map.display_point_to_anchor(selection.start, Bias::Left),
-                        );
-                    });
-                });
-                match mode {
-                    RotTarget::Rot13 => editor.convert_to_rot13(&Default::default(), window, cx),
-                    RotTarget::Rot47 => editor.convert_to_rot47(&Default::default(), window, cx),
-                }
-                editor.change_selections(None, window, cx, |s| {
-                    s.move_with(|map, selection| {
-                        let anchor = original_positions.remove(&selection.id).unwrap();
-                        selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
-                    });
-                });
-                editor.set_clip_at_line_ends(true, cx);
-            });
-        });
-    }
-
-    pub fn convert_to_rot13(
-        &mut self,
-        _: &ConvertToRot13,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.manipulate_text(window, cx, |c| {
-            vec![match c {
-                'A'..='M' | 'a'..='m' => ((c as u8) + 13) as char,
-                'N'..='Z' | 'n'..='z' => ((c as u8) - 13) as char,
-                _ => c,
-            }]
-        })
-    }
-
-    pub fn convert_to_rot47(
-        &mut self,
-        _: &ConvertToRot47,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.manipulate_text(window, cx, |c| {
-            let code_point = c as u32;
-            if code_point >= 33 && code_point <= 126 {
-                return vec![char::from_u32(33 + ((code_point + 14) % 94)).unwrap()];
-            }
-            vec![c]
-        })
     }
 }
 
