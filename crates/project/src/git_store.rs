@@ -1022,9 +1022,13 @@ impl GitStore {
                     return;
                 };
                 if !worktree.read(cx).is_visible() {
+                    log::debug!(
+                        "not adding repositories for local worktree {:?} because it's not visible",
+                        worktree.read(cx).abs_path()
+                    );
                     return;
                 }
-                self.update_repositories_from_worktrees(
+                self.update_repositories_from_worktree(
                     project_environment.clone(),
                     next_repository_id.clone(),
                     downstream
@@ -1034,9 +1038,7 @@ impl GitStore {
                     fs.clone(),
                     cx,
                 );
-                if let Some(worktree) = worktree_store.read(cx).worktree_for_id(*worktree_id, cx) {
-                    self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
-                }
+                self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
             }
             _ => {}
         }
@@ -1057,7 +1059,7 @@ impl GitStore {
     }
 
     /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
-    fn update_repositories_from_worktrees(
+    fn update_repositories_from_worktree(
         &mut self,
         project_environment: Entity<ProjectEnvironment>,
         next_repository_id: Arc<AtomicU64>,
