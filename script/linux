@@ -30,6 +30,8 @@ if [[ -n $apt ]]; then
     libwayland-dev
     libx11-xcb-dev
     libxkbcommon-x11-dev
+    libdbus-1-dev
+    libpipewire-0.3-dev
     libssl-dev
     libzstd-dev
     libvulkan1
@@ -78,6 +80,8 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     wayland-devel
     libxcb-devel
     libxkbcommon-x11-devel
+    dbus-devel
+    pipewire-devel
     openssl-devel
     libzstd-devel
     vulkan-loader
@@ -136,6 +140,7 @@ if [[ -n $zyp ]]; then
     alsa-devel
     clang
     cmake
+    dbus-1-devel
     fontconfig-devel
     gcc
     gcc-c++
@@ -150,6 +155,7 @@ if [[ -n $zyp ]]; then
     make
     mold
     openssl-devel
+    pipewire-devel
     sqlite3-devel
     tar
     wayland-devel
@@ -175,6 +181,8 @@ if [[ -n $pacman ]]; then
     libgit2
     libxcb
     libxkbcommon-x11
+    dbus
+    libpipewire
     openssl
     zstd
     pkgconf
@@ -203,6 +211,8 @@ if [[ -n $xbps ]]; then
     fontconfig-devel
     libxcb-devel
     libxkbcommon-devel
+    dbus-devel
+    pipewire-devel
     libzstd-devel
     openssl-devel
     wayland-devel
