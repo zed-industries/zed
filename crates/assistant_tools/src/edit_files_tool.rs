@@ -339,6 +339,8 @@ impl EditToolRequest {
             }
             DiffResult::Diff(diff) => {
                 cx.update(|cx| {
+                    self.action_log
+                        .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
                     buffer.update(cx, |buffer, cx| {
                         buffer.finalize_last_transaction();
                         buffer.apply_diff(diff, cx);
