@@ -31,9 +31,9 @@ pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     mode: DebugSessionState,
     dap_store: WeakEntity<DapStore>,
-    debug_panel: WeakEntity<DebugPanel>,
-    worktree_store: WeakEntity<WorktreeStore>,
-    workspace: WeakEntity<Workspace>,
+    _debug_panel: WeakEntity<DebugPanel>,
+    _worktree_store: WeakEntity<WorktreeStore>,
+    _workspace: WeakEntity<Workspace>,
     _subscriptions: [Subscription; 1],
 }
 
@@ -56,7 +56,7 @@ impl DebugSession {
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
-        debug_panel: WeakEntity<DebugPanel>,
+        _debug_panel: WeakEntity<DebugPanel>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -69,9 +69,9 @@ impl DebugSession {
             remote_id: None,
             mode: DebugSessionState::Running(mode),
             dap_store: project.read(cx).dap_store().downgrade(),
-            debug_panel,
-            worktree_store: project.read(cx).worktree_store().downgrade(),
-            workspace,
+            _debug_panel,
+            _worktree_store: project.read(cx).worktree_store().downgrade(),
+            _workspace: workspace,
         })
     }
 

@@ -54,7 +54,7 @@ impl NewSessionModal {
     pub(super) fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Self {
         Self {
             workspace: workspace.clone(),
-            mode: NewSessionMode::launch(workspace, window, cx),
+            mode: NewSessionMode::launch(window, cx),
             stop_on_entry: ToggleState::Unselected,
             debugger: None,
         }
@@ -82,13 +82,14 @@ impl NewSessionModal {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
             let task =
                 project.update(cx, |this, cx| this.start_debug_session(config.into(), cx))?;
-            task.await?;
-            let succeeded = true;
-            if succeeded {
+            let spawn_result = task.await;
+            if spawn_result.is_ok() {
                 this.update(cx, |_, cx| {
                     cx.emit(DismissEvent);
-                });
+                })
+                .ok();
             }
+            spawn_result?;
             anyhow::Result::<_, anyhow::Error>::Ok(())
         })
         .detach_and_log_err(cx);
@@ -174,11 +175,10 @@ impl NewSessionModal {
 struct LaunchMode {
     program: Entity<Editor>,
     cwd: Entity<Editor>,
-    workspace: WeakEntity<Workspace>,
 }
 
 impl LaunchMode {
-    fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Entity<Self> {
+    fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
             this.set_placeholder_text("Program path", cx);
@@ -187,11 +187,7 @@ impl LaunchMode {
         cwd.update(cx, |this, cx| {
             this.set_placeholder_text("Working Directory", cx);
         });
-        cx.new(|_| Self {
-            program,
-            cwd,
-            workspace,
-        })
+        cx.new(|_| Self { program, cwd })
     }
 
     fn debug_task(&self, cx: &App) -> task::LaunchConfig {
@@ -321,8 +317,8 @@ impl NewSessionMode {
     fn attach(workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut App) -> Self {
         Self::Attach(AttachMode::new(workspace, cx))
     }
-    fn launch(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Self {
-        Self::Launch(LaunchMode::new(workspace, window, cx))
+    fn launch(window: &mut Window, cx: &mut App) -> Self {
+        Self::Launch(LaunchMode::new(window, cx))
     }
 }
 fn render_editor(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
@@ -389,8 +385,7 @@ impl Render for NewSessionModal {
                                 .style(ui::ButtonStyle::Subtle)
                                 .toggle_state(matches!(self.mode, NewSessionMode::Launch(_)))
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.mode =
-                                        NewSessionMode::launch(this.workspace.clone(), window, cx);
+                                    this.mode = NewSessionMode::launch(window, cx);
                                     this.mode.focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))

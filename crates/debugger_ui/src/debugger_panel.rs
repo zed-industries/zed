@@ -24,7 +24,6 @@ use settings::Settings;
 use std::{any::TypeId, path::PathBuf};
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
-use util::ResultExt;
 use workspace::{
     ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut,
     StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
