@@ -1,15 +1,17 @@
 pub mod items;
 mod toolbar_controls;
 
+mod diagnostic_renderer;
+
 #[cfg(test)]
 mod diagnostics_tests;
 
 use anyhow::Result;
 use collections::{BTreeSet, HashSet};
+use diagnostic_renderer::highlight_diagnostic_message;
 use editor::{
-    Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset, diagnostic_block_renderer,
+    DiagnosticRenderer, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
-    highlight_diagnostic_message,
     scroll::Autoscroll,
 };
 use gpui::{
@@ -49,6 +51,7 @@ struct IncludeWarnings(bool);
 impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut App) {
+    editor::set_diagnostic_renderer(diagnostic_renderer::DiagnosticRenderer {}, cx);
     cx.observe_new(ProjectDiagnosticsEditor::register).detach();
 }
 
@@ -378,351 +381,361 @@ impl ProjectDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let was_empty = self.path_states.is_empty();
-        let snapshot = buffer.read(cx).snapshot();
-        let path_ix = match self
-            .path_states
-            .binary_search_by_key(&&path_to_update, |e| &e.path)
-        {
-            Ok(ix) => ix,
-            Err(ix) => {
-                self.path_states.insert(
-                    ix,
-                    PathState {
-                        path: path_to_update.clone(),
-                        diagnostic_groups: Default::default(),
-                    },
-                );
-                ix
-            }
-        };
-        let mut prev_excerpt_id = if path_ix > 0 {
-            let prev_path_last_group = &self.path_states[path_ix - 1]
-                .diagnostic_groups
-                .last()
-                .unwrap();
-            *prev_path_last_group.excerpts.last().unwrap()
-        } else {
-            ExcerptId::min()
-        };
+        Task::ready(Ok(()))
+        // let was_empty = self.path_states.is_empty();
+        // let snapshot = buffer.read(cx).snapshot();
+        // let path_ix = match self
+        //     .path_states
+        //     .binary_search_by_key(&&path_to_update, |e| &e.path)
+        // {
+        //     Ok(ix) => ix,
+        //     Err(ix) => {
+        //         self.path_states.insert(
+        //             ix,
+        //             PathState {
+        //                 path: path_to_update.clone(),
+        //                 diagnostic_groups: Default::default(),
+        //             },
+        //         );
+        //         ix
+        //     }
+        // };
+        // let mut prev_excerpt_id = if path_ix > 0 {
+        //     let prev_path_last_group = &self.path_states[path_ix - 1]
+        //         .diagnostic_groups
+        //         .last()
+        //         .unwrap();
+        //     *prev_path_last_group.excerpts.last().unwrap()
+        // } else {
+        //     ExcerptId::min()
+        // };
 
-        let mut new_group_ixs = Vec::new();
-        let mut blocks_to_add = Vec::new();
-        let mut blocks_to_remove = HashSet::default();
-        let mut first_excerpt_id = None;
-        let max_severity = if self.include_warnings {
-            DiagnosticSeverity::WARNING
-        } else {
-            DiagnosticSeverity::ERROR
-        };
-        let excerpts = self.excerpts.clone().downgrade();
-        let context = self.context;
-        let editor = self.editor.clone().downgrade();
-        cx.spawn_in(window, async move |this, cx| {
-            let mut old_groups = this
-                .update(cx, |this, _| {
-                    mem::take(&mut this.path_states[path_ix].diagnostic_groups)
-                })?
-                .into_iter()
-                .enumerate()
-                .peekable();
-            let mut new_groups = snapshot
-                .diagnostic_groups(server_to_update)
-                .into_iter()
-                .filter(|(_, group)| {
-                    group.entries[group.primary_ix].diagnostic.severity <= max_severity
-                })
-                .peekable();
-            loop {
-                let mut to_insert = None;
-                let mut to_remove = None;
-                let mut to_keep = None;
-                match (old_groups.peek(), new_groups.peek()) {
-                    (None, None) => break,
-                    (None, Some(_)) => to_insert = new_groups.next(),
-                    (Some((_, old_group)), None) => {
-                        if server_to_update.map_or(true, |id| id == old_group.language_server_id) {
-                            to_remove = old_groups.next();
-                        } else {
-                            to_keep = old_groups.next();
-                        }
-                    }
-                    (Some((_, old_group)), Some((new_language_server_id, new_group))) => {
-                        let old_primary = &old_group.primary_diagnostic;
-                        let new_primary = &new_group.entries[new_group.primary_ix];
-                        match compare_diagnostics(old_primary, new_primary, &snapshot)
-                            .then_with(|| old_group.language_server_id.cmp(new_language_server_id))
-                        {
-                            Ordering::Less => {
-                                if server_to_update
-                                    .map_or(true, |id| id == old_group.language_server_id)
-                                {
-                                    to_remove = old_groups.next();
-                                } else {
-                                    to_keep = old_groups.next();
-                                }
-                            }
-                            Ordering::Equal => {
-                                to_keep = old_groups.next();
-                                new_groups.next();
-                            }
-                            Ordering::Greater => to_insert = new_groups.next(),
-                        }
-                    }
-                }
+        // let mut new_group_ixs = Vec::new();
+        // let mut blocks_to_add = Vec::new();
+        // let mut blocks_to_remove = HashSet::default();
+        // let mut first_excerpt_id = None;
+        // let max_severity = if self.include_warnings {
+        //     DiagnosticSeverity::WARNING
+        // } else {
+        //     DiagnosticSeverity::ERROR
+        // };
+        // let excerpts = self.excerpts.clone().downgrade();
+        // let context = self.context;
+        // let editor = self.editor.clone().downgrade();
+        // cx.spawn_in(window, async move |this, cx| {
+        //     let mut old_groups = this
+        //         .update(cx, |this, _| {
+        //             mem::take(&mut this.path_states[path_ix].diagnostic_groups)
+        //         })?
+        //         .into_iter()
+        //         .enumerate()
+        //         .peekable();
+        //     let mut new_groups = snapshot
+        //         .diagnostic_groups(server_to_update)
+        //         .into_iter()
+        //         .filter(|(_, group)| {
+        //             group.entries[group.primary_ix].diagnostic.severity <= max_severity
+        //         })
+        //         .peekable();
+        //     loop {
+        //         let mut to_insert = None;
+        //         let mut to_remove = None;
+        //         let mut to_keep = None;
+        //         match (old_groups.peek(), new_groups.peek()) {
+        //             (None, None) => break,
+        //             (None, Some(_)) => to_insert = new_groups.next(),
+        //             (Some((_, old_group)), None) => {
+        //                 if server_to_update.map_or(true, |id| id == old_group.language_server_id) {
+        //                     to_remove = old_groups.next();
+        //                 } else {
+        //                     to_keep = old_groups.next();
+        //                 }
+        //             }
+        //             (Some((_, old_group)), Some((new_language_server_id, new_group))) => {
+        //                 let old_primary = &old_group.primary_diagnostic;
+        //                 let new_primary = &new_group.entries[new_group.primary_ix];
+        //                 match compare_diagnostics(old_primary, new_primary, &snapshot)
+        //                     .then_with(|| old_group.language_server_id.cmp(new_language_server_id))
+        //                 {
+        //                     Ordering::Less => {
+        //                         if server_to_update
+        //                             .map_or(true, |id| id == old_group.language_server_id)
+        //                         {
+        //                             to_remove = old_groups.next();
+        //                         } else {
+        //                             to_keep = old_groups.next();
+        //                         }
+        //                     }
+        //                     Ordering::Equal => {
+        //                         to_keep = old_groups.next();
+        //                         new_groups.next();
+        //                     }
+        //                     Ordering::Greater => to_insert = new_groups.next(),
+        //                 }
+        //             }
+        //         }
 
-                if let Some((language_server_id, group)) = to_insert {
-                    let mut group_state = DiagnosticGroupState {
-                        language_server_id,
-                        primary_diagnostic: group.entries[group.primary_ix].clone(),
-                        primary_excerpt_ix: 0,
-                        excerpts: Default::default(),
-                        blocks: Default::default(),
-                        block_count: 0,
-                    };
-                    let mut pending_range: Option<(Range<Point>, Range<Point>, usize)> = None;
-                    let mut is_first_excerpt_for_group = true;
-                    for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
-                        let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
-                        let expanded_range = if let Some(entry) = &resolved_entry {
-                            Some(
-                                context_range_for_entry(
-                                    entry.range.clone(),
-                                    context,
-                                    snapshot.clone(),
-                                    (**cx).clone(),
-                                )
-                                .await,
-                            )
-                        } else {
-                            None
-                        };
-                        if let Some((range, context_range, start_ix)) = &mut pending_range {
-                            if let Some(expanded_range) = expanded_range.clone() {
-                                // If the entries are overlapping or next to each-other, merge them into one excerpt.
-                                if context_range.end.row + 1 >= expanded_range.start.row {
-                                    context_range.end = context_range.end.max(expanded_range.end);
-                                    continue;
-                                }
-                            }
+        //         if let Some((language_server_id, group)) = to_insert {
+        //             let mut group_state = DiagnosticGroupState {
+        //                 language_server_id,
+        //                 primary_diagnostic: group.entries[group.primary_ix].clone(),
+        //                 primary_excerpt_ix: 0,
+        //                 excerpts: Default::default(),
+        //                 blocks: Default::default(),
+        //                 block_count: 0,
+        //             };
+        //             let mut pending_range: Option<(Range<Point>, Range<Point>, usize)> = None;
+        //             let mut is_first_excerpt_for_group = true;
+        //             for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
+        //                 let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
+        //                 let expanded_range = if let Some(entry) = &resolved_entry {
+        //                     Some(
+        //                         context_range_for_entry(
+        //                             entry.range.clone(),
+        //                             context,
+        //                             snapshot.clone(),
+        //                             (**cx).clone(),
+        //                         )
+        //                         .await,
+        //                     )
+        //                 } else {
+        //                     None
+        //                 };
+        //                 if let Some((range, context_range, start_ix)) = &mut pending_range {
+        //                     if let Some(expanded_range) = expanded_range.clone() {
+        //                         // If the entries are overlapping or next to each-other, merge them into one excerpt.
+        //                         if context_range.end.row + 1 >= expanded_range.start.row {
+        //                             context_range.end = context_range.end.max(expanded_range.end);
+        //                             continue;
+        //                         }
+        //                     }
 
-                            let excerpt_id = excerpts.update(cx, |excerpts, cx| {
-                                excerpts
-                                    .insert_excerpts_after(
-                                        prev_excerpt_id,
-                                        buffer.clone(),
-                                        [ExcerptRange {
-                                            context: context_range.clone(),
-                                            primary: range.clone(),
-                                        }],
-                                        cx,
-                                    )
-                                    .pop()
-                                    .unwrap()
-                            })?;
+        //                     let excerpt_id = excerpts.update(cx, |excerpts, cx| {
+        //                         excerpts
+        //                             .insert_excerpts_after(
+        //                                 prev_excerpt_id,
+        //                                 buffer.clone(),
+        //                                 [ExcerptRange {
+        //                                     context: context_range.clone(),
+        //                                     primary: range.clone(),
+        //                                 }],
+        //                                 cx,
+        //                             )
+        //                             .pop()
+        //                             .unwrap()
+        //                     })?;
 
-                            prev_excerpt_id = excerpt_id;
-                            first_excerpt_id.get_or_insert(prev_excerpt_id);
-                            group_state.excerpts.push(excerpt_id);
-                            let header_position = (excerpt_id, language::Anchor::MIN);
+        //                     prev_excerpt_id = excerpt_id;
+        //                     first_excerpt_id.get_or_insert(prev_excerpt_id);
+        //                     group_state.excerpts.push(excerpt_id);
+        //                     // let header_position = (excerpt_id, language::Anchor::MIN);
 
-                            if is_first_excerpt_for_group {
-                                is_first_excerpt_for_group = false;
-                                let mut primary =
-                                    group.entries[group.primary_ix].diagnostic.clone();
-                                primary.message =
-                                    primary.message.split('\n').next().unwrap().to_string();
-                                group_state.block_count += 1;
-                                blocks_to_add.push(BlockProperties {
-                                    placement: BlockPlacement::Above(header_position),
-                                    height: 2,
-                                    style: BlockStyle::Sticky,
-                                    render: diagnostic_header_renderer(primary),
-                                    priority: 0,
-                                });
-                            }
+        //                     // if is_first_excerpt_for_group {
+        //                     //     is_first_excerpt_for_group = false;
+        //                     //     let mut primary =
+        //                     //         group.entries[group.primary_ix].diagnostic.clone();
+        //                     //     primary.message =
+        //                     //         primary.message.split('\n').next().unwrap().to_string();
+        //                     //     group_state.block_count += 1;
+        //                     //     blocks_to_add.push(BlockProperties {
+        //                     //         placement: BlockPlacement::Above(header_position),
+        //                     //         height: 2,
+        //                     //         style: BlockStyle::Sticky,
+        //                     //         render: diagnostic_header_renderer(primary),
+        //                     //         priority: 0,
+        //                     //     });
+        //                     // }
 
-                            for entry in &group.entries[*start_ix..ix] {
-                                let mut diagnostic = entry.diagnostic.clone();
-                                if diagnostic.is_primary {
-                                    group_state.primary_excerpt_ix = group_state.excerpts.len() - 1;
-                                    diagnostic.message =
-                                        entry.diagnostic.message.split('\n').skip(1).collect();
-                                }
+        //                     for entry in &group.entries[*start_ix..ix] {
+        //                         let mut diagnostic = entry.diagnostic.clone();
+        //                         if diagnostic.is_primary {
+        //                             group_state.primary_excerpt_ix = group_state.excerpts.len() - 1;
+        //                             diagnostic.message =
+        //                                 entry.diagnostic.message.split('\n').skip(1).collect();
+        //                         }
 
-                                if !diagnostic.message.is_empty() {
-                                    group_state.block_count += 1;
-                                    blocks_to_add.push(BlockProperties {
-                                        placement: BlockPlacement::Below((
-                                            excerpt_id,
-                                            entry.range.start,
-                                        )),
-                                        height: diagnostic.message.matches('\n').count() as u32 + 1,
-                                        style: BlockStyle::Fixed,
-                                        render: diagnostic_block_renderer(diagnostic, None, true),
-                                        priority: 0,
-                                    });
-                                }
-                            }
+        //                         if !diagnostic.message.is_empty() {
+        //                             group_state.block_count += 1;
 
-                            pending_range.take();
-                        }
+        //                             // BlockProperties {
+        //                             // placement: BlockPlacement::Below((
+        //                             //     excerpt_id,
+        //                             //     entry.range.start,
+        //                             // )),
+        //                             // height: diagnostic.message.matches('\n').count() as u32 + 1,
+        //                             // style: BlockStyle::Fixed,
+        //                             // render: diagnostic_block_renderer(diagnostic, None, true),
+        //                             // // priority: 0,
+        //                             // blocks_to_add.push(
+        //                             //     diagnostic_renderer::DiagnosticRenderer.render_secondary(
+        //                             //         snapshot,
+        //                             //         entry.clone(),
+        //                             //         None,
+        //                             //         true,
+        //                             //         cx,
+        //                             //     ),
+        //                             // );
+        //                         }
+        //                     }
 
-                        if let Some(entry) = resolved_entry.as_ref() {
-                            let range = entry.range.clone();
-                            pending_range = Some((range, expanded_range.unwrap(), ix));
-                        }
-                    }
+        //                     pending_range.take();
+        //                 }
 
-                    this.update(cx, |this, _| {
-                        new_group_ixs.push(this.path_states[path_ix].diagnostic_groups.len());
-                        this.path_states[path_ix]
-                            .diagnostic_groups
-                            .push(group_state);
-                    })?;
-                } else if let Some((_, group_state)) = to_remove {
-                    excerpts.update(cx, |excerpts, cx| {
-                        excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx)
-                    })?;
-                    blocks_to_remove.extend(group_state.blocks.iter().copied());
-                } else if let Some((_, group_state)) = to_keep {
-                    prev_excerpt_id = *group_state.excerpts.last().unwrap();
-                    first_excerpt_id.get_or_insert(prev_excerpt_id);
+        //                 if let Some(entry) = resolved_entry.as_ref() {
+        //                     let range = entry.range.clone();
+        //                     pending_range = Some((range, expanded_range.unwrap(), ix));
+        //                 }
+        //             }
 
-                    this.update(cx, |this, _| {
-                        this.path_states[path_ix]
-                            .diagnostic_groups
-                            .push(group_state)
-                    })?;
-                }
-            }
+        //             this.update(cx, |this, _| {
+        //                 new_group_ixs.push(this.path_states[path_ix].diagnostic_groups.len());
+        //                 this.path_states[path_ix]
+        //                     .diagnostic_groups
+        //                     .push(group_state);
+        //             })?;
+        //         } else if let Some((_, group_state)) = to_remove {
+        //             excerpts.update(cx, |excerpts, cx| {
+        //                 excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx)
+        //             })?;
+        //             blocks_to_remove.extend(group_state.blocks.iter().copied());
+        //         } else if let Some((_, group_state)) = to_keep {
+        //             prev_excerpt_id = *group_state.excerpts.last().unwrap();
+        //             first_excerpt_id.get_or_insert(prev_excerpt_id);
 
-            let excerpts_snapshot = excerpts.update(cx, |excerpts, cx| excerpts.snapshot(cx))?;
-            editor.update(cx, |editor, cx| {
-                editor.remove_blocks(blocks_to_remove, None, cx);
-                let block_ids = editor.insert_blocks(
-                    blocks_to_add.into_iter().flat_map(|block| {
-                        let placement = match block.placement {
-                            BlockPlacement::Above((excerpt_id, text_anchor)) => {
-                                BlockPlacement::Above(
-                                    excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
-                                )
-                            }
-                            BlockPlacement::Below((excerpt_id, text_anchor)) => {
-                                BlockPlacement::Below(
-                                    excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
-                                )
-                            }
-                            BlockPlacement::Replace(_) => {
-                                unreachable!(
-                                    "no Replace block should have been pushed to blocks_to_add"
-                                )
-                            }
-                        };
-                        Some(BlockProperties {
-                            placement,
-                            height: block.height,
-                            style: block.style,
-                            render: block.render,
-                            priority: 0,
-                        })
-                    }),
-                    Some(Autoscroll::fit()),
-                    cx,
-                );
+        //             this.update(cx, |this, _| {
+        //                 this.path_states[path_ix]
+        //                     .diagnostic_groups
+        //                     .push(group_state)
+        //             })?;
+        //         }
+        //     }
 
-                let mut block_ids = block_ids.into_iter();
-                this.update(cx, |this, _| {
-                    for ix in new_group_ixs {
-                        let group_state = &mut this.path_states[path_ix].diagnostic_groups[ix];
-                        group_state.blocks =
-                            block_ids.by_ref().take(group_state.block_count).collect();
-                    }
-                })?;
-                Result::<(), anyhow::Error>::Ok(())
-            })??;
+        //     let excerpts_snapshot = excerpts.update(cx, |excerpts, cx| excerpts.snapshot(cx))?;
+        //     editor.update(cx, |editor, cx| {
+        //         editor.remove_blocks(blocks_to_remove, None, cx);
+        //         let block_ids = editor.insert_blocks(
+        //             blocks_to_add.into_iter().flat_map(|block| {
+        //                 let placement = match block.placement {
+        //                     BlockPlacement::Above((excerpt_id, text_anchor)) => {
+        //                         BlockPlacement::Above(
+        //                             excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+        //                         )
+        //                     }
+        //                     BlockPlacement::Below((excerpt_id, text_anchor)) => {
+        //                         BlockPlacement::Below(
+        //                             excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+        //                         )
+        //                     }
+        //                     BlockPlacement::Replace(_) => {
+        //                         unreachable!(
+        //                             "no Replace block should have been pushed to blocks_to_add"
+        //                         )
+        //                     }
+        //                 };
+        //                 Some(BlockProperties {
+        //                     placement,
+        //                     height: block.height,
+        //                     style: block.style,
+        //                     render: block.render,
+        //                     priority: 0,
+        //                 })
+        //             }),
+        //             Some(Autoscroll::fit()),
+        //             cx,
+        //         );
 
-            this.update_in(cx, |this, window, cx| {
-                if this.path_states[path_ix].diagnostic_groups.is_empty() {
-                    this.path_states.remove(path_ix);
-                }
+        //         let mut block_ids = block_ids.into_iter();
+        //         this.update(cx, |this, _| {
+        //             for ix in new_group_ixs {
+        //                 let group_state = &mut this.path_states[path_ix].diagnostic_groups[ix];
+        //                 group_state.blocks =
+        //                     block_ids.by_ref().take(group_state.block_count).collect();
+        //             }
+        //         })?;
+        //         Result::<(), anyhow::Error>::Ok(())
+        //     })??;
 
-                this.editor.update(cx, |editor, cx| {
-                    let groups;
-                    let mut selections;
-                    let new_excerpt_ids_by_selection_id;
-                    if was_empty {
-                        groups = this.path_states.first()?.diagnostic_groups.as_slice();
-                        new_excerpt_ids_by_selection_id =
-                            [(0, ExcerptId::min())].into_iter().collect();
-                        selections = vec![Selection {
-                            id: 0,
-                            start: 0,
-                            end: 0,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        }];
-                    } else {
-                        groups = this.path_states.get(path_ix)?.diagnostic_groups.as_slice();
-                        new_excerpt_ids_by_selection_id =
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                                s.refresh()
-                            });
-                        selections = editor.selections.all::<usize>(cx);
-                    }
+        //     this.update_in(cx, |this, window, cx| {
+        //         if this.path_states[path_ix].diagnostic_groups.is_empty() {
+        //             this.path_states.remove(path_ix);
+        //         }
 
-                    // If any selection has lost its position, move it to start of the next primary diagnostic.
-                    let snapshot = editor.snapshot(window, cx);
-                    for selection in &mut selections {
-                        if let Some(new_excerpt_id) =
-                            new_excerpt_ids_by_selection_id.get(&selection.id)
-                        {
-                            let group_ix = match groups.binary_search_by(|probe| {
-                                probe
-                                    .excerpts
-                                    .last()
-                                    .unwrap()
-                                    .cmp(new_excerpt_id, &snapshot.buffer_snapshot)
-                            }) {
-                                Ok(ix) | Err(ix) => ix,
-                            };
-                            if let Some(group) = groups.get(group_ix) {
-                                if let Some(offset) = excerpts_snapshot
-                                    .anchor_in_excerpt(
-                                        group.excerpts[group.primary_excerpt_ix],
-                                        group.primary_diagnostic.range.start,
-                                    )
-                                    .map(|anchor| anchor.to_offset(&excerpts_snapshot))
-                                {
-                                    selection.start = offset;
-                                    selection.end = offset;
-                                }
-                            }
-                        }
-                    }
-                    editor.change_selections(None, window, cx, |s| {
-                        s.select(selections);
-                    });
-                    Some(())
-                });
-            })?;
+        //         this.editor.update(cx, |editor, cx| {
+        //             let groups;
+        //             let mut selections;
+        //             let new_excerpt_ids_by_selection_id;
+        //             if was_empty {
+        //                 groups = this.path_states.first()?.diagnostic_groups.as_slice();
+        //                 new_excerpt_ids_by_selection_id =
+        //                     [(0, ExcerptId::min())].into_iter().collect();
+        //                 selections = vec![Selection {
+        //                     id: 0,
+        //                     start: 0,
+        //                     end: 0,
+        //                     reversed: false,
+        //                     goal: SelectionGoal::None,
+        //                 }];
+        //             } else {
+        //                 groups = this.path_states.get(path_ix)?.diagnostic_groups.as_slice();
+        //                 new_excerpt_ids_by_selection_id =
+        //                     editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        //                         s.refresh()
+        //                     });
+        //                 selections = editor.selections.all::<usize>(cx);
+        //             }
 
-            this.update_in(cx, |this, window, cx| {
-                if this.path_states.is_empty() {
-                    if this.editor.focus_handle(cx).is_focused(window) {
-                        window.focus(&this.focus_handle);
-                    }
-                } else if this.focus_handle.is_focused(window) {
-                    let focus_handle = this.editor.focus_handle(cx);
-                    window.focus(&focus_handle);
-                }
+        //             // If any selection has lost its position, move it to start of the next primary diagnostic.
+        //             let snapshot = editor.snapshot(window, cx);
+        //             for selection in &mut selections {
+        //                 if let Some(new_excerpt_id) =
+        //                     new_excerpt_ids_by_selection_id.get(&selection.id)
+        //                 {
+        //                     let group_ix = match groups.binary_search_by(|probe| {
+        //                         probe
+        //                             .excerpts
+        //                             .last()
+        //                             .unwrap()
+        //                             .cmp(new_excerpt_id, &snapshot.buffer_snapshot)
+        //                     }) {
+        //                         Ok(ix) | Err(ix) => ix,
+        //                     };
+        //                     if let Some(group) = groups.get(group_ix) {
+        //                         if let Some(offset) = excerpts_snapshot
+        //                             .anchor_in_excerpt(
+        //                                 group.excerpts[group.primary_excerpt_ix],
+        //                                 group.primary_diagnostic.range.start,
+        //                             )
+        //                             .map(|anchor| anchor.to_offset(&excerpts_snapshot))
+        //                         {
+        //                             selection.start = offset;
+        //                             selection.end = offset;
+        //                         }
+        //                     }
+        //                 }
+        //             }
+        //             editor.change_selections(None, window, cx, |s| {
+        //                 s.select(selections);
+        //             });
+        //             Some(())
+        //         });
+        //     })?;
 
-                #[cfg(test)]
-                this.check_invariants(cx);
+        //     this.update_in(cx, |this, window, cx| {
+        //         if this.path_states.is_empty() {
+        //             if this.editor.focus_handle(cx).is_focused(window) {
+        //                 window.focus(&this.focus_handle);
+        //             }
+        //         } else if this.focus_handle.is_focused(window) {
+        //             let focus_handle = this.editor.focus_handle(cx);
+        //             window.focus(&focus_handle);
+        //         }
 
-                cx.notify();
-            })
-        })
+        //         #[cfg(test)]
+        //         this.check_invariants(cx);
+
+        //         cx.notify();
+        //     })
+        // })
     }
 
     #[cfg(test)]

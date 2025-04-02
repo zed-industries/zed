@@ -774,6 +774,8 @@ impl Vim {
 }
 #[cfg(test)]
 mod test {
+    use std::time::Duration;
+
     use indoc::indoc;
     use workspace::item::Item;
 
@@ -859,10 +861,12 @@ mod test {
             a
             b
             ˇ"});
+        dbg!("done");
     }
 
     #[gpui::test]
     async fn test_visual_insert_first_non_whitespace(cx: &mut gpui::TestAppContext) {
+        std::thread::sleep(Duration::from_millis(100000));
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state(

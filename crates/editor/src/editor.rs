@@ -88,10 +88,9 @@ use gpui::{
     ClipboardItem, Context, DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter,
     FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla,
     KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render,
-    SharedString, Size, Stateful, Styled, StyledText, Subscription, Task, TextStyle,
-    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
-    WeakFocusHandle, Window, div, impl_actions, point, prelude::*, pulsating_between, px, relative,
-    size,
+    SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
+    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
@@ -105,9 +104,9 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText,
-    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
-    TransactionId, TreeSitterOptions, WordsQuery,
+    CursorShape, Diagnostic, DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview,
+    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, InlayHintSettings, RewrapBehavior, WordsCompletionMode, all_language_settings,
         language_settings,
@@ -353,6 +352,31 @@ pub fn init(cx: &mut App) {
 
 pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
     cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
+}
+
+pub trait DiagnosticRenderer {
+    fn render_group(
+        &self,
+        diagnostic_group: Vec<Diagnostic>,
+        max_message_rows: Option<u8>,
+        allow_closing: bool,
+        cx: &App,
+    ) -> BlockProperties<Anchor>;
+    fn render_secondary(
+        &self,
+        buffer: &MultiBufferSnapshot,
+        diagnostic: DiagnosticEntry<Point>,
+        max_message_rows: Option<u8>,
+        allow_closing: bool,
+        cx: &App,
+    ) -> BlockProperties<Anchor>;
+}
+
+pub(crate) struct GlobalDiagnosticRenderer(pub Arc<dyn DiagnosticRenderer>);
+
+impl gpui::Global for GlobalDiagnosticRenderer {}
+pub fn set_diagnostic_renderer(renderer: impl DiagnosticRenderer + 'static, cx: &mut App) {
+    cx.set_global(GlobalDiagnosticRenderer(Arc::new(renderer)));
 }
 
 pub struct SearchWithinRange;
@@ -14152,16 +14176,17 @@ impl Editor {
             if is_valid != active_diagnostics.is_valid {
                 active_diagnostics.is_valid = is_valid;
                 if is_valid {
-                    let mut new_styles = HashMap::default();
-                    for (block_id, diagnostic) in &active_diagnostics.blocks {
-                        new_styles.insert(
-                            *block_id,
-                            diagnostic_block_renderer(diagnostic.clone(), None, true),
-                        );
-                    }
-                    self.display_map.update(cx, |display_map, _cx| {
-                        display_map.replace_blocks(new_styles);
-                    });
+                    // let mut new_styles = HashMap::default();
+                    // for (block_id, diagnostic) in &active_diagnostics.blocks {
+                    //     new_styles.insert(
+                    //         *block_id,
+                    //         diagnostic_block_renderer(diagnostic.clone(), None, true),
+                    //     );
+                    // }
+                    // self.display_map.update(cx, |display_map, _cx| {
+                    //     display_map.replace_blocks(new_styles);
+                    // });
+                    todo!()
                 } else {
                     self.dismiss_diagnostics(cx);
                 }
@@ -14178,6 +14203,12 @@ impl Editor {
     ) {
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
+        let Some(diagnostic_renderer) = cx
+            .try_global::<GlobalDiagnosticRenderer>()
+            .map(|g| g.0.clone())
+        else {
+            return;
+        };
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
 
@@ -14204,23 +14235,21 @@ impl Editor {
             let primary_range = primary_range?;
             let primary_message = primary_message?;
 
+            let block_info: Vec<_> = diagnostic_group
+                .iter()
+                .map(|entry| {
+                    diagnostic_renderer.render_secondary(
+                        &snapshot.buffer_snapshot,
+                        entry.clone(),
+                        None,
+                        true,
+                        cx,
+                    )
+                })
+                .collect();
+
             let blocks = display_map
-                .insert_blocks(
-                    diagnostic_group.iter().map(|entry| {
-                        let diagnostic = entry.diagnostic.clone();
-                        let message_height = diagnostic.message.matches('\n').count() as u32 + 1;
-                        BlockProperties {
-                            style: BlockStyle::Fixed,
-                            placement: BlockPlacement::Below(
-                                buffer.anchor_after(entry.range.start),
-                            ),
-                            height: message_height,
-                            render: diagnostic_block_renderer(diagnostic, None, true),
-                            priority: 0,
-                        }
-                    }),
-                    cx,
-                )
+                .insert_blocks(block_info, cx)
                 .into_iter()
                 .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
                 .collect();
@@ -19650,103 +19679,6 @@ impl InvalidationRegion for SnippetState {
     }
 }
 
-pub fn diagnostic_block_renderer(
-    diagnostic: Diagnostic,
-    max_message_rows: Option<u8>,
-    allow_closing: bool,
-) -> RenderBlock {
-    let (text_without_backticks, code_ranges) =
-        highlight_diagnostic_message(&diagnostic, max_message_rows);
-
-    Arc::new(move |cx: &mut BlockContext| {
-        let group_id: SharedString = cx.block_id.to_string().into();
-
-        let mut text_style = cx.window.text_style().clone();
-        text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
-        let theme_settings = ThemeSettings::get_global(cx);
-        text_style.font_family = theme_settings.buffer_font.family.clone();
-        text_style.font_style = theme_settings.buffer_font.style;
-        text_style.font_features = theme_settings.buffer_font.features.clone();
-        text_style.font_weight = theme_settings.buffer_font.weight;
-
-        let multi_line_diagnostic = diagnostic.message.contains('\n');
-
-        let buttons = |diagnostic: &Diagnostic| {
-            if multi_line_diagnostic {
-                v_flex()
-            } else {
-                h_flex()
-            }
-            .when(allow_closing, |div| {
-                div.children(diagnostic.is_primary.then(|| {
-                    IconButton::new("close-block", IconName::XCircle)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::Compact)
-                        .style(ButtonStyle::Transparent)
-                        .visible_on_hover(group_id.clone())
-                        .on_click(move |_click, window, cx| {
-                            window.dispatch_action(Box::new(Cancel), cx)
-                        })
-                        .tooltip(|window, cx| {
-                            Tooltip::for_action("Close Diagnostics", &Cancel, window, cx)
-                        })
-                }))
-            })
-            .child(
-                IconButton::new("copy-block", IconName::Copy)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Transparent)
-                    .visible_on_hover(group_id.clone())
-                    .on_click({
-                        let message = diagnostic.message.clone();
-                        move |_click, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
-                        }
-                    })
-                    .tooltip(Tooltip::text("Copy diagnostic message")),
-            )
-        };
-
-        let icon_size = buttons(&diagnostic).into_any_element().layout_as_root(
-            AvailableSpace::min_size(),
-            cx.window,
-            cx.app,
-        );
-
-        h_flex()
-            .id(cx.block_id)
-            .group(group_id.clone())
-            .relative()
-            .size_full()
-            .block_mouse_down()
-            .pl(cx.gutter_dimensions.width)
-            .w(cx.max_width - cx.gutter_dimensions.full_width())
-            .child(
-                div()
-                    .flex()
-                    .w(cx.anchor_x - cx.gutter_dimensions.width - icon_size.width)
-                    .flex_shrink(),
-            )
-            .child(buttons(&diagnostic))
-            .child(div().flex().flex_shrink_0().child(
-                StyledText::new(text_without_backticks.clone()).with_default_highlights(
-                    &text_style,
-                    code_ranges.iter().map(|range| {
-                        (
-                            range.clone(),
-                            HighlightStyle {
-                                font_weight: Some(FontWeight::BOLD),
-                                ..Default::default()
-                            },
-                        )
-                    }),
-                ),
-            ))
-            .into_any_element()
-    })
-}
-
 fn inline_completion_edit_text(
     current_snapshot: &BufferSnapshot,
     edits: &[(Range<Anchor>, String)],
@@ -19767,74 +19699,7 @@ fn inline_completion_edit_text(
     edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
 }
 
-pub fn highlight_diagnostic_message(
-    diagnostic: &Diagnostic,
-    mut max_message_rows: Option<u8>,
-) -> (SharedString, Vec<Range<usize>>) {
-    let mut text_without_backticks = String::new();
-    let mut code_ranges = Vec::new();
-
-    if let Some(source) = &diagnostic.source {
-        text_without_backticks.push_str(source);
-        code_ranges.push(0..source.len());
-        text_without_backticks.push_str(": ");
-    }
-
-    let mut prev_offset = 0;
-    let mut in_code_block = false;
-    let has_row_limit = max_message_rows.is_some();
-    let mut newline_indices = diagnostic
-        .message
-        .match_indices('\n')
-        .filter(|_| has_row_limit)
-        .map(|(ix, _)| ix)
-        .fuse()
-        .peekable();
-
-    for (quote_ix, _) in diagnostic
-        .message
-        .match_indices('`')
-        .chain([(diagnostic.message.len(), "")])
-    {
-        let mut first_newline_ix = None;
-        let mut last_newline_ix = None;
-        while let Some(newline_ix) = newline_indices.peek() {
-            if *newline_ix < quote_ix {
-                if first_newline_ix.is_none() {
-                    first_newline_ix = Some(*newline_ix);
-                }
-                last_newline_ix = Some(*newline_ix);
-
-                if let Some(rows_left) = &mut max_message_rows {
-                    if *rows_left == 0 {
-                        break;
-                    } else {
-                        *rows_left -= 1;
-                    }
-                }
-                let _ = newline_indices.next();
-            } else {
-                break;
-            }
-        }
-        let prev_len = text_without_backticks.len();
-        let new_text = &diagnostic.message[prev_offset..first_newline_ix.unwrap_or(quote_ix)];
-        text_without_backticks.push_str(new_text);
-        if in_code_block {
-            code_ranges.push(prev_len..text_without_backticks.len());
-        }
-        prev_offset = last_newline_ix.unwrap_or(quote_ix) + 1;
-        in_code_block = !in_code_block;
-        if first_newline_ix.map_or(false, |newline_ix| newline_ix < quote_ix) {
-            text_without_backticks.push_str("...");
-            break;
-        }
-    }
-
-    (text_without_backticks.into(), code_ranges)
-}
-
-fn diagnostic_style(severity: DiagnosticSeverity, colors: &StatusColors) -> Hsla {
+pub fn diagnostic_style(severity: DiagnosticSeverity, colors: &StatusColors) -> Hsla {
     match severity {
         DiagnosticSeverity::ERROR => colors.error,
         DiagnosticSeverity::WARNING => colors.warning,

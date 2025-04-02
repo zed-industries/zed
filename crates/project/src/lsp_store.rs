@@ -8513,6 +8513,8 @@ impl LspStore {
         // Ensure that primary diagnostics are always the most severe
         params.diagnostics.sort_by_key(|item| item.severity);
 
+        // for d in params.diagnostics {}
+
         for diagnostic in &params.diagnostics {
             let source = diagnostic.source.as_ref();
             let range = range_from_lsp(diagnostic.range);

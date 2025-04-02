@@ -20,6 +20,12 @@ pub struct NeovimBackedTestContext {
     recent_keystrokes: Vec<String>,
 }
 
+impl Drop for NeovimBackedTestContext {
+    fn drop(&mut self) {
+        dbg!("DROPPITY");
+    }
+}
+
 #[derive(Default)]
 pub struct SharedState {
     neovim: String,

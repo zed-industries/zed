@@ -91,6 +91,7 @@ impl NeovimConnection {
             (nvim, join_handle, child)
         })
         .await;
+        dbg!("CREATE");
 
         Self {
             #[cfg(feature = "neovim")]
@@ -524,6 +525,8 @@ impl DerefMut for NeovimConnection {
 #[cfg(feature = "neovim")]
 impl Drop for NeovimConnection {
     fn drop(&mut self) {
+        dbg!("DROP");
+        self._join_handle.abort();
         Self::write_test_data(&self.test_case_id, &self.data);
     }
 }
