@@ -42,6 +42,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
