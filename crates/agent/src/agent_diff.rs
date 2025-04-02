@@ -612,12 +612,14 @@ fn render_diff_hunk_controls(
                     .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click({
-                    let editor = editor.clone();
+                    let agent_diff = agent_diff.clone();
                     move |_event, window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            let snapshot = editor.snapshot(window, cx);
-                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                            editor.restore_hunks_in_ranges(vec![point..point], window, cx);
+                        agent_diff.update(cx, |diff, cx| {
+                            diff.reject_edits_in_ranges(
+                                vec![hunk_range.start..hunk_range.start],
+                                window,
+                                cx,
+                            );
                         });
                     }
                 }),
