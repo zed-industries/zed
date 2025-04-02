@@ -20,6 +20,7 @@ use crate::attach_modal::AttachModal;
 pub(super) struct NewSessionModal {
     workspace: WeakEntity<Workspace>,
     mode: NewSessionMode,
+    stop_on_entry: ToggleState,
 }
 
 impl NewSessionModal {
@@ -27,6 +28,7 @@ impl NewSessionModal {
         Self {
             workspace: workspace.clone(),
             mode: NewSessionMode::launch(workspace, window, cx),
+            stop_on_entry: ToggleState::Unselected,
         }
     }
 }
@@ -366,18 +368,28 @@ impl Render for NewSessionModal {
             .child(v_flex().child(self.mode.clone().render(window, cx)))
             .child(
                 h_flex()
+                    .gap_2()
                     .border_color(cx.theme().colors().border_variant)
-                    .border_b_1()
+                    .border_t_1()
                     .w_full()
                     .justify_end()
                     .p_2()
                     .when(matches!(self.mode, NewSessionMode::Launch(_)), |this| {
-                        this.child(CheckboxWithLabel::new(
-                            "debugger-stop-on-entry",
-                            Label::new("Stop on Entry"),
-                            ToggleState::Unselected,
-                            |_, _, _| {},
-                        ))
+                        let weak = cx.weak_entity();
+                        this.child(
+                            CheckboxWithLabel::new(
+                                "debugger-stop-on-entry",
+                                Label::new("Stop on Entry").size(ui::LabelSize::Small),
+                                self.stop_on_entry,
+                                move |state, _, cx| {
+                                    weak.update(cx, |this, cx| {
+                                        this.stop_on_entry = *state;
+                                    })
+                                    .ok();
+                                },
+                            )
+                            .checkbox_position(ui::IconPosition::End),
+                        )
                     })
                     .child(Button::new("debugger-spawn", "Start")),
             )
