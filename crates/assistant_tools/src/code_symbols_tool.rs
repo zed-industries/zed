@@ -79,7 +79,7 @@ pub struct CodeSymbolsTool;
 
 impl Tool for CodeSymbolsTool {
     fn name(&self) -> String {
-        "code-symbols".into()
+        "code_symbols".into()
     }
 
     fn needs_confirmation(&self) -> bool {

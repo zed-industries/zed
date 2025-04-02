@@ -148,7 +148,7 @@ pub struct BatchTool;
 
 impl Tool for BatchTool {
     fn name(&self) -> String {
-        "batch-tool".into()
+        "batch_tool".into()
     }
 
     fn needs_confirmation(&self) -> bool {

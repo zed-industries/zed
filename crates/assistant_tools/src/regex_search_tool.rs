@@ -41,7 +41,7 @@ pub struct RegexSearchTool;
 
 impl Tool for RegexSearchTool {
     fn name(&self) -> String {
-        "regex-search".into()
+        "regex_search".into()
     }
 
     fn needs_confirmation(&self) -> bool {
