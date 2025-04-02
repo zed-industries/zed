@@ -1008,7 +1008,7 @@ impl Thread {
             };
 
             if stale_message.is_empty() {
-                write!(&mut stale_message, "{}", STALE_FILES_HEADER).ok();
+                write!(&mut stale_message, "{}\n", STALE_FILES_HEADER).ok();
             }
 
             writeln!(&mut stale_message, "- {}", file.path().display()).ok();
@@ -2194,5 +2194,109 @@ fn main() {
             request.messages[1].string_contents(),
             "Are there any good books?"
         );
+    }
+    
+    #[gpui::test]
+    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            AssistantSettings::register(cx);
+            thread_store::init(cx);
+            workspace::init_settings(cx);
+            ThemeSettings::register(cx);
+            ContextServerSettings::register(cx);
+            EditorSettings::register(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = cx.update(|_window, cx| {
+            ThreadStore::new(
+                project.clone(),
+                Arc::default(),
+                Arc::new(PromptBuilder::new(None).unwrap()),
+                cx,
+            )
+            .unwrap()
+        });
+        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+
+        let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
+
+        // Open buffer and add it to context
+        let buffer_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("test/code.rs", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
+            .await
+            .unwrap();
+
+        context_store
+            .update(cx, |store, cx| {
+                store.add_file_from_buffer(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+
+        let context =
+            context_store.update(cx, |store, _| store.context().first().cloned().unwrap());
+
+        // Insert user message with the buffer as context
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Explain this code", vec![context], None, cx)
+        });
+
+        // Create a request and check that it doesn't have a stale buffer warning yet
+        let initial_request = thread.read_with(cx, |thread, cx| {
+            thread.to_completion_request(RequestKind::Chat, cx)
+        });
+        
+        // Make sure we don't have a stale file warning yet
+        let has_stale_warning = initial_request.messages.iter().any(|msg| {
+            msg.string_contents().contains("These files changed since last read:")
+        });
+        assert!(!has_stale_warning, "Should not have stale buffer warning before buffer is modified");
+
+        // Modify the buffer
+        buffer.update(cx, |buffer, cx| {
+            // Find a position at the end of line 1
+            buffer.edit([(1..1, "\n    println!(\"Added a new line\");\n")], None, cx);
+        });
+
+        // Insert another user message without context
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("What does the code do now?", vec![], None, cx)
+        });
+
+        // Create a new request and check for the stale buffer warning
+        let new_request = thread.read_with(cx, |thread, cx| {
+            thread.to_completion_request(RequestKind::Chat, cx)
+        });
+        
+        // We should have a stale file warning as the last message
+        let last_message = new_request.messages.last().expect("Request should have messages");
+        
+        // The last message should be the stale buffer notification
+        assert_eq!(last_message.role, Role::User);
+        
+        // Check the exact content of the message
+        let expected_content = "These files changed since last read:\n- code.rs\n";
+        assert_eq!(last_message.string_contents(), expected_content, 
+            "Last message should be exactly the stale buffer notification");
     }
 }
