@@ -94,6 +94,7 @@ impl DebugAdapter for GoDebugAdapter {
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
                 "stopOnEntry": config.stop_on_entry,
+                "args": launch_config.args
             }),
         }
     }

@@ -23,4 +23,4 @@ runs:
     - name: Run tests
       shell: pwsh
       working-directory: ${{ inputs.working-directory }}
-      run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast --config='profile.dev.debug="limited"'

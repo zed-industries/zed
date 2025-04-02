@@ -959,48 +959,45 @@ impl ActiveThread {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(editor) = self.feedback_comments_editor.clone() {
+        let Some(editor) = self.feedback_comments_editor.clone() else {
+            return;
+        };
+
+        if let Some(message_id) = self.showing_feedback_comments_for {
+            let report_task = self.thread.update(cx, |thread, cx| {
+                thread.report_message_feedback(message_id, ThreadFeedback::Negative, cx)
+            });
+
             let comments = editor.read(cx).text(cx);
+            if !comments.is_empty() {
+                let thread_id = self.thread.read(cx).id().clone();
+                let comments_value = String::from(comments.as_str());
 
-            // Get the message ID for which we're showing feedback comments
-            if let Some(message_id) = self.showing_feedback_comments_for {
-                // Submit negative feedback specifically for this message
-                let _ = self.thread.update(cx, |thread, cx| {
-                    thread.report_message_feedback(message_id, ThreadFeedback::Negative, cx)
-                });
+                let message_content = self
+                    .thread
+                    .read(cx)
+                    .message(message_id)
+                    .map(|msg| msg.to_string())
+                    .unwrap_or_default();
 
-                if !comments.is_empty() {
-                    let thread_id = self.thread.read(cx).id().clone();
-                    let comments_value = String::from(comments.as_str());
-
-                    // Get the message content that received feedback
-                    let message_content = self
-                        .thread
-                        .read(cx)
-                        .message(message_id)
-                        .map(|msg| msg.to_string())
-                        .unwrap_or_default();
-
-                    // Log comments as a separate telemetry event
-                    telemetry::event!(
-                        "Assistant Thread Feedback Comments",
-                        thread_id,
-                        message_id = message_id.0,
-                        message_content,
-                        comments = comments_value
-                    );
-                }
-
-                let this = cx.entity().downgrade();
-                cx.spawn(async move |_, cx| this.update(cx, |_this, cx| cx.notify()))
-                    .detach_and_log_err(cx);
+                telemetry::event!(
+                    "Assistant Thread Feedback Comments",
+                    thread_id,
+                    message_id = message_id.0,
+                    message_content,
+                    comments = comments_value
+                );
             }
 
             self.showing_feedback_comments_for = None;
             self.feedback_comments_editor = None;
 
-            // Notify the UI to update
-            cx.notify();
+            let this = cx.entity().downgrade();
+            cx.spawn(async move |_, cx| {
+                report_task.await?;
+                this.update(cx, |_this, cx| cx.notify())
+            })
+            .detach_and_log_err(cx);
         }
     }
 
