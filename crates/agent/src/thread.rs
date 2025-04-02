@@ -589,32 +589,28 @@ impl Thread {
                 }
             }
 
-            // Track all buffers added as context
-            for ctx in &new_context {
-                match ctx {
-                    AssistantContext::File(file_ctx) => {
-                        self.action_log.update(cx, |log, cx| {
+            self.action_log.update(cx, |log, cx| {
+                // Track all buffers added as context
+                for ctx in &new_context {
+                    match ctx {
+                        AssistantContext::File(file_ctx) => {
                             log.buffer_added_as_context(file_ctx.context_buffer.buffer.clone(), cx);
-                        });
-                    }
-                    AssistantContext::Directory(dir_ctx) => {
-                        for context_buffer in &dir_ctx.context_buffers {
-                            self.action_log.update(cx, |log, cx| {
-                                log.buffer_added_as_context(context_buffer.buffer.clone(), cx);
-                            });
                         }
-                    }
-                    AssistantContext::Symbol(symbol_ctx) => {
-                        self.action_log.update(cx, |log, cx| {
+                        AssistantContext::Directory(dir_ctx) => {
+                            for context_buffer in &dir_ctx.context_buffers {
+                                log.buffer_added_as_context(context_buffer.buffer.clone(), cx);
+                            }
+                        }
+                        AssistantContext::Symbol(symbol_ctx) => {
                             log.buffer_added_as_context(
                                 symbol_ctx.context_symbol.buffer.clone(),
                                 cx,
                             );
-                        });
+                        }
+                        AssistantContext::FetchedUrl(_) | AssistantContext::Thread(_) => {}
                     }
-                    AssistantContext::FetchedUrl(_) | AssistantContext::Thread(_) => {}
                 }
-            }
+            });
         }
 
         let context_ids = new_context
