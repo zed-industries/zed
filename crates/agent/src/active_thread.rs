@@ -55,8 +55,7 @@ pub struct ActiveThread {
     notifications: Vec<WindowHandle<AgentNotification>>,
     _subscriptions: Vec<Subscription>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    showing_feedback_comments: bool,
-    feedback_comments_editor: Option<Entity<Editor>>,
+    feedback_message_editor: Option<Entity<Editor>>,
 }
 
 struct RenderedMessage {
@@ -371,8 +370,7 @@ impl ActiveThread {
             notifications: Vec::new(),
             _subscriptions: subscriptions,
             notification_subscriptions: HashMap::default(),
-            showing_feedback_comments: false,
-            feedback_comments_editor: None,
+            feedback_message_editor: None,
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -923,78 +921,59 @@ impl ActiveThread {
     }
 
     fn handle_show_feedback_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.showing_feedback_comments = true;
-
-        if self.feedback_comments_editor.is_none() {
-            let buffer = cx.new(|cx| {
-                let empty_string = String::new();
-                MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
-            });
-
-            let editor = cx.new(|cx| {
-                Editor::new(
-                    editor::EditorMode::AutoHeight { max_lines: 4 },
-                    buffer,
-                    None,
-                    window,
-                    cx,
-                )
-            });
-
-            editor.read(cx).focus_handle(cx).focus(window);
-            self.feedback_comments_editor = Some(editor);
+        if self.feedback_message_editor.is_some() {
+            return;
         }
 
+        let buffer = cx.new(|cx| {
+            let empty_string = String::new();
+            MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
+        });
+
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(
+                editor::EditorMode::AutoHeight { max_lines: 4 },
+                buffer,
+                None,
+                window,
+                cx,
+            );
+            editor.set_placeholder_text(
+                "What went wrong? Share your feedback so we can improve.",
+                cx,
+            );
+            editor
+        });
+
+        editor.read(cx).focus_handle(cx).focus(window);
+        self.feedback_message_editor = Some(editor);
         cx.notify();
     }
 
-    fn handle_submit_comments(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(editor) = self.feedback_comments_editor.clone() {
-            let comments = editor.read(cx).text(cx);
+    fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.feedback_message_editor.clone() else {
+            return;
+        };
 
-            // Submit negative feedback
-            let report = self.thread.update(cx, |thread, cx| {
-                thread.report_feedback(ThreadFeedback::Negative, cx)
-            });
+        let report_task = self.thread.update(cx, |thread, cx| {
+            thread.report_feedback(ThreadFeedback::Negative, cx)
+        });
 
-            if !comments.is_empty() {
-                let thread_id = self.thread.read(cx).id().clone();
-                let comments_value = String::from(comments.as_str());
+        let comments = editor.read(cx).text(cx);
+        if !comments.is_empty() {
+            let thread_id = self.thread.read(cx).id().clone();
 
-                // Log comments as a separate telemetry event
-                telemetry::event!(
-                    "Assistant Thread Feedback Comments",
-                    thread_id,
-                    comments = comments_value
-                );
-            }
-
-            self.showing_feedback_comments = false;
-            self.feedback_comments_editor = None;
-
-            let this = cx.entity().downgrade();
-            cx.spawn(async move |_, cx| {
-                report.await?;
-                this.update(cx, |_this, cx| cx.notify())
-            })
-            .detach_and_log_err(cx);
+            telemetry::event!("Assistant Thread Feedback Comments", thread_id, comments);
         }
-    }
 
-    fn handle_cancel_comments(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.showing_feedback_comments = false;
-        self.feedback_comments_editor = None;
-        cx.notify();
+        self.feedback_message_editor = None;
+
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            report_task.await?;
+            this.update(cx, |_this, cx| cx.notify())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1405,58 +1384,76 @@ impl ActiveThread {
             .when(
                 show_feedback && !self.thread.read(cx).is_generating(),
                 |parent| {
-                    parent
-                        .child(feedback_items)
-                        .when(self.showing_feedback_comments, |parent| {
+                    parent.child(feedback_items).when_some(
+                        self.feedback_message_editor.clone(),
+                        |parent, feedback_editor| {
+                            let focus_handle = feedback_editor.focus_handle(cx);
                             parent.child(
                                 v_flex()
-                                    .gap_1()
-                                    .px_4()
-                                    .mb_2()
+                                    .key_context("AgentFeedbackMessageEditor")
+                                    .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                                        this.feedback_message_editor = None;
+                                        cx.notify();
+                                    }))
+                                    .on_action(cx.listener(|this, _: &menu::Confirm, _, cx| {
+                                        this.submit_feedback_message(cx);
+                                        cx.notify();
+                                    }))
+                                    .on_action(cx.listener(Self::confirm_editing_message))
+                                    .mx_4()
+                                    .mb_3()
+                                    .p_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().editor_background)
+                                    .child(feedback_editor)
                                     .child(
-                                        Label::new(
-                                            "Please share your feedback to help us improve:",
-                                        )
-                                        .size(LabelSize::Small),
-                                    )
-                                    .child(
-                                        v_flex()
-                                            .p_2()
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(cx.theme().colors().border)
-                                            .bg(cx.theme().colors().editor_background)
+                                        h_flex()
+                                            .gap_1()
+                                            .justify_end()
                                             .child(
-                                                self.feedback_comments_editor
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .clone(),
+                                                Button::new("dismiss-feedback-message", "Cancel")
+                                                    .label_size(LabelSize::Small)
+                                                    .key_binding(
+                                                        KeyBinding::for_action_in(
+                                                            &menu::Cancel,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                                    )
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.feedback_message_editor = None;
+                                                        cx.notify();
+                                                    })),
                                             )
                                             .child(
-                                                h_flex()
-                                                    .gap_1()
-                                                    .justify_end()
-                                                    .child(
-                                                        Button::new("cancel-comments", "Cancel")
-                                                            .label_size(LabelSize::Small)
-                                                            .on_click(cx.listener(
-                                                                Self::handle_cancel_comments,
-                                                            )),
+                                                Button::new(
+                                                    "submit-feedback-message",
+                                                    "Share Feedback",
+                                                )
+                                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                                .label_size(LabelSize::Small)
+                                                .key_binding(
+                                                    KeyBinding::for_action_in(
+                                                        &menu::Confirm,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
                                                     )
-                                                    .child(
-                                                        Button::new("submit-comments", "Submit")
-                                                            .style(ButtonStyle::Tinted(
-                                                                ui::TintColor::Accent,
-                                                            ))
-                                                            .label_size(LabelSize::Small)
-                                                            .on_click(cx.listener(
-                                                                Self::handle_submit_comments,
-                                                            )),
-                                                    ),
+                                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                                )
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.submit_feedback_message(cx);
+                                                    cx.notify();
+                                                })),
                                             ),
                                     ),
                             )
-                        })
+                        },
+                    )
                 },
             )
             .into_any()
