@@ -941,6 +941,7 @@ impl ActiveThread {
                 )
             });
 
+            editor.read(cx).focus_handle(cx).focus(window);
             self.feedback_comments_editor = Some(editor);
         }
 
