@@ -32,8 +32,8 @@ use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, mem, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
-pub use signature_help::SignatureHelpData;
 pub use signature_help::SignatureHelp;
+pub use signature_help::SignatureHelpData;
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
