@@ -1630,40 +1630,43 @@ impl MultiBuffer {
 
     pub fn set_anchored_excerpts_for_path(
         &self,
-        buffer: &Entity<Buffer>,
+        buffer: Entity<Buffer>,
         ranges: Vec<Range<text::Anchor>>,
+        context_line_count: u32,
         cx: &mut Context<Self>,
-    ) -> Task<(Vec<Range<Anchor>>, bool)> {
+    ) -> Task<Vec<Range<Anchor>>> {
         let buffer_snapshot = buffer.read(cx).snapshot();
-        cx.spawn(|this: WeakEntity<MultiBuffer>, cx: &mut AsyncApp| {
-            let snapshot = buffer_snapshot.clone();
-            async move {
-                let (new, counts) = cx
+        let path_key = PathKey::for_buffer(&buffer, cx);
+        cx.spawn(
+            async move |multi_buffer: WeakEntity<MultiBuffer>, cx: &mut AsyncApp| {
+                let snapshot = buffer_snapshot.clone();
+                let (excerpt_ranges, new, counts) = cx
                     .background_spawn(async move {
-                        let ranges = ranges
-                            .into_iter()
-                            .map(|range| range.to_point(&snapshot))
-                            .collect();
-                        Self::merge_excerpt_ranges(ranges)
+                        let ranges = ranges.into_iter().map(|range| range.to_point(&snapshot));
+                        let excerpt_ranges =
+                            build_excerpt_ranges(&snapshot, ranges, context_line_count);
+                        let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
+                        (excerpt_ranges, new, counts)
                     })
                     .await;
 
-                this.update(cx, |this, cx| {
-                    let (ranges, _) = this.set_excerpt_ranges_for_path_2(
-                        PathKey::for_buffer(buffer, cx),
-                        buffer,
-                        ranges,
-                        buffer_snapshot,
-                        new,
-                        counts,
-                        cx,
-                    );
-                    ranges
-                })
-                .ok()
-                .unwrap_or_default()
-            }
-        })
+                multi_buffer
+                    .update(cx, move |multi_buffer, cx| {
+                        let (ranges, _) = multi_buffer.set_excerpt_ranges_for_path_2(
+                            path_key,
+                            buffer,
+                            excerpt_ranges,
+                            buffer_snapshot,
+                            new,
+                            counts,
+                            cx,
+                        );
+                        ranges
+                    })
+                    .ok()
+                    .unwrap_or_default()
+            },
+        )
     }
 
     fn merge_excerpt_ranges<'a>(
@@ -1873,7 +1876,7 @@ impl MultiBuffer {
 
                 async move {
                     let excerpt_ranges =
-                        build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+                        build_excerpt_ranges(&buffer_snapshot, ranges, context_line_count);
                     excerpt_ranges_tx
                         .send((buffer_id, buffer.clone(), excerpt_ranges))
                         .await
@@ -7803,18 +7806,18 @@ impl From<ExcerptId> for EntityId {
     }
 }
 
-pub fn build_excerpt_ranges<T>(
+pub fn build_excerpt_ranges<'a, T>(
     buffer: &BufferSnapshot,
-    ranges: &[Range<T>],
+    ranges: impl IntoIterator<Item = Range<T>>,
     context_line_count: u32,
 ) -> Vec<ExcerptRange<Point>>
 where
-    T: text::ToPoint,
+    T: text::ToPoint + 'a,
 {
     let max_point = buffer.max_point();
     let mut excerpt_ranges = Vec::new();
     let mut range_iter = ranges
-        .iter()
+        .into_iter()
         .map(|range| range.start.to_point(buffer)..range.end.to_point(buffer))
         .peekable();
     while let Some(range) = range_iter.next() {
@@ -7822,14 +7825,10 @@ where
         let row = (range.end.row + context_line_count).min(max_point.row);
         let mut excerpt_end = Point::new(row, buffer.line_len(row));
 
-        let mut ranges_in_excerpt = 1;
-
         while let Some(next_range) = range_iter.peek() {
             if next_range.start.row <= excerpt_end.row + context_line_count {
                 let row = (next_range.end.row + context_line_count).min(max_point.row);
                 excerpt_end = Point::new(row, buffer.line_len(row));
-
-                ranges_in_excerpt += 1;
                 range_iter.next();
             } else {
                 break;
