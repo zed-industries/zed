@@ -872,21 +872,6 @@ impl BufferStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
-    pub(crate) fn worktree_for_buffer(
-        &self,
-        buffer: &Entity<Buffer>,
-        cx: &App,
-    ) -> Option<(Entity<Worktree>, Arc<Path>)> {
-        let file = buffer.read(cx).file()?;
-        let worktree_id = file.worktree_id(cx);
-        let path = file.path().clone();
-        let worktree = self
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)?;
-        Some((worktree, path))
-    }
-
     pub fn create_buffer(&mut self, cx: &mut Context<Self>) -> Task<Result<Entity<Buffer>>> {
         match &self.state {
             BufferStoreState::Local(this) => this.create_buffer(cx),

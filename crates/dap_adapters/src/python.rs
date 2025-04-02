@@ -133,6 +133,7 @@ impl DebugAdapter for PythonDebugAdapter {
                     "subProcess": true,
                     "cwd": launch_config.cwd,
                     "redirectOutput": true,
+                    "StopOnEntry": config.stop_on_entry,
                 })
             }
             dap::DebugRequestType::Attach(attach_config) => {

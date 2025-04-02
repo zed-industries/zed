@@ -308,7 +308,7 @@ impl SignatureHelpPopover {
             .on_mouse_move(|_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                div().px_4().pb_1().child(
+                div().px_2().py_0p5().child(
                     StyledText::new(self.label.clone())
                         .with_default_highlights(&self.style, self.highlights.iter().cloned()),
                 ),

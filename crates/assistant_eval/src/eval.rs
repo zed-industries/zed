@@ -1,6 +1,6 @@
 use crate::headless_assistant::{HeadlessAppState, HeadlessAssistant};
+use agent::RequestKind;
 use anyhow::anyhow;
-use assistant2::RequestKind;
 use collections::HashMap;
 use gpui::{App, Task};
 use language_model::{LanguageModel, TokenUsage};

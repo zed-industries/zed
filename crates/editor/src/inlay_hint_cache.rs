@@ -2565,60 +2565,24 @@ pub mod tests {
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(2, 0),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(4, 0)..Point::new(11, 0),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(22, 0)..Point::new(33, 0),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(44, 0)..Point::new(55, 0),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(56, 0)..Point::new(66, 0),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(67, 0)..Point::new(77, 0),
-                        primary: None,
-                    },
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0)),
+                    ExcerptRange::new(Point::new(4, 0)..Point::new(11, 0)),
+                    ExcerptRange::new(Point::new(22, 0)..Point::new(33, 0)),
+                    ExcerptRange::new(Point::new(44, 0)..Point::new(55, 0)),
+                    ExcerptRange::new(Point::new(56, 0)..Point::new(66, 0)),
+                    ExcerptRange::new(Point::new(67, 0)..Point::new(77, 0)),
                 ],
                 cx,
             );
             multibuffer.push_excerpts(
                 buffer_2.clone(),
                 [
-                    ExcerptRange {
-                        context: Point::new(0, 1)..Point::new(2, 1),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(4, 1)..Point::new(11, 1),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(22, 1)..Point::new(33, 1),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(44, 1)..Point::new(55, 1),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(56, 1)..Point::new(66, 1),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(67, 1)..Point::new(77, 1),
-                        primary: None,
-                    },
+                    ExcerptRange::new(Point::new(0, 1)..Point::new(2, 1)),
+                    ExcerptRange::new(Point::new(4, 1)..Point::new(11, 1)),
+                    ExcerptRange::new(Point::new(22, 1)..Point::new(33, 1)),
+                    ExcerptRange::new(Point::new(44, 1)..Point::new(55, 1)),
+                    ExcerptRange::new(Point::new(56, 1)..Point::new(66, 1)),
+                    ExcerptRange::new(Point::new(67, 1)..Point::new(77, 1)),
                 ],
                 cx,
             );
@@ -2907,18 +2871,12 @@ pub mod tests {
         let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
             let buffer_1_excerpts = multibuffer.push_excerpts(
                 buffer_1.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(2, 0),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
                 cx,
             );
             let buffer_2_excerpts = multibuffer.push_excerpts(
                 buffer_2.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 1)..Point::new(2, 1),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 1)..Point::new(2, 1))],
                 cx,
             );
             (buffer_1_excerpts, buffer_2_excerpts)

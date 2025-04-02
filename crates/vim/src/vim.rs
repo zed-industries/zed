@@ -153,6 +153,8 @@ actions!(
         PushLowercase,
         PushUppercase,
         PushOppositeCase,
+        PushRot13,
+        PushRot47,
         ToggleRegistersView,
         PushRegister,
         PushRecordRegister,
@@ -617,6 +619,14 @@ impl Vim {
 
             Vim::action(editor, cx, |vim, _: &PushOppositeCase, window, cx| {
                 vim.push_operator(Operator::OppositeCase, window, cx)
+            });
+
+            Vim::action(editor, cx, |vim, _: &PushRot13, window, cx| {
+                vim.push_operator(Operator::Rot13, window, cx)
+            });
+
+            Vim::action(editor, cx, |vim, _: &PushRot47, window, cx| {
+                vim.push_operator(Operator::Rot47, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &PushRegister, window, cx| {

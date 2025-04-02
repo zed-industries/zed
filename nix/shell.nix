@@ -1,8 +1,5 @@
 {
-  lib,
   mkShell,
-  stdenv,
-  stdenvAdapters,
   makeFontsConf,
 
   zed-editor,
@@ -13,12 +10,7 @@
   protobuf,
   nodejs_22,
 }:
-let
-  moldStdenv = stdenvAdapters.useMoldLinker stdenv;
-  mkShell' =
-    if stdenv.hostPlatform.isLinux then mkShell.override { stdenv = moldStdenv; } else mkShell;
-in
-mkShell' {
+(mkShell.override { inherit (zed-editor) stdenv; }) {
   inputsFrom = [ zed-editor ];
   packages = [
     rust-analyzer
