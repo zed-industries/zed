@@ -1673,7 +1673,7 @@ impl ActiveThread {
                     if is_status_finished {
                         element.right_7()
                     } else {
-                        element.right_12()
+                        element.right(px(46.))
                     }
                 })
                 .bg(linear_gradient(
@@ -1767,7 +1767,6 @@ impl ActiveThread {
                             h_flex()
                                 .group("disclosure-header")
                                 .relative()
-                                .gap_1p5()
                                 .justify_between()
                                 .py_1()
                                 .map(|element| {
@@ -1781,6 +1780,8 @@ impl ActiveThread {
                                 .map(|element| {
                                     if is_open {
                                         element.border_b_1().rounded_t_md()
+                                    } else if is_pending {
+                                        element.rounded_t_md()
                                     } else {
                                         element.rounded_md()
                                     }
@@ -1838,7 +1839,13 @@ impl ActiveThread {
                             parent.child(
                                 v_flex()
                                     .bg(cx.theme().colors().editor_background)
-                                    .rounded_b_lg()
+                                    .map(|element| {
+                                        if  is_pending {
+                                            element.rounded_none()
+                                        } else {
+                                            element.rounded_b_lg()
+                                        }
+                                    })
                                     .child(results_content),
                             )
                         })
@@ -1848,11 +1855,12 @@ impl ActiveThread {
                                     .py_1()
                                     .pl_2()
                                     .pr_1()
+                                    .gap_1()
                                     .justify_between()
-                                    .bg(self.tool_card_header_bg(cx))
+                                    .bg(cx.theme().colors().editor_background)
                                     .border_t_1()
                                     .border_color(self.tool_card_border_color(cx))
-                                    .gap_1()
+                                    .rounded_b_lg()
                                     .child(Label::new("Action Confirmation").size(LabelSize::Small))
                                     .child(
                                         h_flex()
@@ -1889,6 +1897,7 @@ impl ActiveThread {
                                                     },
                                                 ))
                                             })
+                                            .child(ui::Divider::vertical())
                                             .child({
                                                 let tool_id = tool_use.id.clone();
                                                 Button::new("allow-tool-action", "Allow")
