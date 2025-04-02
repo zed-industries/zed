@@ -3,7 +3,7 @@ use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
 use editor::{
-    Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
+    AnchorRangeExt, Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
 };
@@ -247,57 +247,17 @@ impl AssistantDiff {
             .selections
             .disjoint_anchor_ranges()
             .collect::<Vec<_>>();
-
-        let snapshot = self.multibuffer.read(cx).snapshot(cx);
-        let diff_hunks_in_ranges = self
-            .editor
-            .read(cx)
-            .diff_hunks_in_ranges(&ranges, &snapshot)
-            .collect::<Vec<_>>();
-
-        for hunk in &diff_hunks_in_ranges {
-            let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
-            if let Some(buffer) = buffer {
-                self.thread.update(cx, |thread, cx| {
-                    thread.keep_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
-                });
-            }
-        }
-
-        if let Some(last_kept_hunk) = diff_hunks_in_ranges.last() {
-            let last_kept_hunk_end = editor::Anchor::in_buffer(
-                last_kept_hunk.excerpt_id,
-                last_kept_hunk.buffer_id,
-                last_kept_hunk.buffer_range.start,
-            );
-            let next_hunk = self
-                .editor
-                .read(cx)
-                .diff_hunks_in_ranges(&[last_kept_hunk_end..editor::Anchor::max()], &snapshot)
-                .skip(1)
-                .next();
-            if let Some(next_hunk) = next_hunk {
-                self.editor.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
-                        let next_hunk_start = editor::Anchor::in_buffer(
-                            next_hunk.excerpt_id,
-                            next_hunk.buffer_id,
-                            next_hunk.buffer_range.start,
-                        );
-                        selections.select_anchor_ranges([next_hunk_start..next_hunk_start]);
-                    })
-                })
-            }
-        }
+        self.keep_edits_in_ranges(ranges, window, cx);
     }
 
     fn reject(&mut self, _: &crate::Reject, window: &mut Window, cx: &mut Context<Self>) {
         let ranges = self
             .editor
-            .update(cx, |editor, cx| editor.selections.ranges(cx));
-        self.editor.update(cx, |editor, cx| {
-            editor.restore_hunks_in_ranges(ranges, window, cx)
-        })
+            .read(cx)
+            .selections
+            .disjoint_anchor_ranges()
+            .collect::<Vec<_>>();
+        self.restore_edits_in_ranges(ranges, window, cx);
     }
 
     fn reject_all(&mut self, _: &crate::RejectAll, window: &mut Window, cx: &mut Context<Self>) {
@@ -314,23 +274,103 @@ impl AssistantDiff {
 
     fn keep_edits_in_ranges(
         &mut self,
-        hunk_ranges: Vec<Range<editor::Anchor>>,
+        ranges: Vec<Range<editor::Anchor>>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
         let diff_hunks_in_ranges = self
             .editor
             .read(cx)
-            .diff_hunks_in_ranges(&hunk_ranges, &snapshot)
+            .diff_hunks_in_ranges(&ranges, &snapshot)
             .collect::<Vec<_>>();
+        let newest_cursor = self.editor.update(cx, |editor, cx| {
+            editor.selections.newest::<Point>(cx).head()
+        });
+        if diff_hunks_in_ranges.iter().any(|hunk| {
+            hunk.row_range
+                .contains(&multi_buffer::MultiBufferRow(newest_cursor.row))
+        }) {
+            self.update_selection(&diff_hunks_in_ranges, window, cx);
+        }
 
-        for hunk in diff_hunks_in_ranges {
+        for hunk in &diff_hunks_in_ranges {
             let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
             if let Some(buffer) = buffer {
                 self.thread.update(cx, |thread, cx| {
-                    thread.keep_edits_in_range(buffer, hunk.buffer_range, cx)
+                    thread.keep_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
                 });
             }
+        }
+    }
+
+    fn restore_edits_in_ranges(
+        &mut self,
+        ranges: Vec<Range<editor::Anchor>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+        let diff_hunks_in_ranges = self
+            .editor
+            .read(cx)
+            .diff_hunks_in_ranges(&ranges, &snapshot)
+            .collect::<Vec<_>>();
+        let newest_cursor = self.editor.update(cx, |editor, cx| {
+            editor.selections.newest::<Point>(cx).head()
+        });
+        if diff_hunks_in_ranges.iter().any(|hunk| {
+            hunk.row_range
+                .contains(&multi_buffer::MultiBufferRow(newest_cursor.row))
+        }) {
+            self.update_selection(&diff_hunks_in_ranges, window, cx);
+        }
+
+        let point_ranges = ranges
+            .into_iter()
+            .map(|range| range.to_point(&snapshot))
+            .collect();
+        self.editor.update(cx, |editor, cx| {
+            editor.restore_hunks_in_ranges(point_ranges, window, cx)
+        });
+    }
+
+    fn update_selection(
+        &mut self,
+        diff_hunks: &[multi_buffer::MultiBufferDiffHunk],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+        let target_hunk = diff_hunks
+            .last()
+            .and_then(|last_kept_hunk| {
+                let last_kept_hunk_end = last_kept_hunk.multi_buffer_range().end;
+                self.editor
+                    .read(cx)
+                    .diff_hunks_in_ranges(&[last_kept_hunk_end..editor::Anchor::max()], &snapshot)
+                    .skip(1)
+                    .next()
+            })
+            .or_else(|| {
+                let first_kept_hunk = diff_hunks.first()?;
+                let first_kept_hunk_start = first_kept_hunk.multi_buffer_range().start;
+                self.editor
+                    .read(cx)
+                    .diff_hunks_in_ranges(
+                        &[editor::Anchor::min()..first_kept_hunk_start],
+                        &snapshot,
+                    )
+                    .next()
+            });
+
+        if let Some(target_hunk) = target_hunk {
+            self.editor.update(cx, |editor, cx| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+                    let next_hunk_start = target_hunk.multi_buffer_range().start;
+                    selections.select_anchor_ranges([next_hunk_start..next_hunk_start]);
+                })
+            });
         }
     }
 }
@@ -596,9 +636,13 @@ fn render_diff_hunk_controls(
                 )
                 .on_click({
                     let assistant_diff = assistant_diff.clone();
-                    move |_event, _window, cx| {
+                    move |_event, window, cx| {
                         assistant_diff.update(cx, |diff, cx| {
-                            diff.keep_edits_in_ranges(vec![hunk_range.start..hunk_range.start], cx);
+                            diff.keep_edits_in_ranges(
+                                vec![hunk_range.start..hunk_range.start],
+                                window,
+                                cx,
+                            );
                         });
                     }
                 }),
@@ -818,8 +862,11 @@ mod tests {
         });
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({"file1": "abc\ndef\nghi\njkl\nmno"}))
-            .await;
+        fs.insert_tree(
+            path!("/test"),
+            json!({"file1": "abc\ndef\nghi\njkl\nmno\npqr\nstu\nvwx\nyz"}),
+        )
+        .await;
         let project = Project::test(fs, [Path::new("/test")], cx).await;
         let buffer_path = project
             .read_with(cx, |project, cx| {
@@ -854,12 +901,16 @@ mod tests {
             action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
-                    .edit([(Point::new(1, 1)..Point::new(1, 2), "E")], None, cx)
-                    .unwrap()
-            });
-            buffer.update(cx, |buffer, cx| {
-                buffer
-                    .edit([(Point::new(4, 2)..Point::new(4, 3), "O")], None, cx)
+                    .edit(
+                        [
+                            (Point::new(1, 1)..Point::new(1, 2), "E"),
+                            (Point::new(3, 2)..Point::new(3, 3), "L"),
+                            (Point::new(5, 0)..Point::new(5, 1), "P"),
+                            (Point::new(7, 1)..Point::new(7, 2), "W"),
+                        ],
+                        None,
+                        cx,
+                    )
                     .unwrap()
             });
             action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
@@ -868,10 +919,71 @@ mod tests {
 
         // When opening the assistant diff, the cursor is positioned on the first hunk.
         assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndef\ndEf\nghi\njkl\njkL\nmno\npqr\nPqr\nstu\nvwx\nvWx\nyz"
+        );
+        assert_eq!(
             editor
                 .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
                 .range(),
             Point::new(1, 0)..Point::new(1, 0)
+        );
+
+        // After keeping a hunk, the cursor should be positioned on the second hunk.
+        assistant_diff.update_in(cx, |diff, window, cx| diff.keep(&crate::Keep, window, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndEf\nghi\njkl\njkL\nmno\npqr\nPqr\nstu\nvwx\nvWx\nyz"
+        );
+        assert_eq!(
+            editor
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(3, 0)..Point::new(3, 0)
+        );
+
+        // Restoring a hunk also moves the cursor to the next hunk, possibly cycling if it's at the end.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(None, window, cx, |selections| {
+                selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
+            });
+        });
+        assistant_diff.update_in(cx, |diff, window, cx| {
+            diff.reject(&crate::Reject, window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndEf\nghi\njkl\njkL\nmno\npqr\nPqr\nstu\nvwx\nyz"
+        );
+        assert_eq!(
+            editor
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(3, 0)..Point::new(3, 0)
+        );
+
+        // Keeping a range that doesn't intersect the current selection doesn't move it.
+        assistant_diff.update_in(cx, |diff, window, cx| {
+            let position = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .read(cx)
+                .anchor_before(Point::new(7, 0));
+            diff.keep_edits_in_ranges(vec![position..position], window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndEf\nghi\njkl\njkL\nmno\nPqr\nstu\nvwx\nyz"
+        );
+        assert_eq!(
+            editor
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(3, 0)..Point::new(3, 0)
         );
     }
 }
