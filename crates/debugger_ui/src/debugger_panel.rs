@@ -231,7 +231,7 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         match event {
-            dap_store::DapStoreEvent::DebugClientStarted(session_id) => {
+            dap_store::DapStoreEvent::DebugSessionInitialized(session_id) => {
                 let Some(session) = dap_store.read(cx).session_by_id(session_id) else {
                     return log::error!(
                         "Couldn't get session with id: {session_id:?} from DebugClientStarted event"
