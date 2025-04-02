@@ -130,7 +130,6 @@ impl State {
     fn set_credentials(
         &mut self,
         credentials: BedrockCredentials,
-        settings: AmazonBedrockSettings,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
@@ -145,37 +144,44 @@ impl State {
                 .await?;
             this.update(cx, |this, cx| {
                 this.credentials = Some(credentials);
-                this.settings = Some(settings);
                 cx.notify();
             })
         })
     }
 
-    fn set_authentication_method(
-        &mut self,
-        auth_method: BedrockAuthMethod,
-        cx: &mut Context<Self>,
-    ) {
-        match self.settings.as_mut() {
+    fn is_authenticated(&self) -> Option<String> {
+        match self.settings.as_ref().and_then(|s| s.authentication_method.as_ref()) {
+            Some(BedrockAuthMethod::StaticCredentials) => Some(String::from("You are authenticated using Static Credentials.")),
+            Some(BedrockAuthMethod::NamedProfile) | Some(BedrockAuthMethod::SingleSignOn) => {
+                match self.settings.as_ref() {
+                    None => {
+                        Some(String::from("You are authenticated using a Named Profile, but no profile is set."))
+                    }
+                    Some(settings) => {
+                        match settings.clone().profile_name {
+                            None => {
+                                Some(String::from("You are authenticated using a Named Profile, but no profile is set."))
+                            }
+                            Some(profile_name) => {
+                                Some(format!("You are authenticated using a Named Profile: {}", profile_name))
+                            }
+                        }
+                    }
+                }
+            },
+            Some(BedrockAuthMethod::Automatic) => Some(String::from("You are authenticated using Automatic Credentials.")),
             None => {
-                self.settings = Some(AmazonBedrockSettings {
-                    authentication_method: Some(auth_method),
-                    ..Default::default()
-                });
-            }
-            Some(auth) => {
-                auth.authentication_method = Some(auth_method);
+                if self.credentials.is_some() {
+                    Some(String::from("You are authenticated using Static Credentials."))
+                } else {
+                    None
+                }
             }
         }
-        cx.notify();
-    }
-
-    fn is_authenticated(&self) -> bool {
-        self.credentials.is_some()
     }
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
+        if self.is_authenticated().is_some() {
             return Task::ready(Ok(()));
         }
 
@@ -309,7 +315,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
-        self.state.read(cx).is_authenticated()
+        self.state.read(cx).is_authenticated().is_some()
     }
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
@@ -661,18 +667,18 @@ pub fn get_bedrock_tokens(
 
 pub async fn extract_tool_args_from_events(
     name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+    mut events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> Result<impl Send + Stream<Item = Result<String>>> {
+) -> Result<impl Send + Stream<Item=Result<String>>> {
     handle
         .spawn(async move {
             let mut tool_use_index = None;
             while let Some(event) = events.next().await {
                 if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                    content_block_index,
-                    start,
-                    ..
-                }) = event?
+                                                                       content_block_index,
+                                                                       start,
+                                                                       ..
+                                                                   }) = event?
                 {
                     match start {
                         None => {
@@ -724,9 +730,9 @@ pub async fn extract_tool_args_from_events(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
     struct RawToolUse {
         id: String,
         name: String,
@@ -734,7 +740,7 @@ pub fn map_to_language_model_completion_events(
     }
 
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
     }
 
@@ -844,12 +850,6 @@ struct ConfigurationView {
     secret_access_key_editor: Entity<Editor>,
     session_token_editor: Entity<Editor>,
     region_editor: Entity<Editor>,
-    endpoint_editor: Entity<Editor>,
-    profile_name_editor: Entity<Editor>,
-    #[allow(dead_code)]
-    start_url_editor: Entity<Editor>,
-    #[allow(dead_code)]
-    role_arn_editor: Entity<Editor>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -909,28 +909,6 @@ impl ConfigurationView {
                 editor.set_placeholder_text(Self::PLACEHOLDER_REGION, cx);
                 editor
             }),
-            endpoint_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("", cx);
-                editor
-            }),
-            profile_name_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_PROFILE_NAME_TEXT, cx);
-                editor
-            }),
-            #[allow(dead_code)]
-            start_url_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_START_URL, cx);
-                editor
-            }),
-            #[allow(dead_code)]
-            role_arn_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_ROLE_ARN, cx);
-                editor
-            }),
             state,
             load_credentials_task,
         }
@@ -969,49 +947,6 @@ impl ConfigurationView {
         } else {
             Some(session_token)
         };
-        let region = self
-            .region_editor
-            .read(cx)
-            .text(cx)
-            .to_string()
-            .trim()
-            .to_string();
-        let endpoint = self
-            .endpoint_editor
-            .read(cx)
-            .text(cx)
-            .to_string()
-            .trim()
-            .to_string();
-        let endpoint = if endpoint.is_empty() {
-            None
-        } else {
-            Some(endpoint)
-        };
-        let profile_name = self
-            .profile_name_editor
-            .read(cx)
-            .text(cx)
-            .to_string()
-            .trim()
-            .to_string();
-        let profile_name = if profile_name.is_empty() {
-            None
-        } else {
-            Some(profile_name)
-        };
-        let role_arn = self
-            .role_arn_editor
-            .read(cx)
-            .text(cx)
-            .to_string()
-            .trim()
-            .to_string();
-        let role_arn = if role_arn.is_empty() {
-            None
-        } else {
-            Some(role_arn)
-        };
 
         let state = self.state.clone();
         cx.spawn(async move |_, cx| {
@@ -1023,19 +958,7 @@ impl ConfigurationView {
                         session_token: session_token.clone(),
                     };
 
-                    let settings: AmazonBedrockSettings = AmazonBedrockSettings {
-                        available_models: vec![],
-                        region: Some(region),
-                        endpoint,
-                        profile_name,
-                        role_arn,
-                        authentication_method: state
-                            .settings
-                            .as_ref()
-                            .and_then(|s| s.authentication_method.clone()),
-                    };
-
-                    state.set_credentials(credentials, settings, cx)
+                    state.set_credentials(credentials, cx)
                 })?
                 .await
         })
@@ -1050,8 +973,6 @@ impl ConfigurationView {
         self.session_token_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
         self.region_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
-        self.endpoint_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
@@ -1098,14 +1019,15 @@ impl ConfigurationView {
             .rounded_sm()
     }
 
-    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
-        !self.state.read(cx).is_authenticated()
+    fn should_render_editor(&self, cx: &mut Context<Self>) -> Option<String> {
+        self.state.read(cx).is_authenticated()
     }
 }
 
 impl Render for ConfigurationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).credentials_from_env;
+        let creds_type = self.should_render_editor(cx).is_some();
 
         // Handle loading state
         if self.load_credentials_task.is_some() {
@@ -1113,7 +1035,7 @@ impl Render for ConfigurationView {
         }
 
         // Handle already authenticated state
-        if !self.should_render_editor(cx) {
+        if let Some(auth) = self.should_render_editor(cx) {
             return h_flex()
                 .size_full()
                 .justify_between()
@@ -1124,7 +1046,7 @@ impl Render for ConfigurationView {
                         .child(Label::new(if env_var_set {
                             format!("Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables.")
                         } else {
-                            "Credentials configured.".to_string()
+                            auth.clone()
                         })),
                 )
                 .child(
@@ -1132,37 +1054,23 @@ impl Render for ConfigurationView {
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
-                        .disabled(env_var_set)
+                        .disabled(env_var_set || creds_type)
                         .when(env_var_set, |this| {
                             this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
+                        })
+                        .when(creds_type, |this| {
+                            this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how"))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
                 )
                 .into_any();
         }
 
-        // Get the current authentication method
-        let authentication_method = match self.state.read(cx).settings {
-            Some(ref settings) => settings
-                .authentication_method
-                .clone()
-                .unwrap_or(BedrockAuthMethod::Automatic),
-            None => BedrockAuthMethod::StaticCredentials,
-        };
-
-        // Map of auth method render functions
-        let auth_method_ui = match authentication_method {
-            BedrockAuthMethod::NamedProfile => self.render_named_profile_ui(cx),
-            BedrockAuthMethod::StaticCredentials => self.render_static_credentials_ui(cx),
-            BedrockAuthMethod::SingleSignOn => self.render_sso_ui(cx),
-            BedrockAuthMethod::Automatic => self.render_automatic_ui(),
-        };
-
         // Main configuration view
         v_flex()
             .size_full()
             .on_action(cx.listener(ConfigurationView::save_credentials))
-            .child(Label::new("To use Zed's assistant with Bedrock, you need to select the method of authentication, then follow the instructions specific to strategy."))
+            .child(Label::new("To use Zed's assistant with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
             .child(Label::new("Though to access models on AWS first, you will have to: "))
             .child(
                 List::new()
@@ -1181,9 +1089,7 @@ impl Render for ConfigurationView {
                         )
                     )
             )
-            .child(Label::new("Select an authentication provider:"))
-            .child(self.render_auth_method_selector(window, cx, authentication_method))
-            .child(auth_method_ui)
+            .child(self.render_static_credentials_ui(cx))
             .child(self.render_common_fields(cx))
             .child(
                 Label::new(
@@ -1253,112 +1159,69 @@ impl ConfigurationView {
         )
     }
 
-    fn render_profile_name_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_style = self.make_text_style(cx);
-
-        EditorElement::new(
-            &self.profile_name_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-
-    fn render_endpoint_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_style = self.make_text_style(cx);
-
-        EditorElement::new(
-            &self.endpoint_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-
-    #[allow(dead_code)]
-    fn render_start_url_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_style = self.make_text_style(cx);
-
-        EditorElement::new(
-            &self.start_url_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-
     // Helper method to render the authentication method selector
-    fn render_auth_method_selector(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        current_method: BedrockAuthMethod,
-    ) -> impl IntoElement {
-        let context_menu = ContextMenu::build(window, cx, |mut menu, _, _| {
-            for method in BedrockAuthMethod::iter() {
-                let bedrock_string: &'static str = method.clone().into();
-                let state = self.state.clone();
-                menu = menu.custom_entry(
-                    move |_, _| Label::new(bedrock_string).into_any_element(),
-                    move |_, cx| {
-                        state.update(cx, |state, cx| {
-                            let owned_method = method.clone();
-                            state.set_authentication_method(owned_method, cx);
-                            cx.notify();
-                        })
-                    },
-                );
-            }
-            menu
-        });
-
-        DropdownMenu::new(
-            "aws-auth-selector",
-            <BedrockAuthMethod as Into<&'static str>>::into(current_method),
-            context_menu,
-        )
-    }
+    // fn render_auth_method_selector(
+    //     &self,
+    //     window: &mut Window,
+    //     cx: &mut Context<Self>,
+    //     current_method: BedrockAuthMethod,
+    // ) -> impl IntoElement {
+    //     let context_menu = ContextMenu::build(window, cx, |mut menu, _, _| {
+    //         for method in BedrockAuthMethod::iter() {
+    //             let bedrock_string: &'static str = method.clone().into();
+    //             let state = self.state.clone();
+    //             menu = menu.custom_entry(
+    //                 move |_, _| Label::new(bedrock_string).into_any_element(),
+    //                 move |_, cx| {
+    //                     state.update(cx, |state, cx| {
+    //                         let owned_method = method.clone();
+    //                         state.set_authentication_method(owned_method, cx);
+    //                         cx.notify();
+    //                     })
+    //                 },
+    //             );
+    //         }
+    //         menu
+    //     });
+    //
+    //     DropdownMenu::new(
+    //         "aws-auth-selector",
+    //         <BedrockAuthMethod as Into<&'static str>>::into(current_method),
+    //         context_menu,
+    //     )
+    // }
 
     // Render UI for Named Profile auth method
-    fn render_named_profile_ui(&self, cx: &mut Context<Self>) -> AnyElement {
-        v_flex()
-            .my_2()
-            .gap_1p5()
-            .child(
-                Label::new("Named Profile")
-                    .size(LabelSize::Large)
-                    .weight(FontWeight::BOLD)
-            )
-            .child(
-                Label::new("This method uses an AWS profile configured in your ~/.aws/credentials file. This is typically created by the AWS CLI.")
-                    .size(LabelSize::Small)
-            )
-            .child(
-                List::new()
-                    .child(InstructionListItem::text_only("Install the AWS CLI if you haven't already: https://aws.amazon.com/cli/"))
-                    .child(InstructionListItem::text_only("Run 'aws configure' to set up your credentials"))
-                    .child(InstructionListItem::text_only("To use a profile other than 'default', enter the profile name below"))
-            )
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Label::new("Profile").size(LabelSize::Small))
-                    .child(
-                        self.make_input_styles(cx)
-                            .child(self.render_profile_name_editor(cx)),
-                    ),
-            )
-            .into_any_element()
-    }
+    // fn render_named_profile_ui(&self, cx: &mut Context<Self>) -> AnyElement {
+    //     v_flex()
+    //         .my_2()
+    //         .gap_1p5()
+    //         .child(
+    //             Label::new("Named Profile")
+    //                 .size(LabelSize::Large)
+    //                 .weight(FontWeight::BOLD)
+    //         )
+    //         .child(
+    //             Label::new("This method uses an AWS profile configured in your ~/.aws/credentials file. This is typically created by the AWS CLI.")
+    //                 .size(LabelSize::Small)
+    //         )
+    //         .child(
+    //             List::new()
+    //                 .child(InstructionListItem::text_only("Install the AWS CLI if you haven't already: https://aws.amazon.com/cli/"))
+    //                 .child(InstructionListItem::text_only("Run 'aws configure' to set up your credentials"))
+    //                 .child(InstructionListItem::text_only("To use a profile other than 'default', enter the profile name below"))
+    //         )
+    //         .child(
+    //             v_flex()
+    //                 .gap_0p5()
+    //                 .child(Label::new("Profile").size(LabelSize::Small))
+    //                 .child(
+    //                     self.make_input_styles(cx)
+    //                         .child(self.render_profile_name_editor(cx)),
+    //                 ),
+    //         )
+    //         .into_any_element()
+    // }
 
     // Render UI for Static Credentials auth method
     fn render_static_credentials_ui(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1423,81 +1286,65 @@ impl ConfigurationView {
     }
 
     // Render UI for SSO auth method
-    fn render_sso_ui(&self, cx: &mut Context<Self>) -> AnyElement {
-        v_flex()
-            .my_2()
-            .gap_1p5()
-            .child(
-                Label::new("AWS Single Sign-On (SSO) Authentication")
-                    .size(LabelSize::Default)
-                    .weight(FontWeight::BOLD),
-            )
-            .child(
-                Label::new(
-                    "This method uses AWS IAM Identity Center (formerly SSO) to authenticate.",
-                )
-                .size(LabelSize::Small),
-            )
-            .child(
-                List::new()
-                    .child(InstructionListItem::text_only(
-                        "Set up AWS SSO in your organization",
-                    ))
-                    .child(InstructionListItem::text_only(
-                        "Run 'aws configure sso' to configure your local environment",
-                    ))
-                    .child(InstructionListItem::text_only(
-                        "Then run 'aws sso login' to authenticate",
-                    ))
-                    .child(InstructionListItem::text_only(
-                        "Enter the named profile from the setup process here",
-                    )),
-            )
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Label::new("SSO Profile").size(LabelSize::Small))
-                    .child(
-                        self.make_input_styles(cx)
-                            .child(self.render_profile_name_editor(cx)),
-                    ),
-            )
-            // .child(
-            //     v_flex()
-            //         .gap_0p5()
-            //         .child(Label::new("Start URL").size(LabelSize::Small))
-            //         .child(
-            //             self.make_input_styles(cx)
-            //                 .child(self.render_start_url_editor(cx)),
-            //         ),
-            // )
-            // .child(
-            //     v_flex()
-            //         .gap_0p5()
-            //         .child(Label::new("Role ARN").size(LabelSize::Small))
-            //         .child(
-            //             self.make_input_styles(cx)
-            //                 .child(self.render_role_arn_editor(cx)),
-            //         ),
-            // )
-            .into_any_element()
-    }
-
-    // Add a renderer for the role ARN editor
-    #[allow(dead_code)]
-    fn render_role_arn_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_style = self.make_text_style(cx);
-
-        EditorElement::new(
-            &self.role_arn_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
+    // fn render_sso_ui(&self, cx: &mut Context<Self>) -> AnyElement {
+    //     v_flex()
+    //         .my_2()
+    //         .gap_1p5()
+    //         .child(
+    //             Label::new("AWS Single Sign-On (SSO) Authentication")
+    //                 .size(LabelSize::Default)
+    //                 .weight(FontWeight::BOLD),
+    //         )
+    //         .child(
+    //             Label::new(
+    //                 "This method uses AWS IAM Identity Center (formerly SSO) to authenticate.",
+    //             )
+    //                 .size(LabelSize::Small),
+    //         )
+    //         .child(
+    //             List::new()
+    //                 .child(InstructionListItem::text_only(
+    //                     "Set up AWS SSO in your organization",
+    //                 ))
+    //                 .child(InstructionListItem::text_only(
+    //                     "Run 'aws configure sso' to configure your local environment",
+    //                 ))
+    //                 .child(InstructionListItem::text_only(
+    //                     "Then run 'aws sso login' to authenticate",
+    //                 ))
+    //                 .child(InstructionListItem::text_only(
+    //                     "Enter the named profile from the setup process here",
+    //                 )),
+    //         )
+    //         .child(
+    //             v_flex()
+    //                 .gap_0p5()
+    //                 .child(Label::new("SSO Profile").size(LabelSize::Small))
+    //                 .child(
+    //                     self.make_input_styles(cx)
+    //                         .child(self.render_profile_name_editor(cx)),
+    //                 ),
+    //         )
+    /*    //         .child(
+        //             v_flex()
+        //                 .gap_0p5()
+        //                 .child(Label::new("Start URL").size(LabelSize::Small))
+        //                 .child(
+        //                     self.make_input_styles(cx)
+        //                         .child(self.render_start_url_editor(cx)),
+        //                 ),
+        //         )
+        //         .child(
+        //             v_flex()
+        //                 .gap_0p5()
+        //                 .child(Label::new("Role ARN").size(LabelSize::Small))
+        //                 .child(
+        //                     self.make_input_styles(cx)
+        //                         .child(self.render_role_arn_editor(cx)),
+        //                 ),
+        //         )*/
+    //         .into_any_element()
+    // }
 
     // Render UI for Automatic auth method
     fn render_automatic_ui(&self) -> AnyElement {
@@ -1538,20 +1385,20 @@ impl ConfigurationView {
                             .child(self.render_region_editor(cx)),
                     ),
             )
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Label::new("Endpoint (Optional)").size(LabelSize::Small))
-                    .child(
-                        Label::new("Only set this if you're using a non-standard AWS endpoint or a VPC endpoint")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                    )
-                    .child(
-                        self.make_input_styles(cx)
-                            .child(self.render_endpoint_editor(cx)),
-                    ),
-            )
+            // .child(
+            //     v_flex()
+            //         .gap_0p5()
+            //         .child(Label::new("Endpoint (Optional)").size(LabelSize::Small))
+            //         .child(
+            //             Label::new("Only set this if you're using a non-standard AWS endpoint or a VPC endpoint")
+            //                 .size(LabelSize::Small)
+            //                 .color(Color::Muted)
+            //         )
+            //         .child(
+            //             self.make_input_styles(cx)
+            //                 .child(self.render_endpoint_editor(cx)),
+            //         ),
+            // )
             .into_any_element()
     }
 }
