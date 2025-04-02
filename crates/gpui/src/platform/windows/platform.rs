@@ -397,7 +397,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn is_screen_capture_supported(&self) -> bool {
-        false
+        true
     }
 
     fn screen_capture_sources(
