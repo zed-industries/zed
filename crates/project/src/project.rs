@@ -1490,6 +1490,7 @@ impl Project {
             tcp_connection: None,
             locator: None,
             args: Default::default(),
+            stop_on_entry: None,
         };
         let caps = caps.unwrap_or(Capabilities {
             supports_step_back: Some(false),

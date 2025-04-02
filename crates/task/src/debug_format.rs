@@ -106,6 +106,8 @@ pub struct DebugAdapterConfig {
     pub locator: Option<String>,
     /// Args to pass to a debug adapter (only used in locator right now)
     pub args: Vec<String>,
+    /// Whether to tell the debug adapter to stop on entry
+    pub stop_on_entry: Option<bool>,
 }
 
 impl From<DebugTaskDefinition> for DebugAdapterConfig {
@@ -118,6 +120,7 @@ impl From<DebugTaskDefinition> for DebugAdapterConfig {
             tcp_connection: def.tcp_connection,
             locator: def.locator,
             args: def.args,
+            stop_on_entry: def.stop_on_entry,
         }
     }
 }
@@ -138,6 +141,7 @@ impl TryFrom<DebugAdapterConfig> for DebugTaskDefinition {
             tcp_connection: def.tcp_connection,
             locator: def.locator,
             args: def.args,
+            stop_on_entry: def.stop_on_entry,
         })
     }
 }
@@ -166,6 +170,7 @@ impl DebugTaskDefinition {
             initialize_args: self.initialize_args,
             locator: self.locator,
             tcp_connection: self.tcp_connection,
+            stop_on_entry: self.stop_on_entry,
         });
 
         let label = self.label.clone();
@@ -215,6 +220,8 @@ pub struct DebugTaskDefinition {
     /// Args to pass to a debug adapter (only used in locator right now)
     #[serde(skip)]
     pub args: Vec<String>,
+    /// Whether to tell the debug adapter to stop on entry
+    pub stop_on_entry: Option<bool>,
 }
 
 /// A group of Debug Tasks defined in a JSON file.

@@ -161,6 +161,7 @@ impl Render for InertState {
                             initialize_args: None,
                             args: Default::default(),
                             locator: None,
+                            stop_on_entry: None,
                         },
                     });
                 } else {
@@ -324,6 +325,7 @@ impl InertState {
             args: Default::default(),
             locator: None,
             tcp_connection: Some(TCPHost::default()),
+            stop_on_entry: None,
         };
 
         let _ = self.workspace.update(cx, |workspace, cx| {
