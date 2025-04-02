@@ -1965,68 +1965,106 @@ impl ActiveThread {
     ) -> impl Iterator<Item = AnyElement> + 'a {
         let thread = self.thread.read(cx);
 
-        thread
-            .tools_needing_confirmation()
-            .map(|tool| {
-                div()
-                    .m_3()
-                    .p_2()
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_lg()
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                v_flex()
-                                    .gap_0p5()
-                                    .child(
-                                        Label::new("The agent wants to run this action:")
-                                            .color(Color::Muted),
-                                    )
-                                    .child(div().p_3().child(Label::new(&tool.ui_text))),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child({
-                                        let tool_id = tool.id.clone();
-                                        Button::new("allow-tool-action", "Allow").on_click(
-                                            cx.listener(move |this, event, window, cx| {
-                                                this.handle_allow_tool(
-                                                    tool_id.clone(),
-                                                    event,
-                                                    window,
-                                                    cx,
-                                                )
-                                            }),
-                                        )
-                                    })
-                                    .child({
-                                        let tool_id = tool.id.clone();
-                                        let tool_name = tool.name.clone();
-                                        Button::new("deny-tool", "Deny").on_click(cx.listener(
-                                            move |this, event, window, cx| {
-                                                this.handle_deny_tool(
-                                                    tool_id.clone(),
-                                                    tool_name.clone(),
-                                                    event,
-                                                    window,
-                                                    cx,
-                                                )
-                                            },
-                                        ))
-                                    }),
-                            )
-                            .child(
-                                Label::new("Note: A future release will introduce a way to remember your answers to these. In the meantime, you can avoid these prompts by adding \"assistant\": { \"always_allow_tool_actions\": true } to your settings.json.")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
+        thread.tools_needing_confirmation().map(|tool| {
+            // Note: This element should be removed once a more full-fledged permission UX is implemented.
+            let beta_tag = h_flex()
+                .id("beta-tag")
+                .h(px(18.))
+                .px_1()
+                .gap_1()
+                .border_1()
+                .border_color(cx.theme().colors().text_accent.opacity(0.2))
+                .border_dashed()
+                .rounded_sm()
+                .bg(cx.theme().colors().text_accent.opacity(0.1))
+                .hover(|style| style.bg(cx.theme().colors().text_accent.opacity(0.2)))
+                .child(Label::new("Beta").size(LabelSize::XSmall))
+                .child(Icon::new(IconName::Info).color(Color::Accent).size(IconSize::Indicator))
+                .tooltip(
+                    Tooltip::text(
+                        "A future release will introduce a way to remember your answers to these. In the meantime, you can avoid these prompts by adding \"assistant\": { \"always_allow_tool_actions\": true } to your settings.json."
                     )
-                    .into_any()
-            })
+                );
+
+            v_flex()
+                .mt_2()
+                .mx_4()
+                .border_1()
+                .border_color(self.tool_card_border_color(cx))
+                .rounded_lg()
+                .child(
+                    h_flex()
+                        .py_1()
+                        .pl_2()
+                        .pr_1()
+                        .justify_between()
+                        .rounded_t_lg()
+                        .border_b_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .bg(self.tool_card_header_bg(cx))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(Label::new("Action Confirmation").size(LabelSize::Small))
+                                .child(beta_tag),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child({
+                                    let tool_id = tool.id.clone();
+                                    Button::new("allow-tool-action", "Allow")
+                                        .label_size(LabelSize::Small)
+                                        .icon(IconName::Check)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Success)
+                                        .on_click(cx.listener(move |this, event, window, cx| {
+                                            this.handle_allow_tool(
+                                                tool_id.clone(),
+                                                event,
+                                                window,
+                                                cx,
+                                            )
+                                        }))
+                                })
+                                .child({
+                                    let tool_id = tool.id.clone();
+                                    let tool_name = tool.name.clone();
+                                    Button::new("deny-tool", "Deny")
+                                        .label_size(LabelSize::Small)
+                                        .icon(IconName::Close)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Error)
+                                        .on_click(cx.listener(move |this, event, window, cx| {
+                                            this.handle_deny_tool(
+                                                tool_id.clone(),
+                                                tool_name.clone(),
+                                                event,
+                                                window,
+                                                cx,
+                                            )
+                                        }))
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("action_container")
+                        .rounded_b_lg()
+                        .bg(cx.theme().colors().editor_background)
+                        .overflow_y_scroll()
+                        .max_h_40()
+                        .p_2p5()
+                        .child(
+                            Label::new(&tool.ui_text)
+                                .size(LabelSize::Small)
+                                .buffer_font(cx),
+                        ),
+                )
+                .into_any()
+        })
     }
 
     fn dismiss_notifications(&mut self, cx: &mut Context<ActiveThread>) {
