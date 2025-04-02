@@ -2,7 +2,12 @@
   description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs?ref=nixpkgs-unstable";
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -11,14 +16,16 @@
     flake-compat.url = "github:edolstra/flake-compat";
   };
 
+  nixConfig.extra-substituters = [ "https://zed-industries.cachix.org" ];
+  nixConfig.extra-trusted-public-keys = [
+    "zed-industries.cachix.org-1:QW3RoXK0Lm4ycmU5/3bmYRd3MLf4RbTGPqRulGlX5W0="
+  ];
+
   outputs =
-    {
-      nixpkgs,
-      rust-overlay,
-      crane,
-      ...
-    }:
-    let
+    inputs@{ flake-parts, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      imports = [ ./nix/overlay.nix ];
+
       systems = [
         "x86_64-linux"
         "x86_64-darwin"
@@ -26,39 +33,19 @@
         "aarch64-darwin"
       ];
 
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-      mkZed =
-        pkgs:
-        let
-          rustBin = rust-overlay.lib.mkRustBin { } pkgs;
-        in
-        pkgs.callPackage ./nix/build.nix {
-          crane = crane.mkLib pkgs;
-          rustToolchain = rustBin.fromRustupToolchainFile ./rust-toolchain.toml;
-        };
-    in
-    rec {
-      packages = forAllSystems (pkgs: rec {
-        default = mkZed pkgs;
-        debug = default.override { profile = "dev"; };
-      });
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.callPackage ./nix/shell.nix {
-          zed-editor = packages.${pkgs.hostPlatform.system}.default;
-        };
-      });
-      formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
-      overlays.default = final: _: {
-        zed-editor = mkZed final;
-      };
-    };
+      perSystem =
+        { self', pkgs, ... }:
+        {
+          packages = {
+            default = pkgs.zed-editor;
+            debug = self'.packages.default.override { profile = "dev"; };
+          };
 
-  nixConfig = {
-    extra-substituters = [
-      "https://zed-industries.cachix.org"
-    ];
-    extra-trusted-public-keys = [
-      "zed-industries.cachix.org-1:QW3RoXK0Lm4ycmU5/3bmYRd3MLf4RbTGPqRulGlX5W0="
-    ];
-  };
+          devShells = {
+            darwin = pkgs.callPackage ./nix/shell-darwin.nix { };
+            common = pkgs.callPackage ./nix/shell.nix { };
+            default = self'.devShells.darwin;
+          };
+        };
+    };
 }

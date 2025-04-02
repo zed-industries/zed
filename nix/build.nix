@@ -10,7 +10,7 @@
   cargo-bundle,
   crane,
   rustPlatform,
-  rustToolchain,
+  rust-toolchain,
 
   copyDesktopItems,
   envsubst,
@@ -65,7 +65,7 @@ let
     in
     builtins.elem firstComp topLevelIncludes;
 
-  craneLib = crane.overrideToolchain rustToolchain;
+  craneLib = crane.overrideToolchain rust-toolchain;
   gpu-lib = if withGLES then libglvnd else vulkan-loader;
   commonArgs =
     let
@@ -107,11 +107,11 @@ let
                 hash = "sha256-cSvW0ND148AGdIGWg/ku0yIacVgW+9f1Nsi+kAQxVrI=";
               };
               # https://nixos.asia/en/buildRustPackage
-              cargoDeps = old.cargoDeps.overrideAttrs ({
+              cargoDeps = old.cargoDeps.overrideAttrs {
                 inherit src;
                 name = "${new.pname}-${new.version}-vendor.tar.gz";
                 outputHash = "sha256-Q49FnXNHWhvbH1LtMUpXFcvGKu9VHwqOXXd+MjswO64=";
-              });
+              };
             }
           ))
         ];
