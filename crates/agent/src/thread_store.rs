@@ -374,6 +374,8 @@ pub struct SerializedMessage {
     pub tool_uses: Vec<SerializedToolUse>,
     #[serde(default)]
     pub tool_results: Vec<SerializedToolResult>,
+    #[serde(default)]
+    pub context: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -441,6 +443,7 @@ impl LegacySerializedMessage {
             segments: vec![SerializedMessageSegment::Text { text: self.text }],
             tool_uses: self.tool_uses,
             tool_results: self.tool_results,
+            context: String::new(),
         }
     }
 }

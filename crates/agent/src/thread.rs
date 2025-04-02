@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
@@ -30,7 +30,7 @@ use settings::Settings;
 use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
 use uuid::Uuid;
 
-use crate::context::{AssistantContext, ContextId, attach_context_to_message};
+use crate::context::{AssistantContext, ContextId, format_context_as_string};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse,
@@ -82,6 +82,7 @@ pub struct Message {
     pub id: MessageId,
     pub role: Role,
     pub segments: Vec<MessageSegment>,
+    pub context: String,
 }
 
 impl Message {
@@ -104,6 +105,11 @@ impl Message {
 
     pub fn to_string(&self) -> String {
         let mut result = String::new();
+
+        if !self.context.is_empty() {
+            result.push_str(&self.context);
+        }
+
         for segment in &self.segments {
             match segment {
                 MessageSegment::Text(text) => result.push_str(text),
@@ -114,6 +120,7 @@ impl Message {
                 }
             }
         }
+
         result
     }
 }
@@ -304,6 +311,7 @@ impl Thread {
                             }
                         })
                         .collect(),
+                    context: message.context,
                 })
                 .collect(),
             next_message_id,
@@ -564,8 +572,18 @@ impl Thread {
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        let message_id =
-            self.insert_message(Role::User, vec![MessageSegment::Text(text.into())], cx);
+        let text = text.into();
+
+        let message_id = self.insert_message(Role::User, vec![MessageSegment::Text(text)], cx);
+
+        if !context.is_empty() {
+            if let Some(context_string) = format_context_as_string(context.iter(), cx) {
+                if let Some(message) = self.messages.iter_mut().find(|m| m.id == message_id) {
+                    message.context = context_string;
+                }
+            }
+        }
+
         let context_ids = context
             .iter()
             .map(|context| context.id())
@@ -573,6 +591,7 @@ impl Thread {
         self.context
             .extend(context.into_iter().map(|context| (context.id(), context)));
         self.context_by_message.insert(message_id, context_ids);
+
         if let Some(git_checkpoint) = git_checkpoint {
             self.pending_checkpoint = Some(ThreadCheckpoint {
                 message_id,
@@ -589,7 +608,12 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> MessageId {
         let id = self.next_message_id.post_inc();
-        self.messages.push(Message { id, role, segments });
+        self.messages.push(Message {
+            id,
+            role,
+            segments,
+            context: String::new(),
+        });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
         id
@@ -695,6 +719,7 @@ impl Thread {
                                 content: tool_result.content.clone(),
                             })
                             .collect(),
+                        context: message.context.clone(),
                     })
                     .collect(),
                 initial_project_snapshot,
@@ -881,8 +906,6 @@ impl Thread {
             log::error!("system_prompt_context not set.")
         }
 
-        let mut added_context_ids = HashSet::<ContextId>::default();
-
         for message in &self.messages {
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
@@ -900,23 +923,6 @@ impl Thread {
                     if self.tool_use.message_has_tool_results(message.id) {
                         continue;
                     }
-                }
-            }
-
-            // Attach context to this message if it's the first to reference it
-            if let Some(context_ids) = self.context_by_message.get(&message.id) {
-                let new_context_ids: Vec<_> = context_ids
-                    .iter()
-                    .filter(|id| !added_context_ids.contains(id))
-                    .collect();
-
-                if !new_context_ids.is_empty() {
-                    let referenced_context = new_context_ids
-                        .iter()
-                        .filter_map(|context_id| self.context.get(*context_id));
-
-                    attach_context_to_message(&mut request_message, referenced_context, cx);
-                    added_context_ids.extend(context_ids.iter());
                 }
             }
 
