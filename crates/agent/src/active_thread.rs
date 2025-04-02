@@ -861,19 +861,6 @@ impl ActiveThread {
         cx.notify();
     }
 
-    fn last_user_message(&self, cx: &Context<Self>) -> Option<MessageId> {
-        self.messages
-            .iter()
-            .rev()
-            .find(|message_id| {
-                self.thread
-                    .read(cx)
-                    .message(**message_id)
-                    .map_or(false, |message| message.role == Role::User)
-            })
-            .cloned()
-    }
-
     fn messages_after(&self, message_id: MessageId) -> &[MessageId] {
         self.messages
             .iter()
@@ -1001,8 +988,7 @@ impl ActiveThread {
             return Empty.into_any();
         }
 
-        let allow_editing_message =
-            message.role == Role::User && self.last_user_message(cx) == Some(message_id);
+        let allow_editing_message = message.role == Role::User;
 
         let edit_message_editor = self
             .editing_message
@@ -1209,10 +1195,6 @@ impl ActiveThread {
                                 )
                                 .child(
                                     h_flex()
-                                        // DL: To double-check whether we want to fully remove
-                                        // the editing feature from meassages. Checkpoint sort of
-                                        // solve the same problem.
-                                        .invisible()
                                         .gap_1()
                                         .when_some(
                                             edit_message_editor.clone(),
