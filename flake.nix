@@ -44,7 +44,8 @@
           devShells = {
             darwin = pkgs.callPackage ./nix/shell-darwin.nix { };
             common = pkgs.callPackage ./nix/shell.nix { };
-            default = self'.devShells.darwin;
+            default =
+              if pkgs.stdenv.hostPlatform.isDarwin then self'.devShells.darwin else self'.devShells.common;
           };
         };
     };
