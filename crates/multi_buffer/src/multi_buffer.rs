@@ -13,9 +13,7 @@ use buffer_diff::{
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
-use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
-};
+use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
@@ -1570,7 +1568,6 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-
         let excerpt_ranges = ranges
             .into_iter()
             .map(|range| {
@@ -1586,7 +1583,6 @@ impl MultiBuffer {
             })
             .collect::<Vec<_>>();
 
-        let buffer_snapshot = buffer.read(cx).snapshot();
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
         self.set_excerpt_ranges_for_path(
             path,
@@ -1599,8 +1595,47 @@ impl MultiBuffer {
         )
     }
 
+    pub fn set_anchored_excerpts_for_path(
+        &self,
+        buffer: Entity<Buffer>,
+        ranges: Vec<Range<text::Anchor>>,
+        context_line_count: u32,
+        cx: &mut Context<Self>,
+    ) -> Task<Vec<Range<Anchor>>> {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let path_key = PathKey::for_buffer(&buffer, cx);
+        cx.spawn(async move |multi_buffer, cx| {
+            let snapshot = buffer_snapshot.clone();
+            let (excerpt_ranges, new, counts) = cx
+                .background_spawn(async move {
+                    let ranges = ranges.into_iter().map(|range| range.to_point(&snapshot));
+                    let excerpt_ranges =
+                        build_excerpt_ranges(&snapshot, ranges, context_line_count);
+                    let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
+                    (excerpt_ranges, new, counts)
+                })
+                .await;
+
+            multi_buffer
+                .update(cx, move |multi_buffer, cx| {
+                    let (ranges, _) = multi_buffer.set_excerpt_ranges_for_path(
+                        path_key,
+                        buffer,
+                        excerpt_ranges,
+                        buffer_snapshot,
+                        new,
+                        counts,
+                        cx,
+                    );
+                    ranges
+                })
+                .ok()
+                .unwrap_or_default()
+        })
+    }
+
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
-    pub fn set_excerpt_ranges_for_path(
+    fn set_excerpt_ranges_for_path(
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,
@@ -1627,47 +1662,6 @@ impl MultiBuffer {
             }
         }
         (result, added_a_new_excerpt)
-    }
-
-    pub fn set_anchored_excerpts_for_path(
-        &self,
-        buffer: Entity<Buffer>,
-        ranges: Vec<Range<text::Anchor>>,
-        context_line_count: u32,
-        cx: &mut Context<Self>,
-    ) -> Task<Vec<Range<Anchor>>> {
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let path_key = PathKey::for_buffer(&buffer, cx);
-        cx.spawn(
-            async move |multi_buffer: WeakEntity<MultiBuffer>, cx: &mut AsyncApp| {
-                let snapshot = buffer_snapshot.clone();
-                let (excerpt_ranges, new, counts) = cx
-                    .background_spawn(async move {
-                        let ranges = ranges.into_iter().map(|range| range.to_point(&snapshot));
-                        let excerpt_ranges =
-                            build_excerpt_ranges(&snapshot, ranges, context_line_count);
-                        let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
-                        (excerpt_ranges, new, counts)
-                    })
-                    .await;
-
-                multi_buffer
-                    .update(cx, move |multi_buffer, cx| {
-                        let (ranges, _) = multi_buffer.set_excerpt_ranges_for_path(
-                            path_key,
-                            buffer,
-                            excerpt_ranges,
-                            buffer_snapshot,
-                            new,
-                            counts,
-                            cx,
-                        );
-                        ranges
-                    })
-                    .ok()
-                    .unwrap_or_default()
-            },
-        )
     }
 
     fn merge_excerpt_ranges<'a>(

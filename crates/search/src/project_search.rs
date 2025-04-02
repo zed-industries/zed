@@ -264,11 +264,13 @@ impl ProjectSearch {
             let mut matches = pin!(search.ready_chunks(1024));
             let project_search = project_search.upgrade()?;
             project_search
-                .update(cx, |this, cx| {
-                    this.match_ranges.clear();
-                    this.excerpts.update(cx, |this, cx| this.clear(cx));
-                    this.no_results = Some(true);
-                    this.limit_reached = false;
+                .update(cx, |project_search, cx| {
+                    project_search.match_ranges.clear();
+                    project_search
+                        .excerpts
+                        .update(cx, |excerpts, cx| excerpts.clear(cx));
+                    project_search.no_results = Some(true);
+                    project_search.limit_reached = false;
                 })
                 .ok()?;
 
