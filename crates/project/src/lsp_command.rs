@@ -2353,9 +2353,7 @@ pub(crate) fn parse_completion_text_edit(
 
                         // is `text_to_replace` a subsequence of `completion_text`
                         text_to_replace.all(|needle_ch| {
-                            completion_text
-                                .find(|haystack_ch| *haystack_ch == needle_ch)
-                                .is_some()
+                            completion_text.any(|haystack_ch| haystack_ch == needle_ch)
                         })
                     }
                 }
