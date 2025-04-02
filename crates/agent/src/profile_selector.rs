@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfile, AssistantSettings};
+use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
 use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
 use indexmap::IndexMap;
@@ -15,7 +15,7 @@ use util::ResultExt as _;
 use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
 
 pub struct ProfileSelector {
-    profiles: IndexMap<Arc<str>, AgentProfile>,
+    profiles: IndexMap<AgentProfileId, AgentProfile>,
     fs: Arc<dyn Fs>,
     thread_store: WeakEntity<ThreadStore>,
     focus_handle: FocusHandle,
@@ -133,7 +133,7 @@ impl Render for ProfileSelector {
             .active_model()
             .map_or(false, |model| model.supports_tools());
 
-        let icon = match profile_id.as_ref() {
+        let icon = match profile_id.as_str() {
             "write" => IconName::Pencil,
             "ask" => IconName::MessageBubbles,
             _ => IconName::UserRoundPen,
