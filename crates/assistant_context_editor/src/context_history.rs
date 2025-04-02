@@ -3,13 +3,13 @@ use std::sync::Arc;
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use project::Project;
-use ui::utils::{format_distance_from_now, DateTimeType};
-use ui::{prelude::*, Avatar, ListItem, ListItemSpacing};
+use ui::utils::{DateTimeType, format_distance_from_now};
+use ui::{Avatar, ListItem, ListItemSpacing, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{
-    AssistantPanelDelegate, ContextStore, RemoteContextMetadata, SavedContextMetadata,
-    DEFAULT_TAB_TITLE,
+    AssistantPanelDelegate, ContextStore, DEFAULT_TAB_TITLE, RemoteContextMetadata,
+    SavedContextMetadata,
 };
 
 #[derive(Clone)]
@@ -229,10 +229,12 @@ impl PickerDelegate for SavedContextPickerDelegate {
                                         .into_any_element(),
                                 ]
                             } else {
-                                vec![Label::new("Shared by host")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small)
-                                    .into_any_element()]
+                                vec![
+                                    Label::new("Shared by host")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small)
+                                        .into_any_element(),
+                                ]
                             }),
                     )
             }

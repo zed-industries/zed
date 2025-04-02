@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
 use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
-use search::{project_search::ProjectSearchBar, BufferSearchBar};
+use search::{BufferSearchBar, project_search::ProjectSearchBar};
 
 use crate::{state::Operator, *};
 
@@ -24,6 +24,7 @@ impl VimTestContext {
             git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
+            workspace::init_settings(cx);
             language::init(cx);
             editor::init_settings(cx);
             project::Project::init_settings(cx);

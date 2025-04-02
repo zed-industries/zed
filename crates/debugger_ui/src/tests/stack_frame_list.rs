@@ -4,14 +4,15 @@ use crate::{
     tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
-    requests::{StackTrace, Threads},
     StackFrame,
+    requests::{StackTrace, Threads},
 };
 use editor::{Editor, ToPoint as _};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use serde_json::json;
 use std::sync::Arc;
+use task::LaunchConfig;
 use unindent::Unindent as _;
 use util::path;
 
@@ -52,8 +53,10 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(dap::DebugRequestType::Launch, None, None),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            None,
+            false,
             cx,
         )
     });
@@ -240,8 +243,10 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(dap::DebugRequestType::Launch, None, None),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            None,
+            false,
             cx,
         )
     });
@@ -513,8 +518,10 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(dap::DebugRequestType::Launch, None, None),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            None,
+            false,
             cx,
         )
     });

@@ -1,11 +1,11 @@
-use gpui::{actions, App, ClipboardItem, PromptLevel};
+use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::SystemSpecs;
 use util::ResultExt;
 use workspace::Workspace;
 
 pub mod feedback_modal;
 
-mod system_specs;
+pub mod system_specs;
 
 actions!(
     zed,

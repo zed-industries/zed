@@ -17,7 +17,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
@@ -30,8 +30,9 @@ use util::ResultExt as _;
 use crate::{ContextServerSettings, ServerConfig};
 
 use crate::{
+    CONTEXT_SERVERS_NAMESPACE, ContextServerFactoryRegistry,
     client::{self, Client},
-    types, ContextServerFactoryRegistry, CONTEXT_SERVERS_NAMESPACE,
+    types,
 };
 
 pub struct ContextServer {
@@ -247,12 +248,15 @@ impl ContextServerManager {
         let mut desired_servers = HashMap::default();
 
         let (registry, project) = this.update(cx, |this, cx| {
-            let location = this.project.read(cx).worktrees(cx).next().map(|worktree| {
-                settings::SettingsLocation {
+            let location = this
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| settings::SettingsLocation {
                     worktree_id: worktree.read(cx).id(),
                     path: Path::new(""),
-                }
-            });
+                });
             let settings = ContextServerSettings::get(location, cx);
             desired_servers = settings.context_servers.clone();
 

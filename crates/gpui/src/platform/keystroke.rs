@@ -91,38 +91,68 @@ impl Keystroke {
 
         let mut components = source.split('-').peekable();
         while let Some(component) = components.next() {
-            match component {
-                "ctrl" => control = true,
-                "alt" => alt = true,
-                "shift" => shift = true,
-                "fn" => function = true,
-                "secondary" => {
-                    if cfg!(target_os = "macos") {
-                        platform = true
-                    } else {
-                        control = true
-                    };
-                }
-                "cmd" | "super" | "win" => platform = true,
-                _ => {
-                    if let Some(next) = components.peek() {
-                        if next.is_empty() && source.ends_with('-') {
-                            key = Some(String::from("-"));
-                            break;
-                        } else if next.len() > 1 && next.starts_with('>') {
-                            key = Some(String::from(component));
-                            key_char = Some(String::from(&next[1..]));
-                            components.next();
-                        } else {
-                            return Err(InvalidKeystrokeError {
-                                keystroke: source.to_owned(),
-                            });
-                        }
-                    } else {
-                        key = Some(String::from(component));
-                    }
-                }
+            if component.eq_ignore_ascii_case("ctrl") {
+                control = true;
+                continue;
             }
+            if component.eq_ignore_ascii_case("alt") {
+                alt = true;
+                continue;
+            }
+            if component.eq_ignore_ascii_case("shift") {
+                shift = true;
+                continue;
+            }
+            if component.eq_ignore_ascii_case("fn") {
+                function = true;
+                continue;
+            }
+            if component.eq_ignore_ascii_case("secondary") {
+                if cfg!(target_os = "macos") {
+                    platform = true;
+                } else {
+                    control = true;
+                };
+                continue;
+            }
+
+            let is_platform = component.eq_ignore_ascii_case("cmd")
+                || component.eq_ignore_ascii_case("super")
+                || component.eq_ignore_ascii_case("win");
+
+            if is_platform {
+                platform = true;
+                continue;
+            }
+
+            let mut key_str = component.to_string();
+
+            if let Some(next) = components.peek() {
+                if next.is_empty() && source.ends_with('-') {
+                    key = Some(String::from("-"));
+                    break;
+                } else if next.len() > 1 && next.starts_with('>') {
+                    key = Some(key_str);
+                    key_char = Some(String::from(&next[1..]));
+                    components.next();
+                } else {
+                    return Err(InvalidKeystrokeError {
+                        keystroke: source.to_owned(),
+                    });
+                }
+                continue;
+            }
+
+            if component.len() == 1 && component.as_bytes()[0].is_ascii_uppercase() {
+                // Convert to shift + lowercase char
+                shift = true;
+                key_str.make_ascii_lowercase();
+            } else {
+                // convert ascii chars to lowercase so that named keys like "tab" and "enter"
+                // are accepted case insensitively and stored how we expect so they are matched properly
+                key_str.make_ascii_lowercase()
+            }
+            key = Some(key_str);
         }
 
         // Allow for the user to specify a keystroke modifier as the key itself
@@ -159,7 +189,7 @@ impl Keystroke {
                 function,
             },
             key,
-            key_char: key_char,
+            key_char,
         })
     }
 

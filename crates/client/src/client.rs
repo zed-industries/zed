@@ -6,7 +6,7 @@ pub mod telemetry;
 pub mod user;
 pub mod zed_urls;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     client::IntoClientRequest,
@@ -17,10 +17,10 @@ use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use credentials_provider::CredentialsProvider;
 use futures::{
-    channel::oneshot, future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
-    TryFutureExt as _, TryStreamExt,
+    AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
+    channel::oneshot, future::BoxFuture,
 };
-use gpui::{actions, App, AppContext as _, AsyncApp, Entity, Global, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
@@ -40,8 +40,8 @@ use std::{
     marker::PhantomData,
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, LazyLock, Weak,
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -817,7 +817,7 @@ impl Client {
             | Status::Reauthenticating { .. }
             | Status::ReconnectionError { .. } => false,
             Status::Connected { .. } | Status::Connecting { .. } | Status::Reconnecting { .. } => {
-                return Ok(())
+                return Ok(());
             }
             Status::UpgradeRequired => return Err(EstablishConnectionError::UpgradeRequired)?,
         };
@@ -1024,7 +1024,7 @@ impl Client {
         &self,
         http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
-    ) -> impl Future<Output = Result<url::Url>> {
+    ) -> impl Future<Output = Result<url::Url>> + use<> {
         #[cfg(any(test, feature = "test-support"))]
         let url_override = self.rpc_url.read().clone();
 
@@ -1444,7 +1444,7 @@ impl Client {
     pub fn request<T: RequestMessage>(
         &self,
         request: T,
-    ) -> impl Future<Output = Result<T::Response>> {
+    ) -> impl Future<Output = Result<T::Response>> + use<T> {
         self.request_envelope(request)
             .map_ok(|envelope| envelope.payload)
     }
@@ -1476,7 +1476,7 @@ impl Client {
     pub fn request_envelope<T: RequestMessage>(
         &self,
         request: T,
-    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> + use<T> {
         let client_id = self.id();
         log::debug!(
             "rpc request start. client_id:{}. name:{}",
@@ -1501,7 +1501,7 @@ impl Client {
         &self,
         envelope: proto::Envelope,
         request_type: &'static str,
-    ) -> impl Future<Output = Result<proto::Envelope>> {
+    ) -> impl Future<Output = Result<proto::Envelope>> + use<> {
         let client_id = self.id();
         log::debug!(
             "rpc request start. client_id:{}. name:{}",

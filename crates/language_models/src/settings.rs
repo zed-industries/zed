@@ -6,7 +6,7 @@ use language_model::LanguageModelCacheConfiguration;
 use project::Fs;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsSources};
+use settings::{Settings, SettingsSources, update_settings_file};
 
 use crate::provider::{
     self,
@@ -109,6 +109,7 @@ impl AnthropicSettingsContent {
                                     max_output_tokens,
                                     default_temperature,
                                     extra_beta_headers,
+                                    mode,
                                 } => Some(provider::anthropic::AvailableModel {
                                     name,
                                     display_name,
@@ -124,6 +125,7 @@ impl AnthropicSettingsContent {
                                     max_output_tokens,
                                     default_temperature,
                                     extra_beta_headers,
+                                    mode: Some(mode.into()),
                                 }),
                                 _ => None,
                             })

@@ -1,12 +1,12 @@
-use crate::ui::InstructionListItem;
 use crate::AllLanguageModelSettings;
-use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent, Usage};
-use anyhow::{anyhow, Context as _, Result};
+use crate::ui::InstructionListItem;
+use anthropic::{AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, Usage};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
+use futures::{FutureExt, StreamExt, TryStreamExt as _, future::BoxFuture, stream::BoxStream};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
@@ -25,8 +25,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, List, Tooltip};
-use util::{maybe, ResultExt};
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use util::{ResultExt, maybe};
 
 const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: &str = "Anthropic";
@@ -55,6 +55,37 @@ pub struct AvailableModel {
     pub default_temperature: Option<f32>,
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
+        budget_tokens: Option<u32>,
+    },
+}
+
+impl From<ModelMode> for AnthropicModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => AnthropicModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
+        }
+    }
+}
+
+impl From<AnthropicModelMode> for ModelMode {
+    fn from(value: AnthropicModelMode) -> Self {
+        match value {
+            AnthropicModelMode::Default => ModelMode::Default,
+            AnthropicModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+        }
+    }
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -228,6 +259,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                     extra_beta_headers: model.extra_beta_headers.clone(),
+                    mode: model.mode.clone().unwrap_or_default().into(),
                 },
             );
         }
@@ -368,6 +400,10 @@ impl LanguageModel for AnthropicModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
     fn telemetry_id(&self) -> String {
         format!("anthropic/{}", self.model.id())
     }
@@ -399,9 +435,10 @@ impl LanguageModel for AnthropicModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request = into_anthropic(
             request,
-            self.model.id().into(),
+            self.model.request_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
+            self.model.mode(),
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
@@ -434,6 +471,7 @@ impl LanguageModel for AnthropicModel {
             self.model.tool_model_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
+            self.model.mode(),
         );
         request.tool_choice = Some(anthropic::ToolChoice::Tool {
             name: tool_name.clone(),
@@ -464,6 +502,7 @@ pub fn into_anthropic(
     model: String,
     default_temperature: f32,
     max_output_tokens: u32,
+    mode: AnthropicModelMode,
 ) -> anthropic::Request {
     let mut new_messages: Vec<anthropic::Message> = Vec::new();
     let mut system_message = String::new();
@@ -551,7 +590,16 @@ pub fn into_anthropic(
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
-        system: Some(system_message),
+        system: if system_message.is_empty() {
+            None
+        } else {
+            Some(anthropic::StringOrContents::String(system_message))
+        },
+        thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
+            Some(anthropic::Thinking::Enabled { budget_tokens })
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()
@@ -607,6 +655,16 @@ pub fn map_to_language_model_completion_events(
                                     state,
                                 ));
                             }
+                            ResponseContent::Thinking { thinking } => {
+                                return Some((
+                                    vec![Ok(LanguageModelCompletionEvent::Thinking(thinking))],
+                                    state,
+                                ));
+                            }
+                            ResponseContent::RedactedThinking { .. } => {
+                                // Redacted thinking is encrypted and not accessible to the user, see:
+                                // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
+                            }
                             ResponseContent::ToolUse { id, name, .. } => {
                                 state.tool_uses_by_index.insert(
                                     index,
@@ -625,6 +683,13 @@ pub fn map_to_language_model_completion_events(
                                     state,
                                 ));
                             }
+                            ContentDelta::ThinkingDelta { thinking } => {
+                                return Some((
+                                    vec![Ok(LanguageModelCompletionEvent::Thinking(thinking))],
+                                    state,
+                                ));
+                            }
+                            ContentDelta::SignatureDelta { .. } => {}
                             ContentDelta::InputJsonDelta { partial_json } => {
                                 if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
                                     tool_use.input_json.push_str(&partial_json);

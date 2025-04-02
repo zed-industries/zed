@@ -1,5 +1,5 @@
 use crate::{PeerId, RequestMessage};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::{marker::PhantomData, time::Instant};
 
 pub struct Receipt<T> {

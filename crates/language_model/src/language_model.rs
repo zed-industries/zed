@@ -11,16 +11,17 @@ pub mod fake_provider;
 use anyhow::Result;
 use client::Client;
 use futures::FutureExt;
-use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
+use futures::{StreamExt, TryStreamExt as _, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
+use icons::IconName;
+use parking_lot::Mutex;
 use proto::Plan;
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
 use std::ops::{Add, Sub};
 use std::{future::Future, sync::Arc};
 use thiserror::Error;
-use ui::IconName;
 use util::serde::is_default;
 
 pub use crate::model::*;
@@ -59,9 +60,19 @@ pub struct LanguageModelCacheConfiguration {
 pub enum LanguageModelCompletionEvent {
     Stop(StopReason),
     Text(String),
+    Thinking(String),
     ToolUse(LanguageModelToolUse),
     StartMessage { message_id: String },
     UsageUpdate(TokenUsage),
+}
+
+/// Indicates the format used to define the input schema for a language model tool.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LanguageModelToolSchemaFormat {
+    /// A JSON schema, see https://json-schema.org
+    JsonSchema,
+    /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
+    JsonSchemaSubset,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
@@ -140,6 +151,8 @@ pub struct LanguageModelToolUse {
 pub struct LanguageModelTextStream {
     pub message_id: Option<String>,
     pub stream: BoxStream<'static, Result<String>>,
+    // Has complete token usage after the stream has finished
+    pub last_token_usage: Arc<Mutex<TokenUsage>>,
 }
 
 impl Default for LanguageModelTextStream {
@@ -147,6 +160,7 @@ impl Default for LanguageModelTextStream {
         Self {
             message_id: None,
             stream: Box::pin(futures::stream::empty()),
+            last_token_usage: Arc::new(Mutex::new(TokenUsage::default())),
         }
     }
 }
@@ -169,6 +183,13 @@ pub trait LanguageModel: Send + Sync {
     /// Returns the availability of this language model.
     fn availability(&self) -> LanguageModelAvailability {
         LanguageModelAvailability::Public
+    }
+
+    /// Whether this model supports tools.
+    fn supports_tools(&self) -> bool;
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        LanguageModelToolSchemaFormat::JsonSchema
     }
 
     fn max_token_count(&self) -> usize;
@@ -199,6 +220,7 @@ pub trait LanguageModel: Send + Sync {
             let mut events = events.await?.fuse();
             let mut message_id = None;
             let mut first_item_text = None;
+            let last_token_usage = Arc::new(Mutex::new(TokenUsage::default()));
 
             if let Some(first_event) = events.next().await {
                 match first_event {
@@ -213,19 +235,33 @@ pub trait LanguageModel: Send + Sync {
             }
 
             let stream = futures::stream::iter(first_item_text.map(Ok))
-                .chain(events.filter_map(|result| async move {
-                    match result {
-                        Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
-                        Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
-                        Ok(LanguageModelCompletionEvent::Stop(_)) => None,
-                        Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
-                        Ok(LanguageModelCompletionEvent::UsageUpdate(_)) => None,
-                        Err(err) => Some(Err(err)),
+                .chain(events.filter_map({
+                    let last_token_usage = last_token_usage.clone();
+                    move |result| {
+                        let last_token_usage = last_token_usage.clone();
+                        async move {
+                            match result {
+                                Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
+                                Ok(LanguageModelCompletionEvent::Thinking(_)) => None,
+                                Ok(LanguageModelCompletionEvent::Stop(_)) => None,
+                                Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
+                                Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
+                                    *last_token_usage.lock() = token_usage;
+                                    None
+                                }
+                                Err(err) => Some(Err(err)),
+                            }
+                        }
                     }
                 }))
                 .boxed();
 
-            Ok(LanguageModelTextStream { message_id, stream })
+            Ok(LanguageModelTextStream {
+                message_id,
+                stream,
+                last_token_usage,
+            })
         }
         .boxed()
     }
@@ -317,7 +353,10 @@ pub trait LanguageModelProvider: 'static {
 
 #[derive(PartialEq, Eq)]
 pub enum LanguageModelProviderTosView {
-    ThreadEmptyState,
+    /// When there are some past interactions in the Agent Panel.
+    ThreadtEmptyState,
+    /// When there are no past interactions in the Agent Panel.
+    ThreadFreshStart,
     PromptEditorPopup,
     Configuration,
 }

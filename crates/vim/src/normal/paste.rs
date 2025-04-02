@@ -1,15 +1,15 @@
-use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{impl_actions, Context, Window};
+use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
+use gpui::{Context, Window, impl_actions};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::cmp;
 
 use crate::{
-    motion::Motion,
+    Vim,
+    motion::{Motion, MotionKind},
     object::Object,
     state::{Mode, Register},
-    Vim,
 };
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -50,7 +50,7 @@ impl Vim {
                     .filter(|sel| sel.len() > 1 && vim.mode != Mode::VisualLine);
 
                 if !action.preserve_clipboard && vim.mode.is_visual() {
-                    vim.copy_selections_content(editor, vim.mode == Mode::VisualLine, window, cx);
+                    vim.copy_selections_content(editor, MotionKind::for_mode(vim.mode), window, cx);
                 }
 
                 let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
@@ -118,8 +118,8 @@ impl Vim {
                         } else {
                             to_insert = "\n".to_owned() + &to_insert;
                         }
-                    } else if !line_mode && vim.mode == Mode::VisualLine {
-                        to_insert += "\n";
+                    } else if line_mode && vim.mode == Mode::VisualLine {
+                        to_insert.pop();
                     }
 
                     let display_range = if !selection.is_empty() {
@@ -257,7 +257,7 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
-                        motion.expand_selection(map, selection, times, false, &text_layout_details);
+                        motion.expand_selection(map, selection, times, &text_layout_details);
                     });
                 });
 
@@ -283,15 +283,15 @@ impl Vim {
 #[cfg(test)]
 mod test {
     use crate::{
+        UseSystemClipboard, VimSettings,
         state::{Mode, Register},
         test::{NeovimBackedTestContext, VimTestContext},
-        UseSystemClipboard, VimSettings,
     };
     use gpui::ClipboardItem;
     use indoc::indoc;
     use language::{
-        language_settings::{AllLanguageSettings, LanguageSettingsContent},
         LanguageName,
+        language_settings::{AllLanguageSettings, LanguageSettingsContent},
     };
     use settings::SettingsStore;
 
@@ -537,6 +537,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             the laˇzy dog"});
+        cx.shared_clipboard().await.assert_eq("fox jumps over\n");
         // paste in visual line mode
         cx.simulate_shared_keystrokes("k shift-v p").await;
         cx.shared_state().await.assert_eq(indoc! {"

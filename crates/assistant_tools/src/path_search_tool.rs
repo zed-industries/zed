@@ -1,11 +1,13 @@
-use anyhow::{anyhow, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, AppContext, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
+use ui::IconName;
 use util::paths::PathMatcher;
 use worktree::Snapshot;
 
@@ -27,7 +29,7 @@ pub struct PathSearchToolInput {
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
-    pub offset: Option<usize>,
+    pub offset: u32,
 }
 
 const RESULTS_PER_PAGE: usize = 50;
@@ -39,13 +41,20 @@ impl Tool for PathSearchTool {
         "path-search".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./path_search_tool/description.md").into()
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(PathSearchToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn icon(&self) -> IconName {
+        IconName::SearchCode
+    }
+
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<PathSearchToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
@@ -64,10 +73,14 @@ impl Tool for PathSearchTool {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
-            Ok(input) => (input.offset.unwrap_or(0), input.glob),
+            Ok(input) => (input.offset, input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
-        let path_matcher = match PathMatcher::new(&[glob.clone()]) {
+
+        let path_matcher = match PathMatcher::new([
+            // Sometimes models try to search for "". In this case, return all paths in the project.
+            if glob.is_empty() { "*" } else { &glob },
+        ]) {
             Ok(matcher) => matcher,
             Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
         };
@@ -103,10 +116,10 @@ impl Tool for PathSearchTool {
                 matches.sort();
 
                 let total_matches = matches.len();
-                let response = if total_matches > offset + RESULTS_PER_PAGE {
-                  let paginated_matches: Vec<_> = matches
+                let response = if total_matches > RESULTS_PER_PAGE + offset as usize {
+                let paginated_matches: Vec<_> = matches
                       .into_iter()
-                      .skip(offset)
+                      .skip(offset as usize)
                       .take(RESULTS_PER_PAGE)
                       .collect();
 
@@ -114,7 +127,7 @@ impl Tool for PathSearchTool {
                         "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
                         total_matches,
                         offset + 1,
-                        offset + paginated_matches.len(),
+                        offset as usize + paginated_matches.len(),
                         paginated_matches.join("\n")
                     )
                 } else {

@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolSource};
 use gpui::{App, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use icons::IconName;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 
 use crate::manager::ContextServerManager;
@@ -38,13 +39,21 @@ impl Tool for ContextServerTool {
         self.tool.description.clone().unwrap_or_default()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::Cog
+    }
+
     fn source(&self) -> ToolSource {
         ToolSource::ContextServer {
             id: self.server_id.clone().into(),
         }
     }
 
-    fn input_schema(&self) -> serde_json::Value {
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
+    fn input_schema(&self, _: LanguageModelToolSchemaFormat) -> serde_json::Value {
         match &self.tool.input_schema {
             serde_json::Value::Null => {
                 serde_json::json!({ "type": "object", "properties": [] })

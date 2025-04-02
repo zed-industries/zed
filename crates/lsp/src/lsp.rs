@@ -3,20 +3,20 @@ mod input_handler;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
+use futures::{AsyncRead, AsyncWrite, Future, FutureExt, channel::oneshot, io::BufWriter, select};
 use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
-    gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
+    r#gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, value::RawValue, Value};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json, value::RawValue};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -32,8 +32,8 @@ use std::{
     path::PathBuf,
     pin::Pin,
     sync::{
-        atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
+        atomic::{AtomicI32, Ordering::SeqCst},
     },
     task::Poll,
     time::{Duration, Instant},
@@ -774,6 +774,10 @@ impl LanguageServer {
                     code_lens: Some(CodeLensClientCapabilities {
                         dynamic_registration: Some(false),
                     }),
+                    document_symbol: Some(DocumentSymbolClientCapabilities {
+                        hierarchical_document_symbol_support: Some(true),
+                        ..DocumentSymbolClientCapabilities::default()
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
@@ -826,7 +830,7 @@ impl LanguageServer {
     }
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
-    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
+    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
         if let Some(tasks) = self.io_tasks.lock().take() {
             let response_handlers = self.response_handlers.clone();
             let next_id = AtomicI32::new(self.next_id.load(SeqCst));
@@ -1073,7 +1077,7 @@ impl LanguageServer {
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>> + use<T>
     where
         T::Result: 'static + Send,
     {
@@ -1092,7 +1096,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>> + use<T>
     where
         T::Result: 'static + Send,
     {
@@ -1275,9 +1279,9 @@ impl LanguageServer {
                 name: String::default(),
             })
             .collect();
+        *workspace_folders = folders;
         let should_notify = !added.is_empty() || !removed.is_empty();
         if should_notify {
-            *workspace_folders = folders;
             drop(workspace_folders);
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
@@ -1440,7 +1444,7 @@ impl FakeLanguageServer {
             }),
             notifications_rx,
         };
-        fake.handle_request::<request::Initialize, _, _>({
+        fake.set_request_handler::<request::Initialize, _, _>({
             let capabilities = capabilities;
             move |_, _| {
                 let capabilities = capabilities.clone();
@@ -1479,6 +1483,7 @@ impl LanguageServer {
             document_formatting_provider: Some(OneOf::Left(true)),
             document_range_formatting_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
+            workspace_symbol_provider: Some(OneOf::Left(true)),
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
             ..Default::default()
@@ -1524,7 +1529,7 @@ impl FakeLanguageServer {
     }
 
     /// Registers a handler for a specific kind of request. Removes any existing handler for specified request type.
-    pub fn handle_request<T, F, Fut>(
+    pub fn set_request_handler<T, F, Fut>(
         &self,
         mut handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
@@ -1699,7 +1704,7 @@ mod tests {
             "file://b/c"
         );
 
-        fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
+        fake.set_request_handler::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;

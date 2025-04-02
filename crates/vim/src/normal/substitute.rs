@@ -1,8 +1,11 @@
-use editor::{movement, Editor};
-use gpui::{actions, Context, Window};
+use editor::{Editor, movement};
+use gpui::{Context, Window, actions};
 use language::Point;
 
-use crate::{motion::Motion, Mode, Vim};
+use crate::{
+    Mode, Vim,
+    motion::{Motion, MotionKind},
+};
 
 actions!(vim, [Substitute, SubstituteLine]);
 
@@ -43,7 +46,6 @@ impl Vim {
                                 map,
                                 selection,
                                 count,
-                                true,
                                 &text_layout_details,
                             );
                         }
@@ -57,7 +59,6 @@ impl Vim {
                                 map,
                                 selection,
                                 None,
-                                false,
                                 &text_layout_details,
                             );
                             if let Some((point, _)) = (Motion::FirstNonWhitespace {
@@ -75,7 +76,12 @@ impl Vim {
                         }
                     })
                 });
-                vim.copy_selections_content(editor, line_mode, window, cx);
+                let kind = if line_mode {
+                    MotionKind::Linewise
+                } else {
+                    MotionKind::Exclusive
+                };
+                vim.copy_selections_content(editor, kind, window, cx);
                 let selections = editor.selections.all::<Point>(cx).into_iter();
                 let edits = selections.map(|selection| (selection.start..selection.end, ""));
                 editor.edit(edits, cx);
