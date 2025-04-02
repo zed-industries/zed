@@ -576,20 +576,26 @@ impl Thread {
 
         let message_id = self.insert_message(Role::User, vec![MessageSegment::Text(text)], cx);
 
-        if !context.is_empty() {
-            if let Some(context_string) = format_context_as_string(context.iter(), cx) {
+        // Filter out contexts that have already been included in previous messages
+        let new_context: Vec<_> = context
+            .into_iter()
+            .filter(|ctx| !self.context.contains_key(&ctx.id()))
+            .collect();
+
+        if !new_context.is_empty() {
+            if let Some(context_string) = format_context_as_string(new_context.iter(), cx) {
                 if let Some(message) = self.messages.iter_mut().find(|m| m.id == message_id) {
                     message.context = context_string;
                 }
             }
         }
 
-        let context_ids = context
+        let context_ids = new_context
             .iter()
             .map(|context| context.id())
             .collect::<Vec<_>>();
         self.context
-            .extend(context.into_iter().map(|context| (context.id(), context)));
+            .extend(new_context.into_iter().map(|context| (context.id(), context)));
         self.context_by_message.insert(message_id, context_ids);
 
         if let Some(git_checkpoint) = git_checkpoint {
@@ -1819,7 +1825,7 @@ mod tests {
     use assistant_settings::AssistantSettings;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
@@ -1925,5 +1931,146 @@ fn main() {
         assert_eq!(request.messages.len(), 1);
         let expected_full_message = format!("{}Please explain this code", expected_context);
         assert_eq!(request.messages[0].string_contents(), expected_full_message);
+    }
+
+    #[gpui::test]
+    async fn test_only_include_new_contexts(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            AssistantSettings::register(cx);
+            thread_store::init(cx);
+            workspace::init_settings(cx);
+            ThemeSettings::register(cx);
+            ContextServerSettings::register(cx);
+            EditorSettings::register(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "file1.rs": "fn function1() {}\n",
+                "file2.rs": "fn function2() {}\n",
+                "file3.rs": "fn function3() {}\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = cx.update(|_, cx| {
+            ThreadStore::new(
+                project.clone(),
+                Arc::default(),
+                Arc::new(PromptBuilder::new(None).unwrap()),
+                cx,
+            )
+            .unwrap()
+        });
+        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+
+        let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
+
+        // Open and add three different files
+        async fn open_file(
+            project: &Entity<Project>, 
+            context_store: &Entity<ContextStore>,
+            path: &str,
+            cx: &mut VisualTestContext
+        ) -> Result<()> {
+            let buffer_path = project.read_with(cx, |project, cx| {
+                project.find_project_path(path, cx)
+            }).unwrap();
+            
+            let buffer = project
+                .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
+                .await
+                .unwrap();
+
+            context_store
+                .update(cx, |store, cx| {
+                    store.add_file_from_buffer(buffer.clone(), cx)
+                })
+                .await
+        }
+
+        // Open files individually
+        open_file(&project, &context_store, "test/file1.rs", cx).await.unwrap();
+        open_file(&project, &context_store, "test/file2.rs", cx).await.unwrap();
+        open_file(&project, &context_store, "test/file3.rs", cx).await.unwrap();
+
+        // Get the context objects
+        let contexts = context_store.update(cx, |store, _| store.context().clone());
+        assert_eq!(contexts.len(), 3);
+
+        // First message with context 1
+        let message1_id = thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Message 1", vec![contexts[0].clone()], None, cx)
+        });
+
+        // Second message with contexts 1 and 2 (context 1 should be skipped as it's already included)
+        let message2_id = thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "Message 2", 
+                vec![contexts[0].clone(), contexts[1].clone()], 
+                None, 
+                cx
+            )
+        });
+
+        // Third message with all three contexts (contexts 1 and 2 should be skipped)
+        let message3_id = thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "Message 3",
+                vec![contexts[0].clone(), contexts[1].clone(), contexts[2].clone()],
+                None,
+                cx
+            )
+        });
+
+        // Check what contexts are included in each message
+        let (message1, message2, message3) = thread.read_with(cx, |thread, _| (
+            thread.message(message1_id).unwrap().clone(),
+            thread.message(message2_id).unwrap().clone(),
+            thread.message(message3_id).unwrap().clone(),
+        ));
+
+        // First message should include context 1
+        assert!(message1.context.contains("file1.rs"));
+        
+        // Second message should include only context 2 (not 1)
+        assert!(!message2.context.contains("file1.rs"));
+        assert!(message2.context.contains("file2.rs"));
+        
+        // Third message should include only context 3 (not 1 or 2)
+        assert!(!message3.context.contains("file1.rs"));
+        assert!(!message3.context.contains("file2.rs"));
+        assert!(message3.context.contains("file3.rs"));
+
+        // Check entire request to make sure all contexts are properly included
+        let request = thread.read_with(cx, |thread, cx| {
+            thread.to_completion_request(RequestKind::Chat, cx)
+        });
+
+        // The request should contain all 3 messages
+        assert_eq!(request.messages.len(), 3);
+        
+        // Check that the contexts are properly formatted in each message
+        assert!(request.messages[0].string_contents().contains("file1.rs"));
+        assert!(!request.messages[0].string_contents().contains("file2.rs"));
+        assert!(!request.messages[0].string_contents().contains("file3.rs"));
+        
+        assert!(!request.messages[1].string_contents().contains("file1.rs"));
+        assert!(request.messages[1].string_contents().contains("file2.rs"));
+        assert!(!request.messages[1].string_contents().contains("file3.rs"));
+        
+        assert!(!request.messages[2].string_contents().contains("file1.rs"));
+        assert!(!request.messages[2].string_contents().contains("file2.rs"));
+        assert!(request.messages[2].string_contents().contains("file3.rs"));
     }
 }
