@@ -138,7 +138,7 @@
     }
   },
   {
-    "context": "Editor && !assistant_diff",
+    "context": "Editor && !agent_diff",
     "bindings": {
       "ctrl-k ctrl-r": "git::Restore",
       "ctrl-alt-y": "git::ToggleStaged",
@@ -147,7 +147,7 @@
     }
   },
   {
-    "context": "AssistantDiff",
+    "context": "AgentDiff",
     "bindings": {
       "ctrl-y": "agent::Keep",
       "ctrl-k ctrl-r": "agent::Reject"
@@ -645,7 +645,7 @@
     "bindings": {
       "enter": "agent::Chat",
       "ctrl-i": "agent::ToggleProfileSelector",
-      "shift-ctrl-r": "agent::OpenAssistantDiff"
+      "shift-ctrl-r": "agent::OpenAgentDiff"
     }
   },
   {

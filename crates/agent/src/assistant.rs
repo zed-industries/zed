@@ -1,6 +1,6 @@
 mod active_thread;
+mod agent_diff;
 mod assistant_configuration;
-mod assistant_diff;
 mod assistant_model_selector;
 mod assistant_panel;
 mod buffer_codegen;
@@ -41,7 +41,7 @@ pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate}
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
-pub use assistant_diff::{AssistantDiff, AssistantDiffToolbar};
+pub use agent_diff::{AgentDiff, AgentDiffToolbar};
 
 actions!(
     agent,
@@ -65,7 +65,7 @@ actions!(
         RemoveFocusedContext,
         AcceptSuggestedContext,
         OpenActiveThreadAsMarkdown,
-        OpenAssistantDiff,
+        OpenAgentDiff,
         Keep,
         Reject,
         RejectAll,

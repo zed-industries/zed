@@ -163,6 +163,12 @@ impl MultiBufferDiffHunk {
         self.diff_base_byte_range == (0..0)
             && self.buffer_range == (text::Anchor::MIN..text::Anchor::MAX)
     }
+
+    pub fn multi_buffer_range(&self) -> Range<Anchor> {
+        let start = Anchor::in_buffer(self.excerpt_id, self.buffer_id, self.buffer_range.start);
+        let end = Anchor::in_buffer(self.excerpt_id, self.buffer_id, self.buffer_range.end);
+        start..end
+    }
 }
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
