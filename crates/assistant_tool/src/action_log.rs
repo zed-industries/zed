@@ -255,6 +255,11 @@ impl ActionLog {
         self.track_buffer(buffer, false, cx);
     }
 
+    /// Track a buffer that was added as context, so we can notify the model about user edits.
+    pub fn buffer_added_as_context(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.track_buffer(buffer, false, cx);
+    }
+
     /// Track a buffer as read, so we can notify the model about user edits.
     pub fn will_create_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.track_buffer(buffer.clone(), true, cx);

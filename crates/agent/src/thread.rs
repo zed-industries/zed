@@ -588,6 +588,33 @@ impl Thread {
                     message.context = context_string;
                 }
             }
+
+            // Track all buffers added as context
+            for ctx in &new_context {
+                match ctx {
+                    AssistantContext::File(file_ctx) => {
+                        self.action_log.update(cx, |log, cx| {
+                            log.buffer_added_as_context(file_ctx.context_buffer.buffer.clone(), cx);
+                        });
+                    }
+                    AssistantContext::Directory(dir_ctx) => {
+                        for context_buffer in &dir_ctx.context_buffers {
+                            self.action_log.update(cx, |log, cx| {
+                                log.buffer_added_as_context(context_buffer.buffer.clone(), cx);
+                            });
+                        }
+                    }
+                    AssistantContext::Symbol(symbol_ctx) => {
+                        self.action_log.update(cx, |log, cx| {
+                            log.buffer_added_as_context(
+                                symbol_ctx.context_symbol.buffer.clone(),
+                                cx,
+                            );
+                        });
+                    }
+                    AssistantContext::FetchedUrl(_) | AssistantContext::Thread(_) => {}
+                }
+            }
         }
 
         let context_ids = new_context
@@ -2139,23 +2166,33 @@ fn main() {
         });
 
         assert_eq!(request.messages.len(), 1);
-        assert_eq!(request.messages[0].string_contents(), "What is the best way to learn Rust?");
-        
+        assert_eq!(
+            request.messages[0].string_contents(),
+            "What is the best way to learn Rust?"
+        );
+
         // Add second message, also without context
         let message2_id = thread.update(cx, |thread, cx| {
             thread.insert_user_message("Are there any good books?", vec![], None, cx)
         });
-        
-        let message2 = thread.read_with(cx, |thread, _| thread.message(message2_id).unwrap().clone());
+
+        let message2 =
+            thread.read_with(cx, |thread, _| thread.message(message2_id).unwrap().clone());
         assert_eq!(message2.context, "");
-        
+
         // Check that both messages appear in the request
         let request = thread.read_with(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
-        
+
         assert_eq!(request.messages.len(), 2);
-        assert_eq!(request.messages[0].string_contents(), "What is the best way to learn Rust?");
-        assert_eq!(request.messages[1].string_contents(), "Are there any good books?");
+        assert_eq!(
+            request.messages[0].string_contents(),
+            "What is the best way to learn Rust?"
+        );
+        assert_eq!(
+            request.messages[1].string_contents(),
+            "Are there any good books?"
+        );
     }
 }
