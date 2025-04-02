@@ -1,6 +1,6 @@
 mod active_thread;
-mod assistant_configuration;
 mod agent_diff;
+mod assistant_configuration;
 mod assistant_model_selector;
 mod assistant_panel;
 mod buffer_codegen;

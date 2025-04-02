@@ -558,11 +558,7 @@ impl Render for AgentDiff {
 
         div()
             .track_focus(&self.focus_handle)
-            .key_context(if is_empty {
-                "EmptyPane"
-            } else {
-                "AgentDiff"
-            })
+            .key_context(if is_empty { "EmptyPane" } else { "AgentDiff" })
             .on_action(cx.listener(Self::keep))
             .on_action(cx.listener(Self::reject))
             .on_action(cx.listener(Self::reject_all))
