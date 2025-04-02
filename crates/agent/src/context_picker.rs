@@ -76,7 +76,7 @@ impl ContextPickerMode {
             Self::File => "Files & Directories",
             Self::Symbol => "Symbols",
             Self::Fetch => "Fetch",
-            Self::Thread => "Thread",
+            Self::Thread => "Threads",
         }
     }
 
