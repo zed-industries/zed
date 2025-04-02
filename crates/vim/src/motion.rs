@@ -3816,11 +3816,42 @@ mod test {
             Mode::Normal,
         );
     }
+
     #[gpui::test]
     async fn test_delete_key_can_remove_last_character(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state("abˇc").await;
         cx.simulate_shared_keystrokes("delete").await;
         cx.shared_state().await.assert_eq("aˇb");
+    }
+
+    #[gpui::test]
+    async fn test_inclusive_delete(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇthe quick brown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v 0").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇhe quick brown fox
+            jumped over the lazy dog"});
+        cx.set_shared_state(indoc! {"
+            the quick bˇrown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v 0").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇown fox
+            jumped over the lazy dog"});
+        cx.set_shared_state(indoc! {"
+            the quick brown foxˇ
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v 0").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇ
+            jumped over the lazy dog"});
     }
 }

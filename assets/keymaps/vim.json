@@ -539,6 +539,7 @@
     "bindings": {
       "d": "vim::CurrentLine",
       "s": "vim::PushDeleteSurrounds",
+      "v": ["vim::PushDeleteInclusive", { "inclusive": true }], // "d v"
       "o": "editor::ToggleSelectedDiffHunks", // "d o"
       "shift-o": "git::ToggleStaged",
       "p": "git::Restore", // "d p"

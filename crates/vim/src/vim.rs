@@ -99,6 +99,12 @@ struct PushChangeSurrounds {
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
+struct PushDeleteInclusive {
+    inclusive: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct PushJump {
     line: bool,
 }
@@ -179,6 +185,7 @@ impl_actions!(
         PushSneakBackward,
         PushAddSurrounds,
         PushChangeSurrounds,
+        PushDeleteInclusive,
         PushJump,
         PushDigraph,
         PushLiteral
@@ -538,6 +545,21 @@ impl Vim {
                         window,
                         cx,
                     )
+                },
+            );
+
+            //second place I need to modify it some more
+            Vim::action(
+                editor,
+                cx,
+                |vim, action: &PushDeleteInclusive, window, cx| {
+                    vim.push_operator(
+                        Operator::Delete2 {
+                            inclusive: action.inclusive,
+                        },
+                        window,
+                        cx,
+                    );
                 },
             );
 
