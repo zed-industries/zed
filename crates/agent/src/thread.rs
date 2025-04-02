@@ -1509,14 +1509,15 @@ impl Thread {
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
-        
+
         // Store feedback for this specific message only
         self.message_feedback.insert(message_id, feedback);
-        
+
         cx.notify();
 
         // Get the message content
-        let message_content = self.message(message_id)
+        let message_content = self
+            .message(message_id)
             .map(|msg| msg.to_string())
             .unwrap_or_default();
 
@@ -1534,8 +1535,8 @@ impl Thread {
                 "Assistant Thread Rated",
                 rating,
                 thread_id,
-                message_id = message_id.0,  // Include the message ID
-                message_content,            // Include the message content
+                message_id = message_id.0, // Include the message ID
+                message_content,           // Include the message content
                 thread_data,
                 final_project_snapshot
             );
@@ -1552,11 +1553,13 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         // Find the last assistant message
-        let last_assistant_message_id = self.messages.iter()
+        let last_assistant_message_id = self
+            .messages
+            .iter()
             .rev()
             .find(|msg| msg.role == Role::Assistant)
             .map(|msg| msg.id);
-        
+
         if let Some(message_id) = last_assistant_message_id {
             self.report_message_feedback(message_id, feedback, cx)
         } else {
@@ -1571,8 +1574,8 @@ impl Thread {
             cx.background_spawn(async move {
                 let final_project_snapshot = final_project_snapshot.await;
                 let serialized_thread = serialized_thread.await?;
-                let thread_data =
-                    serde_json::to_value(serialized_thread).unwrap_or_else(|_| serde_json::Value::Null);
+                let thread_data = serde_json::to_value(serialized_thread)
+                    .unwrap_or_else(|_| serde_json::Value::Null);
 
                 let rating = match feedback {
                     ThreadFeedback::Positive => "positive",
