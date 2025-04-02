@@ -637,6 +637,7 @@ impl ContextProvider for RustContextProvider {
                     locator: Some("cargo".into()),
                     tcp_connection: None,
                     initialize_args: None,
+                    stop_on_entry: None,
                 }),
                 command: "cargo".into(),
                 args: vec![
@@ -737,6 +738,7 @@ impl ContextProvider for RustContextProvider {
                     initialize_args: None,
                     locator: Some("cargo".into()),
                     tcp_connection: None,
+                    stop_on_entry: None,
                 }),
                 args: debug_task_args,
                 tags: vec!["rust-main".to_owned()],
