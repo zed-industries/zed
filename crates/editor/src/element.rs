@@ -1545,16 +1545,14 @@ impl EditorElement {
         window.with_absolute_element_offset(minimap_bounds.origin, |window| {
             minimap_elem.prepaint(window, cx)
         });
-        let thumb_bounds = layout.thumb_bounds();
+
         Some(MinimapLayout {
             minimap: minimap_elem,
-            hitbox: layout.hitbox,
-            thumb_bounds,
+            thumb_layout: layout,
             show_thumb,
             minimap_line_height,
             minimap_scroll_top: minimap_top_offset,
             max_scroll_top: total_editor_lines,
-            contents_full_height: total_editor_lines,
         })
     }
 
@@ -5486,10 +5484,10 @@ impl EditorElement {
 
     fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut layout) = layout.minimap.take() {
-            let minimap_hitbox = layout.hitbox.clone();
-            let thumb_bounds = layout.thumb_bounds.clone();
+            let minimap_hitbox = layout.thumb_layout.hitbox.clone();
+            let thumb_bounds = layout.thumb_layout.thumb_bounds();
 
-            window.paint_layer(layout.hitbox.bounds, |window| {
+            window.paint_layer(layout.thumb_layout.hitbox.bounds, |window| {
                 window.with_element_namespace("minimap", |window| {
                     layout.minimap.paint(window, cx);
                     if layout.show_thumb {
@@ -5514,11 +5512,17 @@ impl EditorElement {
 
             window.set_cursor_style(CursorStyle::Arrow, Some(&minimap_hitbox));
 
+            let minimap_axis = ScrollbarAxis::Vertical;
+            let pixels_per_line = (minimap_hitbox.size.height / layout.max_scroll_top)
+                .min(layout.minimap_line_height);
+
+            let mut mouse_position = window.mouse_position();
+
             window.on_mouse_event({
                 let editor = self.editor.clone();
+
                 let minimap_hitbox = minimap_hitbox.clone();
 
-                let mut mouse_position = window.mouse_position();
                 move |event: &MouseMoveEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture {
                         return;
@@ -5528,23 +5532,19 @@ impl EditorElement {
                         if event.pressed_button == Some(MouseButton::Left)
                             && editor.scroll_manager.is_dragging_minimap()
                         {
-                            let y = mouse_position.y;
-                            if (minimap_hitbox.top()..minimap_hitbox.bottom()).contains(&y) {
-                                let mut position = editor.scroll_position(cx);
-
-                                let thumb_top = f32::max(
-                                    event.position.y.0
-                                        - minimap_hitbox.bounds.origin.y.0
-                                        - (thumb_bounds.size.height.0 / 2.),
-                                    0.,
-                                );
-                                let pct_progress = thumb_top
-                                    / (minimap_hitbox.bounds.size.height.0
-                                        - thumb_bounds.size.height.0);
-                                position.y = pct_progress * layout.contents_full_height;
+                            let old_position = mouse_position.along(minimap_axis);
+                            let new_position = event.position.along(minimap_axis);
+                            if (minimap_hitbox.origin.along(minimap_axis)
+                                ..minimap_hitbox.bottom_right().along(minimap_axis))
+                                .contains(&old_position)
+                            {
+                                let position =
+                                    editor.scroll_position(cx).apply_along(minimap_axis, |p| {
+                                        (p + (new_position - old_position) / pixels_per_line)
+                                            .max(0.)
+                                    });
                                 editor.set_scroll_position(position, window, cx);
                             }
-
                             cx.stop_propagation();
                         } else {
                             editor.scroll_manager.set_is_dragging_minimap(false, cx);
@@ -5583,18 +5583,28 @@ impl EditorElement {
                             return;
                         }
 
+                        let event_position = event.position;
+
                         editor.update(cx, |editor, cx| {
-                            editor.scroll_manager.set_is_dragging_minimap(true, cx);
+                            if thumb_bounds.contains(&event_position) {
+                                editor.scroll_manager.set_is_dragging_minimap(true, cx);
+                            } else {
+                                let click_position =
+                                    event_position.relative_to(&minimap_hitbox.origin).y;
 
-                            let mut position = editor.scroll_position(cx);
+                                let top_position = (click_position
+                                    - thumb_bounds.size.along(minimap_axis) / 2.0)
+                                    .max(Pixels::ZERO);
 
-                            let thumb_top = event.position.y
-                                - minimap_hitbox.bounds.origin.y
-                                - (thumb_bounds.size.height / 2.);
-                            position.y = (layout.minimap_scroll_top
-                                + (thumb_top.0 / layout.minimap_line_height.0))
-                                .clamp(0., layout.max_scroll_top);
-                            editor.set_scroll_position(position, window, cx);
+                                let scroll_offset = (layout.minimap_scroll_top
+                                    + top_position / layout.minimap_line_height)
+                                    .min(layout.max_scroll_top);
+
+                                let scroll_position = editor
+                                    .scroll_position(cx)
+                                    .apply_along(minimap_axis, |_| scroll_offset);
+                                editor.set_scroll_position(scroll_position, window, cx);
+                            }
                             cx.stop_propagation();
                         });
                     }
@@ -8370,13 +8380,11 @@ impl ScrollbarLayout {
 
 struct MinimapLayout {
     pub minimap: AnyElement,
-    pub hitbox: Hitbox,
-    pub thumb_bounds: Bounds<Pixels>,
+    pub thumb_layout: ScrollbarLayout,
     pub minimap_scroll_top: f32,
     pub minimap_line_height: Pixels,
     pub show_thumb: bool,
     pub max_scroll_top: f32,
-    pub contents_full_height: f32,
 }
 
 struct CreaseTrailerLayout {
