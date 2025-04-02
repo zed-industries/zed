@@ -126,7 +126,7 @@ pub struct FindReplaceFileTool;
 
 impl Tool for FindReplaceFileTool {
     fn name(&self) -> String {
-        "find-replace-file".into()
+        "find_replace_file".into()
     }
 
     fn needs_confirmation(&self) -> bool {

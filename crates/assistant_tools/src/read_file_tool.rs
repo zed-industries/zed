@@ -44,7 +44,7 @@ pub struct ReadFileTool;
 
 impl Tool for ReadFileTool {
     fn name(&self) -> String {
-        "read-file".into()
+        "read_file".into()
     }
 
     fn needs_confirmation(&self) -> bool {

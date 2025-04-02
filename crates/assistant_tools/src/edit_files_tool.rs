@@ -78,7 +78,7 @@ pub struct EditFilesTool;
 
 impl Tool for EditFilesTool {
     fn name(&self) -> String {
-        "edit-files".into()
+        "edit_files".into()
     }
 
     fn needs_confirmation(&self) -> bool {
