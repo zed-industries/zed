@@ -170,7 +170,7 @@ futures-util = { version = "0.3", features = ["channel", "io-compat", "sink"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
 hashbrown-3575ec1268b04181 = { package = "hashbrown", version = "0.15", features = ["serde"] }
 hashbrown-582f2526e08bb6a0 = { package = "hashbrown", version = "0.14", features = ["raw"] }
-heck = { version = "0.4", features = ["unicode"] }
+heck = { version = "0.5", features = ["unicode"] }
 hmac = { version = "0.12", default-features = false, features = ["reset"] }
 hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "server", "stream"] }
 indexmap = { version = "2", features = ["serde"] }
