@@ -3088,7 +3088,10 @@ impl LocalLspStore {
                 };
 
                 if let Some(glob) = Glob::new(&pattern).log_err() {
-                    if path.components().next().is_none() {
+                    if !path
+                        .components()
+                        .any(|c| matches!(c, path::Component::Normal(_)))
+                    {
                         // For an unrooted glob like `**/Cargo.toml`, watch it within each worktree,
                         // rather than adding a new watcher for `/`.
                         for worktree in &worktrees {
