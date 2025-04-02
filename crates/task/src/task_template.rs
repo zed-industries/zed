@@ -97,6 +97,8 @@ pub struct DebugArgs {
     pub initialize_args: Option<serde_json::value::Value>,
     /// the locator to use
     pub locator: Option<String>,
+    /// Whether to tell the debug adapter to stop on entry
+    pub stop_on_entry: Option<bool>,
 }
 
 /// Represents the type of task that is being ran

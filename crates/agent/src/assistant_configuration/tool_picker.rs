@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use assistant_settings::{
-    AgentProfile, AgentProfileContent, AssistantSettings, AssistantSettingsContent,
+    AgentProfile, AgentProfileContent, AgentProfileId, AssistantSettings, AssistantSettingsContent,
     ContextServerPresetContent, VersionedAssistantSettingsContent,
 };
 use assistant_tool::{ToolSource, ToolWorkingSet};
@@ -51,7 +51,7 @@ pub struct ToolPickerDelegate {
     thread_store: WeakEntity<ThreadStore>,
     fs: Arc<dyn Fs>,
     tools: Vec<ToolEntry>,
-    profile_id: Arc<str>,
+    profile_id: AgentProfileId,
     profile: AgentProfile,
     matches: Vec<StringMatch>,
     selected_index: usize,
@@ -62,7 +62,7 @@ impl ToolPickerDelegate {
         fs: Arc<dyn Fs>,
         tool_set: Arc<ToolWorkingSet>,
         thread_store: WeakEntity<ThreadStore>,
-        profile_id: Arc<str>,
+        profile_id: AgentProfileId,
         profile: AgentProfile,
         cx: &mut Context<ToolPicker>,
     ) -> Self {

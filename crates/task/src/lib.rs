@@ -144,6 +144,7 @@ impl ResolvedTask {
                     tcp_connection: debug_args.tcp_connection,
                     args,
                     locator: debug_args.locator.clone(),
+                    stop_on_entry: debug_args.stop_on_entry,
                 })
             }
             _ => None,
