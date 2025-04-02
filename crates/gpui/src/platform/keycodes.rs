@@ -433,6 +433,37 @@ impl KeyCode {
         if let Some(code) = Self::parse_immutable(input) {
             return Ok((code, Modifiers::default()));
         }
+        if always_use_command_layout() {
+            match input {
+                "a" => return Ok((Self::A, Modifiers::default())),
+                "b" => return Ok((Self::B, Modifiers::default())),
+                "c" => return Ok((Self::C, Modifiers::default())),
+                "d" => return Ok((Self::D, Modifiers::default())),
+                "e" => return Ok((Self::E, Modifiers::default())),
+                "f" => return Ok((Self::F, Modifiers::default())),
+                "g" => return Ok((Self::G, Modifiers::default())),
+                "h" => return Ok((Self::H, Modifiers::default())),
+                "i" => return Ok((Self::I, Modifiers::default())),
+                "j" => return Ok((Self::J, Modifiers::default())),
+                "k" => return Ok((Self::K, Modifiers::default())),
+                "l" => return Ok((Self::L, Modifiers::default())),
+                "m" => return Ok((Self::M, Modifiers::default())),
+                "n" => return Ok((Self::N, Modifiers::default())),
+                "o" => return Ok((Self::O, Modifiers::default())),
+                "p" => return Ok((Self::P, Modifiers::default())),
+                "q" => return Ok((Self::Q, Modifiers::default())),
+                "r" => return Ok((Self::R, Modifiers::default())),
+                "s" => return Ok((Self::S, Modifiers::default())),
+                "t" => return Ok((Self::T, Modifiers::default())),
+                "u" => return Ok((Self::U, Modifiers::default())),
+                "v" => return Ok((Self::V, Modifiers::default())),
+                "w" => return Ok((Self::W, Modifiers::default())),
+                "x" => return Ok((Self::X, Modifiers::default())),
+                "y" => return Ok((Self::Y, Modifiers::default())),
+                "z" => return Ok((Self::Z, Modifiers::default())),
+                _ => {}
+            }
+        }
         if let Some((code, modifiers)) = CHAR_TO_KEY.get(input) {
             return Ok((*code, *modifiers));
         }
@@ -895,31 +926,109 @@ static CHAR_TO_KEY: LazyLock<HashMap<String, (KeyCode, Modifiers)>> = LazyLock::
         map.insert(c, (KeyCode::Quote, modifiers));
     }
     // 0x0000 => KeyCode::A,
+    for (c, modifiers) in generate_keymap_info(0x0000) {
+        map.insert(c, (KeyCode::A, modifiers));
+    }
     // 0x000b => KeyCode::B,
+    for (c, modifiers) in generate_keymap_info(0x000b) {
+        map.insert(c, (KeyCode::B, modifiers));
+    }
     // 0x0008 => KeyCode::C,
+    for (c, modifiers) in generate_keymap_info(0x0008) {
+        map.insert(c, (KeyCode::C, modifiers));
+    }
     // 0x0002 => KeyCode::D,
+    for (c, modifiers) in generate_keymap_info(0x0002) {
+        map.insert(c, (KeyCode::D, modifiers));
+    }
     // 0x000e => KeyCode::E,
+    for (c, modifiers) in generate_keymap_info(0x000e) {
+        map.insert(c, (KeyCode::E, modifiers));
+    }
     // 0x0003 => KeyCode::F,
+    for (c, modifiers) in generate_keymap_info(0x0003) {
+        map.insert(c, (KeyCode::F, modifiers));
+    }
     // 0x0005 => KeyCode::G,
+    for (c, modifiers) in generate_keymap_info(0x0005) {
+        map.insert(c, (KeyCode::G, modifiers));
+    }
     // 0x0004 => KeyCode::H,
+    for (c, modifiers) in generate_keymap_info(0x0004) {
+        map.insert(c, (KeyCode::H, modifiers));
+    }
     // 0x0022 => KeyCode::I,
+    for (c, modifiers) in generate_keymap_info(0x0022) {
+        map.insert(c, (KeyCode::I, modifiers));
+    }
     // 0x0026 => KeyCode::J,
+    for (c, modifiers) in generate_keymap_info(0x0026) {
+        map.insert(c, (KeyCode::J, modifiers));
+    }
     // 0x0028 => KeyCode::K,
+    for (c, modifiers) in generate_keymap_info(0x0028) {
+        map.insert(c, (KeyCode::K, modifiers));
+    }
     // 0x0025 => KeyCode::L,
+    for (c, modifiers) in generate_keymap_info(0x0025) {
+        map.insert(c, (KeyCode::L, modifiers));
+    }
     // 0x002e => KeyCode::M,
+    for (c, modifiers) in generate_keymap_info(0x002e) {
+        map.insert(c, (KeyCode::M, modifiers));
+    }
     // 0x002d => KeyCode::N,
+    for (c, modifiers) in generate_keymap_info(0x002d) {
+        map.insert(c, (KeyCode::N, modifiers));
+    }
     // 0x001f => KeyCode::O,
+    for (c, modifiers) in generate_keymap_info(0x001f) {
+        map.insert(c, (KeyCode::O, modifiers));
+    }
     // 0x0023 => KeyCode::P,
+    for (c, modifiers) in generate_keymap_info(0x0023) {
+        map.insert(c, (KeyCode::P, modifiers));
+    }
     // 0x000c => KeyCode::Q,
+    for (c, modifiers) in generate_keymap_info(0x000c) {
+        map.insert(c, (KeyCode::Q, modifiers));
+    }
     // 0x000f => KeyCode::R,
+    for (c, modifiers) in generate_keymap_info(0x000f) {
+        map.insert(c, (KeyCode::R, modifiers));
+    }
     // 0x0001 => KeyCode::S,
+    for (c, modifiers) in generate_keymap_info(0x0001) {
+        map.insert(c, (KeyCode::S, modifiers));
+    }
     // 0x0011 => KeyCode::T,
+    for (c, modifiers) in generate_keymap_info(0x0011) {
+        map.insert(c, (KeyCode::T, modifiers));
+    }
     // 0x0020 => KeyCode::U,
+    for (c, modifiers) in generate_keymap_info(0x0020) {
+        map.insert(c, (KeyCode::U, modifiers));
+    }
     // 0x0009 => KeyCode::V,
+    for (c, modifiers) in generate_keymap_info(0x0009) {
+        map.insert(c, (KeyCode::V, modifiers));
+    }
     // 0x000d => KeyCode::W,
+    for (c, modifiers) in generate_keymap_info(0x000d) {
+        map.insert(c, (KeyCode::W, modifiers));
+    }
     // 0x0007 => KeyCode::X,
+    for (c, modifiers) in generate_keymap_info(0x0007) {
+        map.insert(c, (KeyCode::X, modifiers));
+    }
     // 0x0010 => KeyCode::Y,
+    for (c, modifiers) in generate_keymap_info(0x0010) {
+        map.insert(c, (KeyCode::Y, modifiers));
+    }
     // 0x0006 => KeyCode::Z,
+    for (c, modifiers) in generate_keymap_info(0x0006) {
+        map.insert(c, (KeyCode::Z, modifiers));
+    }
     map
 });
 
@@ -929,7 +1038,7 @@ use collections::HashMap;
 
 use crate::chars_for_modified_key;
 
-use super::Modifiers;
+use super::{always_use_command_layout, Modifiers};
 
 fn generate_keymap_info(scan_code: u16) -> Vec<(String, Modifiers)> {
     let mut keymap = Vec::new();

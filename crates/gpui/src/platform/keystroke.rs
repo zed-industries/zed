@@ -196,6 +196,28 @@ impl Keystroke {
         let mut key = key.ok_or_else(|| InvalidKeystrokeError {
             keystroke: source.to_owned(),
         })?;
+        if !char_matching {
+            if let Ok(code) = KeyCode::parse(&key) {
+                if code != KeyCode::Unknown {
+                    let ret = Ok(Keystroke {
+                        modifiers: Modifiers {
+                            control,
+                            alt,
+                            shift,
+                            platform,
+                            function,
+                        },
+                        code,
+                        face: key.clone(),
+                        key_char: None,
+                    });
+                    if source == "ctrl-shift-`" || code == KeyCode::Tilde {
+                        println!("parse key stroke key-based: {}, {:#?}", source, ret);
+                    }
+                    return ret;
+                }
+            }
+        }
         if let Some(key_equivalent) = key_equivalents {
             if key.len() == 1 {
                 if let Some(equivalent) = key_equivalent.get(&key.chars().next().unwrap()) {
@@ -232,8 +254,8 @@ impl Keystroke {
             face: key,
             key_char,
         });
-        if code == KeyCode::Unknown {
-            println!("parse key stroke: {}, {:#?}", source, ret);
+        if code == KeyCode::Unknown || source == "ctrl-shift-`" || code == KeyCode::Tilde {
+            println!("parse key stroke char-based: {}, {:#?}", source, ret);
         }
         ret
     }
