@@ -1547,8 +1547,7 @@ impl ActiveThread {
             .workspace
             .upgrade()
             .map(|workspace| workspace.read(cx).app_state().fs.clone());
-        let is_pending = self.thread.read(cx).pending_tool(&tool_use.id).is_some();
-        let auto_run = AssistantSettings::get_global(cx).always_allow_tool_actions;
+        let needs_confirmation = matches!(&tool_use.status, ToolUseStatus::NeedsConfirmation);
 
         let status_icons = div().child(match &tool_use.status {
             ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
@@ -1781,7 +1780,7 @@ impl ActiveThread {
                                 .map(|element| {
                                     if is_open {
                                         element.border_b_1().rounded_t_md()
-                                    } else if is_pending {
+                                    } else if needs_confirmation {
                                         element.rounded_t_md()
                                     } else {
                                         element.rounded_md()
@@ -1841,7 +1840,7 @@ impl ActiveThread {
                                 v_flex()
                                     .bg(cx.theme().colors().editor_background)
                                     .map(|element| {
-                                        if  is_pending {
+                                        if  needs_confirmation {
                                             element.rounded_none()
                                         } else {
                                             element.rounded_b_lg()
@@ -1850,7 +1849,7 @@ impl ActiveThread {
                                     .child(results_content),
                             )
                         })
-                        .when(!auto_run && is_pending, |this| {
+                        .when(needs_confirmation, |this| {
                             this.child(
                                 h_flex()
                                     .py_1()
