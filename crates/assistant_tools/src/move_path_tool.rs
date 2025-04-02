@@ -39,7 +39,7 @@ pub struct MovePathTool;
 
 impl Tool for MovePathTool {
     fn name(&self) -> String {
-        "move-path".into()
+        "move_path".into()
     }
 
     fn needs_confirmation(&self) -> bool {

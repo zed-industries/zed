@@ -81,8 +81,8 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
-    pub default_profile: Arc<str>,
-    pub profiles: IndexMap<Arc<str>, AgentProfile>,
+    pub default_profile: AgentProfileId,
+    pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
 }
@@ -325,7 +325,16 @@ impl AssistantSettingsContent {
         }
     }
 
-    pub fn set_profile(&mut self, profile_id: Arc<str>) {
+    pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
+        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
+            self
+        else {
+            return;
+        };
+        settings.always_allow_tool_actions = Some(allow);
+    }
+
+    pub fn set_profile(&mut self, profile_id: AgentProfileId) {
         let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
             self
         else {
@@ -335,7 +344,11 @@ impl AssistantSettingsContent {
         settings.default_profile = Some(profile_id);
     }
 
-    pub fn create_profile(&mut self, profile_id: Arc<str>, profile: AgentProfile) -> Result<()> {
+    pub fn create_profile(
+        &mut self,
+        profile_id: AgentProfileId,
+        profile: AgentProfile,
+    ) -> Result<()> {
         let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
             self
         else {
@@ -436,9 +449,9 @@ pub struct AssistantSettingsContentV2 {
     /// The default profile to use in the Agent.
     ///
     /// Default: write
-    default_profile: Option<Arc<str>>,
+    default_profile: Option<AgentProfileId>,
     /// The available agent profiles.
-    pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
+    pub profiles: Option<IndexMap<AgentProfileId, AgentProfileContent>>,
     /// Whenever a tool action would normally wait for your confirmation
     /// that you allow it, always choose to allow it.
     ///

@@ -633,6 +633,8 @@
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
     },
+    // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    "always_allow_tool_actions": false,
     "default_profile": "write",
     "profiles": {
       "ask": {
@@ -642,11 +644,11 @@
         "tools": {
           "diagnostics": true,
           "fetch": true,
-          "list-directory": true,
+          "list_directory": true,
           "now": true,
-          "path-search": true,
-          "read-file": true,
-          "regex-search": true,
+          "path_search": true,
+          "read_file": true,
+          "regex_search": true,
           "thinking": true
         }
       },
@@ -655,22 +657,22 @@
         "enable_all_context_servers": true,
         "tools": {
           "bash": true,
-          "batch-tool": true,
-          "code-symbols": true,
-          "copy-path": true,
-          "create-file": true,
-          "delete-path": true,
+          "batch_tool": true,
+          "code_symbols": true,
+          "copy_path": true,
+          "create_file": true,
+          "delete_path": true,
           "diagnostics": true,
-          "find-replace-file": true,
-          "edit-files": false,
+          "find_replace_file": true,
+          "edit_files": false,
           "fetch": true,
-          "list-directory": true,
-          "move-path": true,
+          "list_directory": true,
+          "move_path": true,
           "now": true,
-          "path-search": true,
-          "read-file": true,
-          "regex-search": true,
-          "symbol-info": true,
+          "path_search": true,
+          "read_file": true,
+          "regex_search": true,
+          "symbol_info": true,
           "thinking": true
         }
       }
@@ -1199,7 +1201,27 @@
     // When set to 0, waits indefinitely.
     //
     // Default: 0
-    "lsp_fetch_timeout_ms": 0
+    "lsp_fetch_timeout_ms": 0,
+    // Controls what range to replace when accepting LSP completions.
+    //
+    // When LSP servers give an `InsertReplaceEdit` completion, they provides two ranges: `insert` and `replace`. Usually, `insert`
+    // contains the word prefix before your cursor and `replace` contains the whole word.
+    //
+    // Effectively, this setting just changes whether Zed will use the received range for `insert` or `replace`, so the results may
+    // differ depending on the underlying LSP server.
+    //
+    // Possible values:
+    // 1. "insert"
+    //   Replaces text before the cursor, using the `insert` range described in the LSP specification.
+    // 2. "replace"
+    //   Replaces text before and after the cursor, using the `replace` range described in the LSP specification.
+    // 3. "replace_subsequence"
+    //   Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text,
+    //   and like `"insert"` otherwise.
+    // 4. "replace_suffix"
+    //   Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
+    //   `"insert"` otherwise.
+    "lsp_insert_mode": "replace_suffix"
   },
   // Different settings for specific languages.
   "languages": {

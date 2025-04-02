@@ -78,11 +78,11 @@ pub struct EditFilesTool;
 
 impl Tool for EditFilesTool {
     fn name(&self) -> String {
-        "edit-files".into()
+        "edit_files".into()
     }
 
     fn needs_confirmation(&self) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
@@ -339,6 +339,8 @@ impl EditToolRequest {
             }
             DiffResult::Diff(diff) => {
                 cx.update(|cx| {
+                    self.action_log
+                        .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
                     buffer.update(cx, |buffer, cx| {
                         buffer.finalize_last_transaction();
                         buffer.apply_diff(diff, cx);

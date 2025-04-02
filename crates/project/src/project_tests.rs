@@ -27,7 +27,7 @@ use lsp::{
     WillRenameFiles, notification::DidRenameFiles,
 };
 use parking_lot::Mutex;
-use paths::tasks_file;
+use paths::{config_dir, tasks_file};
 use postage::stream::Stream as _;
 use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
@@ -919,6 +919,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         path!("/the-root"),
         json!({
             ".gitignore": "target\n",
+            "Cargo.lock": "",
             "src": {
                 "a.rs": "",
                 "b.rs": "",
@@ -943,9 +944,37 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         }),
     )
     .await;
+    fs.insert_tree(
+        path!("/the-registry"),
+        json!({
+            "dep1": {
+                "src": {
+                    "dep1.rs": "",
+                }
+            },
+            "dep2": {
+                "src": {
+                    "dep2.rs": "",
+                }
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/the/stdlib"),
+        json!({
+            "LICENSE": "",
+            "src": {
+                "string.rs": "",
+            }
+        }),
+    )
+    .await;
 
     let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let (language_registry, lsp_store) = project.read_with(cx, |project, _| {
+        (project.languages().clone(), project.lsp_store())
+    });
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
@@ -978,6 +1007,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             &[
                 (Path::new(""), false),
                 (Path::new(".gitignore"), false),
+                (Path::new("Cargo.lock"), false),
                 (Path::new("src"), false),
                 (Path::new("src/a.rs"), false),
                 (Path::new("src/b.rs"), false),
@@ -988,8 +1018,26 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     let prev_read_dir_count = fs.read_dir_call_count();
 
-    // Keep track of the FS events reported to the language server.
     let fake_server = fake_servers.next().await.unwrap();
+    let (server_id, server_name) = lsp_store.read_with(cx, |lsp_store, _| {
+        let (id, status) = lsp_store.language_server_statuses().next().unwrap();
+        (id, LanguageServerName::from(status.name.as_str()))
+    });
+
+    // Simulate jumping to a definition in a dependency outside of the worktree.
+    let _out_of_worktree_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(
+                lsp::Url::from_file_path(path!("/the-registry/dep1/src/dep1.rs")).unwrap(),
+                server_id,
+                server_name.clone(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    // Keep track of the FS events reported to the language server.
     let file_changes = Arc::new(Mutex::new(Vec::new()));
     fake_server
         .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
@@ -1017,6 +1065,18 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                                 ),
                                 kind: None,
                             },
+                            lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    path!("/the/stdlib/src/**/*.rs").to_string(),
+                                ),
+                                kind: None,
+                            },
+                            lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    path!("**/Cargo.lock").to_string(),
+                                ),
+                                kind: None,
+                            },
                         ],
                     },
                 )
@@ -1036,12 +1096,23 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     cx.executor().run_until_parked();
     assert_eq!(mem::take(&mut *file_changes.lock()), &[]);
-    assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 4);
+    assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 5);
+
+    let mut new_watched_paths = fs.watched_paths();
+    new_watched_paths.retain(|path| !path.starts_with(config_dir()));
+    assert_eq!(
+        &new_watched_paths,
+        &[
+            Path::new(path!("/the-root")),
+            Path::new(path!("/the-registry/dep1/src/dep1.rs")),
+            Path::new(path!("/the/stdlib/src"))
+        ]
+    );
 
     // Now the language server has asked us to watch an ignored directory path,
     // so we recursively load it.
     project.update(cx, |project, cx| {
-        let worktree = project.worktrees(cx).next().unwrap();
+        let worktree = project.visible_worktrees(cx).next().unwrap();
         assert_eq!(
             worktree
                 .read(cx)
@@ -1052,6 +1123,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             &[
                 (Path::new(""), false),
                 (Path::new(".gitignore"), false),
+                (Path::new("Cargo.lock"), false),
                 (Path::new("src"), false),
                 (Path::new("src/a.rs"), false),
                 (Path::new("src/b.rs"), false),
@@ -1088,12 +1160,37 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     )
     .await
     .unwrap();
+    fs.save(
+        path!("/the-root/Cargo.lock").as_ref(),
+        &"".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.save(
+        path!("/the-stdlib/LICENSE").as_ref(),
+        &"".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.save(
+        path!("/the/stdlib/src/string.rs").as_ref(),
+        &"".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
 
     // The language server receives events for the FS mutations that match its watch patterns.
     cx.executor().run_until_parked();
     assert_eq!(
         &*file_changes.lock(),
         &[
+            lsp::FileEvent {
+                uri: lsp::Url::from_file_path(path!("/the-root/Cargo.lock")).unwrap(),
+                typ: lsp::FileChangeType::CHANGED,
+            },
             lsp::FileEvent {
                 uri: lsp::Url::from_file_path(path!("/the-root/src/b.rs")).unwrap(),
                 typ: lsp::FileChangeType::DELETED,
@@ -1105,6 +1202,10 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             lsp::FileEvent {
                 uri: lsp::Url::from_file_path(path!("/the-root/target/y/out/y2.rs")).unwrap(),
                 typ: lsp::FileChangeType::CREATED,
+            },
+            lsp::FileEvent {
+                uri: lsp::Url::from_file_path(path!("/the/stdlib/src/string.rs")).unwrap(),
+                typ: lsp::FileChangeType::CHANGED,
             },
         ]
     );
@@ -7849,6 +7950,68 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
             FileStatus::Untracked,
         );
     });
+}
+
+#[gpui::test]
+async fn test_repos_in_invisible_worktrees(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                ".git": {},
+                "dep1": {
+                    ".git": {},
+                    "src": {
+                        "a.txt": "",
+                    },
+                },
+                "b.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root/dir1/dep1").as_ref()], cx).await;
+    let visible_worktree =
+        project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    visible_worktree
+        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+
+    let repos = project.read_with(cx, |project, cx| {
+        project
+            .repositories(cx)
+            .values()
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root/dir1/dep1")).into()]);
+
+    let (invisible_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.worktree_store.update(cx, |worktree_store, cx| {
+                worktree_store.find_or_create_worktree(path!("/root/dir1/b.txt"), false, cx)
+            })
+        })
+        .await
+        .expect("failed to create worktree");
+    invisible_worktree
+        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+
+    let repos = project.read_with(cx, |project, cx| {
+        project
+            .repositories(cx)
+            .values()
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root/dir1/dep1")).into()]);
 }
 
 #[gpui::test(iterations = 10)]

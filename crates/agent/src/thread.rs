@@ -3,7 +3,7 @@ use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -122,6 +122,15 @@ impl Message {
 pub enum MessageSegment {
     Text(String),
     Thinking(String),
+}
+
+impl MessageSegment {
+    pub fn text_mut(&mut self) -> &mut String {
+        match self {
+            Self::Text(text) => text,
+            Self::Thinking(text) => text,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -872,13 +881,9 @@ impl Thread {
             log::error!("system_prompt_context not set.")
         }
 
-        let mut referenced_context_ids = HashSet::default();
+        let mut added_context_ids = HashSet::<ContextId>::default();
 
         for message in &self.messages {
-            if let Some(context_ids) = self.context_by_message.get(&message.id) {
-                referenced_context_ids.extend(context_ids);
-            }
-
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
@@ -895,6 +900,23 @@ impl Thread {
                     if self.tool_use.message_has_tool_results(message.id) {
                         continue;
                     }
+                }
+            }
+
+            // Attach context to this message if it's the first to reference it
+            if let Some(context_ids) = self.context_by_message.get(&message.id) {
+                let new_context_ids: Vec<_> = context_ids
+                    .iter()
+                    .filter(|id| !added_context_ids.contains(id))
+                    .collect();
+
+                if !new_context_ids.is_empty() {
+                    let referenced_context = new_context_ids
+                        .iter()
+                        .filter_map(|context_id| self.context.get(*context_id));
+
+                    attach_context_to_message(&mut request_message, referenced_context, cx);
+                    added_context_ids.extend(context_ids.iter());
                 }
             }
 
@@ -922,21 +944,6 @@ impl Thread {
         let breakpoint_index = request.messages.len() - 2;
         for (index, message) in request.messages.iter_mut().enumerate() {
             message.cache = index == breakpoint_index;
-        }
-
-        if !referenced_context_ids.is_empty() {
-            let mut context_message = LanguageModelRequestMessage {
-                role: Role::User,
-                content: Vec::new(),
-                cache: false,
-            };
-
-            let referenced_context = referenced_context_ids
-                .into_iter()
-                .filter_map(|context_id| self.context.get(context_id));
-            attach_context_to_message(&mut context_message, referenced_context, cx);
-
-            request.messages.push(context_message);
         }
 
         self.attached_tracked_files_state(&mut request.messages, cx);
@@ -1076,18 +1083,32 @@ impl Thread {
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                let last_assistant_message_id = thread
+                                let last_assistant_message = thread
                                     .messages
-                                    .iter()
-                                    .rfind(|message| message.role == Role::Assistant)
-                                    .map(|message| message.id)
-                                    .unwrap_or_else(|| {
+                                    .iter_mut()
+                                    .rfind(|message| message.role == Role::Assistant);
+
+                                let last_assistant_message_id =
+                                    if let Some(message) = last_assistant_message {
+                                        if let Some(segment) = message.segments.first_mut() {
+                                            let text = segment.text_mut();
+                                            if text.is_empty() {
+                                                text.push_str("Using tool...");
+                                            }
+                                        } else {
+                                            message.segments.push(MessageSegment::Text(
+                                                "Using tool...".to_string(),
+                                            ));
+                                        }
+
+                                        message.id
+                                    } else {
                                         thread.insert_message(
                                             Role::Assistant,
                                             vec![MessageSegment::Text("Using tool...".to_string())],
                                             cx,
                                         )
-                                    });
+                                    };
                                 thread.tool_use.request_tool_use(
                                     last_assistant_message_id,
                                     tool_use,
@@ -1353,15 +1374,6 @@ impl Thread {
                         cx,
                     );
                 }
-            } else if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                self.run_tool(
-                    tool_use.id.clone(),
-                    tool_use.ui_text.clone(),
-                    tool_use.input.clone(),
-                    &messages,
-                    tool,
-                    cx,
-                );
             }
         }
 
@@ -1391,13 +1403,18 @@ impl Thread {
         cx: &mut Context<Thread>,
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
-        let run_tool = tool.run(
-            input,
-            messages,
-            self.project.clone(),
-            self.action_log.clone(),
-            cx,
-        );
+
+        let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
+            Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
+        } else {
+            tool.run(
+                input,
+                messages,
+                self.project.clone(),
+                self.action_log.clone(),
+                cx,
+            )
+        };
 
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {

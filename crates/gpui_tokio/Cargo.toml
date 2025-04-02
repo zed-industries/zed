@@ -16,3 +16,4 @@ doctest = false
 util.workspace = true
 gpui.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+workspace-hack.workspace = true

@@ -43,3 +43,4 @@ smol.workspace = true
 tempfile.workspace = true
 util.workspace = true
 walkdir.workspace = true
+workspace-hack.workspace = true

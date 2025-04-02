@@ -156,11 +156,12 @@ impl Render for InertState {
                             request: DebugRequestType::Launch(LaunchConfig {
                                 program,
                                 cwd: Some(cwd),
+                                args: Default::default(),
                             }),
                             tcp_connection: Some(TCPHost::default()),
                             initialize_args: None,
-                            args: Default::default(),
                             locator: None,
+                            stop_on_entry: None,
                         },
                     });
                 } else {
@@ -321,9 +322,9 @@ impl InertState {
             adapter: kind,
             request: DebugRequestType::Attach(task::AttachConfig { process_id: None }),
             initialize_args: None,
-            args: Default::default(),
             locator: None,
             tcp_connection: Some(TCPHost::default()),
+            stop_on_entry: None,
         };
 
         let _ = self.workspace.update(cx, |workspace, cx| {

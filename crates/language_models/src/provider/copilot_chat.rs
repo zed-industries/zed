@@ -1,4 +1,3 @@
-use std::future;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -181,12 +180,7 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        match self.model {
-            CopilotChatModel::Claude3_5Sonnet
-            | CopilotChatModel::Claude3_7Sonnet
-            | CopilotChatModel::Claude3_7SonnetThinking => true,
-            _ => false,
-        }
+        false
     }
 
     fn telemetry_id(&self) -> String {
@@ -297,17 +291,6 @@ impl LanguageModel for CopilotChatLanguageModel {
                 .boxed())
         }
         .boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        _request: LanguageModelRequest,
-        _name: String,
-        _description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 }
 

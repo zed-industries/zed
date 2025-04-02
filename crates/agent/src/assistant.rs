@@ -1,6 +1,6 @@
 mod active_thread;
+mod agent_diff;
 mod assistant_configuration;
-mod assistant_diff;
 mod assistant_model_selector;
 mod assistant_panel;
 mod buffer_codegen;
@@ -23,7 +23,7 @@ mod ui;
 
 use std::sync::Arc;
 
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AgentProfileId, AssistantSettings};
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
@@ -41,7 +41,7 @@ pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate}
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
-pub use assistant_diff::{AssistantDiff, AssistantDiffToolbar};
+pub use agent_diff::{AgentDiff, AgentDiffToolbar};
 
 actions!(
     agent,
@@ -65,7 +65,7 @@ actions!(
         RemoveFocusedContext,
         AcceptSuggestedContext,
         OpenActiveThreadAsMarkdown,
-        OpenAssistantDiff,
+        OpenAgentDiff,
         Keep,
         Reject,
         RejectAll,
@@ -82,11 +82,11 @@ pub struct NewThread {
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 pub struct ManageProfiles {
     #[serde(default)]
-    pub customize_tools: Option<Arc<str>>,
+    pub customize_tools: Option<AgentProfileId>,
 }
 
 impl ManageProfiles {
-    pub fn customize_tools(profile_id: Arc<str>) -> Self {
+    pub fn customize_tools(profile_id: AgentProfileId) -> Self {
         Self {
             customize_tools: Some(profile_id),
         }
