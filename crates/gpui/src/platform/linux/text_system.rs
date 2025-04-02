@@ -17,7 +17,7 @@ use pathfinder_geometry::{
     vector::{Vector2F, Vector2I},
 };
 use smallvec::SmallVec;
-use std::{borrow::Cow, fmt::Pointer, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
 
