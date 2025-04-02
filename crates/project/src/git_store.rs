@@ -3632,12 +3632,13 @@ impl Repository {
                 .upgrade()
                 .ok_or_else(|| anyhow!("missing project environment"))?
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_environment(Some(work_directory_abs_path), cx)
+                    project_environment.get_environment(Some(work_directory_abs_path.clone()), cx)
                 })?
                 .await
-                .ok_or_else(|| {
-                    anyhow!("failed to get environment for repository working directory")
-                })?;
+                .unwrap_or_else(|| {
+                    log::error!("failed to get working directory environment for repository {work_directory_abs_path:?}");
+                    HashMap::default()
+                });
             let backend = cx
                 .background_spawn(async move {
                     fs.open_repo(&dot_git_abs_path)
