@@ -1017,6 +1017,13 @@ impl GitStore {
                 }
             }
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(worktree_id, changed_repos) => {
+                let Some(worktree) = worktree_store.read(cx).worktree_for_id(*worktree_id, cx)
+                else {
+                    return;
+                };
+                if !worktree.read(cx).is_visible() {
+                    return;
+                }
                 self.update_repositories_from_worktrees(
                     project_environment.clone(),
                     next_repository_id.clone(),
