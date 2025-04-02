@@ -313,15 +313,14 @@ impl ActionLog {
                 let buffer = buffer.read(cx);
                 let buffer_range =
                     buffer_range.start.to_point(buffer)..buffer_range.end.to_point(buffer);
-                let buffer_row_range = buffer_range.start.row..buffer_range.end.row + 1;
                 let mut delta = 0i32;
 
                 tracked_buffer.unreviewed_changes.retain_mut(|edit| {
                     edit.old.start = (edit.old.start as i32 + delta) as u32;
                     edit.old.end = (edit.old.end as i32 + delta) as u32;
 
-                    if buffer_row_range.end < edit.new.start
-                        || buffer_row_range.start > edit.new.end
+                    if buffer_range.end.row < edit.new.start
+                        || buffer_range.start.row > edit.new.end
                     {
                         true
                     } else {
