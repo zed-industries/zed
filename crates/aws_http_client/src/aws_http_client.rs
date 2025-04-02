@@ -1,5 +1,4 @@
 use std::fmt;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use aws_smithy_runtime_api::client::http::{
