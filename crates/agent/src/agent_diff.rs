@@ -928,7 +928,6 @@ mod tests {
             Point::new(1, 0)..Point::new(1, 0)
         );
 
-        println!("=====================");
         // After keeping a hunk, the cursor should be positioned on the second hunk.
         agent_diff.update_in(cx, |diff, window, cx| diff.keep(&crate::Keep, window, cx));
         cx.run_until_parked();
