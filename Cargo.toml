@@ -662,7 +662,7 @@ notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bb
 
 [profile.dev]
 split-debuginfo = "unpacked"
-debug = "limited"
+debug = "full"
 codegen-units = 16
 
 [profile.dev.package]
