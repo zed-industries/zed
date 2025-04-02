@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use gpui::{App, Entity, SharedString};
 use language::{Buffer, File};
-use language_model::{LanguageModelRequestMessage, MessageContent};
+use language_model::LanguageModelRequestMessage;
 use project::ProjectPath;
 use serde::{Deserialize, Serialize};
 use text::{Anchor, BufferId};
@@ -170,52 +170,61 @@ pub fn attach_context_to_message<'a>(
     let mut context_chunks = Vec::new();
 
     if !file_context.is_empty() {
-        context_chunks.push("The following files are available:\n");
+        context_chunks.push("<files>\n");
         for context in file_context {
             context_chunks.push(&context.context_buffer.text);
         }
+        context_chunks.push("\n</files>\n");
     }
 
     if !directory_context.is_empty() {
-        context_chunks.push("The following directories are available:\n");
+        context_chunks.push("<directories>\n");
         for context in directory_context {
             for context_buffer in &context.context_buffers {
                 context_chunks.push(&context_buffer.text);
             }
         }
+        context_chunks.push("\n</directories>\n");
     }
 
     if !symbol_context.is_empty() {
-        context_chunks.push("The following symbols are available:\n");
+        context_chunks.push("<symbols>\n");
         for context in symbol_context {
             context_chunks.push(&context.context_symbol.text);
         }
+        context_chunks.push("\n</symbols>\n");
     }
 
     if !fetch_context.is_empty() {
-        context_chunks.push("The following fetched results are available:\n");
+        context_chunks.push("<fetched_urls>\n");
         for context in &fetch_context {
             context_chunks.push(&context.url);
             context_chunks.push(&context.text);
         }
+        context_chunks.push("\n</fetched_urls>\n");
     }
 
     // Need to own the SharedString for summary so that it can be referenced.
     let mut thread_context_chunks = Vec::new();
     if !thread_context.is_empty() {
-        context_chunks.push("The following previous conversation threads are available:\n");
+        context_chunks.push("<conversation_threads>\n");
         for context in &thread_context {
             thread_context_chunks.push(context.summary(cx));
             thread_context_chunks.push(context.text.clone());
         }
+        context_chunks.push("\n</conversation_threads>\n");
     }
+
     for chunk in &thread_context_chunks {
         context_chunks.push(chunk);
     }
 
     if !context_chunks.is_empty() {
-        message
-            .content
-            .push(MessageContent::Text(context_chunks.join("\n")));
+        message.content.push(
+            "\n<context>\n\
+                The following items were attached by the user. You don't need to use other tools to read them.\n\n".into(),
+        );
+        message.content.push(context_chunks.join("\n").into());
+        message.content.push("\n</context>\n".into());
     }
 }
