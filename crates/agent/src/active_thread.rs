@@ -55,6 +55,8 @@ pub struct ActiveThread {
     notifications: Vec<WindowHandle<AgentNotification>>,
     _subscriptions: Vec<Subscription>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
+    showing_feedback_comments: bool,
+    feedback_comments_editor: Option<Entity<Editor>>,
 }
 
 struct RenderedMessage {
@@ -369,6 +371,8 @@ impl ActiveThread {
             notifications: Vec::new(),
             _subscriptions: subscriptions,
             notification_subscriptions: HashMap::default(),
+            showing_feedback_comments: false,
+            feedback_comments_editor: None,
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -896,19 +900,100 @@ impl ActiveThread {
     fn handle_feedback_click(
         &mut self,
         feedback: ThreadFeedback,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match feedback {
+            ThreadFeedback::Positive => {
+                let report = self
+                    .thread
+                    .update(cx, |thread, cx| thread.report_feedback(feedback, cx));
+
+                let this = cx.entity().downgrade();
+                cx.spawn(async move |_, cx| {
+                    report.await?;
+                    this.update(cx, |_this, cx| cx.notify())
+                })
+                .detach_and_log_err(cx);
+            }
+            ThreadFeedback::Negative => {
+                self.handle_show_feedback_comments(window, cx);
+            }
+        }
+    }
+
+    fn handle_show_feedback_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.showing_feedback_comments = true;
+
+        if self.feedback_comments_editor.is_none() {
+            let buffer = cx.new(|cx| {
+                let empty_string = String::new();
+                MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
+            });
+
+            let editor = cx.new(|cx| {
+                Editor::new(
+                    editor::EditorMode::AutoHeight { max_lines: 4 },
+                    buffer,
+                    None,
+                    window,
+                    cx,
+                )
+            });
+
+            self.feedback_comments_editor = Some(editor);
+        }
+
+        cx.notify();
+    }
+
+    fn handle_submit_comments(
+        &mut self,
+        _: &ClickEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let report = self
-            .thread
-            .update(cx, |thread, cx| thread.report_feedback(feedback, cx));
+        if let Some(editor) = self.feedback_comments_editor.clone() {
+            let comments = editor.read(cx).text(cx);
 
-        let this = cx.entity().downgrade();
-        cx.spawn(async move |_, cx| {
-            report.await?;
-            this.update(cx, |_this, cx| cx.notify())
-        })
-        .detach_and_log_err(cx);
+            // Submit negative feedback
+            let report = self.thread.update(cx, |thread, cx| {
+                thread.report_feedback(ThreadFeedback::Negative, cx)
+            });
+
+            if !comments.is_empty() {
+                let thread_id = self.thread.read(cx).id().clone();
+                let comments_value = String::from(comments.as_str());
+
+                // Log comments as a separate telemetry event
+                telemetry::event!(
+                    "Assistant Thread Feedback Comments",
+                    thread_id,
+                    comments = comments_value
+                );
+            }
+
+            self.showing_feedback_comments = false;
+            self.feedback_comments_editor = None;
+
+            let this = cx.entity().downgrade();
+            cx.spawn(async move |_, cx| {
+                report.await?;
+                this.update(cx, |_this, cx| cx.notify())
+            })
+            .detach_and_log_err(cx);
+        }
+    }
+
+    fn handle_cancel_comments(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.showing_feedback_comments = false;
+        self.feedback_comments_editor = None;
+        cx.notify();
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1318,7 +1403,53 @@ impl ActiveThread {
             .child(styled_message)
             .when(
                 show_feedback && !self.thread.read(cx).is_generating(),
-                |parent| parent.child(feedback_items),
+                |parent| {
+                    parent
+                        .child(feedback_items)
+                        .when(self.showing_feedback_comments, |parent| {
+                            parent.child(
+                                v_flex()
+                                    .gap_1()
+                                    .px_4()
+                                    .child(
+                                        Label::new(
+                                            "Please share your feedback to help us improve:",
+                                        )
+                                        .size(LabelSize::Small),
+                                    )
+                                    .child(
+                                        div()
+                                            .p_2()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border)
+                                            .bg(cx.theme().colors().editor_background)
+                                            .child(
+                                                self.feedback_comments_editor
+                                                    .as_ref()
+                                                    .unwrap()
+                                                    .clone(),
+                                            ),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .justify_end()
+                                            .pb_2()
+                                            .child(
+                                                Button::new("cancel-comments", "Cancel").on_click(
+                                                    cx.listener(Self::handle_cancel_comments),
+                                                ),
+                                            )
+                                            .child(
+                                                Button::new("submit-comments", "Submit").on_click(
+                                                    cx.listener(Self::handle_submit_comments),
+                                                ),
+                                            ),
+                                    ),
+                            )
+                        })
+                },
             )
             .into_any()
     }
