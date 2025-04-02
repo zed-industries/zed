@@ -938,7 +938,7 @@ impl Operator {
             Operator::Object { around: true } => "a",
             Operator::Change => "c",
             Operator::Delete { inclusive: false } => "d",
-            Operator::Delete { inclusive: true } => "dv",
+            Operator::Delete { inclusive: true } => "v",
             Operator::Yank => "y",
             Operator::Replace => "r",
             Operator::Digraph { .. } => "^K",
