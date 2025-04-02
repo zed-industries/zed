@@ -594,8 +594,11 @@ impl Thread {
             .iter()
             .map(|context| context.id())
             .collect::<Vec<_>>();
-        self.context
-            .extend(new_context.into_iter().map(|context| (context.id(), context)));
+        self.context.extend(
+            new_context
+                .into_iter()
+                .map(|context| (context.id(), context)),
+        );
         self.context_by_message.insert(message_id, context_ids);
 
         if let Some(git_checkpoint) = git_checkpoint {
@@ -1449,17 +1452,7 @@ impl Thread {
         })
     }
 
-    pub fn attach_tool_results(
-        &mut self,
-        updated_context: Vec<AssistantContext>,
-        cx: &mut Context<Self>,
-    ) {
-        self.context.extend(
-            updated_context
-                .into_iter()
-                .map(|context| (context.id(), context)),
-        );
-
+    pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
         // Insert a user message to contain the tool results.
         self.insert_user_message(
             // TODO: Sending up a user message without any content results in the model sending back
@@ -1978,15 +1971,15 @@ fn main() {
 
         // Open and add three different files
         async fn open_file(
-            project: &Entity<Project>, 
+            project: &Entity<Project>,
             context_store: &Entity<ContextStore>,
             path: &str,
-            cx: &mut VisualTestContext
+            cx: &mut VisualTestContext,
         ) -> Result<()> {
-            let buffer_path = project.read_with(cx, |project, cx| {
-                project.find_project_path(path, cx)
-            }).unwrap();
-            
+            let buffer_path = project
+                .read_with(cx, |project, cx| project.find_project_path(path, cx))
+                .unwrap();
+
             let buffer = project
                 .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
                 .await
@@ -2000,9 +1993,15 @@ fn main() {
         }
 
         // Open files individually
-        open_file(&project, &context_store, "test/file1.rs", cx).await.unwrap();
-        open_file(&project, &context_store, "test/file2.rs", cx).await.unwrap();
-        open_file(&project, &context_store, "test/file3.rs", cx).await.unwrap();
+        open_file(&project, &context_store, "test/file1.rs", cx)
+            .await
+            .unwrap();
+        open_file(&project, &context_store, "test/file2.rs", cx)
+            .await
+            .unwrap();
+        open_file(&project, &context_store, "test/file3.rs", cx)
+            .await
+            .unwrap();
 
         // Get the context objects
         let contexts = context_store.update(cx, |store, _| store.context().clone());
@@ -2016,10 +2015,10 @@ fn main() {
         // Second message with contexts 1 and 2 (context 1 should be skipped as it's already included)
         let message2_id = thread.update(cx, |thread, cx| {
             thread.insert_user_message(
-                "Message 2", 
-                vec![contexts[0].clone(), contexts[1].clone()], 
-                None, 
-                cx
+                "Message 2",
+                vec![contexts[0].clone(), contexts[1].clone()],
+                None,
+                cx,
             )
         });
 
@@ -2027,26 +2026,32 @@ fn main() {
         let message3_id = thread.update(cx, |thread, cx| {
             thread.insert_user_message(
                 "Message 3",
-                vec![contexts[0].clone(), contexts[1].clone(), contexts[2].clone()],
+                vec![
+                    contexts[0].clone(),
+                    contexts[1].clone(),
+                    contexts[2].clone(),
+                ],
                 None,
-                cx
+                cx,
             )
         });
 
         // Check what contexts are included in each message
-        let (message1, message2, message3) = thread.read_with(cx, |thread, _| (
-            thread.message(message1_id).unwrap().clone(),
-            thread.message(message2_id).unwrap().clone(),
-            thread.message(message3_id).unwrap().clone(),
-        ));
+        let (message1, message2, message3) = thread.read_with(cx, |thread, _| {
+            (
+                thread.message(message1_id).unwrap().clone(),
+                thread.message(message2_id).unwrap().clone(),
+                thread.message(message3_id).unwrap().clone(),
+            )
+        });
 
         // First message should include context 1
         assert!(message1.context.contains("file1.rs"));
-        
+
         // Second message should include only context 2 (not 1)
         assert!(!message2.context.contains("file1.rs"));
         assert!(message2.context.contains("file2.rs"));
-        
+
         // Third message should include only context 3 (not 1 or 2)
         assert!(!message3.context.contains("file1.rs"));
         assert!(!message3.context.contains("file2.rs"));
@@ -2059,16 +2064,16 @@ fn main() {
 
         // The request should contain all 3 messages
         assert_eq!(request.messages.len(), 3);
-        
+
         // Check that the contexts are properly formatted in each message
         assert!(request.messages[0].string_contents().contains("file1.rs"));
         assert!(!request.messages[0].string_contents().contains("file2.rs"));
         assert!(!request.messages[0].string_contents().contains("file3.rs"));
-        
+
         assert!(!request.messages[1].string_contents().contains("file1.rs"));
         assert!(request.messages[1].string_contents().contains("file2.rs"));
         assert!(!request.messages[1].string_contents().contains("file3.rs"));
-        
+
         assert!(!request.messages[2].string_contents().contains("file1.rs"));
         assert!(!request.messages[2].string_contents().contains("file2.rs"));
         assert!(request.messages[2].string_contents().contains("file3.rs"));
