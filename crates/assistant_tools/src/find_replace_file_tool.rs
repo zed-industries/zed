@@ -226,6 +226,9 @@ impl Tool for FindReplaceFileTool {
             };
 
             let snapshot = cx.update(|cx| {
+                action_log.update(cx, |log, cx| {
+                    log.buffer_read(buffer.clone(), cx)
+                });
                 let snapshot = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();
                     buffer.apply_diff(diff, cx);
