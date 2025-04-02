@@ -14,7 +14,6 @@ pub(super) struct CargoLocator;
 #[async_trait]
 impl DapLocator for CargoLocator {
     async fn run_locator(&self, debug_config: &mut DebugAdapterConfig) -> Result<()> {
-        dbg!(&debug_config);
         let Some(launch_config) = (match &mut debug_config.request {
             task::DebugRequestDisposition::UserConfigured(task::DebugRequestType::Launch(
                 launch_config,
