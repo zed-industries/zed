@@ -432,11 +432,18 @@ impl Render for MessageEditor {
                                         },
                                     ),
                             )
-                            .child(
-                                Label::new("Generating…")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
+                            .child({
+                                let needs_confirmation = thread.has_pending_tool_uses() && 
+                                    thread.tools_needing_confirmation().next().is_some();
+                                
+                                Label::new(if needs_confirmation {
+                                    "Waiting for confirmation…"
+                                } else {
+                                    "Generating…"
+                                })
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                            })
                             .child(ui::Divider::vertical())
                             .child(
                                 Button::new("cancel-generation", "Cancel")
