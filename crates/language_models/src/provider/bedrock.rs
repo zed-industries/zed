@@ -859,10 +859,10 @@ impl ConfigurationView {
     const PLACEHOLDER_SECRET_ACCESS_KEY_TEXT: &'static str =
         "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
     const PLACEHOLDER_SESSION_TOKEN_TEXT: &'static str = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
-    const PLACEHOLDER_PROFILE_NAME_TEXT: &'static str = "default";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
-    const PLACEHOLDER_START_URL: &'static str = "https://XXXXXXXXXXX.awsapps.com/start";
-    const PLACEHOLDER_ROLE_ARN: &'static str = "arn:aws:iam::XXXXXXXXXXX:role/MyRoleName";
+    // const PLACEHOLDER_PROFILE_NAME_TEXT: &'static str = "default";
+    // const PLACEHOLDER_START_URL: &'static str = "https://XXXXXXXXXXX.awsapps.com/start";
+    // const PLACEHOLDER_ROLE_ARN: &'static str = "arn:aws:iam::XXXXXXXXXXX:role/MyRoleName";
 
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| {
