@@ -124,6 +124,15 @@ pub enum MessageSegment {
     Thinking(String),
 }
 
+impl MessageSegment {
+    pub fn text_mut(&mut self) -> &mut String {
+        match self {
+            Self::Text(text) => text,
+            Self::Thinking(text) => text,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<WorktreeSnapshot>,
@@ -1076,18 +1085,32 @@ impl Thread {
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                let last_assistant_message_id = thread
+                                let last_assistant_message = thread
                                     .messages
-                                    .iter()
-                                    .rfind(|message| message.role == Role::Assistant)
-                                    .map(|message| message.id)
-                                    .unwrap_or_else(|| {
+                                    .iter_mut()
+                                    .rfind(|message| message.role == Role::Assistant);
+
+                                let last_assistant_message_id =
+                                    if let Some(message) = last_assistant_message {
+                                        if let Some(segment) = message.segments.first_mut() {
+                                            let text = segment.text_mut();
+                                            if text.is_empty() {
+                                                text.push_str("Using tool...");
+                                            }
+                                        } else {
+                                            message.segments.push(MessageSegment::Text(
+                                                "Using tool...".to_string(),
+                                            ));
+                                        }
+
+                                        message.id
+                                    } else {
                                         thread.insert_message(
                                             Role::Assistant,
                                             vec![MessageSegment::Text("Using tool...".to_string())],
                                             cx,
                                         )
-                                    });
+                                    };
                                 thread.tool_use.request_tool_use(
                                     last_assistant_message_id,
                                     tool_use,
