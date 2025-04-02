@@ -48,6 +48,81 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant_context_editor",
+ "assistant_settings",
+ "assistant_slash_command",
+ "assistant_tool",
+ "async-watch",
+ "buffer_diff",
+ "chrono",
+ "client",
+ "clock",
+ "collections",
+ "command_palette_hooks",
+ "context_server",
+ "convert_case 0.8.0",
+ "db",
+ "editor",
+ "feature_flags",
+ "file_icons",
+ "fs",
+ "futures 0.3.31",
+ "fuzzy",
+ "git",
+ "gpui",
+ "heed",
+ "html_to_markdown",
+ "http_client",
+ "indexmap",
+ "indoc",
+ "itertools 0.14.0",
+ "language",
+ "language_model",
+ "language_model_selector",
+ "log",
+ "lsp",
+ "markdown",
+ "menu",
+ "multi_buffer",
+ "ordered-float 2.10.1",
+ "parking_lot",
+ "paths",
+ "picker",
+ "project",
+ "prompt_library",
+ "prompt_store",
+ "proto",
+ "rand 0.8.5",
+ "release_channel",
+ "rope",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "smol",
+ "streaming_diff",
+ "telemetry",
+ "telemetry_events",
+ "terminal",
+ "terminal_view",
+ "text",
+ "theme",
+ "time",
+ "time_format",
+ "ui",
+ "util",
+ "uuid",
+ "vim_mode_setting",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "ahash"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -442,81 +517,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assistant2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assistant_context_editor",
- "assistant_settings",
- "assistant_slash_command",
- "assistant_tool",
- "async-watch",
- "buffer_diff",
- "chrono",
- "client",
- "clock",
- "collections",
- "command_palette_hooks",
- "context_server",
- "convert_case 0.8.0",
- "db",
- "editor",
- "feature_flags",
- "file_icons",
- "fs",
- "futures 0.3.31",
- "fuzzy",
- "git",
- "gpui",
- "heed",
- "html_to_markdown",
- "http_client",
- "indexmap",
- "indoc",
- "itertools 0.14.0",
- "language",
- "language_model",
- "language_model_selector",
- "log",
- "lsp",
- "markdown",
- "menu",
- "multi_buffer",
- "ordered-float 2.10.1",
- "parking_lot",
- "paths",
- "picker",
- "project",
- "prompt_library",
- "prompt_store",
- "proto",
- "rand 0.8.5",
- "release_channel",
- "rope",
- "schemars",
- "serde",
- "serde_json",
- "settings",
- "smallvec",
- "smol",
- "streaming_diff",
- "telemetry",
- "telemetry_events",
- "terminal",
- "terminal_view",
- "text",
- "theme",
- "time",
- "time_format",
- "ui",
- "util",
- "uuid",
- "vim_mode_setting",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "assistant_context_editor"
 version = "0.1.0"
 dependencies = [
@@ -573,8 +573,8 @@ dependencies = [
 name = "assistant_eval"
 version = "0.1.0"
 dependencies = [
+ "agent",
  "anyhow",
- "assistant2",
  "assistant_tool",
  "assistant_tools",
  "clap",
@@ -693,17 +693,22 @@ name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-watch",
  "buffer_diff",
  "clock",
  "collections",
+ "ctor",
  "derive_more",
+ "env_logger 0.11.7",
+ "futures 0.3.31",
  "gpui",
  "icons",
  "language",
  "language_model",
+ "log",
  "parking_lot",
+ "pretty_assertions",
  "project",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "settings",
@@ -718,7 +723,6 @@ dependencies = [
  "anyhow",
  "assistant_tool",
  "chrono",
- "clock",
  "collections",
  "feature_flags",
  "futures 0.3.31",
@@ -3113,10 +3117,12 @@ dependencies = [
 name = "command_palette"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "collections",
  "command_palette_hooks",
  "ctor",
+ "db",
  "editor",
  "env_logger 0.11.7",
  "fuzzy",
@@ -3132,6 +3138,7 @@ dependencies = [
  "settings",
  "telemetry",
  "theme",
+ "time",
  "ui",
  "util",
  "workspace",
@@ -5302,7 +5309,7 @@ dependencies = [
  "ignore",
  "libc",
  "log",
- "notify 8.0.0 (git+https://github.com/zed-industries/notify.git?rev=bbb9ea5ae52b253e095737847e367c30653a2e96)",
+ "notify",
  "objc",
  "parking_lot",
  "paths",
@@ -7710,7 +7717,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.10"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
 dependencies = [
  "cxx",
  "jni",
@@ -7795,7 +7802,7 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 [[package]]
 name = "livekit"
 version = "0.7.8"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
 dependencies = [
  "chrono",
  "futures-util",
@@ -7818,12 +7825,10 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.2"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
 dependencies = [
- "base64 0.21.7",
  "futures-util",
  "http 0.2.12",
- "jsonwebtoken",
  "livekit-protocol",
  "livekit-runtime",
  "log",
@@ -7834,7 +7839,6 @@ dependencies = [
  "reqwest 0.11.27",
  "scopeguard",
  "serde",
- "serde_json",
  "sha2",
  "thiserror 1.0.69",
  "tokio",
@@ -7845,7 +7849,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.3.9"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -7862,7 +7866,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -8232,7 +8236,7 @@ dependencies = [
  "ignore",
  "log",
  "memchr",
- "notify 8.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "notify",
  "notify-debouncer-mini",
  "once_cell",
  "opener",
@@ -8662,25 +8666,6 @@ dependencies = [
 [[package]]
 name = "notify"
 version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fee8403b3d66ac7b26aee6e40a897d85dc5ce26f44da36b8b73e987cc52e943"
-dependencies = [
- "bitflags 2.9.0",
- "filetime",
- "fsevent-sys 4.1.0",
- "inotify",
- "kqueue",
- "libc",
- "log",
- "mio",
- "notify-types 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "walkdir",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "notify"
-version = "8.0.0"
 source = "git+https://github.com/zed-industries/notify.git?rev=bbb9ea5ae52b253e095737847e367c30653a2e96#bbb9ea5ae52b253e095737847e367c30653a2e96"
 dependencies = [
  "bitflags 2.9.0",
@@ -8691,7 +8676,7 @@ dependencies = [
  "libc",
  "log",
  "mio",
- "notify-types 2.0.0 (git+https://github.com/zed-industries/notify.git?rev=bbb9ea5ae52b253e095737847e367c30653a2e96)",
+ "notify-types",
  "walkdir",
  "windows-sys 0.59.0",
 ]
@@ -8703,16 +8688,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a689eb4262184d9a1727f9087cd03883ea716682ab03ed24efec57d7716dccb8"
 dependencies = [
  "log",
- "notify 8.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "notify-types 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "notify",
+ "notify-types",
  "tempfile",
 ]
-
-[[package]]
-name = "notify-types"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e0826a989adedc2a244799e823aece04662b66609d96af8dff7ac6df9a8925d"
 
 [[package]]
 name = "notify-types"
@@ -10591,6 +10570,7 @@ dependencies = [
  "fuzzy",
  "git",
  "git2",
+ "git_hosting_providers",
  "globset",
  "gpui",
  "http_client",
@@ -14876,9 +14856,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-rust"
-version = "0.23.2"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4d64d449ca63e683c562c7743946a646671ca23947b9c925c0cfbe65051a4af"
+checksum = "4b9b18034c684a2420722be8b2a91c9c44f2546b631c039edf575ccba8c61be1"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -16183,7 +16163,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.7"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
 dependencies = [
  "cc",
  "cxx",
@@ -16196,7 +16176,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.6"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
 dependencies = [
  "fs2",
  "regex",
@@ -17217,7 +17197,6 @@ dependencies = [
  "fuzzy",
  "git",
  "git2",
- "git_hosting_providers",
  "gpui",
  "http_client",
  "ignore",
@@ -17521,11 +17500,11 @@ name = "zed"
 version = "0.181.0"
 dependencies = [
  "activity_indicator",
+ "agent",
  "anyhow",
  "ashpd",
  "assets",
  "assistant",
- "assistant2",
  "assistant_context_editor",
  "assistant_settings",
  "assistant_tools",

@@ -274,6 +274,8 @@ actions!(
         ConvertToTitleCase,
         ConvertToUpperCamelCase,
         ConvertToUpperCase,
+        ConvertToRot13,
+        ConvertToRot47,
         Copy,
         CopyAndTrim,
         CopyFileLocation,

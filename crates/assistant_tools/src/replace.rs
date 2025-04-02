@@ -518,7 +518,7 @@ mod tests {
         // Call replace_flexible and transform the result
         replace_with_flexible_indent(old, new, &buffer_snapshot).map(|diff| {
             buffer.update(cx, |buffer, cx| {
-                let _ = buffer.apply_diff(diff, false, cx);
+                let _ = buffer.apply_diff(diff, cx);
                 buffer.text()
             })
         })

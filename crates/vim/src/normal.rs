@@ -1,5 +1,5 @@
-mod case;
 mod change;
+mod convert;
 mod delete;
 mod increment;
 pub(crate) mod mark;
@@ -22,8 +22,8 @@ use crate::{
     state::{Mark, Mode, Operator},
     surrounds::SurroundsType,
 };
-use case::CaseTarget;
 use collections::BTreeSet;
+use convert::ConvertTarget;
 use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
@@ -55,6 +55,8 @@ actions!(
         ChangeCase,
         ConvertToUpperCase,
         ConvertToLowerCase,
+        ConvertToRot13,
+        ConvertToRot47,
         ToggleComments,
         ShowLocation,
         Undo,
@@ -73,6 +75,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::change_case);
     Vim::action(editor, cx, Vim::convert_to_upper_case);
     Vim::action(editor, cx, Vim::convert_to_lower_case);
+    Vim::action(editor, cx, Vim::convert_to_rot13);
+    Vim::action(editor, cx, Vim::convert_to_rot47);
     Vim::action(editor, cx, Vim::yank_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
@@ -171,13 +175,19 @@ impl Vim {
             }
             Some(Operator::ShellCommand) => self.shell_command_motion(motion, times, window, cx),
             Some(Operator::Lowercase) => {
-                self.change_case_motion(motion, times, CaseTarget::Lowercase, window, cx)
+                self.convert_motion(motion, times, ConvertTarget::LowerCase, window, cx)
             }
             Some(Operator::Uppercase) => {
-                self.change_case_motion(motion, times, CaseTarget::Uppercase, window, cx)
+                self.convert_motion(motion, times, ConvertTarget::UpperCase, window, cx)
             }
             Some(Operator::OppositeCase) => {
-                self.change_case_motion(motion, times, CaseTarget::OppositeCase, window, cx)
+                self.convert_motion(motion, times, ConvertTarget::OppositeCase, window, cx)
+            }
+            Some(Operator::Rot13) => {
+                self.convert_motion(motion, times, ConvertTarget::Rot13, window, cx)
+            }
+            Some(Operator::Rot47) => {
+                self.convert_motion(motion, times, ConvertTarget::Rot47, window, cx)
             }
             Some(Operator::ToggleComments) => {
                 self.toggle_comments_motion(motion, times, window, cx)
@@ -216,13 +226,19 @@ impl Vim {
                 }
                 Some(Operator::Rewrap) => self.rewrap_object(object, around, window, cx),
                 Some(Operator::Lowercase) => {
-                    self.change_case_object(object, around, CaseTarget::Lowercase, window, cx)
+                    self.convert_object(object, around, ConvertTarget::LowerCase, window, cx)
                 }
                 Some(Operator::Uppercase) => {
-                    self.change_case_object(object, around, CaseTarget::Uppercase, window, cx)
+                    self.convert_object(object, around, ConvertTarget::UpperCase, window, cx)
                 }
                 Some(Operator::OppositeCase) => {
-                    self.change_case_object(object, around, CaseTarget::OppositeCase, window, cx)
+                    self.convert_object(object, around, ConvertTarget::OppositeCase, window, cx)
+                }
+                Some(Operator::Rot13) => {
+                    self.convert_object(object, around, ConvertTarget::Rot13, window, cx)
+                }
+                Some(Operator::Rot47) => {
+                    self.convert_object(object, around, ConvertTarget::Rot47, window, cx)
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {

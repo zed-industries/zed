@@ -78,7 +78,7 @@ pub struct EditFilesTool;
 
 impl Tool for EditFilesTool {
     fn name(&self) -> String {
-        "edit-files".into()
+        "edit_files".into()
     }
 
     fn needs_confirmation(&self) -> bool {
@@ -174,7 +174,6 @@ enum EditorResponse {
 struct AppliedAction {
     source: String,
     buffer: Entity<language::Buffer>,
-    edit_ids: Vec<clock::Lamport>,
 }
 
 #[derive(Debug)]
@@ -339,18 +338,17 @@ impl EditToolRequest {
                 self.push_search_error(error);
             }
             DiffResult::Diff(diff) => {
-                let edit_ids = buffer.update(cx, |buffer, cx| {
-                    buffer.finalize_last_transaction();
-                    buffer.apply_diff(diff, false, cx);
-                    let transaction = buffer.finalize_last_transaction();
-                    transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
+                cx.update(|cx| {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.finalize_last_transaction();
+                        buffer.apply_diff(diff, cx);
+                        buffer.finalize_last_transaction();
+                    });
+                    self.action_log
+                        .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
                 })?;
 
-                self.push_applied_action(AppliedAction {
-                    source,
-                    buffer,
-                    edit_ids,
-                });
+                self.push_applied_action(AppliedAction { source, buffer });
             }
         }
 
@@ -473,9 +471,6 @@ impl EditToolRequest {
 
                 for action in applied {
                     changed_buffers.insert(action.buffer.clone());
-                    self.action_log.update(cx, |log, cx| {
-                        log.buffer_edited(action.buffer, action.edit_ids, cx)
-                    })?;
                     write!(&mut output, "\n\n{}", action.source)?;
                 }
 
