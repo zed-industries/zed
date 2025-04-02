@@ -241,7 +241,7 @@ wasmtime-cranelift = { version = "29", default-features = false, features = ["co
 wasmtime-environ = { version = "29", default-features = false, features = ["compile", "component-model", "demangle", "gc-drc"] }
 
 [target.x86_64-apple-darwin.dependencies]
-core-foundation = { version = "0.9" }
+core-foundation = { version = "0.10" }
 core-foundation-sys = { version = "0.8" }
 coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
 flate2 = { version = "1" }
@@ -271,7 +271,7 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 
 [target.x86_64-apple-darwin.build-dependencies]
 clang-sys = { version = "1", default-features = false, features = ["clang_11_0", "runtime"] }
-core-foundation = { version = "0.9" }
+core-foundation = { version = "0.10" }
 core-foundation-sys = { version = "0.8" }
 coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
 flate2 = { version = "1" }
@@ -301,7 +301,7 @@ tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 
 [target.aarch64-apple-darwin.dependencies]
-core-foundation = { version = "0.9" }
+core-foundation = { version = "0.10" }
 core-foundation-sys = { version = "0.8" }
 coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
 flate2 = { version = "1" }
@@ -331,7 +331,7 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 
 [target.aarch64-apple-darwin.build-dependencies]
 clang-sys = { version = "1", default-features = false, features = ["clang_11_0", "runtime"] }
-core-foundation = { version = "0.9" }
+core-foundation = { version = "0.10" }
 core-foundation-sys = { version = "0.8" }
 coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
 flate2 = { version = "1" }
