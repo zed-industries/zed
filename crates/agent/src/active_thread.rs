@@ -953,36 +953,30 @@ impl ActiveThread {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(editor) = self.feedback_comments_editor.clone() {
-            let comments = editor.read(cx).text(cx);
+        let Some(editor) = self.feedback_comments_editor.clone() else {
+            return;
+        };
 
-            // Submit negative feedback
-            let report = self.thread.update(cx, |thread, cx| {
-                thread.report_feedback(ThreadFeedback::Negative, cx)
-            });
+        let report_task = self.thread.update(cx, |thread, cx| {
+            thread.report_feedback(ThreadFeedback::Negative, cx)
+        });
 
-            if !comments.is_empty() {
-                let thread_id = self.thread.read(cx).id().clone();
-                let comments_value = String::from(comments.as_str());
+        let comments = editor.read(cx).text(cx);
+        if !comments.is_empty() {
+            let thread_id = self.thread.read(cx).id().clone();
 
-                // Log comments as a separate telemetry event
-                telemetry::event!(
-                    "Assistant Thread Feedback Comments",
-                    thread_id,
-                    comments = comments_value
-                );
-            }
-
-            self.showing_feedback_comments = false;
-            self.feedback_comments_editor = None;
-
-            let this = cx.entity().downgrade();
-            cx.spawn(async move |_, cx| {
-                report.await?;
-                this.update(cx, |_this, cx| cx.notify())
-            })
-            .detach_and_log_err(cx);
+            telemetry::event!("Assistant Thread Feedback Comments", thread_id, comments);
         }
+
+        self.showing_feedback_comments = false;
+        self.feedback_comments_editor = None;
+
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            report_task.await?;
+            this.update(cx, |_this, cx| cx.notify())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_cancel_comments(
