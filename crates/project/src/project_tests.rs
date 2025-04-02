@@ -7851,6 +7851,68 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_repos_in_invisible_worktrees(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                ".git": {},
+                "dep1": {
+                    ".git": {},
+                    "src": {
+                        "a.txt": "",
+                    },
+                },
+                "b.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root/dir1/dep1").as_ref()], cx).await;
+    let visible_worktree =
+        project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    visible_worktree
+        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+
+    let repos = project.read_with(cx, |project, cx| {
+        project
+            .repositories(cx)
+            .values()
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root/dir1/dep1")).into()]);
+
+    let (invisible_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.worktree_store.update(cx, |worktree_store, cx| {
+                worktree_store.find_or_create_worktree(path!("/root/dir1/b.txt"), false, cx)
+            })
+        })
+        .await
+        .expect("failed to create worktree");
+    invisible_worktree
+        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+
+    let repos = project.read_with(cx, |project, cx| {
+        project
+            .repositories(cx)
+            .values()
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root/dir1/dep1")).into()]);
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     init_test(cx);
