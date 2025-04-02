@@ -325,6 +325,15 @@ impl AssistantSettingsContent {
         }
     }
 
+    pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
+        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
+            self
+        else {
+            return;
+        };
+        settings.always_allow_tool_actions = Some(allow);
+    }
+
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
         let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
             self
