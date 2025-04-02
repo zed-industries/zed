@@ -881,7 +881,7 @@ impl Thread {
             log::error!("system_prompt_context not set.")
         }
 
-        let mut added_context_ids = HashSet::<&ContextId>::default();
+        let mut added_context_ids = HashSet::<ContextId>::default();
 
         for message in &self.messages {
             let mut request_message = LanguageModelRequestMessage {
@@ -916,8 +916,6 @@ impl Thread {
                         .filter_map(|context_id| self.context.get(*context_id));
 
                     attach_context_to_message(&mut request_message, referenced_context, cx);
-
-                    // Track which contexts we've added
                     added_context_ids.extend(context_ids.iter());
                 }
             }
