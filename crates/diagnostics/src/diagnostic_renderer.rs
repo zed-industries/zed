@@ -3,18 +3,22 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use collections::HashMap;
 use editor::{
-    Direction, Editor, EditorElement, EditorStyle, MultiBuffer, MultiBufferSnapshot,
+    Anchor, Bias, Direction, DisplayPoint, Editor, EditorElement, EditorSnapshot, EditorStyle,
+    MultiBuffer, MultiBufferSnapshot,
     actions::{Cancel, GoToDiagnostic},
     diagnostic_style,
-    display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, RenderBlock},
+    display_map::{
+        BlockContext, BlockPlacement, BlockProperties, BlockStyle, DisplayRow, RenderBlock,
+    },
 };
 use gpui::{
     AppContext, AvailableSpace, ClipboardItem, Entity, FontWeight, HighlightStyle, StyledText,
-    TextStyle,
+    Task, TextStyle,
 };
 use indoc;
-use language::{Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, PointUtf16};
+use language::{Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Point, PointUtf16};
 use lsp::DiagnosticSeverity;
 use settings::Settings;
 use theme::ThemeSettings;
@@ -192,31 +196,119 @@ pub fn highlight_diagnostic_message(
 impl editor::DiagnosticRenderer for DiagnosticRenderer {
     fn render_group(
         &self,
-        _diagnostic_group: Vec<language::Diagnostic>,
-        _max_message_rows: Option<u8>,
-        _allow_closing: bool,
-        _cx: &ui::App,
-    ) -> editor::display_map::BlockProperties<editor::Anchor> {
-        todo!()
-    }
+        diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
+        snapshot: EditorSnapshot,
+        cx: &App,
+    ) -> Task<Vec<BlockProperties<Anchor>>> {
+        cx.spawn(async move |_| {
+            let diagnostics_by_rows =
+                diagnostic_group
+                    .into_iter()
+                    .fold(HashMap::default(), |mut acc, diagnostic| {
+                        acc.entry(diagnostic.range.start.row())
+                            .or_insert_with(Vec::new)
+                            .push(diagnostic);
+                        acc
+                    });
 
-    fn render_secondary(
-        &self,
-        buffer: &MultiBufferSnapshot,
-        entry: DiagnosticEntry<language::Point>,
-        max_message_rows: Option<u8>,
-        allow_closing: bool,
-        _cx: &ui::App,
-    ) -> editor::display_map::BlockProperties<editor::Anchor> {
-        let diagnostic = entry.diagnostic.clone();
-        let message_height = diagnostic.message.matches('\n').count() as u32 + 1;
-        BlockProperties {
-            style: BlockStyle::Fixed,
-            placement: BlockPlacement::Below(buffer.anchor_after(entry.range.start)),
-            height: message_height,
-            render: diagnostic_block_renderer(diagnostic, max_message_rows, allow_closing),
-            priority: 0,
-        }
+            for (row, mut diagnostics) in diagnostics_by_rows {
+                diagnostics.sort_by_key(|diagnostic| {
+                    (
+                        !diagnostic.diagnostic.is_primary,
+                        diagnostic.diagnostic.severity,
+                    )
+                });
+                let primary = diagnostics.remove(0);
+
+                let mut markdown = if let Some(source) = primary.diagnostic.source {
+                    format!("{}: {}", source, primary.diagnostic.message)
+                } else {
+                    primary.diagnostic.message.clone()
+                };
+                for diagnostic in diagnostics {
+                    markdown.push_str("\n- hint: ");
+                    if let Some(source) = diagnostic.diagnostic.source {
+                        markdown.push(format!("{source}: "));
+                    }
+                    markdown.push(secondary.diagnostic.message)
+                }
+                let parsed_content = cx
+                    .new_window_entity(|window, cx| {
+                        let status_colors = cx.theme().status();
+
+                        match local_diagnostic.diagnostic.severity {
+                            DiagnosticSeverity::ERROR => {
+                                background_color = Some(status_colors.error_background);
+                                border_color = Some(status_colors.error_border);
+                            }
+                            DiagnosticSeverity::WARNING => {
+                                background_color = Some(status_colors.warning_background);
+                                border_color = Some(status_colors.warning_border);
+                            }
+                            DiagnosticSeverity::INFORMATION => {
+                                background_color = Some(status_colors.info_background);
+                                border_color = Some(status_colors.info_border);
+                            }
+                            DiagnosticSeverity::HINT => {
+                                background_color = Some(status_colors.hint_background);
+                                border_color = Some(status_colors.hint_border);
+                            }
+                            _ => {
+                                background_color = Some(status_colors.ignored_background);
+                                border_color = Some(status_colors.ignored_border);
+                            }
+                        };
+                        let settings = ThemeSettings::get_global(cx);
+                        let mut base_text_style = window.text_style();
+                        base_text_style.refine(&TextStyleRefinement {
+                            font_family: Some(settings.ui_font.family.clone()),
+                            font_fallbacks: settings.ui_font.fallbacks.clone(),
+                            font_size: Some(settings.ui_font_size(cx).into()),
+                            color: Some(cx.theme().colors().editor_foreground),
+                            background_color: Some(gpui::transparent_black()),
+
+                            ..Default::default()
+                        });
+                        let markdown_style = MarkdownStyle {
+                            base_text_style,
+                            selection_background_color: { cx.theme().players().local().selection },
+                            link: TextStyleRefinement {
+                                underline: Some(gpui::UnderlineStyle {
+                                    thickness: px(1.),
+                                    color: Some(cx.theme().colors().editor_foreground),
+                                    wavy: false,
+                                }),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        };
+                        Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
+                            .open_url(open_markdown_url)
+                    })
+                    .await;
+            }
+
+            // diagnostic_group
+            //     .into_iter()
+            //     .map(|entry| {
+            //         let diagnostic = entry.diagnostic.clone();
+            //         let message_height = diagnostic.message.matches('\n').count() as u32 + 1;
+            //         BlockProperties {
+            //             style: BlockStyle::Fixed,
+            //             placement: BlockPlacement::Below(
+            //                 snapshot
+            //                     .buffer_snapshot
+            //                     .anchor_after(entry.range.start.to_point(&snapshot)),
+            //             ),
+            //             height: message_height,
+            //             render: diagnostic_block_renderer(diagnostic, None, true),
+            //             priority: 0,
+            //         }
+            //     })
+            //     .collect()
+            //
+            Vec::new()
+        })
     }
 }
 #[derive(IntoComponent)]

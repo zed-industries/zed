@@ -72,7 +72,7 @@ pub use element::{
 use feature_flags::{Debugger, FeatureFlagAppExt};
 use futures::{
     FutureExt,
-    future::{self, Shared, join},
+    future::{self, BoxFuture, Shared, join},
 };
 use fuzzy::StringMatchCandidate;
 
@@ -357,19 +357,10 @@ pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) 
 pub trait DiagnosticRenderer {
     fn render_group(
         &self,
-        diagnostic_group: Vec<Diagnostic>,
-        max_message_rows: Option<u8>,
-        allow_closing: bool,
+        diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
+        snapshot: EditorSnapshot,
         cx: &App,
-    ) -> BlockProperties<Anchor>;
-    fn render_secondary(
-        &self,
-        buffer: &MultiBufferSnapshot,
-        diagnostic: DiagnosticEntry<Point>,
-        max_message_rows: Option<u8>,
-        allow_closing: bool,
-        cx: &App,
-    ) -> BlockProperties<Anchor>;
+    ) -> Task<Vec<BlockProperties<Anchor>>>;
 }
 
 pub(crate) struct GlobalDiagnosticRenderer(pub Arc<dyn DiagnosticRenderer>);
@@ -703,6 +694,7 @@ pub struct Editor {
     select_syntax_node_history: SelectSyntaxNodeHistory,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
+    active_diagnostics_update: Task<()>,
     show_inline_diagnostics: bool,
     inline_diagnostics_update: Task<()>,
     inline_diagnostics_enabled: bool,
@@ -1474,6 +1466,7 @@ impl Editor {
             select_syntax_node_history: SelectSyntaxNodeHistory::default(),
             ime_transaction: Default::default(),
             active_diagnostics: None,
+            active_diagnostics_update: Task::ready(()),
             show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline.enabled,
             inline_diagnostics_update: Task::ready(()),
             inline_diagnostics: Vec::new(),
@@ -14200,69 +14193,63 @@ impl Editor {
         group_id: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<()> {
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
-        let Some(diagnostic_renderer) = cx
+        let diagnostic_renderer = cx
             .try_global::<GlobalDiagnosticRenderer>()
-            .map(|g| g.0.clone())
-        else {
-            return;
-        };
-        self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
-            let buffer = self.buffer.read(cx).snapshot(cx);
+            .map(|g| g.0.clone())?;
+        let buffer = self.buffer.read(cx).snapshot(cx);
 
-            let mut primary_range = None;
-            let mut primary_message = None;
-            let diagnostic_group = buffer
-                .diagnostic_group(buffer_id, group_id)
-                .filter_map(|entry| {
-                    let start = entry.range.start;
-                    let end = entry.range.end;
-                    if snapshot.is_line_folded(MultiBufferRow(start.row))
-                        && (start.row == end.row
-                            || snapshot.is_line_folded(MultiBufferRow(end.row)))
-                    {
-                        return None;
-                    }
-                    if entry.diagnostic.is_primary {
-                        primary_range = Some(entry.range.clone());
-                        primary_message = Some(entry.diagnostic.message.clone());
-                    }
-                    Some(entry)
+        let mut primary_range = None;
+        let mut primary_message = None;
+        let diagnostic_group = buffer
+            .diagnostic_group(buffer_id, group_id)
+            .filter_map(|entry| {
+                let start = entry.range.start;
+                let end = entry.range.end;
+                if snapshot.is_line_folded(MultiBufferRow(start.row))
+                    && (start.row == end.row || snapshot.is_line_folded(MultiBufferRow(end.row)))
+                {
+                    return None;
+                }
+                if entry.diagnostic.is_primary {
+                    primary_range = Some(entry.range.clone());
+                    primary_message = Some(entry.diagnostic.message.clone());
+                }
+                Some(DiagnosticEntry {
+                    range: entry.range.to_display_points(&snapshot),
+                    diagnostic: entry.diagnostic,
                 })
-                .collect::<Vec<_>>();
-            let primary_range = primary_range?;
-            let primary_message = primary_message?;
-
-            let block_info: Vec<_> = diagnostic_group
-                .iter()
-                .map(|entry| {
-                    diagnostic_renderer.render_secondary(
-                        &snapshot.buffer_snapshot,
-                        entry.clone(),
-                        None,
-                        true,
-                        cx,
-                    )
-                })
-                .collect();
-
-            let blocks = display_map
-                .insert_blocks(block_info, cx)
-                .into_iter()
-                .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
-                .collect();
-
-            Some(ActiveDiagnosticGroup {
-                primary_range: buffer.anchor_before(primary_range.start)
-                    ..buffer.anchor_after(primary_range.end),
-                primary_message,
-                group_id,
-                blocks,
-                is_valid: true,
             })
+            .collect::<Vec<_>>();
+        let primary_range = primary_range?;
+        let primary_message = primary_message?;
+
+        let blocks = diagnostic_renderer.render_group(diagnostic_group.clone(), snapshot, cx);
+        self.active_diagnostics_update = cx.spawn(async move |editor, cx| {
+            let blocks = blocks.await;
+            editor
+                .update(cx, |editor, cx| {
+                    let blocks = editor.display_map.update(cx, |display_map, cx| {
+                        display_map
+                            .insert_blocks(blocks, cx)
+                            .into_iter()
+                            .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
+                            .collect()
+                    });
+                    editor.active_diagnostics = Some(ActiveDiagnosticGroup {
+                        primary_range: buffer.anchor_before(primary_range.start)
+                            ..buffer.anchor_after(primary_range.end),
+                        primary_message,
+                        group_id,
+                        blocks,
+                        is_valid: true,
+                    });
+                })
+                .ok();
         });
+        Some(())
     }
 
     fn dismiss_diagnostics(&mut self, cx: &mut Context<Self>) {
@@ -14321,6 +14308,11 @@ impl Editor {
             None
         };
         self.inline_diagnostics_update = cx.spawn_in(window, async move |editor, cx| {
+            let editor = editor.upgrade().unwrap();
+            let aa = editor.read(cx).render(window, cx);
+            aa.into_any_element()
+                .layout_as_root(available_space, window, cx);
+
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }

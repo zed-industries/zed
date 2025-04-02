@@ -56,6 +56,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                 )
             },
         );
+        cx.dispatch_action(&workspace::OpenComponentPreview);
     })
     .detach();
 }
