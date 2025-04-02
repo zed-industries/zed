@@ -155,6 +155,37 @@ impl TryFrom<DebugAdapterConfig> for DebugTaskDefinition {
     }
 }
 
+impl TryFrom<TaskTemplate> for DebugTaskDefinition {
+    type Error = ();
+
+    fn try_from(value: TaskTemplate) -> Result<Self, Self::Error> {
+        let TaskType::Debug(debug_args) = value.task_type else {
+            return Err(());
+        };
+
+        let request = match debug_args.request {
+            crate::DebugArgsRequest::Launch => DebugRequestType::Launch(LaunchConfig {
+                program: value.command,
+                cwd: value.cwd.map(|cwd| PathBuf::from(cwd)),
+                args: value.args,
+            }),
+            crate::DebugArgsRequest::Attach(attach_config) => {
+                DebugRequestType::Attach(attach_config)
+            }
+        };
+
+        Ok(DebugTaskDefinition {
+            adapter: debug_args.adapter,
+            request,
+            label: value.label,
+            initialize_args: debug_args.initialize_args,
+            tcp_connection: debug_args.tcp_connection,
+            locator: debug_args.locator,
+            stop_on_entry: debug_args.stop_on_entry,
+        })
+    }
+}
+
 impl DebugTaskDefinition {
     /// Translate from debug definition to a task template
     pub fn to_zed_format(self) -> anyhow::Result<TaskTemplate> {

@@ -126,6 +126,7 @@ impl NewSessionModal {
         .detach_and_log_err(cx);
         Ok(())
     }
+
     fn adapter_drop_down_menu(
         &self,
         window: &mut Window,
@@ -181,7 +182,6 @@ impl NewSessionModal {
                         .ok();
                     }
                 };
-                // let name = name.clone();
 
                 let available_adapters = workspace
                     .update(cx, |this, cx| {
@@ -195,6 +195,75 @@ impl NewSessionModal {
 
                 for adapter in available_adapters {
                     menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.0.clone()));
+                }
+                menu
+            }),
+        )
+    }
+
+    fn debug_config_drop_down_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ui::DropdownMenu {
+        let workspace = self.workspace.clone();
+        let weak = cx.weak_entity();
+        let debugger = self.debugger.clone();
+        DropdownMenu::new(
+            "debug-config-menu",
+            debugger
+                .as_ref()
+                .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
+                .clone(),
+            ContextMenu::build(window, cx, move |mut menu, _, cx| {
+                let setter_for_name = |task: DebugTaskDefinition| {
+                    let weak = weak.clone();
+                    let workspace = workspace.clone();
+                    move |window: &mut Window, cx: &mut App| {
+                        weak.update(cx, |this, cx| {
+                            this.debugger = Some(task.adapter.clone().into());
+
+                            match &task.request {
+                                DebugRequestType::Launch(launch_config) => {
+                                    this.mode = NewSessionMode::launch(
+                                        Some(launch_config.clone()),
+                                        window,
+                                        cx,
+                                    );
+                                }
+                                DebugRequestType::Attach(_) => {
+                                    this.mode =
+                                        NewSessionMode::attach(workspace.clone(), window, cx);
+                                }
+                            }
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                };
+
+                let available_adapters: Vec<DebugTaskDefinition> = workspace
+                    .update(cx, |this, cx| {
+                        this.project()
+                            .read(cx)
+                            .task_store()
+                            .read(cx)
+                            .task_inventory()
+                            .iter()
+                            .flat_map(|task_inventory| task_inventory.read(cx).list_debug_tasks())
+                            .cloned()
+                            .filter_map(|task| task.try_into().ok())
+                            .collect()
+                    })
+                    .ok()
+                    .unwrap_or_default();
+
+                for debug_definition in available_adapters {
+                    menu = menu.entry(
+                        debug_definition.label.clone(),
+                        None,
+                        setter_for_name(debug_definition),
+                    );
                 }
                 menu
             }),
@@ -463,6 +532,7 @@ impl Render for NewSessionModal {
             .child(v_flex().child(self.mode.clone().render(window, cx)))
             .child(
                 h_flex()
+                    .child(self.debug_config_drop_down_menu(window, cx))
                     .gap_2()
                     .border_color(cx.theme().colors().border_variant)
                     .border_t_1()
