@@ -16,10 +16,11 @@ use task::DebugTaskDefinition;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
-    ContextMenu, DropdownMenu, FluentBuilder, InteractiveElement, IntoElement, Label,
+    ContextMenu, Disableable, DropdownMenu, FluentBuilder, InteractiveElement, IntoElement, Label,
     LabelCommon as _, ParentElement, RenderOnce, SharedString, Styled, StyledExt, ToggleButton,
     ToggleState, Toggleable, Window, div, h_flex, relative, rems, v_flex,
 };
+use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
 use crate::attach_modal::AttachModal;
@@ -30,12 +31,6 @@ pub(super) struct NewSessionModal {
     mode: NewSessionMode,
     stop_on_entry: ToggleState,
     debugger: Option<SharedString>,
-}
-
-enum State {
-    Configuration(NewSessionMode),
-    Launching(),
-    Failed(),
 }
 
 fn suggested_label(request: &DebugRequestType, debugger: &str) -> String {
@@ -449,11 +444,13 @@ impl Render for NewSessionModal {
                             .checkbox_position(ui::IconPosition::End),
                         )
                     })
-                    .child(Button::new("debugger-spawn", "Start").on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.start_new_session(cx);
-                        },
-                    ))),
+                    .child(
+                        Button::new("debugger-spawn", "Start")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.start_new_session(cx).log_err();
+                            }))
+                            .disabled(self.debugger.is_none()),
+                    ),
             )
     }
 }
