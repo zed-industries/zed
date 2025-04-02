@@ -4,27 +4,27 @@ use gpui::{FontWeight, HighlightStyle};
 use rpc::proto::{self, documentation};
 
 #[derive(Debug)]
-pub struct SignatureHelps {
+pub struct SignatureHelp {
     pub active_signature: usize,
-    pub signatures: Vec<SignatureHelp>,
+    pub signatures: Vec<SignatureHelpData>,
     pub(super) original_data: lsp::SignatureHelp,
 }
 
 #[derive(Debug, Clone)]
-pub struct SignatureHelp {
+pub struct SignatureHelpData {
     pub label: String,
     pub documentation: Option<String>,
     pub highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
-impl SignatureHelps {
+impl SignatureHelp {
     pub fn new(help: lsp::SignatureHelp) -> Option<Self> {
         if help.signatures.is_empty() {
             return None;
         }
         let active_signature = help.active_signature.unwrap_or(0) as usize;
         let active_parameter = help.active_parameter.unwrap_or(0) as usize;
-        let mut signatures = Vec::<SignatureHelp>::with_capacity(help.signatures.capacity());
+        let mut signatures = Vec::<SignatureHelpData>::with_capacity(help.signatures.capacity());
         for signature in &help.signatures {
             let str_for_join = ", ";
             let mut highlights = Vec::new();
@@ -66,7 +66,7 @@ impl SignatureHelps {
                 lsp::Documentation::MarkupContent(markup) => markup.value,
             });
 
-            signatures.push(SignatureHelp {
+            signatures.push(SignatureHelpData {
                 label,
                 documentation,
                 highlights,
@@ -196,7 +196,7 @@ fn proto_to_lsp_documentation(documentation: proto::Documentation) -> Option<lsp
 mod tests {
     use gpui::{FontWeight, HighlightStyle};
 
-    use crate::lsp_command::signature_help::SignatureHelps;
+    use crate::lsp_command::signature_help::SignatureHelp;
 
     fn current_parameter() -> HighlightStyle {
         HighlightStyle {
@@ -226,7 +226,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelps::new(signature_help);
+        let maybe_markdown = SignatureHelp::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -262,7 +262,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(1),
         };
-        let maybe_markdown = SignatureHelps::new(signature_help);
+        let maybe_markdown = SignatureHelp::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -315,7 +315,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelps::new(signature_help);
+        let maybe_markdown = SignatureHelp::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -368,7 +368,7 @@ mod tests {
             active_signature: Some(1),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelps::new(signature_help);
+        let maybe_markdown = SignatureHelp::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -421,7 +421,7 @@ mod tests {
             active_signature: Some(1),
             active_parameter: Some(1),
         };
-        let maybe_markdown = SignatureHelps::new(signature_help);
+        let maybe_markdown = SignatureHelp::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -474,7 +474,7 @@ mod tests {
             active_signature: Some(1),
             active_parameter: None,
         };
-        let maybe_markdown = SignatureHelps::new(signature_help);
+        let maybe_markdown = SignatureHelp::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -542,7 +542,7 @@ mod tests {
             active_signature: Some(2),
             active_parameter: Some(1),
         };
-        let maybe_markdown = SignatureHelps::new(signature_help);
+        let maybe_markdown = SignatureHelp::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -564,7 +564,7 @@ mod tests {
             active_signature: None,
             active_parameter: None,
         };
-        let maybe_markdown = SignatureHelps::new(signature_help);
+        let maybe_markdown = SignatureHelp::new(signature_help);
         assert!(maybe_markdown.is_none());
     }
 
@@ -589,7 +589,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelps::new(signature_help);
+        let maybe_markdown = SignatureHelp::new(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();

@@ -5746,7 +5746,7 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<SignatureHelps>> {
+    ) -> Task<Vec<SignatureHelp>> {
         let position = position.to_point_utf16(buffer.read(cx));
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
