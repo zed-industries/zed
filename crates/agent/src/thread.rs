@@ -222,7 +222,8 @@ pub struct Thread {
     pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
-    feedback: Option<ThreadFeedback>,
+    feedback: Option<ThreadFeedback>, // Keep for backward compatibility
+    message_feedback: HashMap<MessageId, ThreadFeedback>,
 }
 
 impl Thread {
@@ -261,6 +262,7 @@ impl Thread {
             },
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
+            message_feedback: HashMap::default(),
         }
     }
 
@@ -323,6 +325,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
+            message_feedback: HashMap::default(),
         }
     }
 
@@ -1484,14 +1487,21 @@ impl Thread {
         canceled
     }
 
-    /// Returns the feedback given to the thread, if any.
+    /// Returns the overall feedback given to the thread, if any.
     pub fn feedback(&self) -> Option<ThreadFeedback> {
         self.feedback
     }
 
-    /// Reports feedback about the thread and stores it in our telemetry backend.
-    pub fn report_feedback(
+    /// Returns the feedback for a specific message, if any.
+    pub fn message_feedback(&self, message_id: MessageId) -> Option<ThreadFeedback> {
+        self.message_feedback.get(&message_id).copied()
+    }
+
+    /// Reports feedback about a specific message and stores it in our telemetry backend.
+    /// Does NOT affect the overall thread feedback.
+    pub fn report_message_feedback(
         &mut self,
+        message_id: MessageId,
         feedback: ThreadFeedback,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1499,8 +1509,16 @@ impl Thread {
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
-        self.feedback = Some(feedback);
+        
+        // Store feedback for this specific message only
+        self.message_feedback.insert(message_id, feedback);
+        
         cx.notify();
+
+        // Get the message content
+        let message_content = self.message(message_id)
+            .map(|msg| msg.to_string())
+            .unwrap_or_default();
 
         cx.background_spawn(async move {
             let final_project_snapshot = final_project_snapshot.await;
@@ -1516,6 +1534,8 @@ impl Thread {
                 "Assistant Thread Rated",
                 rating,
                 thread_id,
+                message_id = message_id.0,  // Include the message ID
+                message_content,            // Include the message content
                 thread_data,
                 final_project_snapshot
             );
@@ -1523,6 +1543,53 @@ impl Thread {
 
             Ok(())
         })
+    }
+
+    /// Reports feedback about the thread (for backward compatibility)
+    pub fn report_feedback(
+        &mut self,
+        feedback: ThreadFeedback,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        // Find the last assistant message
+        let last_assistant_message_id = self.messages.iter()
+            .rev()
+            .find(|msg| msg.role == Role::Assistant)
+            .map(|msg| msg.id);
+        
+        if let Some(message_id) = last_assistant_message_id {
+            self.report_message_feedback(message_id, feedback, cx)
+        } else {
+            // Fall back to the old behavior if there's no assistant message
+            let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
+            let serialized_thread = self.serialize(cx);
+            let thread_id = self.id().clone();
+            let client = self.project.read(cx).client();
+            self.feedback = Some(feedback);
+            cx.notify();
+
+            cx.background_spawn(async move {
+                let final_project_snapshot = final_project_snapshot.await;
+                let serialized_thread = serialized_thread.await?;
+                let thread_data =
+                    serde_json::to_value(serialized_thread).unwrap_or_else(|_| serde_json::Value::Null);
+
+                let rating = match feedback {
+                    ThreadFeedback::Positive => "positive",
+                    ThreadFeedback::Negative => "negative",
+                };
+                telemetry::event!(
+                    "Assistant Thread Rated",
+                    rating,
+                    thread_id,
+                    thread_data,
+                    final_project_snapshot
+                );
+                client.telemetry().flush_events();
+
+                Ok(())
+            })
+        }
     }
 
     /// Create a snapshot of the current project state including git information and unsaved buffers.
