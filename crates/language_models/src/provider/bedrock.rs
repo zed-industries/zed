@@ -12,11 +12,7 @@ use bedrock::bedrock_client::types::{
     ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
 };
 use bedrock::bedrock_client::{self, Config};
-use bedrock::{
-    BedrockError, BedrockInnerContent, BedrockMessage, BedrockSpecificTool,
-    BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
-    value_to_aws_document,
-};
+use bedrock::{BedrockError, BedrockInnerContent, BedrockMessage, BedrockStreamingResponse, Model};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -412,50 +408,6 @@ impl LanguageModel for BedrockModel {
             ))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        name: String,
-        description: String,
-        schema: Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let mut request = into_bedrock(
-            request,
-            self.model.id().into(),
-            self.model.default_temperature(),
-            self.model.max_output_tokens(),
-        );
-
-        request.tool_choice = BedrockSpecificTool::builder()
-            .name(name.clone())
-            .build()
-            .log_err()
-            .map(BedrockToolChoice::Tool);
-
-        if let Some(tool) = BedrockTool::builder()
-            .name(name.clone())
-            .description(description.clone())
-            .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(&schema)))
-            .build()
-            .log_err()
-        {
-            request.tools.push(tool);
-        }
-
-        let handle = self.handler.clone();
-
-        let request = self.stream_completion(request, _cx);
-        self.request_limiter
-            .run(async move {
-                let response = request.map_err(|err| anyhow!(err))?.await;
-                Ok(extract_tool_args_from_events(name, response, handle)
-                    .await?
-                    .boxed())
-            })
-            .boxed()
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
