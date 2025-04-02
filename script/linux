@@ -29,8 +29,6 @@ if [[ -n $apt ]]; then
     libfontconfig-dev
     libwayland-dev
     libxkbcommon-x11-dev
-    libdbus-1-dev
-    libpipewire-0.3-dev
     libssl-dev
     libzstd-dev
     libvulkan1
@@ -79,8 +77,6 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     fontconfig-devel
     wayland-devel
     libxkbcommon-x11-devel
-    dbus-devel
-    pipewire-devel
     openssl-devel
     libzstd-devel
     vulkan-loader
@@ -141,7 +137,6 @@ if [[ -n $zyp ]]; then
     alsa-devel
     clang
     cmake
-    dbus-1-devel
     fontconfig-devel
     gcc
     gcc-c++
@@ -156,7 +151,6 @@ if [[ -n $zyp ]]; then
     mold
     netcat-openbsd
     openssl-devel
-    pipewire-devel
     sqlite3-devel
     tar
     wayland-devel
@@ -181,8 +175,6 @@ if [[ -n $pacman ]]; then
     wayland
     libgit2
     libxkbcommon-x11
-    dbus
-    libpipewire
     openbsd-netcat
     openssl
     zstd
@@ -212,8 +204,6 @@ if [[ -n $xbps ]]; then
     fontconfig-devel
     libxcb-devel
     libxkbcommon-devel
-    dbus-devel
-    pipewire-devel
     libzstd-devel
     openbsd-netcat
     openssl-devel
