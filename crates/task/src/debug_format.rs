@@ -41,7 +41,6 @@ impl TCPHost {
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct AttachConfig {
     /// The processId to attach to, if left empty we will show a process picker
-    #[serde(default)]
     pub process_id: Option<u32>,
 }
 
@@ -52,7 +51,8 @@ pub struct LaunchConfig {
     pub program: String,
     /// The current working directory of your project
     pub cwd: Option<PathBuf>,
-    /// Args to pass to a debuggee
+    /// Arguments to pass to a debuggee
+    #[serde(default)]
     pub args: Vec<String>,
 }
 
@@ -166,7 +166,7 @@ impl TryFrom<TaskTemplate> for DebugTaskDefinition {
         let request = match debug_args.request {
             crate::DebugArgsRequest::Launch => DebugRequestType::Launch(LaunchConfig {
                 program: value.command,
-                cwd: value.cwd.map(|cwd| PathBuf::from(cwd)),
+                cwd: value.cwd.map(PathBuf::from),
                 args: value.args,
             }),
             crate::DebugArgsRequest::Attach(attach_config) => {
@@ -289,5 +289,23 @@ impl TryFrom<DebugTaskFile> for TaskTemplates {
             .collect();
 
         Ok(Self(templates))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{DebugRequestType, LaunchConfig};
+
+    #[test]
+    fn test_can_deserialize_non_attach_task() {
+        let deserialized: DebugRequestType =
+            serde_json::from_str(r#"{"program": "cafebabe"}"#).unwrap();
+        assert_eq!(
+            deserialized,
+            DebugRequestType::Launch(LaunchConfig {
+                program: "cafebabe".to_owned(),
+                ..Default::default()
+            })
+        );
     }
 }
