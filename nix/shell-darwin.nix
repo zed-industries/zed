@@ -7,6 +7,7 @@
   rust-toolchain,
   rust-analyzer,
   cargo-nextest,
+  cargo-bundle,
 
   cmake,
   protobuf,
@@ -30,6 +31,7 @@ in
     })
     rust-analyzer
     cargo-nextest
+    cargo-bundle
 
     cmake
     protobuf
