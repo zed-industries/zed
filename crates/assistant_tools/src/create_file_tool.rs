@@ -41,7 +41,7 @@ impl Tool for CreateFileTool {
     }
 
     fn needs_confirmation(&self) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
