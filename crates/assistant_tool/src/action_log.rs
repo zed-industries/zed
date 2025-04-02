@@ -313,12 +313,17 @@ impl ActionLog {
                 let buffer = buffer.read(cx);
                 let buffer_range =
                     buffer_range.start.to_point(buffer)..buffer_range.end.to_point(buffer);
-                let buffer_row_range = buffer_range.start.row..buffer_range.end.row + 1;
                 let mut delta = 0i32;
+
                 tracked_buffer.unreviewed_changes.retain_mut(|edit| {
                     edit.old.start = (edit.old.start as i32 + delta) as u32;
                     edit.old.end = (edit.old.end as i32 + delta) as u32;
-                    if edit.new.overlaps(&buffer_row_range) {
+
+                    if buffer_range.end.row < edit.new.start
+                        || buffer_range.start.row > edit.new.end
+                    {
+                        true
+                    } else {
                         let old_bytes = tracked_buffer
                             .base_text
                             .point_to_offset(Point::new(edit.old.start, 0))
@@ -342,8 +347,6 @@ impl ActionLog {
                         );
                         delta += edit.new_len() as i32 - edit.old_len() as i32;
                         false
-                    } else {
-                        true
                     }
                 });
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
@@ -644,7 +647,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_undoing_edits(cx: &mut TestAppContext) {
+    async fn test_deletions(cx: &mut TestAppContext) {
         let action_log = cx.new(|_| ActionLog::new());
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno\npqr", cx));
 
@@ -652,13 +655,13 @@ mod tests {
             action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
-                    .edit([(Point::new(1, 1)..Point::new(1, 2), "E")], None, cx)
+                    .edit([(Point::new(1, 0)..Point::new(2, 0), "")], None, cx)
                     .unwrap();
                 buffer.finalize_last_transaction();
             });
             buffer.update(cx, |buffer, cx| {
                 buffer
-                    .edit([(Point::new(4, 0)..Point::new(5, 0), "")], None, cx)
+                    .edit([(Point::new(3, 0)..Point::new(4, 0), "")], None, cx)
                     .unwrap();
                 buffer.finalize_last_transaction();
             });
@@ -667,7 +670,7 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
-            "abc\ndEf\nghi\njkl\npqr"
+            "abc\nghi\njkl\npqr"
         );
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
@@ -675,12 +678,12 @@ mod tests {
                 buffer.clone(),
                 vec![
                     HunkStatus {
-                        range: Point::new(1, 0)..Point::new(2, 0),
-                        diff_status: DiffHunkStatusKind::Modified,
+                        range: Point::new(1, 0)..Point::new(1, 0),
+                        diff_status: DiffHunkStatusKind::Deleted,
                         old_text: "def\n".into(),
                     },
                     HunkStatus {
-                        range: Point::new(4, 0)..Point::new(4, 0),
+                        range: Point::new(3, 0)..Point::new(3, 0),
                         diff_status: DiffHunkStatusKind::Deleted,
                         old_text: "mno\n".into(),
                     }
@@ -692,19 +695,25 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
-            "abc\ndEf\nghi\njkl\nmno\npqr"
+            "abc\nghi\njkl\nmno\npqr"
         );
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
                 buffer.clone(),
                 vec![HunkStatus {
-                    range: Point::new(1, 0)..Point::new(2, 0),
-                    diff_status: DiffHunkStatusKind::Modified,
+                    range: Point::new(1, 0)..Point::new(1, 0),
+                    diff_status: DiffHunkStatusKind::Deleted,
                     old_text: "def\n".into(),
                 }],
             )]
         );
+
+        action_log.update(cx, |log, cx| {
+            log.keep_edits_in_range(buffer.clone(), Point::new(1, 0)..Point::new(1, 0), cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
     #[gpui::test(iterations = 10)]
@@ -859,7 +868,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_deletion(cx: &mut TestAppContext) {
+    async fn test_deleting_files(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
