@@ -1,6 +1,6 @@
 mod active_thread;
+mod agent_diff;
 mod assistant_configuration;
-mod assistant_diff;
 mod assistant_model_selector;
 mod assistant_panel;
 mod buffer_codegen;
@@ -23,7 +23,7 @@ mod ui;
 
 use std::sync::Arc;
 
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AgentProfileId, AssistantSettings};
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
@@ -33,6 +33,7 @@ use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings as _;
+use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AddContextServerModal, ManageProfilesModal};
@@ -40,12 +41,11 @@ pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate}
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
-pub use assistant_diff::{AssistantDiff, AssistantDiffToolbar};
+pub use agent_diff::{AgentDiff, AgentDiffToolbar};
 
 actions!(
-    assistant2,
+    agent,
     [
-        NewThread,
         NewPromptEditor,
         ToggleContextPicker,
         ToggleProfileSelector,
@@ -65,33 +65,39 @@ actions!(
         RemoveFocusedContext,
         AcceptSuggestedContext,
         OpenActiveThreadAsMarkdown,
-        OpenAssistantDiff,
-        ToggleKeep,
+        OpenAgentDiff,
+        Keep,
         Reject,
         RejectAll,
         KeepAll
     ]
 );
 
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema)]
+pub struct NewThread {
+    #[serde(default)]
+    from_thread_id: Option<ThreadId>,
+}
+
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 pub struct ManageProfiles {
     #[serde(default)]
-    pub customize_tools: Option<Arc<str>>,
+    pub customize_tools: Option<AgentProfileId>,
 }
 
 impl ManageProfiles {
-    pub fn customize_tools(profile_id: Arc<str>) -> Self {
+    pub fn customize_tools(profile_id: AgentProfileId) -> Self {
         Self {
             customize_tools: Some(profile_id),
         }
     }
 }
 
-impl_actions!(assistant, [ManageProfiles]);
+impl_actions!(agent, [NewThread, ManageProfiles]);
 
-const NAMESPACE: &str = "assistant2";
+const NAMESPACE: &str = "agent";
 
-/// Initializes the `assistant2` crate.
+/// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
@@ -117,10 +123,10 @@ pub fn init(
     cx.observe_new(AddContextServerModal::register).detach();
     cx.observe_new(ManageProfilesModal::register).detach();
 
-    feature_gate_assistant2_actions(cx);
+    feature_gate_agent_actions(cx);
 }
 
-fn feature_gate_assistant2_actions(cx: &mut App) {
+fn feature_gate_agent_actions(cx: &mut App) {
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(NAMESPACE);
     });

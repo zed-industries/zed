@@ -633,6 +633,8 @@
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
     },
+    // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    "always_allow_tool_actions": false,
     "default_profile": "write",
     "profiles": {
       "ask": {
@@ -642,11 +644,11 @@
         "tools": {
           "diagnostics": true,
           "fetch": true,
-          "list-directory": true,
+          "list_directory": true,
           "now": true,
-          "path-search": true,
-          "read-file": true,
-          "regex-search": true,
+          "path_search": true,
+          "read_file": true,
+          "regex_search": true,
           "thinking": true
         }
       },
@@ -655,22 +657,22 @@
         "enable_all_context_servers": true,
         "tools": {
           "bash": true,
-          "batch-tool": true,
-          "code-symbols": true,
-          "copy-path": true,
-          "create-file": true,
-          "delete-path": true,
+          "batch_tool": true,
+          "code_symbols": true,
+          "copy_path": true,
+          "create_file": true,
+          "delete_path": true,
           "diagnostics": true,
-          "find-replace-file": true,
-          "edit-files": false,
+          "find_replace_file": true,
+          "edit_files": false,
           "fetch": true,
-          "list-directory": true,
-          "move-path": true,
+          "list_directory": true,
+          "move_path": true,
           "now": true,
-          "path-search": true,
-          "read-file": true,
-          "regex-search": true,
-          "symbol-info": true,
+          "path_search": true,
+          "read_file": true,
+          "regex_search": true,
+          "symbol_info": true,
           "thinking": true
         }
       }

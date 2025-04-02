@@ -1321,7 +1321,7 @@ impl Buffer {
             this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
-                    this.apply_diff(diff, true, cx);
+                    this.apply_diff(diff, cx);
                     tx.send(this.finalize_last_transaction().cloned()).ok();
                     this.has_conflict = false;
                     this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
@@ -1882,14 +1882,7 @@ impl Buffer {
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.
-    ///
-    /// If `atomic` is true, the diff will be applied as a single edit.
-    pub fn apply_diff(
-        &mut self,
-        diff: Diff,
-        atomic: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<TransactionId> {
+    pub fn apply_diff(&mut self, diff: Diff, cx: &mut Context<Self>) -> Option<TransactionId> {
         let snapshot = self.snapshot();
         let mut edits_since = snapshot.edits_since::<usize>(&diff.base_version).peekable();
         let mut delta = 0;
@@ -1919,17 +1912,7 @@ impl Buffer {
 
         self.start_transaction();
         self.text.set_line_ending(diff.line_ending);
-        if atomic {
-            self.edit(adjusted_edits, None, cx);
-        } else {
-            let mut delta = 0isize;
-            for (range, new_text) in adjusted_edits {
-                let adjusted_range =
-                    (range.start as isize + delta) as usize..(range.end as isize + delta) as usize;
-                delta += new_text.len() as isize - range.len() as isize;
-                self.edit([(adjusted_range, new_text)], None, cx);
-            }
-        }
+        self.edit(adjusted_edits, None, cx);
         self.end_transaction(cx)
     }
 

@@ -70,7 +70,10 @@ impl NewSessionModal {
             initialize_args: None,
             tcp_connection: None,
             locator: None,
-            args: vec![],
+            stop_on_entry: match self.stop_on_entry {
+                ToggleState::Selected => Some(true),
+                _ => None,
+            },
         })
     }
     fn start_new_session(&self, cx: &mut Context<Self>) -> Result<()> {
@@ -195,6 +198,7 @@ impl LaunchMode {
         task::LaunchConfig {
             program: self.program.read(cx).text(cx),
             cwd: path.is_empty().not().then(|| PathBuf::from(path)),
+            args: Default::default(),
         }
     }
 }
@@ -213,10 +217,10 @@ impl AttachMode {
             label: "Attach New Session Setup".into(),
             request: dap::DebugRequestType::Attach(task::AttachConfig { process_id: None }),
             tcp_connection: None,
-            args: Vec::default(),
             adapter: "".into(),
             locator: None,
             initialize_args: None,
+            stop_on_entry: Some(false),
         };
 
         cx.new(|cx| Self {

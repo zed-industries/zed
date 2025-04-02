@@ -41,7 +41,7 @@ pub struct ListDirectoryTool;
 
 impl Tool for ListDirectoryTool {
     fn name(&self) -> String {
-        "list-directory".into()
+        "list_directory".into()
     }
 
     fn needs_confirmation(&self) -> bool {

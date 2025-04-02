@@ -131,9 +131,11 @@ impl DebugAdapter for JsDebugAdapter {
         match &config.request {
             DebugRequestType::Attach(attach) => {
                 map.insert("processId".into(), attach.process_id.into());
+                map.insert("stopOnEntry".into(), config.stop_on_entry.into());
             }
             DebugRequestType::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
+                map.insert("args".into(), launch.args.clone().into());
                 map.insert(
                     "cwd".into(),
                     launch

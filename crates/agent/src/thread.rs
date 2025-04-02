@@ -3,7 +3,7 @@ use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -11,7 +11,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
-use git;
+use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -19,11 +19,12 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
-use project::git_store::{GitStore, GitStoreCheckpoint};
+use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
@@ -43,7 +44,9 @@ pub enum RequestKind {
     Summarize,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
+)]
 pub struct ThreadId(Arc<str>);
 
 impl ThreadId {
@@ -121,6 +124,15 @@ pub enum MessageSegment {
     Thinking(String),
 }
 
+impl MessageSegment {
+    pub fn text_mut(&mut self) -> &mut String {
+        match self {
+            Self::Text(text) => text,
+            Self::Thinking(text) => text,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<WorktreeSnapshot>,
@@ -173,12 +185,26 @@ impl LastRestoreCheckpoint {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub enum DetailedSummaryState {
+    #[default]
+    NotGenerated,
+    Generating {
+        message_id: MessageId,
+    },
+    Generated {
+        text: SharedString,
+        message_id: MessageId,
+    },
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
     updated_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
+    detailed_summary_state: DetailedSummaryState,
     messages: Vec<Message>,
     next_message_id: MessageId,
     context: BTreeMap<ContextId, AssistantContext>,
@@ -211,6 +237,7 @@ impl Thread {
             updated_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
+            detailed_summary_state: DetailedSummaryState::NotGenerated,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             context: BTreeMap::default(),
@@ -260,6 +287,7 @@ impl Thread {
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
+            detailed_summary_state: serialized.detailed_summary_state,
             messages: serialized
                 .messages
                 .into_iter()
@@ -326,6 +354,19 @@ impl Thread {
     pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.summary = Some(summary.into());
         cx.emit(ThreadEvent::SummaryChanged);
+    }
+
+    pub fn latest_detailed_summary_or_text(&self) -> SharedString {
+        self.latest_detailed_summary()
+            .unwrap_or_else(|| self.text().into())
+    }
+
+    fn latest_detailed_summary(&self) -> Option<SharedString> {
+        if let DetailedSummaryState::Generated { text, .. } = &self.detailed_summary_state {
+            Some(text.clone())
+        } else {
+            None
+        }
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
@@ -658,6 +699,7 @@ impl Thread {
                     .collect(),
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage.clone(),
+                detailed_summary_state: this.detailed_summary_state.clone(),
             })
         })
     }
@@ -780,18 +822,20 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         let mut request = self.to_completion_request(request_kind, cx);
-        request.tools = {
-            let mut tools = Vec::new();
-            tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
-                LanguageModelRequestTool {
-                    name: tool.name(),
-                    description: tool.description(),
-                    input_schema: tool.input_schema(model.tool_input_format()),
-                }
-            }));
+        if model.supports_tools() {
+            request.tools = {
+                let mut tools = Vec::new();
+                tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
+                    LanguageModelRequestTool {
+                        name: tool.name(),
+                        description: tool.description(),
+                        input_schema: tool.input_schema(model.tool_input_format()),
+                    }
+                }));
 
-            tools
-        };
+                tools
+            };
+        }
 
         self.stream_completion(request, model, cx);
     }
@@ -837,13 +881,9 @@ impl Thread {
             log::error!("system_prompt_context not set.")
         }
 
-        let mut referenced_context_ids = HashSet::default();
+        let mut added_context_ids = HashSet::<ContextId>::default();
 
         for message in &self.messages {
-            if let Some(context_ids) = self.context_by_message.get(&message.id) {
-                referenced_context_ids.extend(context_ids);
-            }
-
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
@@ -860,6 +900,23 @@ impl Thread {
                     if self.tool_use.message_has_tool_results(message.id) {
                         continue;
                     }
+                }
+            }
+
+            // Attach context to this message if it's the first to reference it
+            if let Some(context_ids) = self.context_by_message.get(&message.id) {
+                let new_context_ids: Vec<_> = context_ids
+                    .iter()
+                    .filter(|id| !added_context_ids.contains(id))
+                    .collect();
+
+                if !new_context_ids.is_empty() {
+                    let referenced_context = new_context_ids
+                        .iter()
+                        .filter_map(|context_id| self.context.get(*context_id));
+
+                    attach_context_to_message(&mut request_message, referenced_context, cx);
+                    added_context_ids.extend(context_ids.iter());
                 }
             }
 
@@ -887,21 +944,6 @@ impl Thread {
         let breakpoint_index = request.messages.len() - 2;
         for (index, message) in request.messages.iter_mut().enumerate() {
             message.cache = index == breakpoint_index;
-        }
-
-        if !referenced_context_ids.is_empty() {
-            let mut context_message = LanguageModelRequestMessage {
-                role: Role::User,
-                content: Vec::new(),
-                cache: false,
-            };
-
-            let referenced_context = referenced_context_ids
-                .into_iter()
-                .filter_map(|context_id| self.context.get(context_id));
-            attach_context_to_message(&mut context_message, referenced_context, cx);
-
-            request.messages.push(context_message);
         }
 
         self.attached_tracked_files_state(&mut request.messages, cx);
@@ -1041,18 +1083,32 @@ impl Thread {
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                let last_assistant_message_id = thread
+                                let last_assistant_message = thread
                                     .messages
-                                    .iter()
-                                    .rfind(|message| message.role == Role::Assistant)
-                                    .map(|message| message.id)
-                                    .unwrap_or_else(|| {
+                                    .iter_mut()
+                                    .rfind(|message| message.role == Role::Assistant);
+
+                                let last_assistant_message_id =
+                                    if let Some(message) = last_assistant_message {
+                                        if let Some(segment) = message.segments.first_mut() {
+                                            let text = segment.text_mut();
+                                            if text.is_empty() {
+                                                text.push_str("Using tool...");
+                                            }
+                                        } else {
+                                            message.segments.push(MessageSegment::Text(
+                                                "Using tool...".to_string(),
+                                            ));
+                                        }
+
+                                        message.id
+                                    } else {
                                         thread.insert_message(
                                             Role::Assistant,
                                             vec![MessageSegment::Text("Using tool...".to_string())],
                                             cx,
                                         )
-                                    });
+                                    };
                                 thread.tool_use.request_tool_use(
                                     last_assistant_message_id,
                                     tool_use,
@@ -1200,6 +1256,87 @@ impl Thread {
         });
     }
 
+    pub fn generate_detailed_summary(&mut self, cx: &mut Context<Self>) -> Option<Task<()>> {
+        let last_message_id = self.messages.last().map(|message| message.id)?;
+
+        match &self.detailed_summary_state {
+            DetailedSummaryState::Generating { message_id, .. }
+            | DetailedSummaryState::Generated { message_id, .. }
+                if *message_id == last_message_id =>
+            {
+                // Already up-to-date
+                return None;
+            }
+            _ => {}
+        }
+
+        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+
+        if !provider.is_authenticated(cx) {
+            return None;
+        }
+
+        let mut request = self.to_completion_request(RequestKind::Summarize, cx);
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                "Generate a detailed summary of this conversation. Include:\n\
+                1. A brief overview of what was discussed\n\
+                2. Key facts or information discovered\n\
+                3. Outcomes or conclusions reached\n\
+                4. Any action items or next steps if any\n\
+                Format it in Markdown with headings and bullet points."
+                    .into(),
+            ],
+            cache: false,
+        });
+
+        let task = cx.spawn(async move |thread, cx| {
+            let stream = model.stream_completion_text(request, &cx);
+            let Some(mut messages) = stream.await.log_err() else {
+                thread
+                    .update(cx, |this, _cx| {
+                        this.detailed_summary_state = DetailedSummaryState::NotGenerated;
+                    })
+                    .log_err();
+
+                return;
+            };
+
+            let mut new_detailed_summary = String::new();
+
+            while let Some(chunk) = messages.stream.next().await {
+                if let Some(chunk) = chunk.log_err() {
+                    new_detailed_summary.push_str(&chunk);
+                }
+            }
+
+            thread
+                .update(cx, |this, _cx| {
+                    this.detailed_summary_state = DetailedSummaryState::Generated {
+                        text: new_detailed_summary.into(),
+                        message_id: last_message_id,
+                    };
+                })
+                .log_err();
+        });
+
+        self.detailed_summary_state = DetailedSummaryState::Generating {
+            message_id: last_message_id,
+        };
+
+        Some(task)
+    }
+
+    pub fn is_generating_detailed_summary(&self) -> bool {
+        matches!(
+            self.detailed_summary_state,
+            DetailedSummaryState::Generating { .. }
+        )
+    }
+
     pub fn use_pending_tools(
         &mut self,
         cx: &mut Context<Self>,
@@ -1237,15 +1374,6 @@ impl Thread {
                         cx,
                     );
                 }
-            } else if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                self.run_tool(
-                    tool_use.id.clone(),
-                    tool_use.ui_text.clone(),
-                    tool_use.input.clone(),
-                    &messages,
-                    tool,
-                    cx,
-                );
             }
         }
 
@@ -1275,13 +1403,18 @@ impl Thread {
         cx: &mut Context<Thread>,
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
-        let run_tool = tool.run(
-            input,
-            messages,
-            self.project.clone(),
-            self.action_log.clone(),
-            cx,
-        );
+
+        let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
+            Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
+        } else {
+            tool.run(
+                input,
+                messages,
+                self.project.clone(),
+                self.action_log.clone(),
+                cx,
+            )
+        };
 
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
@@ -1444,48 +1577,61 @@ impl Thread {
                 (path, snapshot)
             });
 
-            let Ok((worktree_path, snapshot)) = worktree_info else {
+            let Ok((worktree_path, _snapshot)) = worktree_info else {
                 return WorktreeSnapshot {
                     worktree_path: String::new(),
                     git_state: None,
                 };
             };
 
-            let repo_info = git_store
+            let git_state = git_store
                 .update(cx, |git_store, cx| {
                     git_store
                         .repositories()
                         .values()
-                        .find(|repo| repo.read(cx).worktree_id == Some(snapshot.id()))
-                        .and_then(|repo| {
-                            let repo = repo.read(cx);
-                            Some((repo.branch().cloned(), repo.local_repository()?))
+                        .find(|repo| {
+                            repo.read(cx)
+                                .abs_path_to_repo_path(&worktree.read(cx).abs_path())
+                                .is_some()
                         })
+                        .cloned()
                 })
                 .ok()
-                .flatten();
+                .flatten()
+                .map(|repo| {
+                    repo.read_with(cx, |repo, _| {
+                        let current_branch =
+                            repo.branch.as_ref().map(|branch| branch.name.to_string());
+                        repo.send_job(|state, _| async move {
+                            let RepositoryState::Local { backend, .. } = state else {
+                                return GitState {
+                                    remote_url: None,
+                                    head_sha: None,
+                                    current_branch,
+                                    diff: None,
+                                };
+                            };
 
-            // Extract git information
-            let git_state = match repo_info {
-                None => None,
-                Some((branch, repo)) => {
-                    let current_branch = branch.map(|branch| branch.name.to_string());
-                    let remote_url = repo.remote_url("origin");
-                    let head_sha = repo.head_sha();
+                            let remote_url = backend.remote_url("origin");
+                            let head_sha = backend.head_sha();
+                            let diff = backend.diff(DiffType::HeadToWorktree).await.ok();
 
-                    // Get diff asynchronously
-                    let diff = repo
-                        .diff(git::repository::DiffType::HeadToWorktree)
-                        .await
-                        .ok();
-
-                    Some(GitState {
-                        remote_url,
-                        head_sha,
-                        current_branch,
-                        diff,
+                            GitState {
+                                remote_url,
+                                head_sha,
+                                current_branch,
+                                diff,
+                            }
+                        })
                     })
-                }
+                });
+
+            let git_state = match git_state {
+                Some(git_state) => match git_state.ok() {
+                    Some(git_state) => git_state.await.ok(),
+                    None => None,
+                },
+                None => None,
             };
 
             WorktreeSnapshot {
@@ -1550,23 +1696,20 @@ impl Thread {
         Ok(String::from_utf8_lossy(&markdown).to_string())
     }
 
-    pub fn review_edits_in_range(
+    pub fn keep_edits_in_range(
         &mut self,
         buffer: Entity<language::Buffer>,
         buffer_range: Range<language::Anchor>,
-        accept: bool,
         cx: &mut Context<Self>,
     ) {
         self.action_log.update(cx, |action_log, cx| {
-            action_log.review_edits_in_range(buffer, buffer_range, accept, cx)
+            action_log.keep_edits_in_range(buffer, buffer_range, cx)
         });
     }
 
-    /// Keeps all edits across all buffers at once.
-    /// This provides a more performant alternative to calling review_edits_in_range for each buffer.
     pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
         self.action_log
-            .update(cx, |action_log, _cx| action_log.keep_all_edits());
+            .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {
@@ -1579,6 +1722,28 @@ impl Thread {
 
     pub fn cumulative_token_usage(&self) -> TokenUsage {
         self.cumulative_token_usage.clone()
+    }
+
+    pub fn is_getting_too_long(&self, cx: &App) -> bool {
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let Some(model) = model_registry.active_model() else {
+            return false;
+        };
+
+        let max_tokens = model.max_token_count();
+
+        let current_usage =
+            self.cumulative_token_usage.input_tokens + self.cumulative_token_usage.output_tokens;
+
+        #[cfg(debug_assertions)]
+        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
+            .unwrap_or("0.9".to_string())
+            .parse()
+            .unwrap();
+        #[cfg(not(debug_assertions))]
+        let warning_threshold: f32 = 0.9;
+
+        current_usage as f32 >= (max_tokens as f32 * warning_threshold)
     }
 
     pub fn deny_tool_use(

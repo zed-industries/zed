@@ -38,7 +38,7 @@ pub struct PathSearchTool;
 
 impl Tool for PathSearchTool {
     fn name(&self) -> String {
-        "path-search".into()
+        "path_search".into()
     }
 
     fn needs_confirmation(&self) -> bool {

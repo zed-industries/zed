@@ -296,6 +296,10 @@ impl LanguageModel for GoogleLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchemaSubset
     }
@@ -351,61 +355,6 @@ impl LanguageModel for GoogleLanguageModel {
             Ok(map_to_language_model_completion_events(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        name: String,
-        description: String,
-        schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = into_google(request, self.model.id().to_string());
-        request.tools = Some(vec![google_ai::Tool {
-            function_declarations: vec![google_ai::FunctionDeclaration {
-                name: name.clone(),
-                description,
-                parameters: schema,
-            }],
-        }]);
-        request.tool_config = Some(google_ai::ToolConfig {
-            function_calling_config: google_ai::FunctionCallingConfig {
-                mode: google_ai::FunctionCallingMode::Any,
-                allowed_function_names: Some(vec![name]),
-            },
-        });
-        let response = self.stream_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                Ok(response
-                    .filter_map(|event| async move {
-                        match event {
-                            Ok(response) => {
-                                if let Some(candidates) = &response.candidates {
-                                    for candidate in candidates {
-                                        for part in &candidate.content.parts {
-                                            if let google_ai::Part::FunctionCallPart(
-                                                function_call_part,
-                                            ) = part
-                                            {
-                                                return Some(Ok(serde_json::to_string(
-                                                    &function_call_part.function_call.args,
-                                                )
-                                                .unwrap_or_default()));
-                                            }
-                                        }
-                                    }
-                                }
-                                None
-                            }
-                            Err(e) => Some(Err(e)),
-                        }
-                    })
-                    .boxed())
-            })
-            .boxed()
     }
 }
 
@@ -468,19 +417,17 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
-        tools: Some(
-            request
+        tools: Some(vec![google_ai::Tool {
+            function_declarations: request
                 .tools
                 .into_iter()
-                .map(|tool| google_ai::Tool {
-                    function_declarations: vec![FunctionDeclaration {
-                        name: tool.name,
-                        description: tool.description,
-                        parameters: tool.input_schema,
-                    }],
+                .map(|tool| FunctionDeclaration {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.input_schema,
                 })
                 .collect(),
-        ),
+        }]),
         tool_config: None,
     }
 }

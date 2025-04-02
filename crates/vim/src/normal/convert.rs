@@ -7,23 +7,25 @@ use multi_buffer::MultiBufferRow;
 use crate::{
     Vim,
     motion::Motion,
-    normal::{ChangeCase, ConvertToLowerCase, ConvertToUpperCase},
+    normal::{ChangeCase, ConvertToLowerCase, ConvertToRot13, ConvertToRot47, ConvertToUpperCase},
     object::Object,
     state::Mode,
 };
 
-pub enum CaseTarget {
-    Lowercase,
-    Uppercase,
+pub enum ConvertTarget {
+    LowerCase,
+    UpperCase,
     OppositeCase,
+    Rot13,
+    Rot47,
 }
 
 impl Vim {
-    pub fn change_case_motion(
+    pub fn convert_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        mode: CaseTarget,
+        mode: ConvertTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -41,14 +43,20 @@ impl Vim {
                     });
                 });
                 match mode {
-                    CaseTarget::Lowercase => {
+                    ConvertTarget::LowerCase => {
                         editor.convert_to_lower_case(&Default::default(), window, cx)
                     }
-                    CaseTarget::Uppercase => {
+                    ConvertTarget::UpperCase => {
                         editor.convert_to_upper_case(&Default::default(), window, cx)
                     }
-                    CaseTarget::OppositeCase => {
+                    ConvertTarget::OppositeCase => {
                         editor.convert_to_opposite_case(&Default::default(), window, cx)
+                    }
+                    ConvertTarget::Rot13 => {
+                        editor.convert_to_rot13(&Default::default(), window, cx)
+                    }
+                    ConvertTarget::Rot47 => {
+                        editor.convert_to_rot47(&Default::default(), window, cx)
                     }
                 }
                 editor.change_selections(None, window, cx, |s| {
@@ -62,11 +70,11 @@ impl Vim {
         });
     }
 
-    pub fn change_case_object(
+    pub fn convert_object(
         &mut self,
         object: Object,
         around: bool,
-        mode: CaseTarget,
+        mode: ConvertTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -85,14 +93,20 @@ impl Vim {
                     });
                 });
                 match mode {
-                    CaseTarget::Lowercase => {
+                    ConvertTarget::LowerCase => {
                         editor.convert_to_lower_case(&Default::default(), window, cx)
                     }
-                    CaseTarget::Uppercase => {
+                    ConvertTarget::UpperCase => {
                         editor.convert_to_upper_case(&Default::default(), window, cx)
                     }
-                    CaseTarget::OppositeCase => {
+                    ConvertTarget::OppositeCase => {
                         editor.convert_to_opposite_case(&Default::default(), window, cx)
+                    }
+                    ConvertTarget::Rot13 => {
+                        editor.convert_to_rot13(&Default::default(), window, cx)
+                    }
+                    ConvertTarget::Rot47 => {
+                        editor.convert_to_rot47(&Default::default(), window, cx)
                     }
                 }
                 editor.change_selections(None, window, cx, |s| {
@@ -132,6 +146,36 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_text(window, cx, |c| c.to_lowercase().collect::<Vec<char>>())
+    }
+
+    pub fn convert_to_rot13(
+        &mut self,
+        _: &ConvertToRot13,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |c| {
+            vec![match c {
+                'A'..='M' | 'a'..='m' => ((c as u8) + 13) as char,
+                'N'..='Z' | 'n'..='z' => ((c as u8) - 13) as char,
+                _ => c,
+            }]
+        })
+    }
+
+    pub fn convert_to_rot47(
+        &mut self,
+        _: &ConvertToRot47,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |c| {
+            let code_point = c as u32;
+            if code_point >= 33 && code_point <= 126 {
+                return vec![char::from_u32(33 + ((code_point + 14) % 94)).unwrap()];
+            }
+            vec![c]
+        })
     }
 
     fn manipulate_text<F>(&mut self, window: &mut Window, cx: &mut Context<Self>, transform: F)
@@ -307,5 +351,61 @@ mod test {
         cx.set_shared_state("abc dˇef\n").await;
         cx.simulate_shared_keystrokes("g shift-u i w").await;
         cx.shared_state().await.assert_eq("abc ˇDEF\n");
+    }
+
+    #[gpui::test]
+    async fn test_convert_to_rot13(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        // works in visual mode
+        cx.set_shared_state("a😀C«dÉ1*fˇ»\n").await;
+        cx.simulate_shared_keystrokes("g ?").await;
+        cx.shared_state().await.assert_eq("a😀CˇqÉ1*s\n");
+
+        // works with line selections
+        cx.set_shared_state("abˇC\n").await;
+        cx.simulate_shared_keystrokes("shift-v g ?").await;
+        cx.shared_state().await.assert_eq("ˇnoP\n");
+
+        // works in visual block mode
+        cx.set_shared_state("ˇaa\nbb\ncc").await;
+        cx.simulate_shared_keystrokes("ctrl-v j g ?").await;
+        cx.shared_state().await.assert_eq("ˇna\nob\ncc");
+    }
+
+    #[gpui::test]
+    async fn test_change_rot13_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇabc def").await;
+        cx.simulate_shared_keystrokes("g ? w").await;
+        cx.shared_state().await.assert_eq("ˇnop def");
+
+        cx.simulate_shared_keystrokes("g ? w").await;
+        cx.shared_state().await.assert_eq("ˇabc def");
+
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("ˇnop def");
+
+        cx.set_shared_state("abˇc def").await;
+        cx.simulate_shared_keystrokes("g ? i w").await;
+        cx.shared_state().await.assert_eq("ˇnop def");
+
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("ˇabc def");
+
+        cx.simulate_shared_keystrokes("g ? $").await;
+        cx.shared_state().await.assert_eq("ˇnop qrs");
+    }
+
+    #[gpui::test]
+    async fn test_change_rot13_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            .await;
+        cx.simulate_shared_keystrokes("g ? i w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("ˇnopqrstuvwxyzabcdefghijklmNOPQRSTUVWXYZABCDEFGHIJKLM");
     }
 }
