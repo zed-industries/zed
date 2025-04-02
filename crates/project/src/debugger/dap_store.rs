@@ -358,7 +358,14 @@ impl DapStore {
 
         let task = cx.spawn(async move |this, cx| {
             if config.locator.is_some() {
-                locator_store.resolve_debug_config(&mut config).await?;
+                config = cx
+                    .background_spawn(async move {
+                        locator_store
+                            .resolve_debug_config(&mut config)
+                            .await
+                            .map(|_| config)
+                    })
+                    .await?;
             }
 
             let start_client_task = this.update(cx, |this, cx| {
