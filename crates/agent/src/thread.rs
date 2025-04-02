@@ -3,7 +3,7 @@ use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -1403,13 +1403,18 @@ impl Thread {
         cx: &mut Context<Thread>,
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
-        let run_tool = tool.run(
-            input,
-            messages,
-            self.project.clone(),
-            self.action_log.clone(),
-            cx,
-        );
+
+        let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
+            Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
+        } else {
+            tool.run(
+                input,
+                messages,
+                self.project.clone(),
+                self.action_log.clone(),
+                cx,
+            )
+        };
 
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
