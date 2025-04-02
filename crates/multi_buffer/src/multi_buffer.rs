@@ -1732,7 +1732,9 @@ impl MultiBuffer {
                 (None, Some(_)) => {
                     let existing_id = existing_iter.next().unwrap();
                     let locator = snapshot.excerpt_locator_for_id(existing_id);
-                    let existing_excerpt = excerpts_cursor.item().unwrap();
+                    let Some(existing_excerpt) = excerpts_cursor.item() else {
+                        break;
+                    };
                     excerpts_cursor.seek_forward(&Some(locator), Bias::Left, &());
                     let existing_end = existing_excerpt
                         .range
