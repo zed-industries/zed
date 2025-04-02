@@ -1411,6 +1411,7 @@ impl ActiveThread {
                                 v_flex()
                                     .gap_1()
                                     .px_4()
+                                    .mb_2()
                                     .child(
                                         Label::new(
                                             "Please share your feedback to help us improve:",
@@ -1418,7 +1419,7 @@ impl ActiveThread {
                                         .size(LabelSize::Small),
                                     )
                                     .child(
-                                        div()
+                                        v_flex()
                                             .p_2()
                                             .rounded_md()
                                             .border_1()
@@ -1429,22 +1430,28 @@ impl ActiveThread {
                                                     .as_ref()
                                                     .unwrap()
                                                     .clone(),
-                                            ),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .gap_1()
-                                            .justify_end()
-                                            .pb_2()
-                                            .child(
-                                                Button::new("cancel-comments", "Cancel").on_click(
-                                                    cx.listener(Self::handle_cancel_comments),
-                                                ),
                                             )
                                             .child(
-                                                Button::new("submit-comments", "Submit").on_click(
-                                                    cx.listener(Self::handle_submit_comments),
-                                                ),
+                                                h_flex()
+                                                    .gap_1()
+                                                    .justify_end()
+                                                    .child(
+                                                        Button::new("cancel-comments", "Cancel")
+                                                            .label_size(LabelSize::Small)
+                                                            .on_click(cx.listener(
+                                                                Self::handle_cancel_comments,
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        Button::new("submit-comments", "Submit")
+                                                            .style(ButtonStyle::Tinted(
+                                                                ui::TintColor::Accent,
+                                                            ))
+                                                            .label_size(LabelSize::Small)
+                                                            .on_click(cx.listener(
+                                                                Self::handle_submit_comments,
+                                                            )),
+                                                    ),
                                             ),
                                     ),
                             )
