@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     fmt::{Display, Write},
-    sync::LazyLock,
 };
 
 use super::KeyCode;
@@ -208,7 +207,7 @@ impl Keystroke {
                             function,
                         },
                         code,
-                        face: key.clone(),
+                        face: key,
                         key_char: None,
                     });
                     if source == "ctrl-shift-`" || code == KeyCode::Tilde {
@@ -328,59 +327,59 @@ impl Keystroke {
     }
 }
 
-fn is_printable_key(key: &str) -> bool {
-    !matches!(
-        key,
-        "f1" | "f2"
-            | "f3"
-            | "f4"
-            | "f5"
-            | "f6"
-            | "f7"
-            | "f8"
-            | "f9"
-            | "f10"
-            | "f11"
-            | "f12"
-            | "f13"
-            | "f14"
-            | "f15"
-            | "f16"
-            | "f17"
-            | "f18"
-            | "f19"
-            | "f20"
-            | "f21"
-            | "f22"
-            | "f23"
-            | "f24"
-            | "f25"
-            | "f26"
-            | "f27"
-            | "f28"
-            | "f29"
-            | "f30"
-            | "f31"
-            | "f32"
-            | "f33"
-            | "f34"
-            | "f35"
-            | "backspace"
-            | "delete"
-            | "left"
-            | "right"
-            | "up"
-            | "down"
-            | "pageup"
-            | "pagedown"
-            | "insert"
-            | "home"
-            | "end"
-            | "back"
-            | "forward"
-            | "escape"
-    )
-}
+// fn is_printable_key(key: &str) -> bool {
+//     !matches!(
+//         key,
+//         "f1" | "f2"
+//             | "f3"
+//             | "f4"
+//             | "f5"
+//             | "f6"
+//             | "f7"
+//             | "f8"
+//             | "f9"
+//             | "f10"
+//             | "f11"
+//             | "f12"
+//             | "f13"
+//             | "f14"
+//             | "f15"
+//             | "f16"
+//             | "f17"
+//             | "f18"
+//             | "f19"
+//             | "f20"
+//             | "f21"
+//             | "f22"
+//             | "f23"
+//             | "f24"
+//             | "f25"
+//             | "f26"
+//             | "f27"
+//             | "f28"
+//             | "f29"
+//             | "f30"
+//             | "f31"
+//             | "f32"
+//             | "f33"
+//             | "f34"
+//             | "f35"
+//             | "backspace"
+//             | "delete"
+//             | "left"
+//             | "right"
+//             | "up"
+//             | "down"
+//             | "pageup"
+//             | "pagedown"
+//             | "insert"
+//             | "home"
+//             | "end"
+//             | "back"
+//             | "forward"
+//             | "escape"
+//     )
+// }
 
 impl std::fmt::Display for Keystroke {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
