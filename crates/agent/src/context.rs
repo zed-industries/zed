@@ -184,9 +184,8 @@ pub fn format_context_as_string<'a>(
         result.push_str("<files>\n");
         for context in file_context {
             result.push_str(&context.context_buffer.text);
-            result.push('\n');
         }
-        result.push_str("</files>\n\n");
+        result.push_str("</files>\n");
     }
 
     if !directory_context.is_empty() {
@@ -194,10 +193,9 @@ pub fn format_context_as_string<'a>(
         for context in directory_context {
             for context_buffer in &context.context_buffers {
                 result.push_str(&context_buffer.text);
-                result.push('\n');
             }
         }
-        result.push_str("</directories>\n\n");
+        result.push_str("</directories>\n");
     }
 
     if !symbol_context.is_empty() {
@@ -206,7 +204,7 @@ pub fn format_context_as_string<'a>(
             result.push_str(&context.context_symbol.text);
             result.push('\n');
         }
-        result.push_str("</symbols>\n\n");
+        result.push_str("</symbols>\n");
     }
 
     if !fetch_context.is_empty() {
@@ -217,7 +215,7 @@ pub fn format_context_as_string<'a>(
             result.push_str(&context.text);
             result.push('\n');
         }
-        result.push_str("</fetched_urls>\n\n");
+        result.push_str("</fetched_urls>\n");
     }
 
     if !thread_context.is_empty() {
@@ -231,7 +229,7 @@ pub fn format_context_as_string<'a>(
         result.push_str("</conversation_threads>\n");
     }
 
-    result.push_str("\n</context>\n");
+    result.push_str("</context>\n");
     Some(result)
 }
 

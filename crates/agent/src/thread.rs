@@ -125,7 +125,7 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageSegment {
     Text(String),
     Thinking(String),
@@ -945,11 +945,9 @@ impl Thread {
             request.messages.push(request_message);
         }
 
-        // Set a cache breakpoint at the second-to-last message.
         // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
-        let breakpoint_index = request.messages.len() - 2;
-        for (index, message) in request.messages.iter_mut().enumerate() {
-            message.cache = index == breakpoint_index;
+        if let Some(last) = request.messages.last_mut() {
+            last.cache = true;
         }
 
         self.attached_tracked_files_state(&mut request.messages, cx);
@@ -1812,4 +1810,120 @@ impl EventEmitter<ThreadEvent> for Thread {}
 struct PendingCompletion {
     id: usize,
     _task: Task<()>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ThreadStore, context_store::ContextStore, thread_store};
+    use assistant_settings::AssistantSettings;
+    use context_server::ContextServerSettings;
+    use editor::EditorSettings;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use prompt_store::PromptBuilder;
+    use serde_json::json;
+    use settings::{Settings, SettingsStore};
+    use std::sync::Arc;
+    use theme::ThemeSettings;
+    use util::path;
+    use workspace::Workspace;
+
+    #[gpui::test]
+    async fn test_message_with_context(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            AssistantSettings::register(cx);
+            thread_store::init(cx);
+            workspace::init_settings(cx);
+            ThemeSettings::register(cx);
+            ContextServerSettings::register(cx);
+            EditorSettings::register(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = cx.update(|_window, cx| {
+            ThreadStore::new(
+                project.clone(),
+                Arc::default(),
+                Arc::new(PromptBuilder::new(None).unwrap()),
+                cx,
+            )
+            .unwrap()
+        });
+        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+
+        let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
+
+        let buffer_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("test/code.rs", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
+            .await
+            .unwrap();
+
+        context_store
+            .update(cx, |store, cx| {
+                store.add_file_from_buffer(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+
+        let context =
+            context_store.update(cx, |store, _| store.context().first().cloned().unwrap());
+
+        // Insert user message with context
+        let message_id = thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Please explain this code", vec![context], None, cx)
+        });
+
+        // Check content and context in message object
+        let message = thread.read_with(cx, |thread, _| thread.message(message_id).unwrap().clone());
+
+        let expected_context = r#"
+<context>
+The following items were attached by the user. You don't need to use other tools to read them.
+
+<files>
+```rs code.rs
+fn main() {
+    println!("Hello, world!");
+}
+```
+</files>
+</context>
+"#;
+        assert_eq!(message.role, Role::User);
+        assert_eq!(message.segments.len(), 1);
+        assert_eq!(
+            message.segments[0],
+            MessageSegment::Text("Please explain this code".to_string())
+        );
+        assert_eq!(message.context, expected_context);
+
+        // Check message in request
+        let request = thread.read_with(cx, |thread, cx| {
+            thread.to_completion_request(RequestKind::Chat, cx)
+        });
+
+        assert_eq!(request.messages.len(), 1);
+        let expected_full_message = format!("{}Please explain this code", expected_context);
+        assert_eq!(request.messages[0].string_contents(), expected_full_message);
+    }
 }
