@@ -1966,6 +1966,7 @@ impl ActiveThread {
         let thread = self.thread.read(cx);
 
         thread.tools_needing_confirmation().map(|tool| {
+            // Note: This element should be removed once a more full-fledged permission UX is implemented.
             let beta_tag = h_flex()
                 .id("beta-tag")
                 .h(px(18.))
