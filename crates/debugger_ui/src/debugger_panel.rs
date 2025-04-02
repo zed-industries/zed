@@ -719,12 +719,8 @@ impl Panel for DebugPanel {
     ) {
     }
 
-    fn size(&self, _window: &Window, cx: &App) -> Pixels {
-        if self.pane.read(cx).items().next().is_some() {
-            self.size
-        } else {
-            px(0.)
-        }
+    fn size(&self, _window: &Window, _: &App) -> Pixels {
+        self.size
     }
 
     fn set_size(&mut self, size: Option<Pixels>, _window: &mut Window, _cx: &mut Context<Self>) {
@@ -754,38 +750,18 @@ impl Panel for DebugPanel {
     fn activation_priority(&self) -> u32 {
         9
     }
-    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if active && self.pane.read(cx).items_len() == 0 {
-            let Some(_) = self.project.clone().upgrade() else {
-                return;
-            };
-
-            let workspace = self.workspace.clone();
-            cx.defer_in(window, |this, window, cx| {
-                this.workspace
-                    .update(cx, |this, cx| {
-                        this.toggle_modal(window, cx, |window, cx| {
-                            NewSessionModal::new(workspace, window, cx)
-                        });
-                    })
-                    .log_err();
-            })
-        }
-    }
+    fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
 }
 
 impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_sessions = self.pane.read(cx).items().next().is_some();
         v_flex()
-            .h_0()
+            .size_full()
             .key_context("DebugPanel")
+            .child(h_flex().children(self.top_controls_strip(window, cx)))
             .track_focus(&self.focus_handle(cx))
-            .when(has_sessions, |this| {
-                this.size_full()
-                    .child(h_flex().children(self.top_controls_strip(window, cx)))
-                    .child(self.pane.clone())
-            })
+            .when(has_sessions, |this| this.child(self.pane.clone()))
             .into_any()
     }
 }

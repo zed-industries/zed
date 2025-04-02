@@ -382,7 +382,7 @@ impl Render for NewSessionModal {
                                 Label::new("Stop on Entry").size(ui::LabelSize::Small),
                                 self.stop_on_entry,
                                 move |state, _, cx| {
-                                    weak.update(cx, |this, cx| {
+                                    weak.update(cx, |this, _| {
                                         this.stop_on_entry = *state;
                                     })
                                     .ok();
