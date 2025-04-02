@@ -257,14 +257,15 @@ impl AssistantDiff {
             .selections
             .disjoint_anchor_ranges()
             .collect::<Vec<_>>();
-        self.restore_edits_in_ranges(ranges, window, cx);
+        self.reject_edits_in_ranges(ranges, window, cx);
     }
 
     fn reject_all(&mut self, _: &crate::RejectAll, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| {
-            let max_point = editor.buffer().read(cx).read(cx).max_point();
-            editor.restore_hunks_in_ranges(vec![Point::zero()..max_point], window, cx)
-        })
+        self.reject_edits_in_ranges(
+            vec![editor::Anchor::min()..editor::Anchor::max()],
+            window,
+            cx,
+        );
     }
 
     fn keep_all(&mut self, _: &crate::KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
@@ -304,7 +305,7 @@ impl AssistantDiff {
         }
     }
 
-    fn restore_edits_in_ranges(
+    fn reject_edits_in_ranges(
         &mut self,
         ranges: Vec<Range<editor::Anchor>>,
         window: &mut Window,
