@@ -11,7 +11,7 @@ pub mod fake_provider;
 use anyhow::Result;
 use client::Client;
 use futures::FutureExt;
-use futures::{StreamExt, TryStreamExt as _, future::BoxFuture, stream::BoxStream};
+use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
 use icons::IconName;
 use parking_lot::Mutex;
@@ -20,7 +20,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
 use std::ops::{Add, Sub};
-use std::{future::Future, sync::Arc};
+use std::sync::Arc;
 use thiserror::Error;
 use util::serde::is_default;
 
@@ -266,15 +266,6 @@ pub trait LanguageModel: Send + Sync {
         .boxed()
     }
 
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        name: String,
-        description: String,
-        schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
-
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         None
     }
@@ -282,33 +273,6 @@ pub trait LanguageModel: Send + Sync {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &fake_provider::FakeLanguageModel {
         unimplemented!()
-    }
-}
-
-impl dyn LanguageModel {
-    pub fn use_tool<T: LanguageModelTool>(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> impl 'static + Future<Output = Result<T>> {
-        let schema = schemars::schema_for!(T);
-        let schema_json = serde_json::to_value(&schema).unwrap();
-        let stream = self.use_any_tool(request, T::name(), T::description(), schema_json, cx);
-        async move {
-            let stream = stream.await?;
-            let response = stream.try_collect::<String>().await?;
-            Ok(serde_json::from_str(&response)?)
-        }
-    }
-
-    pub fn use_tool_stream<T: LanguageModelTool>(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let schema = schemars::schema_for!(T);
-        let schema_json = serde_json::to_value(&schema).unwrap();
-        self.use_any_tool(request, T::name(), T::description(), schema_json, cx)
     }
 }
 

@@ -364,17 +364,6 @@ impl LanguageModel for LmStudioLanguageModel {
         }
         .boxed()
     }
-
-    fn use_any_tool(
-        &self,
-        _request: LanguageModelRequest,
-        _tool_name: String,
-        _tool_description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        async move { Ok(futures::stream::empty().boxed()) }.boxed()
-    }
 }
 
 struct ConfigurationView {
