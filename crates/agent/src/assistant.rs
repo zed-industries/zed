@@ -33,6 +33,7 @@ use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings as _;
+use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AddContextServerModal, ManageProfilesModal};
@@ -43,9 +44,8 @@ pub use crate::thread_store::ThreadStore;
 pub use assistant_diff::{AssistantDiff, AssistantDiffToolbar};
 
 actions!(
-    assistant2,
+    agent,
     [
-        NewThread,
         NewPromptEditor,
         ToggleContextPicker,
         ToggleProfileSelector,
@@ -66,12 +66,18 @@ actions!(
         AcceptSuggestedContext,
         OpenActiveThreadAsMarkdown,
         OpenAssistantDiff,
-        ToggleKeep,
+        Keep,
         Reject,
         RejectAll,
         KeepAll
     ]
 );
+
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema)]
+pub struct NewThread {
+    #[serde(default)]
+    from_thread_id: Option<ThreadId>,
+}
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 pub struct ManageProfiles {
@@ -87,11 +93,11 @@ impl ManageProfiles {
     }
 }
 
-impl_actions!(assistant, [ManageProfiles]);
+impl_actions!(agent, [NewThread, ManageProfiles]);
 
-const NAMESPACE: &str = "assistant2";
+const NAMESPACE: &str = "agent";
 
-/// Initializes the `assistant2` crate.
+/// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
@@ -117,10 +123,10 @@ pub fn init(
     cx.observe_new(AddContextServerModal::register).detach();
     cx.observe_new(ManageProfilesModal::register).detach();
 
-    feature_gate_assistant2_actions(cx);
+    feature_gate_agent_actions(cx);
 }
 
-fn feature_gate_assistant2_actions(cx: &mut App) {
+fn feature_gate_agent_actions(cx: &mut App) {
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(NAMESPACE);
     });

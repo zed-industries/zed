@@ -296,6 +296,10 @@ impl LanguageModel for GoogleLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchemaSubset
     }

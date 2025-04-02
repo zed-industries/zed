@@ -339,7 +339,7 @@ impl DapStore {
             local_store.toolchain_store.clone(),
             local_store.environment.update(cx, |env, cx| {
                 let worktree = worktree.read(cx);
-                env.get_environment(Some(worktree.id()), Some(worktree.abs_path()), cx)
+                env.get_environment(worktree.abs_path().into(), cx)
             }),
         );
         let session_id = local_store.next_session_id();
@@ -407,7 +407,7 @@ impl DapStore {
             local_store.toolchain_store.clone(),
             local_store.environment.update(cx, |env, cx| {
                 let worktree = worktree.read(cx);
-                env.get_environment(Some(worktree.id()), Some(worktree.abs_path()), cx)
+                env.get_environment(Some(worktree.abs_path()), cx)
             }),
         );
         let session_id = local_store.next_session_id();

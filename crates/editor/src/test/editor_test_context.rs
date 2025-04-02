@@ -120,10 +120,9 @@ impl EditorTestContext {
                 let buffer = cx.new(|cx| Buffer::local(text, cx));
                 multibuffer.push_excerpts(
                     buffer,
-                    ranges.into_iter().map(|range| ExcerptRange {
-                        context: range,
-                        primary: None,
-                    }),
+                    ranges
+                        .into_iter()
+                        .map(|range| ExcerptRange::new(range.clone())),
                     cx,
                 );
             }

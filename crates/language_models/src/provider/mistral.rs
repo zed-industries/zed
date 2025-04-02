@@ -291,6 +291,10 @@ impl LanguageModel for MistralLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("mistral/{}", self.model.id())
     }

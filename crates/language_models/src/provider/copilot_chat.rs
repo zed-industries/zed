@@ -180,6 +180,15 @@ impl LanguageModel for CopilotChatLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        match self.model {
+            CopilotChatModel::Claude3_5Sonnet
+            | CopilotChatModel::Claude3_7Sonnet
+            | CopilotChatModel::Claude3_7SonnetThinking => true,
+            _ => false,
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("copilot_chat/{}", self.model.id())
     }

@@ -1,7 +1,8 @@
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 
 use file_icons::FileIcons;
 use gpui::ClickEvent;
+use gpui::{Animation, AnimationExt as _, pulsating_between};
 use ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::context::{AssistantContext, ContextId, ContextKind};
@@ -170,6 +171,22 @@ impl RenderOnce for ContextPill {
                     element
                         .cursor_pointer()
                         .on_click(move |event, window, cx| on_click(event, window, cx))
+                })
+                .map(|element| {
+                    if context.summarizing {
+                        element
+                            .tooltip(ui::Tooltip::text("Summarizing..."))
+                            .with_animation(
+                                "pulsating-ctx-pill",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.opacity(delta),
+                            )
+                            .into_any_element()
+                    } else {
+                        element.into_any()
+                    }
                 }),
             ContextPill::Suggested {
                 name,
@@ -220,7 +237,8 @@ impl RenderOnce for ContextPill {
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
                     element.on_click(move |event, window, cx| on_click(event, window, cx))
-                }),
+                })
+                .into_any(),
         }
     }
 }
@@ -232,6 +250,7 @@ pub struct AddedContext {
     pub parent: Option<SharedString>,
     pub tooltip: Option<SharedString>,
     pub icon_path: Option<SharedString>,
+    pub summarizing: bool,
 }
 
 impl AddedContext {
@@ -256,6 +275,7 @@ impl AddedContext {
                     parent,
                     tooltip: Some(full_path_string),
                     icon_path: FileIcons::get_icon(&full_path, cx),
+                    summarizing: false,
                 }
             }
 
@@ -280,6 +300,7 @@ impl AddedContext {
                     parent,
                     tooltip: Some(full_path_string),
                     icon_path: None,
+                    summarizing: false,
                 }
             }
 
@@ -290,6 +311,7 @@ impl AddedContext {
                 parent: None,
                 tooltip: None,
                 icon_path: None,
+                summarizing: false,
             },
 
             AssistantContext::FetchedUrl(fetched_url_context) => AddedContext {
@@ -299,6 +321,7 @@ impl AddedContext {
                 parent: None,
                 tooltip: None,
                 icon_path: None,
+                summarizing: false,
             },
 
             AssistantContext::Thread(thread_context) => AddedContext {
@@ -308,6 +331,10 @@ impl AddedContext {
                 parent: None,
                 tooltip: None,
                 icon_path: None,
+                summarizing: thread_context
+                    .thread
+                    .read(cx)
+                    .is_generating_detailed_summary(),
             },
         }
     }

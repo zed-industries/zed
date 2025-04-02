@@ -482,7 +482,7 @@ fn main() {
             prompt_builder.clone(),
             cx,
         );
-        assistant2::init(
+        agent::init(
             app_state.fs.clone(),
             app_state.client.clone(),
             prompt_builder.clone(),

@@ -19,8 +19,6 @@ impl ContextId {
         Self(post_inc(&mut self.0))
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextKind {
     File,
     Directory,

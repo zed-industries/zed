@@ -44,8 +44,8 @@ struct CommitMetadataFile {
     worktree_id: WorktreeId,
 }
 
-const COMMIT_METADATA_NAMESPACE: &'static str = "0";
-const FILE_NAMESPACE: &'static str = "1";
+const COMMIT_METADATA_NAMESPACE: u32 = 0;
+const FILE_NAMESPACE: u32 = 1;
 
 impl CommitView {
     pub fn open(
@@ -375,7 +375,7 @@ fn format_commit(commit: &CommitDetails) -> String {
     writeln!(
         &mut result,
         "Author: {} <{}>",
-        commit.committer_name, commit.committer_email
+        commit.author_name, commit.author_email
     )
     .unwrap();
     writeln!(
