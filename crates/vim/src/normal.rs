@@ -1,4 +1,4 @@
-mod case;
+mod convert;
 mod change;
 mod delete;
 mod increment;
@@ -22,7 +22,7 @@ use crate::{
     state::{Mark, Mode, Operator},
     surrounds::SurroundsType,
 };
-use case::{CaseTarget, RotTarget};
+use convert::ConvertTarget;
 use collections::BTreeSet;
 use editor::Anchor;
 use editor::Bias;
@@ -175,19 +175,19 @@ impl Vim {
             }
             Some(Operator::ShellCommand) => self.shell_command_motion(motion, times, window, cx),
             Some(Operator::Lowercase) => {
-                self.change_case_motion(motion, times, CaseTarget::Lowercase, window, cx)
+                self.convert_motion(motion, times, ConvertTarget::LowerCase, window, cx)
             }
             Some(Operator::Uppercase) => {
-                self.change_case_motion(motion, times, CaseTarget::Uppercase, window, cx)
+                self.convert_motion(motion, times, ConvertTarget::UpperCase, window, cx)
             }
             Some(Operator::OppositeCase) => {
-                self.change_case_motion(motion, times, CaseTarget::OppositeCase, window, cx)
+                self.convert_motion(motion, times, ConvertTarget::OppositeCase, window, cx)
             }
             Some(Operator::Rot13) => {
-                self.change_case_motion(motion, times, CaseTarget::Rot13, window, cx)
+                self.convert_motion(motion, times, ConvertTarget::Rot13, window, cx)
             }
             Some(Operator::Rot47) => {
-                self.change_case_motion(motion, times, CaseTarget::Rot47, window, cx)
+                self.convert_motion(motion, times, ConvertTarget::Rot47, window, cx)
             }
             Some(Operator::ToggleComments) => {
                 self.toggle_comments_motion(motion, times, window, cx)
@@ -226,19 +226,19 @@ impl Vim {
                 }
                 Some(Operator::Rewrap) => self.rewrap_object(object, around, window, cx),
                 Some(Operator::Lowercase) => {
-                    self.change_case_object(object, around, CaseTarget::Lowercase, window, cx)
+                    self.convert_object(object, around, ConvertTarget::LowerCase, window, cx)
                 }
                 Some(Operator::Uppercase) => {
-                    self.change_case_object(object, around, CaseTarget::Uppercase, window, cx)
+                    self.convert_object(object, around, ConvertTarget::UpperCase, window, cx)
                 }
                 Some(Operator::OppositeCase) => {
-                    self.change_case_object(object, around, CaseTarget::OppositeCase, window, cx)
+                    self.convert_object(object, around, ConvertTarget::OppositeCase, window, cx)
                 }
                 Some(Operator::Rot13) => {
-                    self.change_case_object(object, around, CaseTarget::Rot13, window, cx)
+                    self.convert_object(object, around, ConvertTarget::Rot13, window, cx)
                 }
                 Some(Operator::Rot47) => {
-                    self.change_case_object(object, around, CaseTarget::Rot47, window, cx)
+                    self.convert_object(object, around, ConvertTarget::Rot47, window, cx)
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {

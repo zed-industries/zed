@@ -12,20 +12,20 @@ use crate::{
     state::Mode,
 };
 
-pub enum CaseTarget {
-    Lowercase,
-    Uppercase,
+pub enum ConvertTarget {
+    LowerCase,
+    UpperCase,
     OppositeCase,
     Rot13,
     Rot47,
 }
 
 impl Vim {
-    pub fn change_case_motion(
+    pub fn convert_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        mode: CaseTarget,
+        mode: ConvertTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -43,17 +43,21 @@ impl Vim {
                     });
                 });
                 match mode {
-                    CaseTarget::Lowercase => {
+                    ConvertTarget::LowerCase => {
                         editor.convert_to_lower_case(&Default::default(), window, cx)
                     }
-                    CaseTarget::Uppercase => {
+                    ConvertTarget::UpperCase => {
                         editor.convert_to_upper_case(&Default::default(), window, cx)
                     }
-                    CaseTarget::OppositeCase => {
+                    ConvertTarget::OppositeCase => {
                         editor.convert_to_opposite_case(&Default::default(), window, cx)
                     }
-                    CaseTarget::Rot13 => editor.convert_to_rot13(&Default::default(), window, cx),
-                    CaseTarget::Rot47 => editor.convert_to_rot47(&Default::default(), window, cx),
+                    ConvertTarget::Rot13 => {
+                        editor.convert_to_rot13(&Default::default(), window, cx)
+                    }
+                    ConvertTarget::Rot47 => {
+                        editor.convert_to_rot47(&Default::default(), window, cx)
+                    }
                 }
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -66,11 +70,11 @@ impl Vim {
         });
     }
 
-    pub fn change_case_object(
+    pub fn convert_object(
         &mut self,
         object: Object,
         around: bool,
-        mode: CaseTarget,
+        mode: ConvertTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -89,17 +93,21 @@ impl Vim {
                     });
                 });
                 match mode {
-                    CaseTarget::Lowercase => {
+                    ConvertTarget::LowerCase => {
                         editor.convert_to_lower_case(&Default::default(), window, cx)
                     }
-                    CaseTarget::Uppercase => {
+                    ConvertTarget::UpperCase => {
                         editor.convert_to_upper_case(&Default::default(), window, cx)
                     }
-                    CaseTarget::OppositeCase => {
+                    ConvertTarget::OppositeCase => {
                         editor.convert_to_opposite_case(&Default::default(), window, cx)
                     }
-                    CaseTarget::Rot13 => editor.convert_to_rot13(&Default::default(), window, cx),
-                    CaseTarget::Rot47 => editor.convert_to_rot47(&Default::default(), window, cx),
+                    ConvertTarget::Rot13 => {
+                        editor.convert_to_rot13(&Default::default(), window, cx)
+                    }
+                    ConvertTarget::Rot47 => {
+                        editor.convert_to_rot47(&Default::default(), window, cx)
+                    }
                 }
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
