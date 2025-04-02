@@ -19,6 +19,8 @@ pub struct Paste {
     before: bool,
     #[serde(default)]
     preserve_clipboard: bool,
+    #[serde(default)]
+    next_mode: Mode,
 }
 
 impl_actions!(vim, [Paste]);
@@ -203,7 +205,7 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx);
+        self.switch_mode(action.next_mode, true, window, cx);
     }
 
     pub fn replace_with_register_object(
