@@ -13,7 +13,6 @@ use buffer_diff::{
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
-use futures::{SinkExt, channel::mpsc};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
@@ -1572,34 +1571,36 @@ impl MultiBuffer {
     ) -> (Vec<Range<Anchor>>, bool) {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
-        let excerpt_ranges = ranges.into_iter().map(|range| {
-            let start_row = range.start.row.saturating_sub(context_line_count);
-            let start = Point::new(start_row, 0);
-            let end_row = (range.end.row + context_line_count).min(buffer_snapshot.max_point().row);
-            let end = Point::new(end_row, buffer_snapshot.line_len(end_row));
-            ExcerptRange {
-                context: start..end,
-                primary: range,
-            }
-        });
+        let excerpt_ranges = ranges
+            .into_iter()
+            .map(|range| {
+                let start_row = range.start.row.saturating_sub(context_line_count);
+                let start = Point::new(start_row, 0);
+                let end_row =
+                    (range.end.row + context_line_count).min(buffer_snapshot.max_point().row);
+                let end = Point::new(end_row, buffer_snapshot.line_len(end_row));
+                ExcerptRange {
+                    context: start..end,
+                    primary: range,
+                }
+            })
+            .collect::<Vec<_>>();
 
-        self.set_excerpt_ranges_for_path(path, buffer, excerpt_ranges.collect(), cx)
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
+        self.set_excerpt_ranges_for_path(
+            path,
+            buffer,
+            excerpt_ranges,
+            buffer_snapshot,
+            new,
+            counts,
+            cx,
+        )
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
     pub fn set_excerpt_ranges_for_path(
-        &mut self,
-        path: PathKey,
-        buffer: Entity<Buffer>,
-        ranges: Vec<ExcerptRange<Point>>,
-        cx: &mut Context<Self>,
-    ) -> (Vec<Range<Anchor>>, bool) {
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let (new, counts) = Self::merge_excerpt_ranges(&ranges);
-        self.set_excerpt_ranges_for_path_2(path, buffer, ranges, buffer_snapshot, new, counts, cx)
-    }
-
-    pub fn set_excerpt_ranges_for_path_2(
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,
@@ -1652,7 +1653,7 @@ impl MultiBuffer {
 
                 multi_buffer
                     .update(cx, move |multi_buffer, cx| {
-                        let (ranges, _) = multi_buffer.set_excerpt_ranges_for_path_2(
+                        let (ranges, _) = multi_buffer.set_excerpt_ranges_for_path(
                             path_key,
                             buffer,
                             excerpt_ranges,
