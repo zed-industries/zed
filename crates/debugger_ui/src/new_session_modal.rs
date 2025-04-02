@@ -31,6 +31,7 @@ pub(super) struct NewSessionModal {
     debug_panel: WeakEntity<DebugPanel>,
     mode: NewSessionMode,
     stop_on_entry: ToggleState,
+    config_name: Option<SharedString>,
     debugger: Option<SharedString>,
 }
 
@@ -76,6 +77,7 @@ impl NewSessionModal {
             workspace: workspace.clone(),
             debugger,
             debug_panel,
+            config_name: None,
             mode: NewSessionMode::launch(launch_config, window, cx),
             stop_on_entry: stop_on_entry
                 .map(Into::into)
@@ -208,12 +210,12 @@ impl NewSessionModal {
     ) -> ui::DropdownMenu {
         let workspace = self.workspace.clone();
         let weak = cx.weak_entity();
-        let debugger = self.debugger.clone();
+        let config_name = self.config_name.clone();
         DropdownMenu::new(
             "debug-config-menu",
-            debugger
+            config_name
                 .as_ref()
-                .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
+                .unwrap_or_else(|| &SELECT_CONFIG_LABEL)
                 .clone(),
             ContextMenu::build(window, cx, move |mut menu, _, cx| {
                 let setter_for_name = |task: DebugTaskDefinition| {
@@ -222,6 +224,7 @@ impl NewSessionModal {
                     move |window: &mut Window, cx: &mut App| {
                         weak.update(cx, |this, cx| {
                             this.debugger = Some(task.adapter.clone().into());
+                            this.config_name = Some(task.label.clone().into());
 
                             match &task.request {
                                 DebugRequestType::Launch(launch_config) => {
@@ -348,6 +351,7 @@ impl AttachMode {
 }
 
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
+static SELECT_CONFIG_LABEL: SharedString = SharedString::new_static("Select Config");
 
 #[derive(Clone)]
 enum NewSessionMode {
@@ -532,36 +536,40 @@ impl Render for NewSessionModal {
             .child(v_flex().child(self.mode.clone().render(window, cx)))
             .child(
                 h_flex()
-                    .child(self.debug_config_drop_down_menu(window, cx))
                     .gap_2()
                     .border_color(cx.theme().colors().border_variant)
                     .border_t_1()
                     .w_full()
-                    .justify_end()
+                    .child(self.debug_config_drop_down_menu(window, cx))
+                    .justify_between()
                     .p_2()
-                    .when(matches!(self.mode, NewSessionMode::Launch(_)), |this| {
-                        let weak = cx.weak_entity();
-                        this.child(
-                            CheckboxWithLabel::new(
-                                "debugger-stop-on-entry",
-                                Label::new("Stop on Entry").size(ui::LabelSize::Small),
-                                self.stop_on_entry,
-                                move |state, _, cx| {
-                                    weak.update(cx, |this, _| {
-                                        this.stop_on_entry = *state;
-                                    })
-                                    .ok();
-                                },
-                            )
-                            .checkbox_position(ui::IconPosition::End),
-                        )
-                    })
                     .child(
-                        Button::new("debugger-spawn", "Start")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.start_new_session(cx).log_err();
-                            }))
-                            .disabled(self.debugger.is_none()),
+                        h_flex()
+                            .justify_end()
+                            .when(matches!(self.mode, NewSessionMode::Launch(_)), |this| {
+                                let weak = cx.weak_entity();
+                                this.child(
+                                    CheckboxWithLabel::new(
+                                        "debugger-stop-on-entry",
+                                        Label::new("Stop on Entry").size(ui::LabelSize::Small),
+                                        self.stop_on_entry,
+                                        move |state, _, cx| {
+                                            weak.update(cx, |this, _| {
+                                                this.stop_on_entry = *state;
+                                            })
+                                            .ok();
+                                        },
+                                    )
+                                    .checkbox_position(ui::IconPosition::End),
+                                )
+                            })
+                            .child(
+                                Button::new("debugger-spawn", "Start")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.start_new_session(cx).log_err();
+                                    }))
+                                    .disabled(self.debugger.is_none()),
+                            ),
                     ),
             )
     }
