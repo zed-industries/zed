@@ -341,6 +341,9 @@ impl Render for MessageEditor {
         let is_too_long = thread.is_getting_too_long(cx);
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
+        let needs_confirmation =
+            thread.has_pending_tool_uses() && thread.tools_needing_confirmation().next().is_some();
+
         let submit_label_color = if is_editor_empty {
             Color::Muted
         } else {
@@ -433,9 +436,8 @@ impl Render for MessageEditor {
                                     ),
                             )
                             .child({
-                                let needs_confirmation = thread.has_pending_tool_uses() && 
-                                    thread.tools_needing_confirmation().next().is_some();
-                                
+
+
                                 Label::new(if needs_confirmation {
                                     "Waiting for confirmation…"
                                 } else {
