@@ -929,6 +929,7 @@ impl ActiveThread {
         let checkpoint = thread.checkpoint_for_message(message_id);
         let context = thread.context_for_message(message_id).collect::<Vec<_>>();
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
+        let has_tool_uses = !tool_uses.is_empty();
 
         // Don't render user messages that are just there for returning tool results.
         if message.role == Role::User && thread.message_has_tool_results(message_id) {
@@ -1061,7 +1062,12 @@ impl ActiveThread {
                     div()
                         .min_h_6()
                         .text_ui(cx)
-                        .child(self.render_message_content(message_id, rendered_message, cx))
+                        .child(self.render_message_content(
+                            message_id,
+                            rendered_message,
+                            has_tool_uses,
+                            cx,
+                        ))
                 },
             )
             .when(!context.is_empty(), |parent| {
@@ -1321,15 +1327,21 @@ impl ActiveThread {
         &self,
         message_id: MessageId,
         rendered_message: &RenderedMessage,
+        has_tool_uses: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let pending_thinking_segment_index = rendered_message
-            .segments
-            .iter()
-            .enumerate()
-            .last()
-            .filter(|(_, segment)| matches!(segment, RenderedMessageSegment::Thinking { .. }))
-            .map(|(index, _)| index);
+        let is_last_message = self.messages.last() == Some(&message_id);
+        let pending_thinking_segment_index = if is_last_message && !has_tool_uses {
+            rendered_message
+                .segments
+                .iter()
+                .enumerate()
+                .last()
+                .filter(|(_, segment)| matches!(segment, RenderedMessageSegment::Thinking { .. }))
+                .map(|(index, _)| index)
+        } else {
+            None
+        };
 
         div()
             .text_ui(cx)
