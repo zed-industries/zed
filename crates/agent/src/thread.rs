@@ -1845,7 +1845,7 @@ mod tests {
     use assistant_settings::AssistantSettings;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::TestAppContext;
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
@@ -1857,57 +1857,18 @@ mod tests {
 
     #[gpui::test]
     async fn test_message_with_context(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AssistantSettings::register(cx);
-            thread_store::init(cx);
-            workspace::init_settings(cx);
-            ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
-            EditorSettings::register(cx);
-        });
+        init_test_settings(cx);
 
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/test"),
+        let project = create_test_project(
+            cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
         .await;
-        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (_workspace, _thread_store, thread, context_store) =
+            setup_test_environment(cx, project.clone()).await;
 
-        let thread_store = cx.update(|_window, cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
-        });
-        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
-
-        let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
-
-        let buffer_path = project
-            .read_with(cx, |project, cx| {
-                project.find_project_path("test/code.rs", cx)
-            })
-            .unwrap();
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
-            .await
-            .unwrap();
-
-        context_store
-            .update(cx, |store, cx| {
-                store.add_file_from_buffer(buffer.clone(), cx)
-            })
+        add_file_to_context(&project, &context_store, "test/code.rs", cx)
             .await
             .unwrap();
 
@@ -1955,22 +1916,10 @@ fn main() {
 
     #[gpui::test]
     async fn test_only_include_new_contexts(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AssistantSettings::register(cx);
-            thread_store::init(cx);
-            workspace::init_settings(cx);
-            ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
-            EditorSettings::register(cx);
-        });
+        init_test_settings(cx);
 
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/test"),
+        let project = create_test_project(
+            cx,
             json!({
                 "file1.rs": "fn function1() {}\n",
                 "file2.rs": "fn function2() {}\n",
@@ -1978,55 +1927,18 @@ fn main() {
             }),
         )
         .await;
-        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-        let thread_store = cx.update(|_, cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
-        });
-        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
-
-        let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
-
-        // Open and add three different files
-        async fn open_file(
-            project: &Entity<Project>,
-            context_store: &Entity<ContextStore>,
-            path: &str,
-            cx: &mut VisualTestContext,
-        ) -> Result<()> {
-            let buffer_path = project
-                .read_with(cx, |project, cx| project.find_project_path(path, cx))
-                .unwrap();
-
-            let buffer = project
-                .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
-                .await
-                .unwrap();
-
-            context_store
-                .update(cx, |store, cx| {
-                    store.add_file_from_buffer(buffer.clone(), cx)
-                })
-                .await
-        }
+        let (_, _thread_store, thread, context_store) =
+            setup_test_environment(cx, project.clone()).await;
 
         // Open files individually
-        open_file(&project, &context_store, "test/file1.rs", cx)
+        add_file_to_context(&project, &context_store, "test/file1.rs", cx)
             .await
             .unwrap();
-        open_file(&project, &context_store, "test/file2.rs", cx)
+        add_file_to_context(&project, &context_store, "test/file2.rs", cx)
             .await
             .unwrap();
-        open_file(&project, &context_store, "test/file3.rs", cx)
+        add_file_to_context(&project, &context_store, "test/file3.rs", cx)
             .await
             .unwrap();
 
@@ -2108,40 +2020,16 @@ fn main() {
 
     #[gpui::test]
     async fn test_message_without_files(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AssistantSettings::register(cx);
-            thread_store::init(cx);
-            workspace::init_settings(cx);
-            ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
-            EditorSettings::register(cx);
-        });
+        init_test_settings(cx);
 
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/test"),
+        let project = create_test_project(
+            cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
         .await;
-        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
-        let (_workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-        let thread_store = cx.update(|_window, cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
-        });
-        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+        let (_, _thread_store, thread, _context_store) =
+            setup_test_environment(cx, project.clone()).await;
 
         // Insert user message without any context (empty context vector)
         let message_id = thread.update(cx, |thread, cx| {
@@ -2195,61 +2083,22 @@ fn main() {
             "Are there any good books?"
         );
     }
-    
+
     #[gpui::test]
     async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AssistantSettings::register(cx);
-            thread_store::init(cx);
-            workspace::init_settings(cx);
-            ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
-            EditorSettings::register(cx);
-        });
+        init_test_settings(cx);
 
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/test"),
+        let project = create_test_project(
+            cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
         .await;
-        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-        let thread_store = cx.update(|_window, cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
-        });
-        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
-
-        let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
+        let (_workspace, _thread_store, thread, context_store) =
+            setup_test_environment(cx, project.clone()).await;
 
         // Open buffer and add it to context
-        let buffer_path = project
-            .read_with(cx, |project, cx| {
-                project.find_project_path("test/code.rs", cx)
-            })
-            .unwrap();
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
-            .await
-            .unwrap();
-
-        context_store
-            .update(cx, |store, cx| {
-                store.add_file_from_buffer(buffer.clone(), cx)
-            })
+        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
             .await
             .unwrap();
 
@@ -2265,17 +2114,25 @@ fn main() {
         let initial_request = thread.read_with(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
-        
+
         // Make sure we don't have a stale file warning yet
         let has_stale_warning = initial_request.messages.iter().any(|msg| {
-            msg.string_contents().contains("These files changed since last read:")
+            msg.string_contents()
+                .contains("These files changed since last read:")
         });
-        assert!(!has_stale_warning, "Should not have stale buffer warning before buffer is modified");
+        assert!(
+            !has_stale_warning,
+            "Should not have stale buffer warning before buffer is modified"
+        );
 
         // Modify the buffer
         buffer.update(cx, |buffer, cx| {
             // Find a position at the end of line 1
-            buffer.edit([(1..1, "\n    println!(\"Added a new line\");\n")], None, cx);
+            buffer.edit(
+                [(1..1, "\n    println!(\"Added a new line\");\n")],
+                None,
+                cx,
+            );
         });
 
         // Insert another user message without context
@@ -2287,16 +2144,99 @@ fn main() {
         let new_request = thread.read_with(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
-        
+
         // We should have a stale file warning as the last message
-        let last_message = new_request.messages.last().expect("Request should have messages");
-        
+        let last_message = new_request
+            .messages
+            .last()
+            .expect("Request should have messages");
+
         // The last message should be the stale buffer notification
         assert_eq!(last_message.role, Role::User);
-        
+
         // Check the exact content of the message
         let expected_content = "These files changed since last read:\n- code.rs\n";
-        assert_eq!(last_message.string_contents(), expected_content, 
-            "Last message should be exactly the stale buffer notification");
+        assert_eq!(
+            last_message.string_contents(),
+            expected_content,
+            "Last message should be exactly the stale buffer notification"
+        );
+    }
+
+    fn init_test_settings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            AssistantSettings::register(cx);
+            thread_store::init(cx);
+            workspace::init_settings(cx);
+            ThemeSettings::register(cx);
+            ContextServerSettings::register(cx);
+            EditorSettings::register(cx);
+        });
+    }
+
+    // Helper to create a test project with test files
+    async fn create_test_project(
+        cx: &mut TestAppContext,
+        files: serde_json::Value,
+    ) -> Entity<Project> {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), files).await;
+        Project::test(fs, [path!("/test").as_ref()], cx).await
+    }
+
+    async fn setup_test_environment(
+        cx: &mut TestAppContext,
+        project: Entity<Project>,
+    ) -> (
+        Entity<Workspace>,
+        Entity<ThreadStore>,
+        Entity<Thread>,
+        Entity<ContextStore>,
+    ) {
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = cx.update(|_, cx| {
+            ThreadStore::new(
+                project.clone(),
+                Arc::default(),
+                Arc::new(PromptBuilder::new(None).unwrap()),
+                cx,
+            )
+            .unwrap()
+        });
+
+        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+        let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
+
+        (workspace, thread_store, thread, context_store)
+    }
+
+    async fn add_file_to_context(
+        project: &Entity<Project>,
+        context_store: &Entity<ContextStore>,
+        path: &str,
+        cx: &mut TestAppContext,
+    ) -> Result<Entity<language::Buffer>> {
+        let buffer_path = project
+            .read_with(cx, |project, cx| project.find_project_path(path, cx))
+            .unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
+            .await
+            .unwrap();
+
+        context_store
+            .update(cx, |store, cx| {
+                store.add_file_from_buffer(buffer.clone(), cx)
+            })
+            .await?;
+
+        Ok(buffer)
     }
 }
