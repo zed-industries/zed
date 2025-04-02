@@ -1733,7 +1733,7 @@ impl GitPanel {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = anyhow::Result<Option<FetchOptions>>> {
+    ) -> impl Future<Output = anyhow::Result<Option<FetchOptions>>> + use<> {
         let repo = self.active_repository.clone();
         let workspace = self.workspace.clone();
         let mut cx = window.to_async(cx);

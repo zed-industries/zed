@@ -21,7 +21,7 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, DiffType,FetchOptions, GitRepository,
+        Branch, CommitDetails, CommitDiff, CommitFile, DiffType, FetchOptions, GitRepository,
         GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
         UpstreamTrackingStatus,
     },
