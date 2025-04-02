@@ -177,9 +177,8 @@ impl Vim {
         match operator {
             None => self.move_cursor(motion, times, window, cx),
             Some(Operator::Change) => self.change_motion(motion, times, window, cx),
-            Some(Operator::Delete) => self.delete_motion(motion, times, false, window, cx),
-            Some(Operator::Delete2 { inclusive: _ }) => {
-                self.delete_motion(motion, times, true, window, cx)
+            Some(Operator::Delete { inclusive: i }) => {
+                self.delete_motion(motion, times, i, window, cx)
             }
             Some(Operator::Yank) => self.yank_motion(motion, times, window, cx),
             Some(Operator::AddSurrounds { target: None }) => {}
@@ -230,7 +229,9 @@ impl Vim {
         match self.maybe_pop_operator() {
             Some(Operator::Object { around }) => match self.maybe_pop_operator() {
                 Some(Operator::Change) => self.change_object(object, around, window, cx),
-                Some(Operator::Delete) => self.delete_object(object, around, window, cx),
+                Some(Operator::Delete { inclusive: _ }) => {
+                    self.delete_object(object, around, window, cx)
+                }
                 Some(Operator::Yank) => self.yank_object(object, around, window, cx),
                 Some(Operator::Indent) => {
                     self.indent_object(object, around, IndentDirection::In, window, cx)

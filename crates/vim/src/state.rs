@@ -78,8 +78,9 @@ impl Default for Mode {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operator {
     Change,
-    Delete,
-    Delete2 {
+    //Delete,
+    //Delete2 {
+    Delete {
         inclusive: bool,
     },
     Yank,
@@ -936,8 +937,8 @@ impl Operator {
             Operator::Object { around: false } => "i",
             Operator::Object { around: true } => "a",
             Operator::Change => "c",
-            Operator::Delete => "d",
-            Operator::Delete2 { inclusive: _ } => "dv", //temporary, ideally we can reuse delete but making its own path for now
+            Operator::Delete { inclusive: false } => "d",
+            Operator::Delete { inclusive: true } => "dv",
             Operator::Yank => "y",
             Operator::Replace => "r",
             Operator::Digraph { .. } => "^K",
@@ -1005,8 +1006,7 @@ impl Operator {
             | Operator::ChangeSurrounds { target: Some(_) }
             | Operator::DeleteSurrounds => true,
             Operator::Change
-            | Operator::Delete
-            | Operator::Delete2 { inclusive: _ }
+            | Operator::Delete { inclusive: _ }
             | Operator::Yank
             | Operator::Rewrap
             | Operator::Indent
@@ -1029,8 +1029,7 @@ impl Operator {
     pub fn starts_dot_recording(&self) -> bool {
         match self {
             Operator::Change
-            | Operator::Delete
-            | Operator::Delete2 { inclusive: _ }
+            | Operator::Delete { inclusive: _ }
             | Operator::Replace
             | Operator::Indent
             | Operator::Outdent

@@ -99,12 +99,6 @@ struct PushChangeSurrounds {
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct PushDeleteInclusive {
-    inclusive: bool,
-}
-
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
 struct PushJump {
     line: bool,
 }
@@ -145,6 +139,7 @@ actions!(
         ResizePaneDown,
         PushChange,
         PushDelete,
+        PushDeleteInclusive,
         Exchange,
         PushYank,
         PushReplace,
@@ -185,7 +180,6 @@ impl_actions!(
         PushSneakBackward,
         PushAddSurrounds,
         PushChangeSurrounds,
-        PushDeleteInclusive,
         PushJump,
         PushDigraph,
         PushLiteral
@@ -548,20 +542,9 @@ impl Vim {
                 },
             );
 
-            //second place I need to modify it some more
-            Vim::action(
-                editor,
-                cx,
-                |vim, action: &PushDeleteInclusive, window, cx| {
-                    vim.push_operator(
-                        Operator::Delete2 {
-                            inclusive: action.inclusive,
-                        },
-                        window,
-                        cx,
-                    );
-                },
-            );
+            Vim::action(editor, cx, |vim, _: &PushDeleteInclusive, window, cx| {
+                vim.push_operator(Operator::Delete { inclusive: true }, window, cx);
+            });
 
             Vim::action(editor, cx, |vim, action: &PushJump, window, cx| {
                 vim.push_operator(Operator::Jump { line: action.line }, window, cx)
@@ -592,7 +575,7 @@ impl Vim {
             });
 
             Vim::action(editor, cx, |vim, _: &PushDelete, window, cx| {
-                vim.push_operator(Operator::Delete, window, cx)
+                vim.push_operator(Operator::Delete { inclusive: false }, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &PushYank, window, cx| {

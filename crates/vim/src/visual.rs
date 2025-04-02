@@ -792,7 +792,7 @@ impl Vim {
 
         match self.maybe_pop_operator() {
             Some(Operator::Change) => self.substitute(None, false, window, cx),
-            Some(Operator::Delete) => {
+            Some(Operator::Delete { inclusive: _ }) => {
                 self.stop_recording(cx);
                 self.visual_delete(false, window, cx)
             }
