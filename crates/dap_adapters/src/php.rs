@@ -118,6 +118,7 @@ impl DebugAdapter for PhpDebugAdapter {
                 json!({
                     "program": launch_config.program,
                     "cwd": launch_config.cwd,
+                    "args": launch_config.args,
                     "stopOnEntry": config.stop_on_entry,
                 })
             }

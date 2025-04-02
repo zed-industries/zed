@@ -1489,7 +1489,6 @@ impl Project {
             initialize_args: None,
             tcp_connection: None,
             locator: None,
-            args: Default::default(),
             stop_on_entry: None,
         };
         let caps = caps.unwrap_or(Capabilities {
