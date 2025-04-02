@@ -841,7 +841,7 @@ mod tests {
     use prompt_store::PromptBuilder;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::{path::Path, sync::Arc};
+    use std::sync::Arc;
     use theme::ThemeSettings;
     use util::path;
 
@@ -866,7 +866,7 @@ mod tests {
             json!({"file1": "abc\ndef\nghi\njkl\nmno\npqr\nstu\nvwx\nyz"}),
         )
         .await;
-        let project = Project::test(fs, [Path::new("/test")], cx).await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
         let buffer_path = project
             .read_with(cx, |project, cx| {
                 project.find_project_path("test/file1", cx)
