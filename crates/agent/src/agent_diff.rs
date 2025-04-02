@@ -600,7 +600,7 @@ fn render_diff_hunk_controls(
         .occlude()
         .shadow_md()
         .children(vec![
-            Button::new("reject", "Reject")
+            Button::new(("reject", row as u64), "Reject")
                 .disabled(is_created_file)
                 .key_binding(
                     KeyBinding::for_action_in(
