@@ -88,12 +88,6 @@ pub fn init(cx: &mut App) {
                         });
                     }
                 })
-                .register_action(|workspace, _: &OpenConfiguration, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
-                        panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
-                    }
-                })
                 .register_action(|workspace, _: &OpenAgentDiff, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
