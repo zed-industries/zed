@@ -82,7 +82,7 @@ impl Tool for EditFilesTool {
     }
 
     fn needs_confirmation(&self) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
