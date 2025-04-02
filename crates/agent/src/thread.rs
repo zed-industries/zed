@@ -881,13 +881,9 @@ impl Thread {
             log::error!("system_prompt_context not set.")
         }
 
-        let mut referenced_context_ids = HashSet::default();
+        let mut added_context_ids = HashSet::<ContextId>::default();
 
         for message in &self.messages {
-            if let Some(context_ids) = self.context_by_message.get(&message.id) {
-                referenced_context_ids.extend(context_ids);
-            }
-
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
@@ -904,6 +900,23 @@ impl Thread {
                     if self.tool_use.message_has_tool_results(message.id) {
                         continue;
                     }
+                }
+            }
+
+            // Attach context to this message if it's the first to reference it
+            if let Some(context_ids) = self.context_by_message.get(&message.id) {
+                let new_context_ids: Vec<_> = context_ids
+                    .iter()
+                    .filter(|id| !added_context_ids.contains(id))
+                    .collect();
+
+                if !new_context_ids.is_empty() {
+                    let referenced_context = new_context_ids
+                        .iter()
+                        .filter_map(|context_id| self.context.get(*context_id));
+
+                    attach_context_to_message(&mut request_message, referenced_context, cx);
+                    added_context_ids.extend(context_ids.iter());
                 }
             }
 
@@ -931,21 +944,6 @@ impl Thread {
         let breakpoint_index = request.messages.len() - 2;
         for (index, message) in request.messages.iter_mut().enumerate() {
             message.cache = index == breakpoint_index;
-        }
-
-        if !referenced_context_ids.is_empty() {
-            let mut context_message = LanguageModelRequestMessage {
-                role: Role::User,
-                content: Vec::new(),
-                cache: false,
-            };
-
-            let referenced_context = referenced_context_ids
-                .into_iter()
-                .filter_map(|context_id| self.context.get(context_id));
-            attach_context_to_message(&mut context_message, referenced_context, cx);
-
-            request.messages.push(context_message);
         }
 
         self.attached_tracked_files_state(&mut request.messages, cx);
