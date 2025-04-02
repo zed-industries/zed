@@ -184,9 +184,6 @@ jobs:
           - os: arm Mac
             runner: [macOS, ARM64, test]
             install_nix: false
-          - os: arm Linux
-            runner: buildjet-16vcpu-ubuntu-2204-arm
-            install_nix: true
     if: github.repository_owner == 'zed-industries'
     runs-on: ${{ matrix.system.runner }}
     needs: tests

@@ -1,8 +1,8 @@
 use gpui::{AnyElement, ScrollHandle};
 use smallvec::SmallVec;
 
-use crate::prelude::*;
 use crate::Tab;
+use crate::prelude::*;
 
 #[derive(IntoElement)]
 pub struct TabBar {

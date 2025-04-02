@@ -1,7 +1,7 @@
-use crate::{motion::Motion, object::Object, state::Mode, Vim};
+use crate::{Vim, motion::Motion, object::Object, state::Mode};
 use collections::HashMap;
-use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Bias, Editor, RewrapOptions};
-use gpui::{actions, Context, Window};
+use editor::{Bias, Editor, RewrapOptions, display_map::ToDisplayPoint, scroll::Autoscroll};
+use gpui::{Context, Window, actions};
 use language::SelectionGoal;
 
 actions!(vim, [Rewrap]);
@@ -55,7 +55,7 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         selection_starts.insert(selection.id, anchor);
-                        motion.expand_selection(map, selection, times, false, &text_layout_details);
+                        motion.expand_selection(map, selection, times, &text_layout_details);
                     });
                 });
                 editor.rewrap_impl(

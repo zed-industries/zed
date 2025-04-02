@@ -6,8 +6,8 @@ use theme::{
     ThemeColorsContent, ThemeContent, ThemeStyleContent,
 };
 
-use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
 use crate::ThemeMetadata;
+use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
 
 use super::ZedSyntaxToken;
 

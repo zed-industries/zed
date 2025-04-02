@@ -19,7 +19,7 @@ pub(super) fn bash_task_context() -> ContextProviderWithTasks {
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
-    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
     use unindent::Unindent;

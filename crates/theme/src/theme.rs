@@ -28,8 +28,8 @@ use anyhow::Result;
 use fallback_themes::apply_status_color_defaults;
 use fs::Fs;
 use gpui::{
-    px, App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
-    WindowBackgroundAppearance,
+    App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
+    WindowBackgroundAppearance, px,
 };
 use serde::Deserialize;
 use uuid::Uuid;

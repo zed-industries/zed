@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -10,7 +10,7 @@ use project::{Project, ProjectPath};
 use std::{
     fmt::Write,
     path::Path,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
 use workspace::Workspace;

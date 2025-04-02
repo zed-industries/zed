@@ -1,13 +1,13 @@
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::CompletionProvider;
-use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
+use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    actions, point, size, transparent_black, Action, App, Bounds, Entity, EventEmitter, Focusable,
-    PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions,
+    Action, App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task,
+    TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, point, size,
+    transparent_black,
 };
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
+use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{
-    div, prelude::*, Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing,
-    ParentElement, Render, SharedString, Styled, Tooltip, Window,
+    Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
+    SharedString, Styled, Tooltip, Window, div, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::Workspace;

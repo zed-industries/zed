@@ -1,9 +1,9 @@
-use super::{proto, Client, Status, TypedEnvelope};
-use anyhow::{anyhow, Context as _, Result};
+use super::{Client, Status, TypedEnvelope, proto};
+use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
-use collections::{hash_map::Entry, HashMap, HashSet};
+use collections::{HashMap, HashSet, hash_map::Entry};
 use feature_flags::FeatureFlagAppExt;
-use futures::{channel::mpsc, Future, StreamExt};
+use futures::{Future, StreamExt, channel::mpsc};
 use gpui::{
     App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, WeakEntity,
 };
@@ -581,7 +581,7 @@ impl UserStore {
         })
     }
 
-    pub fn clear_contacts(&self) -> impl Future<Output = ()> {
+    pub fn clear_contacts(&self) -> impl Future<Output = ()> + use<> {
         let (tx, mut rx) = postage::barrier::channel();
         self.update_contacts_tx
             .unbounded_send(UpdateContacts::Clear(tx))

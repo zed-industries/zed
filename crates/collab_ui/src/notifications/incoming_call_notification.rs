@@ -2,10 +2,10 @@ use crate::notification_window_options;
 use crate::notifications::collab_notification::CollabNotification;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
-use gpui::{prelude::*, App, WindowHandle};
+use gpui::{App, WindowHandle, prelude::*};
 
 use std::sync::{Arc, Weak};
-use ui::{prelude::*, Button, Label};
+use ui::{Button, Label, prelude::*};
 use util::ResultExt;
 use workspace::AppState;
 

@@ -1,16 +1,16 @@
 use auto_update::AutoUpdater;
 use client::proto::UpdateNotification;
 use editor::{Editor, MultiBuffer};
-use gpui::{actions, prelude::*, App, Context, DismissEvent, Entity, SharedString, Window};
+use gpui::{App, Context, DismissEvent, Entity, SharedString, Window, actions, prelude::*};
 use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
 use serde::Deserialize;
 use smol::io::AsyncReadExt;
 use util::ResultExt as _;
-use workspace::notifications::simple_message_notification::MessageNotification;
-use workspace::notifications::{show_app_notification, NotificationId};
 use workspace::Workspace;
+use workspace::notifications::simple_message_notification::MessageNotification;
+use workspace::notifications::{NotificationId, show_app_notification};
 
 actions!(auto_update, [ViewReleaseNotesLocally]);
 

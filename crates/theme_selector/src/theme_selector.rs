@@ -1,18 +1,18 @@
 mod icon_theme_selector;
 
 use fs::Fs;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal,
-    WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
+    Window, actions,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{update_settings_file, SettingsStore};
+use settings::{SettingsStore, update_settings_file};
 use std::sync::Arc;
 use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
-use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
+use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
-use workspace::{ui::HighlightedLabel, ModalView, Workspace};
+use workspace::{ModalView, Workspace, ui::HighlightedLabel};
 use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};

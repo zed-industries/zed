@@ -1,4 +1,4 @@
-use gpui::{prelude::*, AnyElement};
+use gpui::{AnyElement, prelude::*};
 use smallvec::SmallVec;
 use ui::prelude::*;
 

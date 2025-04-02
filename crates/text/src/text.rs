@@ -11,9 +11,9 @@ mod tests;
 mod undo_map;
 
 pub use anchor::*;
-use anyhow::{anyhow, Context as _, Result};
-pub use clock::ReplicaId;
+use anyhow::{Context as _, Result, anyhow};
 use clock::LOCAL_BRANCH_REPLICA_ID;
+pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use locator::Locator;
 use operation_queue::OperationQueue;
@@ -1561,10 +1561,10 @@ impl Buffer {
         self.subscriptions.subscribe()
     }
 
-    pub fn wait_for_edits(
+    pub fn wait_for_edits<It: IntoIterator<Item = clock::Lamport>>(
         &mut self,
-        edit_ids: impl IntoIterator<Item = clock::Lamport>,
-    ) -> impl 'static + Future<Output = Result<()>> {
+        edit_ids: It,
+    ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         let mut futures = Vec::new();
         for edit_id in edit_ids {
             if !self.version.observed(edit_id) {
@@ -1584,10 +1584,10 @@ impl Buffer {
         }
     }
 
-    pub fn wait_for_anchors(
+    pub fn wait_for_anchors<It: IntoIterator<Item = Anchor>>(
         &mut self,
-        anchors: impl IntoIterator<Item = Anchor>,
-    ) -> impl 'static + Future<Output = Result<()>> {
+        anchors: It,
+    ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         let mut futures = Vec::new();
         for anchor in anchors {
             if !self.version.observed(anchor.timestamp)
@@ -1613,7 +1613,10 @@ impl Buffer {
         }
     }
 
-    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_version(
+        &mut self,
+        version: clock::Global,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let mut rx = None;
         if !self.snapshot.version.observed_all(&version) {
             let channel = oneshot::channel();

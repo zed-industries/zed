@@ -1,8 +1,8 @@
 use crate::{
-    platform::AtlasTextureList, AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds,
-    DevicePixels, PlatformAtlas, Point, Size,
+    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
+    Point, Size, platform::AtlasTextureList,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;

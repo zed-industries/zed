@@ -1,11 +1,11 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use editor::SearchSettings;
-use gpui::{actions, Action, App, FocusHandle, IntoElement};
+use gpui::{Action, App, FocusHandle, IntoElement, actions};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
-use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton, IconButtonShape};
+use ui::{Tooltip, prelude::*};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
 
@@ -105,12 +105,12 @@ impl SearchOptions {
         options
     }
 
-    pub fn as_button(
+    pub fn as_button<Action: Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static>(
         &self,
         active: bool,
         focus_handle: FocusHandle,
-        action: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
+        action: Action,
+    ) -> impl IntoElement + use<Action> {
         IconButton::new(self.label(), self.icon())
             .on_click(action)
             .style(ButtonStyle::Subtle)

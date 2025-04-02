@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use component::{example_group, single_example, ComponentPreview};
+use component::{ComponentPreview, example_group, single_example};
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 

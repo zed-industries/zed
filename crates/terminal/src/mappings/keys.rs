@@ -398,7 +398,7 @@ mod test {
                     false
                 ),
                 to_esc_str(
-                    &Keystroke::parse_case_insensitive(&format!("ctrl-{}", upper)).unwrap(),
+                    &Keystroke::parse(&format!("ctrl-{}", upper)).unwrap(),
                     &mode,
                     false
                 ),
@@ -415,7 +415,7 @@ mod test {
         for character in ascii_printable {
             assert_eq!(
                 to_esc_str(
-                    &Keystroke::parse_case_insensitive(&format!("alt-{}", character)).unwrap(),
+                    &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
                     &TermMode::NONE,
                     true
                 )

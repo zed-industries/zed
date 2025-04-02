@@ -1,11 +1,11 @@
 use gpui::{
-    div, hsla, prelude::*, AnyElement, AnyView, ElementId, Hsla, IntoElement, Styled, Window,
+    AnyElement, AnyView, ElementId, Hsla, IntoElement, Styled, Window, div, hsla, prelude::*,
 };
 use std::sync::Arc;
 
 use crate::utils::is_light;
-use crate::{prelude::*, ElevationIndex, KeyBinding};
 use crate::{Color, Icon, IconName, ToggleState};
+use crate::{ElevationIndex, KeyBinding, prelude::*};
 
 // TODO: Checkbox, CheckboxWithLabel, and Switch could all be
 // restructured to use a ToggleLike, similar to Button/Buttonlike, Label/Labellike

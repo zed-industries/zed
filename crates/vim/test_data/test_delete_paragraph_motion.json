@@ -1,0 +1,18 @@
+{"Put":{"state":"ˇhello world.\n\nhello world.\n"}}
+{"Key":"y"}
+{"Key":"}"}
+{"Get":{"state":"ˇhello world.\n\nhello world.\n","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"hello world.\n"}}
+{"Key":"d"}
+{"Key":"}"}
+{"Get":{"state":"ˇ\nhello world.\n","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"hello world.\n"}}
+{"Put":{"state":"helˇlo world.\n\nhello world.\n"}}
+{"Key":"y"}
+{"Key":"}"}
+{"Get":{"state":"helˇlo world.\n\nhello world.\n","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"lo world."}}
+{"Key":"d"}
+{"Key":"}"}
+{"Get":{"state":"heˇl\n\nhello world.\n","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"lo world."}}

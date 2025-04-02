@@ -1,11 +1,11 @@
-use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
-use gpui::{impl_actions, Context, Window};
+use editor::{Editor, MultiBufferSnapshot, ToOffset, ToPoint, scroll::Autoscroll};
+use gpui::{Context, Window, impl_actions};
 use language::{Bias, Point};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::ops::Range;
 
-use crate::{state::Mode, Vim};
+use crate::{Vim, state::Mode};
 
 const BOOLEAN_PAIRS: &[(&str, &str)] = &[("true", "false"), ("yes", "no"), ("on", "off")];
 

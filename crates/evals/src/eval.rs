@@ -18,19 +18,19 @@ use semantic_index::{
 };
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
+use smol::Timer;
 use smol::channel::bounded;
 use smol::io::AsyncReadExt;
-use smol::Timer;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::{
     fs,
     path::Path,
-    process::{exit, Stdio},
+    process::{Stdio, exit},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 

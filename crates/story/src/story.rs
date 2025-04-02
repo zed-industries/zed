@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rems, AnyElement, App, DefaultColor, DefaultColors, Div, SharedString,
-    Window,
+    AnyElement, App, DefaultColor, DefaultColors, Div, SharedString, Window, div, prelude::*, px,
+    rems,
 };
 use itertools::Itertools;
 use smallvec::SmallVec;

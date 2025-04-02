@@ -398,8 +398,12 @@ impl BladeRenderer {
                 log::error!("GPU hung");
                 #[cfg(target_os = "linux")]
                 if self.gpu.device_information().driver_name == "radv" {
-                    log::error!("there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround");
-                    log::error!("if that helps you're running into https://github.com/zed-industries/zed/issues/26143");
+                    log::error!(
+                        "there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround"
+                    );
+                    log::error!(
+                        "if that helps you're running into https://github.com/zed-industries/zed/issues/26143"
+                    );
                 }
                 log::error!(
                     "your device information is: {:?}",

@@ -1,5 +1,5 @@
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -11,8 +11,8 @@ use feature_flags::FeatureFlag;
 use futures::channel::mpsc;
 use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
-use smol::stream::StreamExt;
 use smol::Timer;
+use smol::stream::StreamExt;
 use ui::prelude::*;
 use workspace::Workspace;
 

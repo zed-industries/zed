@@ -6,15 +6,18 @@ use std::{
     sync::Arc,
 };
 
-use ::util::{paths::SanitizedPath, ResultExt};
-use anyhow::{anyhow, Context as _, Result};
+use ::util::{ResultExt, paths::SanitizedPath};
+use anyhow::{Context as _, Result, anyhow};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use windows::{
-    core::*,
+    UI::{
+        StartScreen::{JumpList, JumpListItem},
+        ViewManagement::UISettings,
+    },
     Win32::{
         Foundation::*,
         Graphics::{
@@ -25,10 +28,7 @@ use windows::{
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    UI::{
-        StartScreen::{JumpList, JumpListItem},
-        ViewManagement::UISettings,
-    },
+    core::*,
 };
 
 use crate::{platform::blade::BladeContext, *};
@@ -826,7 +826,7 @@ fn should_auto_hide_scrollbars() -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{read_from_clipboard, write_to_clipboard, ClipboardItem};
+    use crate::{ClipboardItem, read_from_clipboard, write_to_clipboard};
 
     #[test]
     fn test_clipboard() {

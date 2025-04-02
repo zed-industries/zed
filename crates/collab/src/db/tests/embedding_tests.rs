@@ -1,7 +1,7 @@
 use super::TestDb;
 use crate::db::embedding;
 use collections::HashMap;
-use sea_orm::{sea_query::Expr, ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, sea_query::Expr};
 use std::ops::Sub;
 use time::{Duration, OffsetDateTime, PrimitiveDateTime};
 

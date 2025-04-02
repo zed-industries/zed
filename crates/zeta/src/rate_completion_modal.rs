@@ -1,9 +1,9 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
-use gpui::{actions, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable};
+use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, actions, prelude::*};
 use language::language_settings;
 use std::time::Duration;
-use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
+use ui::{KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use workspace::{ModalView, Workspace};
 
 actions!(

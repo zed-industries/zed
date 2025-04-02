@@ -1,10 +1,10 @@
 mod supported_countries;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use futures::{
+    AsyncBufReadExt, AsyncReadExt, Stream, StreamExt,
     io::BufReader,
     stream::{self, BoxStream},
-    AsyncBufReadExt, AsyncReadExt, Stream, StreamExt,
 };
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};

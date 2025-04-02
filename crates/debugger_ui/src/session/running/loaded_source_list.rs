@@ -1,4 +1,4 @@
-use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
+use gpui::{AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription, list};
 use project::debugger::session::{Session, SessionEvent};
 use ui::prelude::*;
 use util::maybe;

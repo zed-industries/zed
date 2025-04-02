@@ -4,20 +4,20 @@ pub mod request;
 mod sign_in;
 
 use ::fs::Fs;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
-use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
+use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared};
 use gpui::{
-    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
-    WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
+    WeakEntity, actions,
 };
 use http_client::HttpClient;
 use language::language_settings::CopilotSettings;
 use language::{
-    language_settings::{all_language_settings, language_settings, EditPredictionProvider},
-    point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
-    ToPointUtf16,
+    Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
+    language_settings::{EditPredictionProvider, all_language_settings, language_settings},
+    point_from_lsp, point_to_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -33,10 +33,10 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{fs::remove_matching, ResultExt};
+use util::{ResultExt, fs::remove_matching};
 
 pub use crate::copilot_completion_provider::CopilotCompletionProvider;
-pub use crate::sign_in::{initiate_sign_in, CopilotCodeVerification};
+pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in};
 
 actions!(
     copilot,
@@ -348,7 +348,10 @@ impl Copilot {
         this
     }
 
-    fn shutdown_language_server(&mut self, _cx: &mut Context<Self>) -> impl Future<Output = ()> {
+    fn shutdown_language_server(
+        &mut self,
+        _cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
         let shutdown = match mem::replace(&mut self.server, CopilotServer::Disabled) {
             CopilotServer::Running(server) => Some(Box::pin(async move { server.lsp.shutdown() })),
             _ => None,

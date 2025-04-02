@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 
-use gpui::{hsla, point, px, App, BoxShadow, Hsla};
-use smallvec::{smallvec, SmallVec};
+use gpui::{App, BoxShadow, Hsla, hsla, point, px};
+use smallvec::{SmallVec, smallvec};
 use theme::{ActiveTheme, Appearance};
 
 /// Today, elevation is primarily used to add shadows to elements, and set the correct background for elements like buttons.

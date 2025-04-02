@@ -1,14 +1,14 @@
 use crate::{
+    Vim,
     motion::{self, Motion},
     object::Object,
     state::Mode,
-    Vim,
 };
 use editor::{
-    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, Bias, Editor, EditorSnapshot,
-    ToOffset, ToPoint,
+    Anchor, Bias, Editor, EditorSnapshot, ToOffset, ToPoint, display_map::ToDisplayPoint,
+    scroll::Autoscroll,
 };
-use gpui::{actions, Context, Window};
+use gpui::{Context, Window, actions};
 use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;
@@ -188,13 +188,7 @@ impl Vim {
             let text_layout_details = editor.text_layout_details(window);
             let mut selection = editor.selections.newest_display(cx);
             let snapshot = editor.snapshot(window, cx);
-            motion.expand_selection(
-                &snapshot,
-                &mut selection,
-                times,
-                false,
-                &text_layout_details,
-            );
+            motion.expand_selection(&snapshot, &mut selection, times, &text_layout_details);
             let start = snapshot
                 .buffer_snapshot
                 .anchor_before(selection.start.to_point(&snapshot));

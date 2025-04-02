@@ -1,7 +1,7 @@
 use gpui::{Hsla, Rgba};
 
-use crate::scale::{ColorScaleSet, ColorScales};
 use crate::ColorScale;
+use crate::scale::{ColorScaleSet, ColorScales};
 use crate::{SystemColors, ThemeColors};
 
 pub(crate) fn neutral() -> ColorScaleSet {

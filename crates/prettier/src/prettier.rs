@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncApp, Entity};
-use language::{language_settings::language_settings, Buffer, Diff};
+use language::{Buffer, Diff, language_settings::language_settings};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
@@ -119,9 +119,13 @@ impl Prettier {
                                     } else {
                                         log::warn!("Skipping path {path_to_check:?} workspace root with workspaces {workspaces:?} that have no prettier installed");
                                     }
-                                },
-                                Some(unknown) => log::error!("Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."),
-                                None => log::warn!("Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"),
+                                }
+                                Some(unknown) => log::error!(
+                                    "Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."
+                                ),
+                                None => log::warn!(
+                                    "Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"
+                                ),
                             }
                         }
                     }
@@ -213,7 +217,9 @@ impl Prettier {
                                 let workspace_ignore = path_to_check.join(".prettierignore");
                                 if let Some(metadata) = fs.metadata(&workspace_ignore).await? {
                                     if !metadata.is_dir {
-                                        log::info!("Found prettier ignore at workspace root {workspace_ignore:?}");
+                                        log::info!(
+                                            "Found prettier ignore at workspace root {workspace_ignore:?}"
+                                        );
                                         return Ok(ControlFlow::Continue(Some(path_to_check)));
                                     }
                                 }
@@ -646,7 +652,8 @@ mod tests {
                 &HashSet::default(),
                 Path::new("/root/work/project/src/index.js")
             )
-            .await.unwrap(),
+            .await
+            .unwrap(),
             ControlFlow::Continue(Some(PathBuf::from("/root/work/project"))),
             "Should successfully find a prettier for path hierarchy that has node_modules with prettier, but no package.json mentions of it"
         );

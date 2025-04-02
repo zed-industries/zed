@@ -1,9 +1,9 @@
 use crate::wasm_host::wit::since_v0_4_0::slash_command::SlashCommandOutputSection;
 use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
-use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
+use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -11,9 +11,9 @@ use context_server_settings::ContextServerSettings;
 use extension::{
     ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
 };
-use futures::{io::BufReader, FutureExt as _};
-use futures::{lock::Mutex, AsyncReadExt};
-use language::{language_settings::AllLanguageSettings, BinaryStatus, LanguageName};
+use futures::{AsyncReadExt, lock::Mutex};
+use futures::{FutureExt as _, io::BufReader};
+use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{

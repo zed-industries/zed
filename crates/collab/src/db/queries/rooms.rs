@@ -764,7 +764,7 @@ impl Database {
                             .find(|worktree| worktree.id as i64 == legacy_worktree_id)
                         {
                             worktree.updated_repositories.push(proto::RepositoryEntry {
-                                work_directory_id: db_repository.id as u64,
+                                repository_id: db_repository.id as u64,
                                 updated_statuses,
                                 removed_statuses,
                                 current_merge_conflicts,
@@ -782,6 +782,7 @@ impl Database {
                             id: db_repository.id as u64,
                             abs_path: db_repository.abs_path,
                             scan_id: db_repository.scan_id as u64,
+                            is_last_update: true,
                         });
                     }
                 }

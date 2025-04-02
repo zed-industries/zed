@@ -6,6 +6,7 @@ mod pty_info;
 pub mod terminal_settings;
 
 use alacritty_terminal::{
+    Term,
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Grid, Row, Scroll as AlacScroll},
@@ -13,22 +14,21 @@ use alacritty_terminal::{
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
+        Config, RenderableCursor, TermMode,
         cell::{Cell, Flags},
         search::{Match, RegexIter, RegexSearch},
-        Config, RenderableCursor, TermMode,
     },
     tty::{self},
     vi_mode::{ViModeCursor, ViMotion},
     vte::ansi::{
         ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
     },
-    Term,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use futures::{
-    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     FutureExt,
+    channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
 };
 
 use mappings::mouse::{
@@ -59,10 +59,9 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    actions, black, px, AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context,
-    EventEmitter, Hsla, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
-    Window,
+    AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -782,7 +781,7 @@ impl Terminal {
         cx: &mut Context<Self>,
     ) {
         match event {
-            InternalEvent::Resize(mut new_bounds) => {
+            &InternalEvent::Resize(mut new_bounds) => {
                 new_bounds.bounds.size.height =
                     cmp::max(new_bounds.line_height, new_bounds.height());
                 new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
@@ -1943,15 +1942,20 @@ const TASK_DELIMITER: &str = "⏵ ";
 fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, String) {
     let escaped_full_label = task.full_label.replace("\r\n", "\r").replace('\n', "\r");
     let (success, task_line) = match error_code {
-        Some(0) => {
-            (true, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"))
-        }
-        Some(error_code) => {
-            (false, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"))
-        }
-        None => {
-            (false, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"))
-        }
+        Some(0) => (
+            true,
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
+        ),
+        Some(error_code) => (
+            false,
+            format!(
+                "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
+            ),
+        ),
+        None => (
+            false,
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
+        ),
     };
     let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
     let command_line = format!("{TASK_DELIMITER}Command: {escaped_command_label}");
@@ -2141,12 +2145,12 @@ mod tests {
         index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
-    use gpui::{bounds, point, size, Pixels, Point};
-    use rand::{distributions::Alphanumeric, rngs::ThreadRng, thread_rng, Rng};
+    use gpui::{Pixels, Point, bounds, point, size};
+    use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
 
     use crate::{
-        content_index_for_mouse, python_extract_path_and_line, rgb_for_index, IndexedCell,
-        TerminalBounds, TerminalContent,
+        IndexedCell, TerminalBounds, TerminalContent, content_index_for_mouse,
+        python_extract_path_and_line, rgb_for_index,
     };
 
     #[test]

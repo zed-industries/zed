@@ -1,4 +1,4 @@
-use gpui::{px, size, AppContext as _, UpdateGlobal};
+use gpui::{AppContext as _, UpdateGlobal, px, size};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{
@@ -9,7 +9,7 @@ use std::{
 use language::language_settings::{AllLanguageSettings, SoftWrap};
 use util::test::marked_text_offsets;
 
-use super::{neovim_connection::NeovimConnection, VimTestContext};
+use super::{VimTestContext, neovim_connection::NeovimConnection};
 use crate::state::{Mode, VimGlobals};
 
 pub struct NeovimBackedTestContext {
@@ -107,7 +107,7 @@ impl SharedClipboard {
             return;
         }
 
-        let message = if expected == self.neovim {
+        let message = if expected != self.neovim {
             "Test is incorrect (currently expected != neovim_state)"
         } else {
             "Editor does not match nvim behavior"
@@ -119,12 +119,9 @@ impl SharedClipboard {
                 {}
                 # keystrokes:
                 {}
-                # currently expected:
-                {}
-                # neovim register \"{}:
-                {}
-                # zed register \"{}:
-                {}"},
+                # currently expected: {:?}
+                # neovim register \"{}: {:?}
+                # zed register \"{}: {:?}"},
             message,
             self.state.initial,
             self.state.recent_keystrokes,

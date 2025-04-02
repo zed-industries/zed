@@ -2,21 +2,22 @@ mod base_keymap_picker;
 mod base_keymap_setting;
 mod multibuffer_hint;
 
-use client::{telemetry::Telemetry, TelemetrySettings};
+use client::{TelemetrySettings, telemetry::Telemetry};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, svg, Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
+    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, svg,
 };
-use language::language_settings::{all_language_settings, EditPredictionProvider};
+use language::language_settings::{EditPredictionProvider, all_language_settings};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use ui::{prelude::*, CheckboxWithLabel, ElevationIndex, Tooltip};
+use ui::{CheckboxWithLabel, ElevationIndex, Tooltip, prelude::*};
 use vim_mode_setting::VimModeSetting;
 use workspace::{
+    AppState, Welcome, Workspace, WorkspaceId,
     dock::DockPosition,
     item::{Item, ItemEvent},
-    open_new, AppState, Welcome, Workspace, WorkspaceId,
+    open_new,
 };
 
 pub use base_keymap_setting::BaseKeymap;

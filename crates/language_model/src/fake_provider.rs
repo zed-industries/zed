@@ -3,7 +3,7 @@ use crate::{
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest,
 };
-use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
 use http_client::Result;
 use parking_lot::Mutex;
@@ -151,6 +151,10 @@ impl LanguageModel for FakeLanguageModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         provider_name()
+    }
+
+    fn supports_tools(&self) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String {

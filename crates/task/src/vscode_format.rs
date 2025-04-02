@@ -154,8 +154,8 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        vscode_format::{Command, VsCodeTaskDefinition},
         TaskTemplate, TaskTemplates, VsCodeTaskFile,
+        vscode_format::{Command, VsCodeTaskDefinition},
     };
 
     use super::EnvVariableReplacer;

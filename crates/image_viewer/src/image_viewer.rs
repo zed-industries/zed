@@ -4,22 +4,22 @@ mod image_viewer_settings;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use editor::{items::entry_git_aware_label_color, EditorSettings};
+use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
 use gpui::{
-    canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, Context, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ObjectFit,
-    ParentElement, Render, Styled, Task, WeakEntity, Window,
+    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ObjectFit, ParentElement, Render, Styled, Task, WeakEntity,
+    Window, canvas, div, fill, img, opaque_grey, point, size,
 };
 use persistence::IMAGE_VIEWER;
-use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
+use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
 use theme::Theme;
 use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
-    item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
     ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
 };
 
 pub use crate::image_info::*;
@@ -441,7 +441,9 @@ mod persistence {
                 .collect::<Vec<&str>>()
                 .join(", ");
 
-            let query = format!("DELETE FROM image_viewers WHERE workspace_id = ? AND item_id NOT IN ({placeholders})");
+            let query = format!(
+                "DELETE FROM image_viewers WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
+            );
 
             self.write(move |conn| {
                 let mut statement = Statement::prepare(conn, query)?;

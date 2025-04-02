@@ -12,10 +12,10 @@ use language::{Bias, Point, Selection, SelectionGoal, TextDimension};
 use util::post_inc;
 
 use crate::{
-    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
-    movement::TextLayoutDetails,
     Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
     ToOffset, ToPoint,
+    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
+    movement::TextLayoutDetails,
 };
 
 #[derive(Debug, Clone)]

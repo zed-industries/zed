@@ -1,15 +1,15 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncApp;
-use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
+use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
 pub struct CLspAdapter;
 
@@ -360,7 +360,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
-    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 

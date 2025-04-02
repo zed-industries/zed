@@ -1,20 +1,20 @@
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
-    GrammarManifestEntry, SchemaVersion, RELOAD_DEBOUNCE_DURATION,
+    GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION, SchemaVersion,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
-use futures::{io::BufReader, AsyncReadExt, StreamExt};
+use futures::{AsyncReadExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, SemanticVersion, SharedString, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
-use project::{Project, DEFAULT_COMPLETION_CONTEXT};
+use project::{DEFAULT_COMPLETION_CONTEXT, Project};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use serde_json::json;

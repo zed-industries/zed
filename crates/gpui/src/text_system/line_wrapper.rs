@@ -1,4 +1,4 @@
-use crate::{px, FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun};
+use crate::{FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun, px};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
@@ -232,7 +232,7 @@ impl Boundary {
 mod tests {
     use super::*;
     use crate::{
-        font, Font, FontFeatures, FontStyle, FontWeight, Hsla, TestAppContext, TestDispatcher,
+        Font, FontFeatures, FontStyle, FontWeight, Hsla, TestAppContext, TestDispatcher, font,
     };
     #[cfg(target_os = "macos")]
     use crate::{TextRun, WindowTextSystem, WrapBoundary};
@@ -242,11 +242,11 @@ mod tests {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         let cx = TestAppContext::new(dispatcher, None);
         cx.text_system()
-            .add_fonts(vec![std::fs::read(
-                "../../assets/fonts/plex-mono/ZedPlexMono-Regular.ttf",
-            )
-            .unwrap()
-            .into()])
+            .add_fonts(vec![
+                std::fs::read("../../assets/fonts/plex-mono/ZedPlexMono-Regular.ttf")
+                    .unwrap()
+                    .into(),
+            ])
             .unwrap();
         let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
         LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())

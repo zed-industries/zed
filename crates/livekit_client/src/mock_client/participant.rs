@@ -1,7 +1,7 @@
 use crate::{
-    test::{Room, WeakRoom},
     AudioStream, LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, Participant,
     ParticipantIdentity, RemoteTrack, RemoteTrackPublication, TrackSid,
+    test::{Room, WeakRoom},
 };
 use anyhow::Result;
 use collections::HashMap;

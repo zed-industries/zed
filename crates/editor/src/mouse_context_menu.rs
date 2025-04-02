@@ -1,10 +1,10 @@
-use crate::actions::FormatSelections;
 use crate::CopyAndTrim;
+use crate::actions::FormatSelections;
 use crate::{
-    actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
-    DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,
-    GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager,
-    SelectMode, ToDisplayPoint, ToggleCodeActions,
+    Copy, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor, EditorMode,
+    FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation, GoToTypeDefinition,
+    Paste, Rename, RevealInFileManager, SelectMode, ToDisplayPoint, ToggleCodeActions,
+    actions::Format, selections_collection::SelectionsCollection,
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscription, Window};

@@ -15,6 +15,41 @@ pub struct PullRequest {
     pub url: Url,
 }
 
+#[derive(Clone)]
+pub struct GitRemote {
+    pub host: Arc<dyn GitHostingProvider + Send + Sync + 'static>,
+    pub owner: String,
+    pub repo: String,
+}
+
+impl std::fmt::Debug for GitRemote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitRemote")
+            .field("host", &self.host.name())
+            .field("owner", &self.owner)
+            .field("repo", &self.repo)
+            .finish()
+    }
+}
+
+impl GitRemote {
+    pub fn host_supports_avatars(&self) -> bool {
+        self.host.supports_avatars()
+    }
+
+    pub async fn avatar_url(
+        &self,
+        commit: SharedString,
+        client: Arc<dyn HttpClient>,
+    ) -> Option<Url> {
+        self.host
+            .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
+            .await
+            .ok()
+            .flatten()
+    }
+}
+
 pub struct BuildCommitPermalinkParams<'a> {
     pub sha: &'a str,
 }

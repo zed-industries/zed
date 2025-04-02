@@ -22,12 +22,12 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
+    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, HideMouseCursorOrigin, ToPoint,
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
-    KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
+    Render, Subscription, Task, WeakEntity, Window, actions, impl_actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -38,12 +38,12 @@ use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
+use settings::{Settings, SettingsSources, SettingsStore, update_settings_file};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{px, IntoElement, SharedString};
+use ui::{IntoElement, SharedString, px};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
@@ -153,6 +153,8 @@ actions!(
         PushLowercase,
         PushUppercase,
         PushOppositeCase,
+        PushRot13,
+        PushRot47,
         ToggleRegistersView,
         PushRegister,
         PushRecordRegister,
@@ -619,6 +621,14 @@ impl Vim {
                 vim.push_operator(Operator::OppositeCase, window, cx)
             });
 
+            Vim::action(editor, cx, |vim, _: &PushRot13, window, cx| {
+                vim.push_operator(Operator::Rot13, window, cx)
+            });
+
+            Vim::action(editor, cx, |vim, _: &PushRot47, window, cx| {
+                vim.push_operator(Operator::Rot47, window, cx)
+            });
+
             Vim::action(editor, cx, |vim, _: &PushRegister, window, cx| {
                 vim.push_operator(Operator::Register, window, cx)
             });
@@ -767,6 +777,9 @@ impl Vim {
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
             if action.name().starts_with("vim::") {
+                self.update_editor(window, cx, |_, editor, _, _| {
+                    editor.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction)
+                });
                 return;
             }
         } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()

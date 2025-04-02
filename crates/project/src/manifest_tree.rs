@@ -9,7 +9,7 @@ mod server_tree;
 
 use std::{
     borrow::Borrow,
-    collections::{hash_map::Entry, BTreeMap},
+    collections::{BTreeMap, hash_map::Entry},
     ops::ControlFlow,
     sync::Arc,
 };
@@ -23,8 +23,8 @@ use settings::{SettingsStore, WorktreeId};
 use worktree::{Event as WorktreeEvent, Worktree};
 
 use crate::{
-    worktree_store::{WorktreeStore, WorktreeStoreEvent},
     ProjectPath,
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
 pub(crate) use server_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition};

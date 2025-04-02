@@ -1,12 +1,11 @@
 use anyhow::Result;
 use base64::{
-    alphabet,
+    Engine as _, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
-    Engine as _,
 };
-use gpui::{img, App, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, Window};
+use gpui::{App, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, Window, img};
 use std::sync::Arc;
-use ui::{div, prelude::*, IntoElement, Styled};
+use ui::{IntoElement, Styled, div, prelude::*};
 
 use crate::outputs::OutputContent;
 

@@ -1,6 +1,6 @@
 mod archive;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -279,10 +279,12 @@ impl ManagedNodeRuntime {
 
     async fn node_environment_path(&self) -> Result<OsString> {
         let node_binary = self.installation_path.join(Self::NODE_PATH);
-        let mut env_path = vec![node_binary
-            .parent()
-            .expect("invalid node binary path")
-            .to_path_buf()];
+        let mut env_path = vec![
+            node_binary
+                .parent()
+                .expect("invalid node binary path")
+                .to_path_buf(),
+        ];
 
         if let Some(existing_path) = std::env::var_os("PATH") {
             let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();

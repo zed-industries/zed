@@ -2,7 +2,7 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, ToOffset, ToPoint};
+use crate::{CharKind, DisplayRow, EditorStyle, ToOffset, ToPoint, scroll::ScrollAnchor};
 use gpui::{Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
@@ -766,11 +766,11 @@ pub fn split_display_range_by_lines(
 mod tests {
     use super::*;
     use crate::{
+        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
         display_map::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
-        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
     };
-    use gpui::{font, px, AppContext as _};
+    use gpui::{AppContext as _, font, px};
     use language::Capability;
     use project::Project;
     use settings::SettingsStore;
@@ -1089,14 +1089,8 @@ mod tests {
                 multibuffer.push_excerpts(
                     buffer.clone(),
                     [
-                        ExcerptRange {
-                            context: Point::new(0, 0)..Point::new(1, 4),
-                            primary: None,
-                        },
-                        ExcerptRange {
-                            context: Point::new(2, 0)..Point::new(3, 2),
-                            primary: None,
-                        },
+                        ExcerptRange::new(Point::new(0, 0)..Point::new(1, 4)),
+                        ExcerptRange::new(Point::new(2, 0)..Point::new(3, 2)),
                     ],
                     cx,
                 );

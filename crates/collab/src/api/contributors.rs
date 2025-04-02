@@ -2,9 +2,9 @@ use std::sync::{Arc, OnceLock};
 
 use anyhow::anyhow;
 use axum::{
+    Extension, Json, Router,
     extract::{self, Query},
     routing::get,
-    Extension, Json, Router,
 };
 use chrono::{NaiveDateTime, SecondsFormat};
 use serde::{Deserialize, Serialize};

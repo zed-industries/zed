@@ -1,8 +1,8 @@
-use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
+use editor::{Bias, Editor, scroll::Autoscroll, styled_runs_for_code_label};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    rems, App, Context, DismissEvent, Entity, FontWeight, ParentElement, StyledText, Task,
-    WeakEntity, Window,
+    App, Context, DismissEvent, Entity, FontWeight, ParentElement, StyledText, Task, WeakEntity,
+    Window, rems,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -11,8 +11,8 @@ use std::{borrow::Cow, cmp::Reverse, sync::Arc};
 use theme::ActiveTheme;
 use util::ResultExt;
 use workspace::{
-    ui::{v_flex, Color, Label, LabelCommon, LabelLike, ListItem, ListItemSpacing, Toggleable},
     Workspace,
+    ui::{Color, Label, LabelCommon, LabelLike, ListItem, ListItemSpacing, Toggleable, v_flex},
 };
 
 pub fn init(cx: &mut App) {

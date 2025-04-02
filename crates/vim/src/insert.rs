@@ -1,6 +1,6 @@
-use crate::{state::Mode, Vim};
-use editor::{scroll::Autoscroll, Bias, Editor};
-use gpui::{actions, Action, Context, Window};
+use crate::{Vim, state::Mode};
+use editor::{Bias, Editor, scroll::Autoscroll};
+use gpui::{Action, Context, Window, actions};
 use language::SelectionGoal;
 
 actions!(vim, [NormalBefore, TemporaryNormal]);

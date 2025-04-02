@@ -1,8 +1,8 @@
 use super::Axis;
 use crate::{
-    display_map::DisplayRow, Autoscroll, Editor, EditorMode, NextScreen,
-    NextScrollCursorCenterTopBottom, ScrollCursorBottom, ScrollCursorCenter,
-    ScrollCursorCenterTopBottom, ScrollCursorTop, SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT,
+    Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
+    SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
+    ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow,
 };
 use gpui::{Context, Point, Window};
 

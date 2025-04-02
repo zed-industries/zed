@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, uniform_list, App, Application, Bounds, Context, Window,
-    WindowBounds, WindowOptions,
+    App, Application, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px,
+    rgb, size, uniform_list,
 };
 
 struct UniformListExample {}

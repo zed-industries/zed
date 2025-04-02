@@ -1,10 +1,10 @@
 use crate::Vim;
 use editor::{
+    DisplayPoint, Editor, EditorSettings,
     display_map::{DisplayRow, ToDisplayPoint},
     scroll::ScrollAmount,
-    DisplayPoint, Editor, EditorSettings,
 };
-use gpui::{actions, Context, Window};
+use gpui::{Context, Window, actions};
 use language::Bias;
 use settings::Settings;
 
@@ -163,7 +163,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::{EditorSettings, ScrollBeyondLastLine};
-    use gpui::{point, px, size, AppContext as _};
+    use gpui::{AppContext as _, point, px, size};
     use indoc::indoc;
     use language::Point;
     use settings::SettingsStore;

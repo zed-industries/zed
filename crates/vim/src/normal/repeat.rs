@@ -1,14 +1,14 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
+    Vim,
     insert::NormalBefore,
     motion::Motion,
     normal::InsertBefore,
     state::{Mode, Operator, RecordedSelection, ReplayableAction, VimGlobals},
-    Vim,
 };
 use editor::Editor;
-use gpui::{actions, Action, App, Context, Window};
+use gpui::{Action, App, Context, Window, actions};
 use workspace::Workspace;
 
 actions!(vim, [Repeat, EndRepeat, ToggleRecord, ReplayLastRecording]);

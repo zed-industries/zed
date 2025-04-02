@@ -1,17 +1,17 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use crate::{
+    DebugPanel,
     session::running::variable_list::{CollapseSelectedEntry, ExpandSelectedEntry},
     tests::{active_debug_session_panel, init_test, init_test_workspace},
-    DebugPanel,
 };
 use collections::HashMap;
 use dap::{
-    requests::{Initialize, Launch, Scopes, StackTrace, Variables},
     Scope, StackFrame, Variable,
+    requests::{Initialize, Launch, Scopes, StackTrace, Variables},
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::{SelectFirst, SelectNext, SelectPrevious};

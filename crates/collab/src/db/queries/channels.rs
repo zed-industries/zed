@@ -1,7 +1,7 @@
 use super::*;
 use rpc::{
-    proto::{channel_member::Kind, ChannelBufferVersion, VectorClockEntry},
     ErrorCode, ErrorCodeExt,
+    proto::{ChannelBufferVersion, VectorClockEntry, channel_member::Kind},
 };
 use sea_orm::{DbBackend, TryGetableMany};
 

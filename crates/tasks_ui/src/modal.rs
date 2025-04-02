@@ -3,23 +3,23 @@ use std::sync::Arc;
 use crate::TaskContexts;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    rems, Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
+    Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
     Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window,
+    WeakEntity, Window, rems,
 };
-use picker::{highlighted_match_with_paths::HighlightedMatch, Picker, PickerDelegate};
-use project::{task_store::TaskStore, TaskSourceKind};
+use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
+use project::{TaskSourceKind, task_store::TaskStore};
 use task::{
     DebugRequestType, DebugTaskDefinition, ResolvedTask, RevealTarget, TaskContext, TaskModal,
     TaskTemplate, TaskType,
 };
 use ui::{
-    div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
-    FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
-    KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
+    ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon,
+    IconButton, IconButtonShape, IconName, IconSize, IntoElement, KeyBinding, LabelSize, ListItem,
+    ListItemSpacing, RenderOnce, Toggleable, Tooltip, div, h_flex, v_flex,
 };
 use util::ResultExt;
-use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
+use workspace::{ModalView, Workspace, tasks::schedule_resolved_task};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.

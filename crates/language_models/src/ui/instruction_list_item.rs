@@ -1,5 +1,5 @@
 use gpui::{AnyElement, IntoElement, ParentElement, SharedString};
-use ui::{prelude::*, ListItem};
+use ui::{ListItem, prelude::*};
 
 /// A reusable list item component for adding LLM provider configuration instructions
 pub struct InstructionListItem {

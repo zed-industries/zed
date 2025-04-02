@@ -14,7 +14,7 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::{actions, App, Global, ReadGlobal, UpdateGlobal};
+use gpui::{App, Global, ReadGlobal, UpdateGlobal, actions};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };

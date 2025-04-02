@@ -275,7 +275,7 @@ impl_actions!(task, [Spawn, Rerun]);
 pub mod outline {
     use std::sync::OnceLock;
 
-    use gpui::{action_as, AnyView, App, Window};
+    use gpui::{AnyView, App, Window, action_as};
 
     action_as!(outline, ToggleOutline as Toggle);
     /// A pointer to outline::toggle function, exposed here to sewer the breadcrumbs <-> outline dependency.

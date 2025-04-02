@@ -1,15 +1,15 @@
 mod prompts;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt as _;
+use futures::future::{self, BoxFuture, Shared};
 use fuzzy::StringMatchCandidate;
 use gpui::{App, BackgroundExecutor, Global, ReadGlobal, SharedString, Task};
 use heed::{
-    types::{SerdeBincode, SerdeJson, Str},
     Database, RoTxn,
+    types::{SerdeBincode, SerdeJson, Str},
 };
 use parking_lot::RwLock;
 pub use prompts::*;
@@ -19,7 +19,7 @@ use std::{
     cmp::Reverse,
     future::Future,
     path::PathBuf,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use text::LineEnding;
 use util::ResultExt;
@@ -117,7 +117,7 @@ impl MetadataCache {
 }
 
 impl PromptStore {
-    pub fn global(cx: &App) -> impl Future<Output = Result<Arc<Self>>> {
+    pub fn global(cx: &App) -> impl Future<Output = Result<Arc<Self>>> + use<> {
         let store = GlobalPromptStore::global(cx).0.clone();
         async move { store.await.map_err(|err| anyhow!(err)) }
     }

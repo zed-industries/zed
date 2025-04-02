@@ -12,7 +12,7 @@ use windows::Win32::{
             GetClipboardData, GetClipboardFormatNameW, IsClipboardFormatAvailable, OpenClipboard,
             RegisterClipboardFormatW, SetClipboardData,
         },
-        Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
+        Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock},
         Ole::{CF_HDROP, CF_UNICODETEXT},
     },
     UI::Shell::{DragQueryFileW, HDROP},
@@ -20,7 +20,7 @@ use windows::Win32::{
 use windows_core::PCWSTR;
 
 use crate::{
-    hash, ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, SmartGlobal,
+    ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, SmartGlobal, hash,
 };
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew

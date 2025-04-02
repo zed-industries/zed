@@ -3,7 +3,7 @@ use crate::db::{self, ChannelRole, NewUserParams};
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use db::Database;
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{Deserialize, de::DeserializeOwned};
 use std::{fs, path::Path};
 
 use crate::Config;

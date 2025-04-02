@@ -2,36 +2,36 @@ use anyhow::Result;
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
-    selections_creases, DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs,
-    FileSlashCommand,
+    DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs, FileSlashCommand,
+    selections_creases,
 };
 use client::{proto, zed_urls};
-use collections::{hash_map, BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
+    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, ProposedChangeLocation,
+    ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
         CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::Autoscroll,
-    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, ProposedChangeLocation,
-    ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
 };
-use editor::{display_map::CreaseId, FoldPlaceholder};
+use editor::{FoldPlaceholder, display_map::CreaseId};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    actions, div, img, impl_internal_actions, percentage, point, prelude::*, pulsating_between,
-    size, Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardEntry,
+    Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardEntry,
     ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     Global, InteractiveElement, IntoElement, ParentElement, Pixels, Render, RenderImage,
     SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    WeakEntity,
+    WeakEntity, actions, div, img, impl_internal_actions, percentage, point, prelude::*,
+    pulsating_between, size,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::{all_language_settings, SoftWrap},
     BufferSnapshot, LspAdapterDelegate, ToOffset,
+    language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
     LanguageModelImage, LanguageModelProvider, LanguageModelProviderTosView, LanguageModelRegistry,
@@ -46,32 +46,32 @@ use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use std::{any::TypeId, borrow::Cow, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use text::SelectionGoal;
 use ui::{
-    prelude::*, ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor,
-    Tooltip,
+    ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor, Tooltip,
+    prelude::*,
 };
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 use workspace::searchable::{Direction, SearchableItemHandle};
 use workspace::{
+    Save, ShowConfiguration, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotificationId,
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
-    Save, ShowConfiguration, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
 };
 
-use crate::{
-    slash_command::SlashCommandCompletionProvider, slash_command_picker,
-    ThoughtProcessOutputSection,
-};
 use crate::{
     AssistantContext, AssistantPatch, AssistantPatchStatus, CacheStatus, Content, ContextEvent,
     ContextId, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
     MessageMetadata, MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
+};
+use crate::{
+    ThoughtProcessOutputSection, slash_command::SlashCommandCompletionProvider,
+    slash_command_picker,
 };
 
 actions!(
@@ -3413,7 +3413,7 @@ impl ContextEditorToolbarItem {
 pub fn render_remaining_tokens(
     context_editor: &Entity<ContextEditor>,
     cx: &App,
-) -> Option<impl IntoElement> {
+) -> Option<impl IntoElement + use<>> {
     let context = &context_editor.read(cx).context;
 
     let (token_count_color, token_count, max_token_count, tooltip) = match token_state(context, cx)?

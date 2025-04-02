@@ -1,4 +1,4 @@
-use crate::{prelude::*, ContentGroup};
+use crate::{ContentGroup, prelude::*};
 use gpui::{AnimationElement, AnimationExt, Styled};
 use std::time::Duration;
 

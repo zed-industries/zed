@@ -1,18 +1,18 @@
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 use fuzzy::StringMatchCandidate;
 
 use git::repository::Branch;
 use gpui::{
-    rems, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
+    Subscription, Task, Window, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -336,7 +336,7 @@ impl PickerDelegate for BranchListDelegate {
 
         let current_branch = self.repo.as_ref().map(|repo| {
             repo.update(cx, |repo, _| {
-                repo.current_branch().map(|branch| branch.name.clone())
+                repo.branch.as_ref().map(|branch| branch.name.clone())
             })
         });
 
@@ -463,7 +463,7 @@ impl PickerDelegate for BranchListDelegate {
                                 let message = if entry.is_new {
                                     if let Some(current_branch) =
                                         self.repo.as_ref().and_then(|repo| {
-                                            repo.read(cx).current_branch().map(|b| b.name.clone())
+                                            repo.read(cx).branch.as_ref().map(|b| b.name.clone())
                                         })
                                     {
                                         format!("based off {}", current_branch)

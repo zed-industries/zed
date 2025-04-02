@@ -3,7 +3,6 @@ use std::rc::Rc;
 use ::util::ResultExt;
 use anyhow::Context as _;
 use windows::{
-    core::PCWSTR,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
@@ -15,6 +14,7 @@ use windows::{
             WindowsAndMessaging::*,
         },
     },
+    core::PCWSTR,
 };
 
 use crate::*;
@@ -232,11 +232,7 @@ fn handle_close_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
         drop(lock);
         let should_close = callback();
         state_ptr.state.borrow_mut().callbacks.should_close = Some(callback);
-        if should_close {
-            None
-        } else {
-            Some(0)
-        }
+        if should_close { None } else { Some(0) }
     } else {
         None
     }

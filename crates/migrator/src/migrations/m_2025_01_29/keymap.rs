@@ -2,11 +2,11 @@ use collections::HashMap;
 use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, QueryMatch};
 
+use crate::MigrationPatterns;
 use crate::patterns::{
     KEYMAP_ACTION_ARRAY_ARGUMENT_AS_OBJECT_PATTERN, KEYMAP_ACTION_ARRAY_PATTERN,
     KEYMAP_ACTION_STRING_PATTERN, KEYMAP_CONTEXT_PATTERN,
 };
-use crate::MigrationPatterns;
 
 pub const KEYMAP_PATTERNS: MigrationPatterns = &[
     (

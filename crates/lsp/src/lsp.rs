@@ -3,20 +3,20 @@ mod input_handler;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
+use futures::{AsyncRead, AsyncWrite, Future, FutureExt, channel::oneshot, io::BufWriter, select};
 use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
-    gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
+    r#gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, value::RawValue, Value};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json, value::RawValue};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -32,8 +32,8 @@ use std::{
     path::PathBuf,
     pin::Pin,
     sync::{
-        atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
+        atomic::{AtomicI32, Ordering::SeqCst},
     },
     task::Poll,
     time::{Duration, Instant},
@@ -830,7 +830,7 @@ impl LanguageServer {
     }
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
-    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
+    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
         if let Some(tasks) = self.io_tasks.lock().take() {
             let response_handlers = self.response_handlers.clone();
             let next_id = AtomicI32::new(self.next_id.load(SeqCst));
@@ -1077,7 +1077,7 @@ impl LanguageServer {
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>> + use<T>
     where
         T::Result: 'static + Send,
     {
@@ -1096,7 +1096,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>> + use<T>
     where
         T::Result: 'static + Send,
     {

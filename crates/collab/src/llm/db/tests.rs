@@ -26,7 +26,7 @@ impl TestLlmDb {
         let mut rng = StdRng::from_entropy();
         let url = format!(
             "postgres://postgres@localhost/zed-llm-test-{}",
-            rng.gen::<u128>()
+            rng.r#gen::<u128>()
         );
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()

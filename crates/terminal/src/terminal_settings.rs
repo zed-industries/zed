@@ -3,11 +3,11 @@ use alacritty_terminal::vte::ansi::{
 };
 use collections::HashMap;
 use gpui::{
-    px, AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
+    AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString, px,
 };
-use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
+use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::RootSchema};
 use serde_derive::{Deserialize, Serialize};
-use settings::{add_references_to_properties, SettingsJsonSchemaParams, SettingsSources};
+use settings::{SettingsJsonSchemaParams, SettingsSources, add_references_to_properties};
 use std::path::PathBuf;
 use task::Shell;
 

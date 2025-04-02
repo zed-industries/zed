@@ -480,7 +480,7 @@ impl Database {
         self.notification_kinds_by_id
             .iter()
             .find(|(_, kind)| **kind == notification_kind)
-            .map(|kind| kind.0 .0)
+            .map(|kind| kind.0.0)
     }
 
     /// Removes the channel message with the given ID.

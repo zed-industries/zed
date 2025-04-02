@@ -8,22 +8,22 @@ use std::time::Duration;
 use dap::client::SessionId;
 use failed::FailedState;
 use gpui::{
-    percentage, Animation, AnimationExt, AnyElement, App, Entity, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, Transformation, WeakEntity,
+    Animation, AnimationExt, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, Task, Transformation, WeakEntity, percentage,
 };
 use inert::{InertEvent, InertState};
+use project::Project;
 use project::debugger::{dap_store::DapStore, session::Session};
 use project::worktree_store::WorktreeStore;
-use project::Project;
 use rpc::proto::{self, PeerId};
 use running::RunningState;
 use starting::{StartingEvent, StartingState};
 use task::DebugTaskDefinition;
-use ui::{prelude::*, Indicator};
+use ui::{Indicator, prelude::*};
 use util::ResultExt;
 use workspace::{
-    item::{self, Item},
     FollowableItem, ViewId, Workspace,
+    item::{self, Item},
 };
 
 use crate::debugger_panel::DebugPanel;

@@ -1,4 +1,4 @@
-use crate::{range_to_lsp, Diagnostic};
+use crate::{Diagnostic, range_to_lsp};
 use anyhow::Result;
 use collections::HashMap;
 use lsp::LanguageServerId;

@@ -275,8 +275,8 @@ pub mod scope_map {
         collections::{HashMap, VecDeque},
         hash::{DefaultHasher, Hasher},
         sync::{
-            atomic::{AtomicU64, Ordering},
             RwLock,
+            atomic::{AtomicU64, Ordering},
         },
         usize,
     };
@@ -371,7 +371,9 @@ pub mod scope_map {
             "warn" => log_impl::Level::Warn,
             "error" => log_impl::Level::Error,
             "off" | "disable" | "no" | "none" | "disabled" => {
-                crate::warn!("Invalid log level \"{level_str}\", set to error to disable non-error logging. Defaulting to error");
+                crate::warn!(
+                    "Invalid log level \"{level_str}\", set to error to disable non-error logging. Defaulting to error"
+                );
                 log_impl::Level::Error
             }
             _ => {

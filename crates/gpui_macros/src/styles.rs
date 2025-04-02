@@ -2,9 +2,9 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    braced,
+    Token, Visibility, braced,
     parse::{Parse, ParseStream, Result},
-    parse_macro_input, Token, Visibility,
+    parse_macro_input,
 };
 
 #[derive(Debug)]
@@ -1292,27 +1292,27 @@ fn border_prefixes() -> Vec<BorderStylePrefix> {
                 quote! { border_widths.bottom },
                 quote! { border_widths.left },
             ],
-            doc_string_prefix: "Sets the border width of the element. [Docs](https://tailwindcss.com/docs/border-width)"
+            doc_string_prefix: "Sets the border width of the element. [Docs](https://tailwindcss.com/docs/border-width)",
         },
         BorderStylePrefix {
             prefix: "border_t",
             fields: vec![quote! { border_widths.top }],
-            doc_string_prefix: "Sets the border width of the top side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
+            doc_string_prefix: "Sets the border width of the top side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)",
         },
         BorderStylePrefix {
             prefix: "border_b",
             fields: vec![quote! { border_widths.bottom }],
-            doc_string_prefix: "Sets the border width of the bottom side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
+            doc_string_prefix: "Sets the border width of the bottom side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)",
         },
         BorderStylePrefix {
             prefix: "border_r",
             fields: vec![quote! { border_widths.right }],
-            doc_string_prefix: "Sets the border width of the right side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
+            doc_string_prefix: "Sets the border width of the right side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)",
         },
         BorderStylePrefix {
             prefix: "border_l",
             fields: vec![quote! { border_widths.left }],
-            doc_string_prefix: "Sets the border width of the left side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
+            doc_string_prefix: "Sets the border width of the left side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)",
         },
         BorderStylePrefix {
             prefix: "border_x",
@@ -1320,7 +1320,7 @@ fn border_prefixes() -> Vec<BorderStylePrefix> {
                 quote! { border_widths.left },
                 quote! { border_widths.right },
             ],
-            doc_string_prefix: "Sets the border width of the vertical sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)"
+            doc_string_prefix: "Sets the border width of the vertical sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)",
         },
         BorderStylePrefix {
             prefix: "border_y",
@@ -1328,7 +1328,7 @@ fn border_prefixes() -> Vec<BorderStylePrefix> {
                 quote! { border_widths.top },
                 quote! { border_widths.bottom },
             ],
-            doc_string_prefix: "Sets the border width of the horizontal sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)"
+            doc_string_prefix: "Sets the border width of the horizontal sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)",
         },
     ]
 }

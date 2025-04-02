@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent,
     SlashCommandOutputSection, SlashCommandResult,
@@ -7,8 +7,8 @@ use editor::Editor;
 use futures::StreamExt;
 use gpui::{App, Context, SharedString, Task, WeakEntity, Window};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use ui::IconName;
 use workspace::Workspace;
 

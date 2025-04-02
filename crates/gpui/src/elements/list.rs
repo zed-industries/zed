@@ -8,9 +8,9 @@
 //! If all of your elements are the same height, see [`UniformList`] for a simpler API
 
 use crate::{
-    point, px, size, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, EntityId, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point,
-    ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
+    FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent, Size,
+    Style, StyleRefinement, Styled, Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -349,7 +349,7 @@ impl ListState {
         let mut cursor = state.items.cursor::<(Count, Height)>(&());
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
 
-        let scroll_top = cursor.start().1 .0 + scroll_top.offset_in_item;
+        let scroll_top = cursor.start().1.0 + scroll_top.offset_in_item;
 
         cursor.seek_forward(&Count(ix), Bias::Right, &());
         if let Some(&ListItem::Measured { size, .. }) = cursor.item() {
@@ -1067,8 +1067,8 @@ mod test {
     #[gpui::test]
     fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {
         use crate::{
-            div, list, point, px, size, AppContext, Context, Element, IntoElement, ListState,
-            Render, Styled, Window,
+            AppContext, Context, Element, IntoElement, ListState, Render, Styled, Window, div,
+            list, point, px, size,
         };
 
         let cx = cx.add_empty_window();

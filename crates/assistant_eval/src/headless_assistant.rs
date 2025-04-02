@@ -1,11 +1,11 @@
+use agent::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use anyhow::anyhow;
-use assistant2::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use assistant_tool::ToolWorkingSet;
 use client::{Client, UserStore};
 use collections::HashMap;
 use dap::DapRegistry;
 use futures::StreamExt;
-use gpui::{prelude::*, App, AsyncApp, Entity, SemanticVersion, Subscription, Task};
+use gpui::{App, AsyncApp, Entity, SemanticVersion, Subscription, Task, prelude::*};
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
@@ -167,7 +167,7 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     context_server::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
-    assistant2::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
+    agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
 
     Arc::new(HeadlessAppState {
         languages,

@@ -8,7 +8,7 @@ use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
 use std::{str, sync::Arc};
-use util::{asset_str, ResultExt};
+use util::{ResultExt, asset_str};
 
 pub use language::*;
 

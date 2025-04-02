@@ -3,8 +3,8 @@ use convert_case::{Case, Casing};
 use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, QueryMatch};
 
-use crate::patterns::KEYMAP_ACTION_ARRAY_ARGUMENT_AS_OBJECT_PATTERN;
 use crate::MigrationPatterns;
+use crate::patterns::KEYMAP_ACTION_ARRAY_ARGUMENT_AS_OBJECT_PATTERN;
 
 pub const KEYMAP_PATTERNS: MigrationPatterns = &[(
     KEYMAP_ACTION_ARRAY_ARGUMENT_AS_OBJECT_PATTERN,

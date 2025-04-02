@@ -1,6 +1,6 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::{test_server::open_channel_notes, TestServer},
+    tests::{TestServer, test_server::open_channel_notes},
 };
 use call::ActiveCall;
 use channel::ACKNOWLEDGE_DEBOUNCE_INTERVAL;
@@ -10,7 +10,7 @@ use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
 use gpui::{BackgroundExecutor, Context, Entity, TestAppContext, Window};
-use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
+use rpc::{RECEIVE_TIMEOUT, proto::PeerId};
 use serde_json::json;
 use std::ops::Range;
 

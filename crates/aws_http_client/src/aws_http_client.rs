@@ -32,7 +32,7 @@ impl AwsConnector for AwsHttpConnector {
         let req = match request.try_into_http1x() {
             Ok(req) => req,
             Err(err) => {
-                return HttpConnectorFuture::ready(Err(ConnectorError::other(err.into(), None)))
+                return HttpConnectorFuture::ready(Err(ConnectorError::other(err.into(), None)));
             }
         };
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use editor::{Editor, EditorEvent};
-use gpui::{prelude::*, App, Entity, FocusHandle, Focusable};
+use gpui::{App, Entity, FocusHandle, Focusable, prelude::*};
 use ui::prelude::*;
 
 /// The head of a [`Picker`](crate::Picker).
@@ -17,7 +17,7 @@ impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
         edit_handler: impl FnMut(&mut V, &Entity<Editor>, &EditorEvent, &mut Window, &mut Context<V>)
-            + 'static,
+        + 'static,
         window: &mut Window,
         cx: &mut Context<V>,
     ) -> Self {

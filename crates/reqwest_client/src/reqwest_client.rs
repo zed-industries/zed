@@ -4,7 +4,7 @@ use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, TryStreamExt as _};
-use http_client::{http, RedirectPolicy};
+use http_client::{RedirectPolicy, http};
 use regex::Regex;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
@@ -256,7 +256,7 @@ impl http_client::HttpClient for ReqwestClient {
 
 #[cfg(test)]
 mod tests {
-    use http_client::{http, HttpClient};
+    use http_client::{HttpClient, http};
 
     use crate::ReqwestClient;
 

@@ -2,15 +2,15 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-    action_with_deprecated_aliases, Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+    Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Subscription, Task, WeakEntity, action_with_deprecated_aliases,
 };
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelRegistry,
 };
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
 use workspace::ShowConfiguration;
 
 action_with_deprecated_aliases!(

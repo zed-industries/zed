@@ -1,4 +1,4 @@
-use gpui::{div, Context, Entity, IntoElement, ParentElement, Render, Subscription};
+use gpui::{Context, Entity, IntoElement, ParentElement, Render, Subscription, div};
 use project::image_store::{ImageFormat, ImageMetadata};
 use settings::Settings;
 use ui::prelude::*;

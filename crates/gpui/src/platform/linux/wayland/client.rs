@@ -8,8 +8,8 @@ use std::{
 };
 
 use calloop::{
-    timer::{TimeoutAction, Timer},
     EventLoop, LoopHandle,
+    timer::{TimeoutAction, Timer},
 };
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
@@ -21,7 +21,7 @@ use util::ResultExt;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
 use wayland_client::event_created_child;
-use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
+use wayland_client::globals::{GlobalList, GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_data_device_manager::DndAction;
 use wayland_client::protocol::wl_data_offer::WlDataOffer;
@@ -30,12 +30,11 @@ use wayland_client::protocol::{
     wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output, wl_region,
 };
 use wayland_client::{
-    delegate_noop,
+    Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
     },
-    Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
@@ -64,13 +63,13 @@ use wayland_protocols::xdg::decoration::zv1::client::{
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
-use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
+use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
 
 use crate::platform::linux::{
-    get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
+    LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
     reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
@@ -79,16 +78,14 @@ use crate::platform::linux::{
         window::WaylandWindow,
     },
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-    LinuxClient,
 };
-use crate::platform::{blade::BladeContext, PlatformWindow};
+use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
+    AnyWindowHandle, Bounds, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScaledPixels,
-    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, DOUBLE_CLICK_INTERVAL,
-    SCROLL_LINES,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, SCROLL_LINES,
+    ScaledPixels, ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
 };
 
 /// Used to convert evdev scancode to xkb scancode

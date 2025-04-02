@@ -7,7 +7,7 @@ use picker::{Picker, PickerDelegate};
 use std::cell::LazyCell;
 use std::sync::Arc;
 use sysinfo::System;
-use ui::{prelude::*, Context, Tooltip};
+use ui::{Context, Tooltip, prelude::*};
 use ui::{ListItem, ListItemSpacing};
 use util::debug_panic;
 use workspace::ModalView;

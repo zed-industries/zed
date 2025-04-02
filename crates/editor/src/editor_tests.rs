@@ -1,30 +1,30 @@
 use super::*;
 use crate::{
+    JoinLines,
     scroll::scroll_amount::ScrollAmount,
     test::{
         assert_text_with_selections, build_editor,
-        editor_lsp_test_context::{git_commit_lang, EditorLspTestContext},
+        editor_lsp_test_context::{EditorLspTestContext, git_commit_lang},
         editor_test_context::EditorTestContext,
         select_ranges,
     },
-    JoinLines,
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
-    div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions,
+    BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
+    WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
-    language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
-        LanguageSettingsContent, PrettierSettings,
-    },
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
     Override, Point,
+    language_settings::{
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+        LanguageSettingsContent, PrettierSettings,
+    },
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use lsp::CompletionParams;
@@ -32,9 +32,9 @@ use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
+    FakeFs,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::{LspSettings, ProjectSettings},
-    FakeFs,
 };
 use serde_json::{self, json};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -47,12 +47,12 @@ use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
-    test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
+    test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
     uri,
 };
 use workspace::{
-    item::{FollowEvent, FollowableItem, Item, ItemHandle},
     CloseAllItems, CloseInactiveItems, NavigationEntry, ViewId,
+    item::{FollowEvent, FollowableItem, Item, ItemHandle},
 };
 
 #[gpui::test]
@@ -3165,18 +3165,12 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             toml_buffer.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(2, 0),
-                primary: None,
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
             cx,
         );
         multibuffer.push_excerpts(
             rust_buffer.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(1, 0),
-                primary: None,
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
             cx,
         );
         multibuffer
@@ -3269,18 +3263,6 @@ async fn test_backspace(cx: &mut TestAppContext) {
             ˇtwo
         ˇ  threeˇ  four
     "});
-
-    // Test backspace with line_mode set to true
-    cx.update_editor(|e, _, _| e.selections.line_mode = true);
-    cx.set_state(indoc! {"
-        The ˇquick ˇbrown
-        fox jumps over
-        the lazy dog
-        ˇThe qu«ick bˇ»rown"});
-    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
-    cx.assert_editor_state(indoc! {"
-        ˇfox jumps over
-        the lazy dogˇ"});
 }
 
 #[gpui::test]
@@ -3300,16 +3282,6 @@ async fn test_delete(cx: &mut TestAppContext) {
         fouˇ five six
         seven ˇten
     "});
-
-    // Test backspace with line_mode set to true
-    cx.update_editor(|e, _, _| e.selections.line_mode = true);
-    cx.set_state(indoc! {"
-        The ˇquick ˇbrown
-        fox «ˇjum»ps over
-        the lazy dog
-        ˇThe qu«ick bˇ»rown"});
-    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
-    cx.assert_editor_state("ˇthe lazy dogˇ");
 }
 
 #[gpui::test]
@@ -4928,7 +4900,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
         r#"            «for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -4943,7 +4915,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             "for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -4958,7 +4930,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -4970,7 +4942,7 @@ if is_entire_line {
         r#"       «     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -4985,7 +4957,7 @@ if is_entire_line {
             "     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5000,7 +4972,7 @@ if is_entire_line {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -5012,7 +4984,7 @@ if is_entire_line {
         r#"       «ˇ     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -5027,7 +4999,7 @@ if is_entire_line {
             "     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5042,7 +5014,7 @@ if is_entire_line {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -5054,7 +5026,7 @@ if is_entire_line {
         r#"            for selection «in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -5069,7 +5041,7 @@ if is_entire_line {
             "in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5084,7 +5056,7 @@ if is_entire_line {
             "in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -7881,54 +7853,27 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
         multi_buffer.push_excerpts(
             buffer_1.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_2.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_3.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
@@ -8007,7 +7952,9 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| !multi_buffer_editor.is_dirty(cx)));
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.text(cx)),
-        uri!("a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"),
+        uri!(
+            "a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"
+        ),
     );
     buffer_1.update(cx, |buffer, _| {
         assert!(!buffer.is_dirty());
@@ -10705,14 +10652,8 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(0, 4),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(1, 0)..Point::new(1, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(0, 4)),
+                ExcerptRange::new(Point::new(1, 0)..Point::new(1, 4)),
             ],
             cx,
         );
@@ -10778,10 +10719,7 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
     );
     let excerpt_ranges = markers.into_iter().map(|marker| {
         let context = excerpt_ranges.remove(&marker).unwrap()[0].clone();
-        ExcerptRange {
-            context,
-            primary: None,
-        }
+        ExcerptRange::new(context.clone())
     });
     let buffer = cx.new(|cx| Buffer::local(initial_text, cx));
     let multibuffer = cx.new(|cx| {
@@ -10849,14 +10787,8 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
             .push_excerpts(
                 buffer.clone(),
                 [
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(1, 4),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(1, 0)..Point::new(2, 4),
-                        primary: None,
-                    },
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(1, 4)),
+                    ExcerptRange::new(Point::new(1, 0)..Point::new(2, 4)),
                 ],
                 cx,
             )
@@ -10940,14 +10872,8 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
             .push_excerpts(
                 buffer.clone(),
                 [
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(1, 4),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(1, 0)..Point::new(2, 4),
-                        primary: None,
-                    },
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(1, 4)),
+                    ExcerptRange::new(Point::new(1, 0)..Point::new(2, 4)),
                 ],
                 cx,
             )
@@ -11418,34 +11344,16 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
             let excerpt_ids = multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [
-                    ExcerptRange {
-                        context: 1..6,
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: 12..15,
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: 0..3,
-                        primary: None,
-                    },
+                    ExcerptRange::new(1..6),
+                    ExcerptRange::new(12..15),
+                    ExcerptRange::new(0..3),
                 ],
                 cx,
             );
             multibuffer.insert_excerpts_after(
                 excerpt_ids[0],
                 buffer_2.clone(),
-                [
-                    ExcerptRange {
-                        context: 8..12,
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: 0..6,
-                        primary: None,
-                    },
-                ],
+                [ExcerptRange::new(8..12), ExcerptRange::new(0..6)],
                 cx,
             );
         });
@@ -13619,54 +13527,27 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_2.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_3.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
@@ -13786,54 +13667,27 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_2.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_3.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
@@ -14286,54 +14140,27 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 3),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 3)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_2.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 3),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 3)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_3.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 3),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 3)),
             ],
             cx,
         );
@@ -14442,18 +14269,9 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(2, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(4, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 0),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0)),
+                ExcerptRange::new(Point::new(4, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 0)),
             ],
             cx,
         );
@@ -16006,7 +15824,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
         for buffer in &buffers {
             let snapshot = buffer.read(cx).snapshot();
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced("", buffer.read(cx).file().unwrap().path().clone()),
+                PathKey::namespaced(0, buffer.read(cx).file().unwrap().path().clone()),
                 buffer.clone(),
                 vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
                 DEFAULT_MULTIBUFFER_CONTEXT,
@@ -16633,54 +16451,27 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
         multi_buffer.push_excerpts(
             buffer_1.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_2.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_3.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
@@ -16827,26 +16618,17 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
         let mut multi_buffer = MultiBuffer::new(ReadWrite);
         multi_buffer.push_excerpts(
             buffer_1.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(3, 0),
-                primary: None,
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_2.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(3, 0),
-                primary: None,
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_3.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(3, 0),
-                primary: None,
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
             cx,
         );
         multi_buffer
@@ -16959,14 +16741,13 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
         let mut multi_buffer = MultiBuffer::new(ReadWrite);
         multi_buffer.push_excerpts(
             buffer_1.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)
+            [ExcerptRange::new(
+                Point::new(0, 0)
                     ..Point::new(
                         sample_text.chars().filter(|&c| c == '\n').count() as u32 + 1,
                         0,
                     ),
-                primary: None,
-            }],
+            )],
             cx,
         );
         multi_buffer
@@ -17407,6 +17188,8 @@ fn assert_breakpoint(
                     Breakpoint {
                         message: breakpoint.message.clone(),
                         state: breakpoint.state,
+                        condition: breakpoint.condition.clone(),
+                        hit_condition: breakpoint.hit_condition.clone(),
                     },
                 )
             })
@@ -17435,13 +17218,7 @@ fn add_log_breakpoint_at_cursor(
                 .buffer_snapshot
                 .anchor_before(Point::new(cursor_position.row, 0));
 
-            (
-                breakpoint_position,
-                Breakpoint {
-                    message: Some(Arc::from(log_message)),
-                    state: BreakpointState::Enabled,
-                },
-            )
+            (breakpoint_position, Breakpoint::new_log(&log_message))
         });
 
     editor.edit_breakpoint_at_anchor(
@@ -18691,7 +18468,7 @@ fn assert_selection_ranges(marked_text: &str, editor: &mut Editor, cx: &mut Cont
 pub fn handle_signature_help_request(
     cx: &mut EditorLspTestContext,
     mocked_response: lsp::SignatureHelp,
-) -> impl Future<Output = ()> {
+) -> impl Future<Output = ()> + use<> {
     let mut request =
         cx.set_request_handler::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
             let mocked_response = mocked_response.clone();

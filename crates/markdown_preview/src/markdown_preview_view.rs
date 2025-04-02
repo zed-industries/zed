@@ -6,22 +6,22 @@ use anyhow::Result;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent};
 use gpui::{
-    list, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, ListState, ParentElement, Render, Styled, Subscription, Task,
-    WeakEntity, Window,
+    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ListState, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
+    list,
 };
 use language::LanguageRegistry;
 use ui::prelude::*;
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
-use crate::markdown_elements::ParsedMarkdownElement;
 use crate::OpenPreviewToTheSide;
+use crate::markdown_elements::ParsedMarkdownElement;
 use crate::{
+    OpenPreview,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
-    markdown_renderer::{render_markdown_block, RenderContext},
-    OpenPreview,
+    markdown_renderer::{RenderContext, render_markdown_block},
 };
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);

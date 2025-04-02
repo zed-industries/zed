@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
 
 use collections::HashMap;
-use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, SharedString, Window};
+use gpui::{AnyElement, App, IntoElement, RenderOnce, SharedString, Window, div, prelude::*, px};
 use linkme::distributed_slice;
 use parking_lot::RwLock;
 use theme::ActiveTheme;
@@ -158,7 +158,7 @@ pub fn components() -> AllComponents {
     let data = COMPONENT_DATA.read();
     let mut all_components = AllComponents::new();
 
-    for (ref scope, name, description) in &data.components {
+    for (scope, name, description) in &data.components {
         let preview = data.previews.get(name).cloned();
         let component_name = SharedString::new_static(name);
         let id = ComponentId(name);

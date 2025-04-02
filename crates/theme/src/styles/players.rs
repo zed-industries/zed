@@ -4,7 +4,7 @@ use gpui::Hsla;
 use serde_derive::Deserialize;
 
 use crate::{
-    amber, blue, jade, lime, orange, pink, purple, red, try_parse_color, PlayerColorContent,
+    PlayerColorContent, amber, blue, jade, lime, orange, pink, purple, red, try_parse_color,
 };
 
 #[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq)]

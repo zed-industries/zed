@@ -224,6 +224,15 @@ where
     }
 }
 
+impl<T> Patch<T> {
+    pub fn retain_mut<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut Edit<T>) -> bool,
+    {
+        self.0.retain_mut(f);
+    }
+}
+
 impl<T: Clone> IntoIterator for Patch<T> {
     type Item = Edit<T>;
     type IntoIter = std::vec::IntoIter<Edit<T>>;

@@ -1,7 +1,9 @@
-use anyhow::{anyhow, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModelRequestMessage;
+use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,7 +40,7 @@ pub struct CopyPathTool;
 
 impl Tool for CopyPathTool {
     fn name(&self) -> String {
-        "copy-path".into()
+        "copy_path".into()
     }
 
     fn needs_confirmation(&self) -> bool {
@@ -53,9 +55,8 @@ impl Tool for CopyPathTool {
         IconName::Clipboard
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(CopyPathToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<CopyPathToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

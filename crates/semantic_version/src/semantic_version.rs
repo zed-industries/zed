@@ -7,8 +7,8 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{anyhow, Result};
-use serde::{de::Error, Deserialize, Serialize};
+use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize, de::Error};
 
 /// A [semantic version](https://semver.org/) number.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]

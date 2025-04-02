@@ -1,21 +1,21 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
-    Action, ActionBuildError, App, InvalidKeystrokeError, KeyBinding, KeyBindingContextPredicate,
-    NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
+    Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
+    KeyBinding, KeyBindingContextPredicate, NoAction, SharedString,
 };
 use schemars::{
-    gen::{SchemaGenerator, SchemaSettings},
-    schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
     JsonSchema,
+    r#gen::{SchemaGenerator, SchemaSettings},
+    schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
 };
 use serde::Deserialize;
 use serde_json::Value;
 use std::{any::TypeId, fmt::Write, rc::Rc, sync::Arc, sync::LazyLock};
 use util::{asset_str, markdown::MarkdownString};
 
-use crate::{settings_store::parse_json_with_comments, SettingsAssets};
+use crate::{SettingsAssets, settings_store::parse_json_with_comments};
 
 pub trait KeyBindingValidator: Send + Sync {
     fn action_type_id(&self) -> TypeId;
@@ -363,7 +363,7 @@ impl KeymapFile {
                 return Err(format!(
                     "didn't find an action named {}.",
                     inline_code_string(&name)
-                ))
+                ));
             }
             Err(ActionBuildError::BuildError { name, error }) => match action_input_string {
                 Some(action_input_string) => {
@@ -372,14 +372,14 @@ impl KeymapFile {
                         inline_code_string(&name),
                         MarkdownString::inline_code(&action_input_string),
                         MarkdownString::escape(&error.to_string())
-                    ))
+                    ));
                 }
                 None => {
                     return Err(format!(
                         "can't build {} action - it requires input data via [name, input]: {}",
                         inline_code_string(&name),
                         MarkdownString::escape(&error.to_string())
-                    ))
+                    ));
                 }
             },
         };
@@ -391,7 +391,7 @@ impl KeymapFile {
                     "invalid keystroke {}. {}",
                     inline_code_string(&keystroke),
                     KEYSTROKE_PARSE_EXPECTED_MESSAGE
-                ))
+                ));
             }
         };
 

@@ -1,9 +1,8 @@
 use crate::{
-    register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, App, Bounds,
-    DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement,
-    LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
-    TextOverflow, TextRun, TextStyle, TooltipId, WhiteSpace, Window, WrappedLine,
-    WrappedLineLayout,
+    ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+    HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, SharedString, Size, TextOverflow, TextRun, TextStyle, TooltipId, WhiteSpace,
+    Window, WrappedLine, WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::anyhow;
 use smallvec::SmallVec;

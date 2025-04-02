@@ -14,7 +14,7 @@ use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use strum::EnumIter;
 use thiserror::Error;
 
-use crate::LanguageModelAvailability;
+use crate::{LanguageModelAvailability, LanguageModelToolSchemaFormat};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "provider", rename_all = "lowercase")]
@@ -111,6 +111,13 @@ impl CloudModel {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
             },
+        }
+    }
+
+    pub fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        match self {
+            Self::Anthropic(_) | Self::OpenAi(_) => LanguageModelToolSchemaFormat::JsonSchema,
+            Self::Google(_) => LanguageModelToolSchemaFormat::JsonSchemaSubset,
         }
     }
 }

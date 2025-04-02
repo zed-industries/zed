@@ -1,4 +1,4 @@
-use ui::{prelude::*, HighlightedLabel};
+use ui::{HighlightedLabel, prelude::*};
 
 #[derive(Clone)]
 pub struct HighlightedMatchWithPaths {

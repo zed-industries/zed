@@ -1,6 +1,6 @@
 use crate::{
-    platform::AtlasTextureList, AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds,
-    DevicePixels, PlatformAtlas, Point, Size,
+    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
+    Point, Size, platform::AtlasTextureList,
 };
 use anyhow::Result;
 use blade_graphics as gpu;

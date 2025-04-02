@@ -1,6 +1,6 @@
 use gpui::{FocusHandle, Focusable};
 use ui::{
-    h_flex, Color, Context, IntoElement, Label, LabelCommon, ParentElement, Render, Styled, Window,
+    Color, Context, IntoElement, Label, LabelCommon, ParentElement, Render, Styled, Window, h_flex,
 };
 
 pub(crate) struct FailedState {

@@ -1,8 +1,8 @@
-use gpui::{relative, CursorStyle, DefiniteLength, MouseButton, MouseDownEvent, MouseUpEvent};
-use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
+use gpui::{AnyElement, AnyView, ClickEvent, Hsla, Rems, transparent_black};
+use gpui::{CursorStyle, DefiniteLength, MouseButton, MouseDownEvent, MouseUpEvent, relative};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, DynamicSpacing, ElevationIndex};
+use crate::{DynamicSpacing, ElevationIndex, prelude::*};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
 pub trait SelectableButton: Toggleable {

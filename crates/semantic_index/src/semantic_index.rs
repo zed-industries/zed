@@ -269,7 +269,7 @@ mod tests {
     use embedding_index::{ChunkedFile, EmbeddingIndex};
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
-    use futures::{future::BoxFuture, FutureExt};
+    use futures::{FutureExt, future::BoxFuture};
     use gpui::TestAppContext;
     use indexing::IndexingEntrySet;
     use language::language_settings::AllLanguageSettings;

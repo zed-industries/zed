@@ -60,7 +60,7 @@ use runtimelib::media::datatable::TabularDataResource;
 use serde_json::Value;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{div, prelude::*, v_flex, IntoElement, Styled};
+use ui::{IntoElement, Styled, div, prelude::*, v_flex};
 use util::markdown::MarkdownString;
 
 use crate::outputs::OutputContent;

@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use decorated_icon::*;
-use gpui::{img, svg, AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation};
+use gpui::{AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation, img, svg};
 pub use icon_decoration::*;
 pub use icons::*;
 
-use crate::{prelude::*, Indicator};
+use crate::{Indicator, prelude::*};
 
 #[derive(IntoElement)]
 pub enum AnyIcon {

@@ -6,7 +6,7 @@ use clap::Parser;
 use eval::{Eval, EvalOutput};
 use futures::future;
 use gpui::{Application, AsyncApp};
-use headless_assistant::{authenticate_model_provider, find_model, HeadlessAppState};
+use headless_assistant::{HeadlessAppState, authenticate_model_provider, find_model};
 use itertools::Itertools;
 use judge::Judge;
 use language_model::{LanguageModel, LanguageModelRegistry};

@@ -274,8 +274,8 @@ mod macos {
     use core_foundation_sys::{
         base::kCFAllocatorDefault,
         date_formatter::{
-            kCFDateFormatterMediumStyle, kCFDateFormatterNoStyle, kCFDateFormatterShortStyle,
-            CFDateFormatterCreate,
+            CFDateFormatterCreate, kCFDateFormatterMediumStyle, kCFDateFormatterNoStyle,
+            kCFDateFormatterShortStyle,
         },
         locale::CFLocaleCopyCurrent,
     };

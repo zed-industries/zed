@@ -1,11 +1,11 @@
 use ::fs::Fs;
-use anyhow::{anyhow, Context as _, Ok, Result};
+use anyhow::{Context as _, Ok, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use futures::io::BufReader;
 use gpui::{AsyncApp, SharedString};
-pub use http_client::{github::latest_github_release, HttpClient};
+pub use http_client::{HttpClient, github::latest_github_release};
 use language::LanguageToolchainStore;
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};

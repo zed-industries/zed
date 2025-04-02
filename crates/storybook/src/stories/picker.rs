@@ -1,9 +1,9 @@
 use fuzzy::StringMatchCandidate;
-use gpui::{div, prelude::*, App, Entity, KeyBinding, Render, SharedString, Styled, Task, Window};
+use gpui::{App, Entity, KeyBinding, Render, SharedString, Styled, Task, Window, div, prelude::*};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, ListItemSpacing};
 use ui::{Label, ListItem};
+use ui::{ListItemSpacing, prelude::*};
 
 pub struct PickerStory {
     picker: Entity<Picker<Delegate>>,

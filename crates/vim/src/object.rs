@@ -1,16 +1,16 @@
 use std::ops::Range;
 
 use crate::{
+    Vim,
     motion::right,
     state::{Mode, Operator},
-    Vim,
 };
 use editor::{
+    Bias, DisplayPoint, Editor, ToOffset,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
-    Bias, DisplayPoint, Editor, ToOffset,
 };
-use gpui::{actions, impl_actions, Window};
+use gpui::{Window, actions, impl_actions};
 use itertools::Itertools;
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -8,7 +8,7 @@ use language::{BufferSnapshot, LspAdapterDelegate};
 use prompt_store::PromptStore;
 use std::{
     fmt::Write,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
 use workspace::Workspace;

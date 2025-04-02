@@ -21,15 +21,15 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 pub use queries::usages::{ActiveUserCount, TokenUsage};
-use sea_orm::prelude::*;
 pub use sea_orm::ConnectOptions;
+use sea_orm::prelude::*;
 use sea_orm::{
     ActiveValue, DatabaseConnection, DatabaseTransaction, IsolationLevel, TransactionTrait,
 };
 
+use crate::Result;
 use crate::db::TransactionHandle;
 use crate::executor::Executor;
-use crate::Result;
 
 /// The database for the LLM service.
 pub struct LlmDatabase {

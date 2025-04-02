@@ -3,9 +3,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
-use project::{git_store::Repository, Project};
+use project::{Project, git_store::Repository};
 use std::sync::Arc;
-use ui::{prelude::*, ListItem, ListItemSpacing};
+use ui::{ListItem, ListItemSpacing, prelude::*};
 use workspace::{ModalView, Workspace};
 
 pub fn register(workspace: &mut Workspace) {

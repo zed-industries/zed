@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::{
     fmt::{self, Display, Formatter},

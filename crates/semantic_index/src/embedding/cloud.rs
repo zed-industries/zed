@@ -1,8 +1,8 @@
 use crate::{Embedding, EmbeddingProvider, TextToEmbed};
-use anyhow::{anyhow, Context as _, Result};
-use client::{proto, Client};
+use anyhow::{Context as _, Result, anyhow};
+use client::{Client, proto};
 use collections::HashMap;
-use futures::{future::BoxFuture, FutureExt};
+use futures::{FutureExt, future::BoxFuture};
 use std::sync::Arc;
 
 pub struct CloudEmbeddingProvider {

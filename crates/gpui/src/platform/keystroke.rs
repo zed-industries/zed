@@ -42,9 +42,9 @@ impl Display for InvalidKeystrokeError {
 }
 
 /// Sentence explaining what keystroke parser expects, starting with "Expected ..."
-pub const KEYSTROKE_PARSE_EXPECTED_MESSAGE: &str = "Expected a sequence of lowercase modifiers \
+pub const KEYSTROKE_PARSE_EXPECTED_MESSAGE: &str = "Expected a sequence of modifiers \
     (`ctrl`, `alt`, `shift`, `fn`, `cmd`, `super`, or `win`) \
-    followed by a lowercase key, separated by `-`.";
+    followed by a key, separated by `-`.";
 
 impl Keystroke {
     /// When matching a key we cannot know whether the user intended to type
@@ -81,28 +81,6 @@ impl Keystroke {
     /// secondary means "cmd" on macOS and "ctrl" on other platforms
     /// when matching a key with an key_char set will be matched without it.
     pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
-        return Self::parse_impl(source, true);
-    }
-
-    /// Parse a keystroke case-insensitively. This means
-    /// keystrokes like `ctrl-T` will not be rejected.
-    /// Useful in tests to allow more concise keystroke inputs,
-    /// e.g., `simulate_keystrokes("ctrl-T")` instead of `simulate_keystrokes("ctrl-shift-t")`.
-    /// This also allows `simulate_input` style functions to support capital letters,
-    /// e.g., `simulate_input("Title Case")` can work by just parsing each character as a keystroke
-    /// and dispatching it, instead of needing to parse something like
-    /// `simulate_input("shift-title shift-case")`.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn parse_case_insensitive(
-        source: &str,
-    ) -> std::result::Result<Self, InvalidKeystrokeError> {
-        return Self::parse_impl(source, false);
-    }
-
-    fn parse_impl(
-        source: &str,
-        case_sensitive: bool,
-    ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut control = false;
         let mut alt = false;
         let mut shift = false;
@@ -166,16 +144,10 @@ impl Keystroke {
             }
 
             if component.len() == 1 && component.as_bytes()[0].is_ascii_uppercase() {
-                if case_sensitive {
-                    return Err(InvalidKeystrokeError {
-                        keystroke: source.to_owned(),
-                    });
-                } else {
-                    // Convert to shift + lowercase char if parsing case insensitively
-                    shift = true;
-                    key_str.make_ascii_lowercase();
-                }
-            } else if case_sensitive {
+                // Convert to shift + lowercase char
+                shift = true;
+                key_str.make_ascii_lowercase();
+            } else {
                 // convert ascii chars to lowercase so that named keys like "tab" and "enter"
                 // are accepted case insensitively and stored how we expect so they are matched properly
                 key_str.make_ascii_lowercase()

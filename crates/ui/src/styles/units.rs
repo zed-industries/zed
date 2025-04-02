@@ -1,4 +1,4 @@
-use gpui::{rems, Length, Rems, Window};
+use gpui::{Length, Rems, Window, rems};
 
 /// The base size of a rem, in pixels.
 pub const BASE_REM_SIZE_IN_PX: f32 = 16.;

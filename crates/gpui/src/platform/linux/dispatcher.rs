@@ -1,9 +1,9 @@
 use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use calloop::{
+    EventLoop,
     channel::{self, Sender},
     timer::TimeoutAction,
-    EventLoop,
 };
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;

@@ -1,4 +1,4 @@
-use crate::{prelude::*, LabelLike};
+use crate::{LabelLike, prelude::*};
 use gpui::StyleRefinement;
 
 /// A struct representing a label element in the UI.

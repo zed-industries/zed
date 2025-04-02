@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use gpui::{actions, AsyncApp};
+use anyhow::{Result, anyhow};
+use gpui::{AsyncApp, actions};
 use std::path::{Path, PathBuf};
 use util::ResultExt;
 

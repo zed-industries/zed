@@ -89,7 +89,7 @@ impl TestDispatcher {
         self.state.lock().time = new_now;
     }
 
-    pub fn simulate_random_delay(&self) -> impl 'static + Send + Future<Output = ()> {
+    pub fn simulate_random_delay(&self) -> impl 'static + Send + Future<Output = ()> + use<> {
         struct YieldNow {
             pub(crate) count: usize,
         }

@@ -1,7 +1,7 @@
 use super::{
+    Highlights,
     fold_map::FoldRows,
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
-    Highlights,
 };
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
 use language::{Chunk, Point};
@@ -593,9 +593,9 @@ impl WrapSnapshot {
         let output_end = WrapPoint::new(rows.end, 0);
         let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>(&());
         transforms.seek(&output_start, Bias::Right, &());
-        let mut input_start = TabPoint(transforms.start().1 .0);
+        let mut input_start = TabPoint(transforms.start().1.0);
         if transforms.item().map_or(false, |t| t.is_isomorphic()) {
-            input_start.0 += output_start.0 - transforms.start().0 .0;
+            input_start.0 += output_start.0 - transforms.start().0.0;
         }
         let input_end = self
             .to_tab_point(output_end)
@@ -647,11 +647,11 @@ impl WrapSnapshot {
         let mut cursor = self.transforms.cursor::<(WrapPoint, TabPoint)>(&());
         cursor.seek(&start, Bias::Right, &());
         if let Some(transform) = cursor.item() {
-            let start_in_transform = start.0 - cursor.start().0 .0;
-            let end_in_transform = cmp::min(end, cursor.end(&()).0).0 - cursor.start().0 .0;
+            let start_in_transform = start.0 - cursor.start().0.0;
+            let end_in_transform = cmp::min(end, cursor.end(&()).0).0 - cursor.start().0.0;
             if transform.is_isomorphic() {
-                let tab_start = TabPoint(cursor.start().1 .0 + start_in_transform);
-                let tab_end = TabPoint(cursor.start().1 .0 + end_in_transform);
+                let tab_start = TabPoint(cursor.start().1.0 + start_in_transform);
+                let tab_end = TabPoint(cursor.start().1.0 + end_in_transform);
                 summary += &self.tab_snapshot.text_summary_for_range(tab_start..tab_end);
             } else {
                 debug_assert_eq!(start_in_transform.row, end_in_transform.row);
@@ -674,7 +674,7 @@ impl WrapSnapshot {
                 .output;
 
             if let Some(transform) = cursor.item() {
-                let end_in_transform = end.0 - cursor.start().0 .0;
+                let end_in_transform = end.0 - cursor.start().0.0;
                 if transform.is_isomorphic() {
                     let char_start = cursor.start().1;
                     let char_end = TabPoint(char_start.0 + end_in_transform);
@@ -736,9 +736,9 @@ impl WrapSnapshot {
     pub fn to_tab_point(&self, point: WrapPoint) -> TabPoint {
         let mut cursor = self.transforms.cursor::<(WrapPoint, TabPoint)>(&());
         cursor.seek(&point, Bias::Right, &());
-        let mut tab_point = cursor.start().1 .0;
+        let mut tab_point = cursor.start().1.0;
         if cursor.item().map_or(false, |t| t.is_isomorphic()) {
-            tab_point += point.0 - cursor.start().0 .0;
+            tab_point += point.0 - cursor.start().0.0;
         }
         TabPoint(tab_point)
     }
@@ -754,7 +754,7 @@ impl WrapSnapshot {
     pub fn tab_point_to_wrap_point(&self, point: TabPoint) -> WrapPoint {
         let mut cursor = self.transforms.cursor::<(TabPoint, WrapPoint)>(&());
         cursor.seek(&point, Bias::Right, &());
-        WrapPoint(cursor.start().1 .0 + (point.0 - cursor.start().0 .0))
+        WrapPoint(cursor.start().1.0 + (point.0 - cursor.start().0.0))
     }
 
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
@@ -877,9 +877,9 @@ impl WrapChunks<'_> {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
         self.transforms.seek(&output_start, Bias::Right, &());
-        let mut input_start = TabPoint(self.transforms.start().1 .0);
+        let mut input_start = TabPoint(self.transforms.start().1.0);
         if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
-            input_start.0 += output_start.0 - self.transforms.start().0 .0;
+            input_start.0 += output_start.0 - self.transforms.start().0.0;
         }
         let input_end = self
             .snapshot
@@ -1169,9 +1169,9 @@ fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
 mod tests {
     use super::*;
     use crate::{
+        MultiBuffer,
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         test::test_font,
-        MultiBuffer,
     };
     use gpui::{px, test::observe};
     use rand::prelude::*;
@@ -1207,7 +1207,7 @@ mod tests {
         log::info!("Wrap width: {:?}", wrap_width);
 
         let buffer = cx.update(|cx| {
-            if rng.gen() {
+            if rng.r#gen() {
                 MultiBuffer::build_random(&mut rng, cx)
             } else {
                 let len = rng.gen_range(0..10);

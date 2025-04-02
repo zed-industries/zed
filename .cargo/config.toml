@@ -14,10 +14,10 @@ linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [target.aarch64-apple-darwin]
-rustflags = ["-C", "link-args=-Objc -all_load"]
+rustflags = ["-C", "link-args=-all_load"]
 
 [target.x86_64-apple-darwin]
-rustflags = ["-C", "link-args=-Objc -all_load"]
+rustflags = ["-C", "link-args=-all_load"]
 
 [target.'cfg(target_os = "windows")']
 rustflags = [

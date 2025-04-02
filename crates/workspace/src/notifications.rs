@@ -1,13 +1,13 @@
 use crate::{Toast, Workspace};
 use gpui::{
-    svg, AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
-    Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task,
+    AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
+    Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task, svg,
 };
 use parking_lot::Mutex;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
-use ui::{prelude::*, Tooltip};
+use ui::{Tooltip, prelude::*};
 use util::ResultExt;
 
 #[derive(Default)]
@@ -408,8 +408,8 @@ pub mod simple_message_notification {
     use std::sync::Arc;
 
     use gpui::{
-        div, AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
-        SharedString, Styled,
+        AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
+        SharedString, Styled, div,
     };
     use ui::prelude::*;
 
@@ -770,7 +770,7 @@ pub trait NotifyResultExt {
     type Ok;
 
     fn notify_err(self, workspace: &mut Workspace, cx: &mut Context<Workspace>)
-        -> Option<Self::Ok>;
+    -> Option<Self::Ok>;
 
     fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
 

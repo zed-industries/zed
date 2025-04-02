@@ -25,7 +25,7 @@ use std::{
 use unicase::UniCase;
 
 #[cfg(unix)]
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -239,7 +239,7 @@ pub fn load_shell_from_passwd() -> Result<()> {
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
         );
-        env::set_var("SHELL", shell);
+        unsafe { env::set_var("SHELL", shell) };
     }
 
     Ok(())
@@ -285,7 +285,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
 
-        parse_env_output(env_output, |key, value| env::set_var(key, value));
+        parse_env_output(env_output, |key, value| unsafe { env::set_var(key, value) });
 
         log::info!(
             "set environment variables from shell:{}, path:{}",
@@ -727,7 +727,7 @@ pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
 
 #[cfg(any(test, feature = "test-support"))]
 mod rng {
-    use rand::{seq::SliceRandom, Rng};
+    use rand::{Rng, seq::SliceRandom};
     pub struct RandomCharIter<T: Rng> {
         rng: T,
         simple_text: bool,

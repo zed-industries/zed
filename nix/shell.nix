@@ -1,8 +1,5 @@
 {
-  lib,
   mkShell,
-  stdenv,
-  stdenvAdapters,
   makeFontsConf,
 
   zed-editor,
@@ -13,12 +10,7 @@
   protobuf,
   nodejs_22,
 }:
-let
-  moldStdenv = stdenvAdapters.useMoldLinker stdenv;
-  mkShell' =
-    if stdenv.hostPlatform.isLinux then mkShell.override { stdenv = moldStdenv; } else mkShell;
-in
-mkShell' {
+(mkShell.override { inherit (zed-editor) stdenv; }) {
   inputsFrom = [ zed-editor ];
   packages = [
     rust-analyzer
@@ -31,13 +23,6 @@ mkShell' {
     # we'll just put it on `$PATH`:
     nodejs_22
   ];
-
-  # We set SDKROOT and DEVELOPER_DIR to the Xcode ones instead of the nixpkgs ones, because
-  # we need Swift 6.0 and nixpkgs doesn't have it
-  shellHook = lib.optionalString stdenv.hostPlatform.isDarwin ''
-    export SDKROOT="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
-    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer";
-  '';
 
   env =
     let

@@ -1,17 +1,17 @@
 use crate::{
+    DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory, SerializableItemRegistry,
+    ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
-    DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory, SerializableItemRegistry,
-    ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
 use anyhow::Result;
 use client::{
-    proto::{self, PeerId},
     Client,
+    proto::{self, PeerId},
 };
-use futures::{channel::mpsc, StreamExt};
+use futures::{StreamExt, channel::mpsc};
 use gpui::{
     Action, AnyElement, AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,

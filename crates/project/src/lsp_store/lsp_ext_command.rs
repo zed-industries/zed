@@ -2,7 +2,7 @@ use crate::{lsp_command::LspCommand, lsp_store::LspStore, make_text_document_ide
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use gpui::{App, AsyncApp, Entity};
-use language::{point_to_lsp, proto::deserialize_anchor, Buffer};
+use language::{Buffer, point_to_lsp, proto::deserialize_anchor};
 use lsp::{LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};

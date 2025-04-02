@@ -40,7 +40,7 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() {
-    use release_channel::{ReleaseChannel, RELEASE_CHANNEL};
+    use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
     use remote::proxy::ProxyLaunchError;
     use remote_server::unix::{execute_proxy, execute_run};
 

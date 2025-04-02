@@ -334,7 +334,7 @@ impl Database {
                             project_repository::ActiveModel {
                                 project_id: ActiveValue::set(project_id),
                                 legacy_worktree_id: ActiveValue::set(Some(worktree_id)),
-                                id: ActiveValue::set(repository.work_directory_id as i64),
+                                id: ActiveValue::set(repository.repository_id as i64),
                                 scan_id: ActiveValue::set(update.scan_id as i64),
                                 is_deleted: ActiveValue::set(false),
                                 branch_summary: ActiveValue::Set(
@@ -384,7 +384,7 @@ impl Database {
                                         project_repository_statuses::ActiveModel {
                                             project_id: ActiveValue::set(project_id),
                                             repository_id: ActiveValue::set(
-                                                repository.work_directory_id as i64,
+                                                repository.repository_id as i64,
                                             ),
                                             scan_id: ActiveValue::set(update.scan_id as i64),
                                             is_deleted: ActiveValue::set(false),
@@ -424,7 +424,7 @@ impl Database {
                                         .eq(project_id)
                                         .and(
                                             project_repository_statuses::Column::RepositoryId
-                                                .eq(repo.work_directory_id),
+                                                .eq(repo.repository_id),
                                         )
                                         .and(
                                             project_repository_statuses::Column::RepoPath
@@ -936,7 +936,7 @@ impl Database {
                         worktree.legacy_repository_entries.insert(
                             db_repository_entry.id as u64,
                             proto::RepositoryEntry {
-                                work_directory_id: db_repository_entry.id as u64,
+                                repository_id: db_repository_entry.id as u64,
                                 updated_statuses,
                                 removed_statuses: Vec::new(),
                                 current_merge_conflicts,
@@ -955,6 +955,7 @@ impl Database {
                         current_merge_conflicts,
                         branch_summary,
                         scan_id: db_repository_entry.scan_id as u64,
+                        is_last_update: true,
                     });
                 }
             }

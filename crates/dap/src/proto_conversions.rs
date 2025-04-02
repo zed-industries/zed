@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use client::proto::{
     self, DapChecksum, DapChecksumAlgorithm, DapEvaluateContext, DapModule, DapScope,
     DapScopePresentationHint, DapSource, DapSourcePresentationHint, DapStackFrame, DapVariable,
