@@ -1228,6 +1228,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "auto_update_helper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "simplelog",
+ "windows 0.61.1",
+ "winresource",
+]
+
+[[package]]
 name = "auto_update_ui"
 version = "0.1.0"
 dependencies = [
