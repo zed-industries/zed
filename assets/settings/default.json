@@ -1219,7 +1219,7 @@
     // 4. "replace_suffix"
     //   Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
     //   `"insert"` otherwise.
-    "completion_mode": "replace_suffix"
+    "lsp_insert_mode": "replace_suffix"
   },
   // Different settings for specific languages.
   "languages": {

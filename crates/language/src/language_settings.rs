@@ -329,11 +329,11 @@ pub struct CompletionSettings {
     /// Default: 0
     #[serde(default = "default_lsp_fetch_timeout_ms")]
     pub lsp_fetch_timeout_ms: u64,
-    /// Controls how the completions are inserted
+    /// Controls how LSP completions are inserted.
     ///
     /// Default: "replace_suffix"
-    #[serde(default = "default_completion_mode")]
-    pub completion_mode: CompletionMode,
+    #[serde(default = "default_lsp_insert_mode")]
+    pub lsp_insert_mode: LspInsertMode,
 }
 
 /// Controls how document's words are completed.
@@ -352,7 +352,7 @@ pub enum WordsCompletionMode {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum CompletionMode {
+pub enum LspInsertMode {
     /// Replaces text before the cursor, using the `insert` range described in the LSP specification.
     Insert,
     /// Replaces text before and after the cursor, using the `replace` range described in the LSP specification.
@@ -369,8 +369,8 @@ fn default_words_completion_mode() -> WordsCompletionMode {
     WordsCompletionMode::Fallback
 }
 
-fn default_completion_mode() -> CompletionMode {
-    CompletionMode::Insert
+fn default_lsp_insert_mode() -> LspInsertMode {
+    LspInsertMode::Insert
 }
 
 fn default_lsp_fetch_timeout_ms() -> u64 {

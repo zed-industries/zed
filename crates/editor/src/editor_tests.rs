@@ -22,8 +22,8 @@ use language::{
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
     Override, Point,
     language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionMode, CompletionSettings,
-        LanguageSettingsContent, PrettierSettings,
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+        LanguageSettingsContent, LspInsertMode, PrettierSettings,
     },
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
@@ -9339,27 +9339,27 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 
     for run in runs {
         let run_variations = [
-            (CompletionMode::Insert, run.expected_with_insertion_mode),
-            (CompletionMode::Replace, run.expected_with_replace_mode),
+            (LspInsertMode::Insert, run.expected_with_insertion_mode),
+            (LspInsertMode::Replace, run.expected_with_replace_mode),
             (
-                CompletionMode::ReplaceSubsequence,
+                LspInsertMode::ReplaceSubsequence,
                 run.expected_with_replace_subsequence_mode,
             ),
             (
-                CompletionMode::ReplaceSuffix,
+                LspInsertMode::ReplaceSuffix,
                 run.expected_with_replace_suffix_mode,
             ),
         ];
 
-        for (completion_mode, expected_text) in run_variations {
+        for (lsp_insert_mode, expected_text) in run_variations {
             eprintln!(
-                "run = {:?}, mode = {completion_mode:.?}",
+                "run = {:?}, mode = {lsp_insert_mode:.?}",
                 run.run_description,
             );
 
             update_test_language_settings(&mut cx, |settings| {
                 settings.defaults.completions = Some(CompletionSettings {
-                    completion_mode,
+                    lsp_insert_mode,
                     words: WordsCompletionMode::Disabled,
                     lsp: true,
                     lsp_fetch_timeout_ms: 0,
@@ -9616,7 +9616,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
             words: WordsCompletionMode::Fallback,
             lsp: true,
             lsp_fetch_timeout_ms: 10,
-            completion_mode: CompletionMode::Insert,
+            lsp_insert_mode: LspInsertMode::Insert,
         });
     });
 
@@ -9712,7 +9712,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
             words: WordsCompletionMode::Enabled,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
-            completion_mode: CompletionMode::Insert,
+            lsp_insert_mode: LspInsertMode::Insert,
         });
     });
 
@@ -9775,7 +9775,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
             words: WordsCompletionMode::Disabled,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
-            completion_mode: CompletionMode::Insert,
+            lsp_insert_mode: LspInsertMode::Insert,
         });
     });
 
@@ -9848,7 +9848,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
             words: WordsCompletionMode::Fallback,
             lsp: false,
             lsp_fetch_timeout_ms: 0,
-            completion_mode: CompletionMode::Insert,
+            lsp_insert_mode: LspInsertMode::Insert,
         });
     });
 

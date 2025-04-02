@@ -18,7 +18,7 @@ use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
     ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{
-        AllLanguageSettings, CompletionMode, InlayHintKind, LanguageSettings, language_settings,
+        AllLanguageSettings, InlayHintKind, LanguageSettings, LspInsertMode, language_settings,
     },
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
@@ -2128,7 +2128,7 @@ impl LspCommand for GetCompletions {
                         let completion_mode = AllLanguageSettings::get_global(cx)
                             .defaults
                             .completions
-                            .completion_mode;
+                            .lsp_insert_mode;
 
                         match parse_completion_text_edit(
                             &completion_text_edit,
@@ -2315,7 +2315,7 @@ impl LspCommand for GetCompletions {
 pub(crate) fn parse_completion_text_edit(
     edit: &lsp::CompletionTextEdit,
     snapshot: &BufferSnapshot,
-    completion_mode: CompletionMode,
+    completion_mode: LspInsertMode,
 ) -> Option<(Range<Anchor>, String)> {
     match edit {
         lsp::CompletionTextEdit::Edit(edit) => {
@@ -2335,9 +2335,9 @@ pub(crate) fn parse_completion_text_edit(
 
         lsp::CompletionTextEdit::InsertAndReplace(edit) => {
             let replace = match completion_mode {
-                CompletionMode::Insert => false,
-                CompletionMode::Replace => true,
-                CompletionMode::ReplaceSubsequence => {
+                LspInsertMode::Insert => false,
+                LspInsertMode::Replace => true,
+                LspInsertMode::ReplaceSubsequence => {
                     let range_to_replace = range_from_lsp(edit.replace);
 
                     let start = snapshot.clip_point_utf16(range_to_replace.start, Bias::Left);
@@ -2357,7 +2357,7 @@ pub(crate) fn parse_completion_text_edit(
                         })
                     }
                 }
-                CompletionMode::ReplaceSuffix => {
+                LspInsertMode::ReplaceSuffix => {
                     let range_after_cursor = lsp::Range {
                         start: edit.insert.end,
                         end: edit.replace.end,

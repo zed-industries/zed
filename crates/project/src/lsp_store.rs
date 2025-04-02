@@ -39,7 +39,7 @@ use language::{
     LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch, PointUtf16,
     TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{
-        AllLanguageSettings, CompletionMode, FormatOnSave, Formatter, LanguageSettings,
+        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, LspInsertMode,
         SelectedFormatter, language_settings,
     },
     point_to_lsp,
@@ -5234,9 +5234,9 @@ impl LspStore {
                     AllLanguageSettings::get_global(cx)
                         .defaults
                         .completions
-                        .completion_mode
+                        .lsp_insert_mode
                 })
-                .unwrap_or(CompletionMode::Insert);
+                .unwrap_or(LspInsertMode::Insert);
             let edit = parse_completion_text_edit(text_edit, snapshot, completion_mode);
 
             if let Some((old_range, mut new_text)) = edit {
@@ -7740,9 +7740,9 @@ impl LspStore {
                         AllLanguageSettings::get_global(cx)
                             .defaults
                             .completions
-                            .completion_mode
+                            .lsp_insert_mode
                     })
-                    .unwrap_or(CompletionMode::Insert);
+                    .unwrap_or(LspInsertMode::Insert);
 
                 let edit = parse_completion_text_edit(text_edit, &buffer_snapshot, completion_mode);
 
