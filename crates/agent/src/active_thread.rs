@@ -1968,31 +1968,47 @@ impl ActiveThread {
         thread
             .tools_needing_confirmation()
             .map(|tool| {
-                div()
-                    .m_3()
-                    .p_2()
-                    .bg(cx.theme().colors().editor_background)
+                v_flex()
+                    .mt_2()
+                    .mx_4()
+
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .rounded_lg()
                     .child(
-                        v_flex()
-                            .gap_1()
+                        h_flex()
+                            .p_1()
+                            .justify_between()
+                            .rounded_t_lg()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border)
+                            .bg(self.tool_card_header_bg(cx))
                             .child(
-                                v_flex()
-                                    .gap_0p5()
-                                    .child(
-                                        Label::new("The agent wants to run this action:")
-                                            .color(Color::Muted),
-                                    )
-                                    .child(div().p_3().child(Label::new(&tool.ui_text))),
+
+                                        Button::new("beta-info", "Action Confirmation")
+                                            .label_size(LabelSize::Small)
+                                            .icon(IconName::Info)
+                                            .icon_position(IconPosition::End)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Accent)
+                                            .tooltip(
+                                                Tooltip::text(
+                                                    "A future release will introduce a way to remember your answers to these. In the meantime, you can avoid these prompts by adding \"assistant\": { \"always_allow_tool_actions\": true } to your settings.json."
+                                                )
+                                            )
                             )
                             .child(
                                 h_flex()
                                     .gap_1()
                                     .child({
                                         let tool_id = tool.id.clone();
-                                        Button::new("allow-tool-action", "Allow").on_click(
+                                        Button::new("allow-tool-action", "Allow")
+                                                          .label_size(LabelSize::Small)
+                                            .icon(IconName::Check)
+                                            .icon_position(IconPosition::Start)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Success)
+                                            .on_click(
                                             cx.listener(move |this, event, window, cx| {
                                                 this.handle_allow_tool(
                                                     tool_id.clone(),
@@ -2006,7 +2022,13 @@ impl ActiveThread {
                                     .child({
                                         let tool_id = tool.id.clone();
                                         let tool_name = tool.name.clone();
-                                        Button::new("deny-tool", "Deny").on_click(cx.listener(
+                                        Button::new("deny-tool", "Deny")
+                                                          .label_size(LabelSize::Small)
+                                            .icon(IconName::Close)
+                                            .icon_position(IconPosition::Start)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Error)
+                                            .on_click(cx.listener(
                                             move |this, event, window, cx| {
                                                 this.handle_deny_tool(
                                                     tool_id.clone(),
@@ -2019,12 +2041,15 @@ impl ActiveThread {
                                         ))
                                     }),
                             )
-                            .child(
-                                Label::new("Note: A future release will introduce a way to remember your answers to these. In the meantime, you can avoid these prompts by adding \"assistant\": { \"always_allow_tool_actions\": true } to your settings.json.")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
                     )
+                    .child(
+                                div().id("action_container").rounded_b_lg()
+                                .bg(cx.theme().colors().editor_background).overflow_y_scroll().max_h_40().p_2p5().child(
+                                Label::new(&tool.ui_text).size(LabelSize::Small).buffer_font(cx))
+
+                    )
+
+
                     .into_any()
             })
     }
