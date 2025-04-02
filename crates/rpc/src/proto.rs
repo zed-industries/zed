@@ -88,7 +88,7 @@ where
             let received_at = Instant::now();
             match bytes? {
                 WebSocketMessage::Binary(bytes) => {
-                    zstd::stream::copy_decode(bytes.as_slice(), &mut self.encoding_buffer).unwrap();
+                    zstd::stream::copy_decode(bytes.as_slice(), &mut self.encoding_buffer)?;
                     let envelope = Envelope::decode(self.encoding_buffer.as_slice())
                         .map_err(io::Error::from)?;
 
