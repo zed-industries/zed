@@ -393,17 +393,17 @@ impl LanguageModel for BedrockModel {
         let Ok(region) = cx.read_entity(&self.state, |state, _cx| {
             // Get region - from credentials or directly from settings
             let region = state
-                .settings
+                .credentials
                 .as_ref()
-                .and_then(|s| s.region.clone())
+                .and_then(|s| Some(s.region.clone()))
                 .unwrap_or(String::from("us-east-1"));
 
             region
         }) else {
-            return async move { Err(anyhow!("App State Droppped")) }.boxed();
+            return async move { Err(anyhow!("App State Dropped")) }.boxed();
         };
 
-        let model_id = match self.model.cross_region_inference_id(&*region) {
+        let model_id = match self.model.cross_region_inference_id(&region) {
             Ok(s) => s,
             Err(e) => {
                 return async move { Err(e) }.boxed();
@@ -962,21 +962,21 @@ impl Render for ConfigurationView {
                             InstructionListItem::new(
                                 "Start by",
                                 Some("creating a user and security credentials"),
-                                Some("https://us-east-1.console.aws.amazon.com/iam/home")
+                                Some("https://us-east-1.console.aws.amazon.com/iam/home"),
                             )
                         )
                         .child(
                             InstructionListItem::new(
                                 "Grant that user permissions according to this documentation:",
                                 Some("Prerequisites"),
-                                Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html")
+                                Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
                             )
                         )
                         .child(
                             InstructionListItem::new(
                                 "Select the models you would like access to:",
                                 Some("Bedrock Model Catalog"),
-                                Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess")
+                                Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"),
                             )
                         )
                         .child(
@@ -1010,7 +1010,7 @@ impl Render for ConfigurationView {
                                 .child(
                                     input_base_styles().child(self.render_region_editor(cx))
                                 )
-                            )
+                        )
                 )
                 .child(
                     Label::new(
