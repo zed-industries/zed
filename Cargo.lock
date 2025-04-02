@@ -11675,7 +11675,6 @@ dependencies = [
  "toml 0.8.20",
  "unindent",
  "util",
- "workspace-hack",
  "worktree",
 ]
 
@@ -17569,9 +17568,6 @@ dependencies = [
  "regex-syntax 0.8.5",
  "reqwest 0.11.27",
  "ring",
- "rust-embed",
- "rust-embed-impl",
- "rust-embed-utils",
  "rust_decimal",
  "rustix 0.38.44",
  "rustix 1.0.5",

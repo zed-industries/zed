@@ -17,6 +17,11 @@ platforms = [
     "x86_64-unknown-linux-musl", # remote server
 ]
 
+[traversal-excludes]
+workspace-members = [
+    "remote_server",
+]
+
 [final-excludes]
 workspace-members = [
     "zed_extension_api",

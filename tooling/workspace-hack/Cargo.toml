@@ -88,8 +88,6 @@ rand_core = { version = "0.6", default-features = false, features = ["std"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
-rust-embed = { version = "8", default-features = false, features = ["debug-embed", "include-exclude"] }
-rust-embed-utils = { version = "8", default-features = false, features = ["debug-embed", "include-exclude"] }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["fs", "net"] }
 rustls-2b5c6dc72f624058 = { package = "rustls", version = "0.23", features = ["ring"] }
@@ -203,9 +201,6 @@ rand_core = { version = "0.6", default-features = false, features = ["std"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
-rust-embed = { version = "8", default-features = false, features = ["debug-embed", "include-exclude"] }
-rust-embed-impl = { version = "8", default-features = false, features = ["debug-embed", "include-exclude"] }
-rust-embed-utils = { version = "8", default-features = false, features = ["debug-embed", "include-exclude"] }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["fs", "net"] }
 rustls-2b5c6dc72f624058 = { package = "rustls", version = "0.23", features = ["ring"] }
