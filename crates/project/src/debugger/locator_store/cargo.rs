@@ -2,17 +2,19 @@ use super::DapLocator;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use dap::DebugAdapterConfig;
-use serde_json::Value;
+use serde_json::{Value, json};
 use smol::{
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
+use util::maybe;
 
-pub(super) struct CargoLocator {}
+pub(super) struct CargoLocator;
 
 #[async_trait]
 impl DapLocator for CargoLocator {
     async fn run_locator(&self, debug_config: &mut DebugAdapterConfig) -> Result<()> {
+        dbg!(&debug_config);
         let Some(launch_config) = (match &mut debug_config.request {
             task::DebugRequestDisposition::UserConfigured(task::DebugRequestType::Launch(
                 launch_config,
@@ -77,6 +79,37 @@ impl DapLocator for CargoLocator {
                     .filter(|name| !name.starts_with("--"))
                     .cloned();
             }
+        }
+
+        if debug_config.adapter == "LLDB" && debug_config.initialize_args.is_none() {
+            // Find Rust pretty-printers in current toolchain's sysroot
+            let cwd = launch_config.cwd.clone();
+            debug_config.initialize_args = maybe!(async move {
+                let cwd = cwd?;
+
+                let output = Command::new("rustc")
+                    .arg("--print")
+                    .arg("sysroot")
+                    .current_dir(cwd)
+                    .output()
+                    .await
+                    .ok()?;
+
+                if !output.status.success() {
+                    return None;
+                }
+
+                let sysroot_path = String::from_utf8(output.stdout).ok()?;
+                let sysroot_path = sysroot_path.trim_end();
+                let first_command = format!(
+                    r#"command script import "{sysroot_path}/lib/rustlib/etc/lldb_lookup.py"#
+                );
+                let second_command =
+                    format!(r#"command source -s 0 '{sysroot_path}/lib/rustlib/etc/lldb_commands"#);
+
+                Some(json!({"initCommands": [first_command, second_command]}))
+            })
+            .await;
         }
 
         launch_config.args.clear();
