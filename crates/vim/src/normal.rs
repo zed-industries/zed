@@ -85,12 +85,12 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &DeleteLeft, window, cx| {
         vim.record_current_action(cx);
         let times = Vim::take_count(cx);
-        vim.delete_motion(Motion::Left, times, window, cx);
+        vim.delete_motion(Motion::Left, times, false, window, cx);
     });
     Vim::action(editor, cx, |vim, _: &DeleteRight, window, cx| {
         vim.record_current_action(cx);
         let times = Vim::take_count(cx);
-        vim.delete_motion(Motion::Right, times, window, cx);
+        vim.delete_motion(Motion::Right, times, false, window, cx);
     });
     Vim::action(editor, cx, |vim, _: &ChangeToEndOfLine, window, cx| {
         vim.start_recording(cx);
@@ -112,6 +112,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 display_lines: false,
             },
             times,
+            false,
             window,
             cx,
         );
@@ -160,7 +161,10 @@ impl Vim {
         match operator {
             None => self.move_cursor(motion, times, window, cx),
             Some(Operator::Change) => self.change_motion(motion, times, window, cx),
-            Some(Operator::Delete) => self.delete_motion(motion, times, window, cx),
+            Some(Operator::Delete) => self.delete_motion(motion, times, false, window, cx),
+            Some(Operator::Delete2 { inclusive: _ }) => {
+                self.delete_motion(motion, times, true, window, cx)
+            }
             Some(Operator::Yank) => self.yank_motion(motion, times, window, cx),
             Some(Operator::AddSurrounds { target: None }) => {}
             Some(Operator::Indent) => {

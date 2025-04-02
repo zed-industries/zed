@@ -79,6 +79,9 @@ impl Default for Mode {
 pub enum Operator {
     Change,
     Delete,
+    Delete2 {
+        inclusive: bool,
+    },
     Yank,
     Replace,
     Object {
@@ -934,6 +937,7 @@ impl Operator {
             Operator::Object { around: true } => "a",
             Operator::Change => "c",
             Operator::Delete => "d",
+            Operator::Delete2 { inclusive: _ } => "dv", //temporary, ideally we can reuse delete but making its own path for now
             Operator::Yank => "y",
             Operator::Replace => "r",
             Operator::Digraph { .. } => "^K",
@@ -1002,6 +1006,7 @@ impl Operator {
             | Operator::DeleteSurrounds => true,
             Operator::Change
             | Operator::Delete
+            | Operator::Delete2 { inclusive: _ }
             | Operator::Yank
             | Operator::Rewrap
             | Operator::Indent
@@ -1025,6 +1030,7 @@ impl Operator {
         match self {
             Operator::Change
             | Operator::Delete
+            | Operator::Delete2 { inclusive: _ }
             | Operator::Replace
             | Operator::Indent
             | Operator::Outdent

@@ -18,6 +18,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        inclusive: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -39,6 +40,11 @@ impl Vim {
                         ranges_to_copy
                             .push(selection.start.to_point(map)..selection.end.to_point(map));
 
+                        if inclusive {
+                            let end = selection.end.to_point(map);
+                            let new_end = Point::new(end.row, end.column + 1).to_display_point(map);
+                            selection.end = map.clip_point(new_end, Bias::Right);
+                        }
                         // When deleting line-wise, we always want to delete a newline.
                         // If there is one after the current line, it goes; otherwise we
                         // pick the one before.
