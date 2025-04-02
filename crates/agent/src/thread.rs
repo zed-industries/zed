@@ -1684,6 +1684,11 @@ impl Thread {
                     Role::System => "System",
                 }
             )?;
+
+            if !message.context.is_empty() {
+                writeln!(markdown, "{}", message.context)?;
+            }
+
             for segment in &message.segments {
                 match segment {
                     MessageSegment::Text(text) => writeln!(markdown, "{}\n", text)?,
