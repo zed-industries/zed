@@ -720,8 +720,8 @@ impl WorkspaceDb {
                 }
 
                 for (path, bps) in map.iter() {
-                    log::debug!(
-                        "Got {} breakpoints from path: {}",
+                    log::info!(
+                        "Got {} breakpoints from database at path: {}",
                         bps.len(),
                         path.to_string_lossy()
                     );
@@ -746,9 +746,10 @@ impl WorkspaceDb {
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
+
+                conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1))?(workspace.id).context("Clearing old breakpoints")?;
+
                 for (path, breakpoints) in workspace.breakpoints {
-                    conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1 AND path = ?2))?((workspace.id, path.as_ref()))
-                    .context("Clearing old breakpoints")?;
                     for bp in breakpoints {
                         let state = BreakpointStateWrapper::from(bp.state);
                         match conn.exec_bound(sql!(
@@ -1605,6 +1606,93 @@ mod tests {
         );
         assert_eq!(loaded_breakpoints[4].state, hit_condition_breakpoint.state);
         assert_eq!(loaded_breakpoints[4].path, Arc::from(path));
+    }
+
+    #[gpui::test]
+    async fn test_remove_last_breakpoint() {
+        env_logger::try_init().ok();
+
+        let db = WorkspaceDb(open_test_db("test_remove_last_breakpoint").await);
+        let id = db.next_id().await.unwrap();
+
+        let singular_path = Path::new("/tmp/test_remove_last_breakpoint.rs");
+
+        let breakpoint_to_remove = Breakpoint {
+            position: 100,
+            message: None,
+            state: BreakpointState::Enabled,
+            condition: None,
+            hit_condition: None,
+        };
+
+        let workspace = SerializedWorkspace {
+            id,
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            breakpoints: {
+                let mut map = collections::BTreeMap::default();
+                map.insert(
+                    Arc::from(singular_path),
+                    vec![SourceBreakpoint {
+                        row: breakpoint_to_remove.position,
+                        path: Arc::from(singular_path),
+                        message: None,
+                        state: BreakpointState::Enabled,
+                        condition: None,
+                        hit_condition: None,
+                    }],
+                );
+                map
+            },
+            session_id: None,
+            window_id: None,
+        };
+
+        db.save_workspace(workspace.clone()).await;
+
+        let loaded = db.workspace_for_roots(&["/tmp"]).unwrap();
+        let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(singular_path)).unwrap();
+
+        assert_eq!(loaded_breakpoints.len(), 1);
+        assert_eq!(loaded_breakpoints[0].row, breakpoint_to_remove.position);
+        assert_eq!(loaded_breakpoints[0].message, breakpoint_to_remove.message);
+        assert_eq!(
+            loaded_breakpoints[0].condition,
+            breakpoint_to_remove.condition
+        );
+        assert_eq!(
+            loaded_breakpoints[0].hit_condition,
+            breakpoint_to_remove.hit_condition
+        );
+        assert_eq!(loaded_breakpoints[0].state, breakpoint_to_remove.state);
+        assert_eq!(loaded_breakpoints[0].path, Arc::from(singular_path));
+
+        let workspace_without_breakpoint = SerializedWorkspace {
+            id,
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            breakpoints: collections::BTreeMap::default(),
+            session_id: None,
+            window_id: None,
+        };
+
+        db.save_workspace(workspace_without_breakpoint.clone())
+            .await;
+
+        let loaded_after_remove = db.workspace_for_roots(&["/tmp"]).unwrap();
+        let empty_breakpoints = loaded_after_remove
+            .breakpoints
+            .get(&Arc::from(singular_path));
+
+        assert!(empty_breakpoints.is_none());
     }
 
     #[gpui::test]

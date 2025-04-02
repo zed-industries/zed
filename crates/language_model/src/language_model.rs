@@ -185,6 +185,9 @@ pub trait LanguageModel: Send + Sync {
         LanguageModelAvailability::Public
     }
 
+    /// Whether this model supports tools.
+    fn supports_tools(&self) -> bool;
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }
@@ -350,7 +353,10 @@ pub trait LanguageModelProvider: 'static {
 
 #[derive(PartialEq, Eq)]
 pub enum LanguageModelProviderTosView {
-    ThreadEmptyState,
+    /// When there are some past interactions in the Agent Panel.
+    ThreadtEmptyState,
+    /// When there are no past interactions in the Agent Panel.
+    ThreadFreshStart,
     PromptEditorPopup,
     Configuration,
 }

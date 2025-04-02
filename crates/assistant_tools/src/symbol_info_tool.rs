@@ -81,7 +81,7 @@ impl Tool for SymbolInfoTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Eye
+        IconName::Code
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {

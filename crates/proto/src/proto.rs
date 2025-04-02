@@ -340,6 +340,8 @@ messages!(
     (ListRemoteDirectoryResponse, Background),
     (ListToolchains, Foreground),
     (ListToolchainsResponse, Foreground),
+    (LoadCommitDiff, Foreground),
+    (LoadCommitDiffResponse, Foreground),
     (LspExtExpandMacro, Background),
     (LspExtExpandMacroResponse, Background),
     (LspExtOpenDocs, Background),
@@ -534,6 +536,7 @@ request_messages!(
     (JoinRoom, JoinRoomResponse),
     (LeaveChannelBuffer, Ack),
     (LeaveRoom, Ack),
+    (LoadCommitDiff, LoadCommitDiffResponse),
     (MarkNotificationRead, Ack),
     (MoveChannel, Ack),
     (OnTypeFormatting, OnTypeFormattingResponse),
@@ -668,6 +671,7 @@ entity_messages!(
     JoinProject,
     LeaveProject,
     LinkedEditingRange,
+    LoadCommitDiff,
     MultiLspQuery,
     RestartLanguageServers,
     OnTypeFormatting,
@@ -830,7 +834,7 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             let removed_statuses_limit = cmp::min(repo.removed_statuses.len(), limit);
 
             updated_repositories.push(RepositoryEntry {
-                work_directory_id: repo.work_directory_id,
+                repository_id: repo.repository_id,
                 branch_summary: repo.branch_summary.clone(),
                 updated_statuses: repo
                     .updated_statuses
@@ -881,26 +885,34 @@ pub fn split_repository_update(
 ) -> impl Iterator<Item = UpdateRepository> {
     let mut updated_statuses_iter = mem::take(&mut update.updated_statuses).into_iter().fuse();
     let mut removed_statuses_iter = mem::take(&mut update.removed_statuses).into_iter().fuse();
-    let mut is_first = true;
-    std::iter::from_fn(move || {
-        let updated_statuses = updated_statuses_iter
-            .by_ref()
-            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
-            .collect::<Vec<_>>();
-        let removed_statuses = removed_statuses_iter
-            .by_ref()
-            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
-            .collect::<Vec<_>>();
-        if updated_statuses.is_empty() && removed_statuses.is_empty() && !is_first {
-            return None;
+    std::iter::from_fn({
+        let update = update.clone();
+        move || {
+            let updated_statuses = updated_statuses_iter
+                .by_ref()
+                .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+                .collect::<Vec<_>>();
+            let removed_statuses = removed_statuses_iter
+                .by_ref()
+                .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+                .collect::<Vec<_>>();
+            if updated_statuses.is_empty() && removed_statuses.is_empty() {
+                return None;
+            }
+            Some(UpdateRepository {
+                updated_statuses,
+                removed_statuses,
+                is_last_update: false,
+                ..update.clone()
+            })
         }
-        is_first = false;
-        Some(UpdateRepository {
-            updated_statuses,
-            removed_statuses,
-            ..update.clone()
-        })
     })
+    .chain([UpdateRepository {
+        updated_statuses: Vec::new(),
+        removed_statuses: Vec::new(),
+        is_last_update: true,
+        ..update
+    }])
 }
 
 #[cfg(test)]

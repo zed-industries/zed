@@ -153,6 +153,10 @@ impl LanguageModel for FakeLanguageModel {
         provider_name()
     }
 
+    fn supports_tools(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         "fake".to_string()
     }
