@@ -1,10 +1,11 @@
+use agent::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use anyhow::anyhow;
-use assistant2::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use assistant_tool::ToolWorkingSet;
 use client::{Client, UserStore};
 use collections::HashMap;
+use dap::DapRegistry;
 use futures::StreamExt;
-use gpui::{prelude::*, App, AsyncApp, Entity, SemanticVersion, Subscription, Task};
+use gpui::{App, AsyncApp, Entity, SemanticVersion, Subscription, Task, prelude::*};
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
@@ -50,6 +51,7 @@ impl HeadlessAssistant {
             app_state.node_runtime.clone(),
             app_state.user_store.clone(),
             app_state.languages.clone(),
+            Arc::new(DapRegistry::default()),
             app_state.fs.clone(),
             env,
             cx,
@@ -89,7 +91,7 @@ impl HeadlessAssistant {
             ThreadEvent::DoneStreaming => {
                 let thread = thread.read(cx);
                 if let Some(message) = thread.messages().last() {
-                    println!("Message: {}", message.text,);
+                    println!("Message: {}", message.to_string());
                 }
                 if thread.all_tools_finished() {
                     self.done_tx.send_blocking(Ok(())).unwrap()
@@ -128,12 +130,7 @@ impl HeadlessAssistant {
                     }
                 }
             }
-            ThreadEvent::StreamedCompletion
-            | ThreadEvent::SummaryChanged
-            | ThreadEvent::StreamedAssistantText(_, _)
-            | ThreadEvent::MessageAdded(_)
-            | ThreadEvent::MessageEdited(_)
-            | ThreadEvent::MessageDeleted(_) => {}
+            _ => {}
         }
     }
 }
@@ -154,7 +151,10 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     cx.set_http_client(client.http_client().clone());
 
     let git_binary_path = None;
-    let fs = Arc::new(RealFs::new(git_binary_path));
+    let fs = Arc::new(RealFs::new(
+        git_binary_path,
+        cx.background_executor().clone(),
+    ));
 
     let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
@@ -163,11 +163,11 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     language::init(cx);
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
-    assistant_tools::init(cx);
+    assistant_tools::init(client.http_client().clone(), cx);
     context_server::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
-    assistant2::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
+    agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
 
     Arc::new(HeadlessAppState {
         languages,
@@ -212,7 +212,7 @@ pub fn authenticate_model_provider(
 pub async fn send_language_model_request(
     model: Arc<dyn LanguageModel>,
     request: LanguageModelRequest,
-    cx: AsyncApp,
+    cx: &mut AsyncApp,
 ) -> anyhow::Result<String> {
     match model.stream_completion_text(request, &cx).await {
         Ok(mut stream) => {

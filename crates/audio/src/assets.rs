@@ -4,8 +4,8 @@ use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AssetSource, Global};
 use rodio::{
-    source::{Buffered, SamplesConverter},
     Decoder, Source,
+    source::{Buffered, SamplesConverter},
 };
 
 type Sound = Buffered<SamplesConverter<Decoder<Cursor<Vec<u8>>>, f32>>;
@@ -35,7 +35,7 @@ impl SoundRegistry {
         cx.set_global(GlobalSoundRegistry(SoundRegistry::new(source)));
     }
 
-    pub fn get(&self, name: &str) -> Result<impl Source<Item = f32>> {
+    pub fn get(&self, name: &str) -> Result<impl Source<Item = f32> + use<>> {
         if let Some(wav) = self.cache.lock().get(name) {
             return Ok(wav.clone());
         }

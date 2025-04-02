@@ -6,15 +6,15 @@ use client::Client;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal as _,
 };
+use icons::IconName;
 use proto::{Plan, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use strum::EnumIter;
 use thiserror::Error;
-use ui::IconName;
 
-use crate::LanguageModelAvailability;
+use crate::{LanguageModelAvailability, LanguageModelToolSchemaFormat};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "provider", rename_all = "lowercase")]
@@ -72,7 +72,9 @@ impl CloudModel {
     pub fn availability(&self) -> LanguageModelAvailability {
         match self {
             Self::Anthropic(model) => match model {
-                anthropic::Model::Claude3_5Sonnet | anthropic::Model::Claude3_7Sonnet => {
+                anthropic::Model::Claude3_5Sonnet
+                | anthropic::Model::Claude3_7Sonnet
+                | anthropic::Model::Claude3_7SonnetThinking => {
                     LanguageModelAvailability::RequiresPlan(Plan::Free)
                 }
                 anthropic::Model::Claude3Opus
@@ -104,10 +106,18 @@ impl CloudModel {
                 | google_ai::Model::Gemini20Flash
                 | google_ai::Model::Gemini20FlashThinking
                 | google_ai::Model::Gemini20FlashLite
+                | google_ai::Model::Gemini25ProExp0325
                 | google_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
             },
+        }
+    }
+
+    pub fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        match self {
+            Self::Anthropic(_) | Self::OpenAi(_) => LanguageModelToolSchemaFormat::JsonSchema,
+            Self::Google(_) => LanguageModelToolSchemaFormat::JsonSchemaSubset,
         }
     }
 }

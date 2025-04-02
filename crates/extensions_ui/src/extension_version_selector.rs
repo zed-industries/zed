@@ -4,13 +4,13 @@ use std::sync::Arc;
 use client::ExtensionMetadata;
 use extension_host::{ExtensionSettings, ExtensionStore};
 use fs::Fs;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
-use gpui::{prelude::*, App, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use gpui::{App, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, prelude::*};
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use settings::update_settings_file;
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::ModalView;
 
@@ -129,7 +129,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
             })
             .collect::<Vec<_>>();
 
-        cx.spawn_in(window, move |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -153,7 +153,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, _cx| {
+            this.update(cx, |this, _cx| {
                 this.delegate.matches = matches;
                 this.delegate.selected_index = this
                     .delegate

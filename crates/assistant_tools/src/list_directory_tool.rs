@@ -1,11 +1,14 @@
-use anyhow::{anyhow, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc};
+use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
@@ -31,23 +34,40 @@ pub struct ListDirectoryToolInput {
     ///
     /// If you wanna list contents in the directory `foo/baz`, you should use the path `foo/baz`.
     /// </example>
-    pub path: Arc<Path>,
+    pub path: String,
 }
 
 pub struct ListDirectoryTool;
 
 impl Tool for ListDirectoryTool {
     fn name(&self) -> String {
-        "list-directory".into()
+        "list_directory".into()
+    }
+
+    fn needs_confirmation(&self) -> bool {
+        false
     }
 
     fn description(&self) -> String {
         include_str!("./list_directory_tool/description.md").into()
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(ListDirectoryToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn icon(&self) -> IconName {
+        IconName::Folder
+    }
+
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<ListDirectoryToolInput>(format)
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<ListDirectoryToolInput>(input.clone()) {
+            Ok(input) => {
+                let path = MarkdownString::inline_code(&input.path);
+                format!("List the {path} directory's contents")
+            }
+            Err(_) => "List directory".to_string(),
+        }
     }
 
     fn run(
@@ -63,8 +83,29 @@ impl Tool for ListDirectoryTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
+        // Sometimes models will return these even though we tell it to give a path and not a glob.
+        // When this happens, just list the root worktree directories.
+        if matches!(input.path.as_str(), "." | "" | "./" | "*") {
+            let output = project
+                .read(cx)
+                .worktrees(cx)
+                .filter_map(|worktree| {
+                    worktree.read(cx).root_entry().and_then(|entry| {
+                        if entry.is_dir() {
+                            entry.path.to_str()
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            return Task::ready(Ok(output));
+        }
+
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path not found in project")));
+            return Task::ready(Err(anyhow!("Path {} not found in project", input.path)));
         };
         let Some(worktree) = project
             .read(cx)
@@ -75,11 +116,11 @@ impl Tool for ListDirectoryTool {
         let worktree = worktree.read(cx);
 
         let Some(entry) = worktree.entry_for_path(&project_path.path) else {
-            return Task::ready(Err(anyhow!("Path not found: {}", input.path.display())));
+            return Task::ready(Err(anyhow!("Path not found: {}", input.path)));
         };
 
         if !entry.is_dir() {
-            return Task::ready(Err(anyhow!("{} is a file.", input.path.display())));
+            return Task::ready(Err(anyhow!("{} is not a directory.", input.path)));
         }
 
         let mut output = String::new();
@@ -92,7 +133,7 @@ impl Tool for ListDirectoryTool {
             .unwrap();
         }
         if output.is_empty() {
-            return Task::ready(Ok(format!("{} is empty.", input.path.display())));
+            return Task::ready(Ok(format!("{} is empty.", input.path)));
         }
         Task::ready(Ok(output))
     }

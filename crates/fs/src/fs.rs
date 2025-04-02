@@ -4,37 +4,25 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
-use anyhow::{anyhow, Context as _, Result};
-#[cfg(any(test, feature = "test-support"))]
-use collections::HashMap;
-#[cfg(any(test, feature = "test-support"))]
-use git::status::StatusCode;
-#[cfg(any(test, feature = "test-support"))]
-use git::status::TrackedStatus;
-#[cfg(any(test, feature = "test-support"))]
-use git::{repository::RepoPath, status::FileStatus};
-
+use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+use gpui::App;
+use gpui::BackgroundExecutor;
+use gpui::Global;
+use gpui::ReadGlobal as _;
 use std::borrow::Cow;
-#[cfg(any(test, feature = "test-support"))]
-use std::collections::HashSet;
-#[cfg(unix)]
-use std::os::fd::AsFd;
-#[cfg(unix)]
-use std::os::fd::AsRawFd;
 use util::command::new_std_command;
 
 #[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
+use std::os::fd::{AsFd, AsRawFd};
 
 #[cfg(unix)]
-use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
 use async_tar::Archive;
-use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
+use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
-use gpui::{App, Global, ReadGlobal};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
@@ -47,12 +35,18 @@ use std::{
 };
 use tempfile::{NamedTempFile, TempDir};
 use text::LineEnding;
-use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
-use collections::{btree_map, BTreeMap};
+mod fake_git_repo;
 #[cfg(any(test, feature = "test-support"))]
-use git::FakeGitRepositoryState;
+use collections::{BTreeMap, btree_map};
+#[cfg(any(test, feature = "test-support"))]
+use fake_git_repo::FakeGitRepositoryState;
+#[cfg(any(test, feature = "test-support"))]
+use git::{
+    repository::RepoPath,
+    status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
+};
 #[cfg(any(test, feature = "test-support"))]
 use parking_lot::Mutex;
 #[cfg(any(test, feature = "test-support"))]
@@ -247,9 +241,9 @@ impl From<MTime> for proto::Timestamp {
     }
 }
 
-#[derive(Default)]
 pub struct RealFs {
     git_binary_path: Option<PathBuf>,
+    executor: BackgroundExecutor,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -301,8 +295,11 @@ impl FileHandle for std::fs::File {
 pub struct RealWatcher {}
 
 impl RealFs {
-    pub fn new(git_binary_path: Option<PathBuf>) -> Self {
-        Self { git_binary_path }
+    pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
+        Self {
+            git_binary_path,
+            executor,
+        }
     }
 }
 
@@ -433,7 +430,7 @@ impl Fs for RealFs {
 
         unsafe {
             unsafe fn ns_string(string: &str) -> id {
-                NSString::alloc(nil).init_str(string).autorelease()
+                unsafe { NSString::alloc(nil).init_str(string).autorelease() }
             }
 
             let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
@@ -456,7 +453,12 @@ impl Fs for RealFs {
         let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
             Ok(_) => Ok(()),
-            Err(err) => Err(anyhow::Error::new(err)),
+            Err(err) => {
+                log::error!("Failed to trash file: {}", err);
+                // Trashing files can fail if you don't have a trashing dbus service configured.
+                // In that case, delete the file directly instead.
+                return self.remove_file(path, RemoveOptions::default()).await;
+            }
         }
     }
 
@@ -464,8 +466,8 @@ impl Fs for RealFs {
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
         use util::paths::SanitizedPath;
         use windows::{
-            core::HSTRING,
             Storage::{StorageDeleteOption, StorageFile},
+            core::HSTRING,
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
@@ -490,8 +492,8 @@ impl Fs for RealFs {
     async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
         use util::paths::SanitizedPath;
         use windows::{
-            core::HSTRING,
             Storage::{StorageDeleteOption, StorageFolder},
+            core::HSTRING,
         };
 
         // todo(windows)
@@ -589,7 +591,7 @@ impl Fs for RealFs {
                     (io::ErrorKind::NotFound, _) => Ok(None),
                     (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
                     _ => Err(anyhow::Error::new(err)),
-                }
+                };
             }
         };
 
@@ -708,7 +710,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use parking_lot::Mutex;
-        use util::paths::SanitizedPath;
+        use util::{ResultExt as _, paths::SanitizedPath};
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -758,14 +760,11 @@ impl Fs for RealFs {
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
-        // with libgit2, we can open git repo from an existing work dir
-        // https://libgit2.org/docs/reference/main/repository/git_repository_open.html
-        let workdir_root = dotgit_path.parent()?;
-        let repo = git2::Repository::open(workdir_root).log_err()?;
         Some(Arc::new(RealGitRepository::new(
-            repo,
+            dotgit_path,
             self.git_binary_path.clone(),
-        )))
+            self.executor.clone(),
+        )?))
     }
 
     fn git_init(&self, abs_work_directory_path: &Path, fallback_branch_name: String) -> Result<()> {
@@ -885,7 +884,7 @@ enum FakeFsEntry {
         mtime: MTime,
         len: u64,
         entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
-        git_repo_state: Option<Arc<Mutex<git::FakeGitRepositoryState>>>,
+        git_repo_state: Option<Arc<Mutex<FakeGitRepositoryState>>>,
     },
     Symlink {
         target: PathBuf,
@@ -1187,6 +1186,11 @@ impl FakeFs {
         self.state.lock().events_paused = true;
     }
 
+    pub fn unpause_events_and_flush(&self) {
+        self.state.lock().events_paused = false;
+        self.flush_events(usize::MAX);
+    }
+
     pub fn buffered_event_count(&self) -> usize {
         self.state.lock().buffered_events.len()
     }
@@ -1254,12 +1258,12 @@ impl FakeFs {
         .boxed()
     }
 
-    pub fn with_git_state<F>(&self, dot_git: &Path, emit_git_event: bool, f: F)
+    pub fn with_git_state<T, F>(&self, dot_git: &Path, emit_git_event: bool, f: F) -> Result<T>
     where
-        F: FnOnce(&mut FakeGitRepositoryState),
+        F: FnOnce(&mut FakeGitRepositoryState) -> T,
     {
         let mut state = self.state.lock();
-        let entry = state.read_path(dot_git).unwrap();
+        let entry = state.read_path(dot_git).context("open .git")?;
         let mut entry = entry.lock();
 
         if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
@@ -1271,13 +1275,15 @@ impl FakeFs {
             });
             let mut repo_state = repo_state.lock();
 
-            f(&mut repo_state);
+            let result = f(&mut repo_state);
 
             if emit_git_event {
                 state.emit_event([(dot_git, None)]);
             }
+
+            Ok(result)
         } else {
-            panic!("not a directory");
+            Err(anyhow!("not a directory"))
         }
     }
 
@@ -1287,6 +1293,7 @@ impl FakeFs {
             state.branches.extend(branch.clone());
             state.current_branch_name = branch
         })
+        .unwrap();
     }
 
     pub fn insert_branches(&self, dot_git: &Path, branches: &[&str]) {
@@ -1300,6 +1307,23 @@ impl FakeFs {
                 .branches
                 .extend(branches.iter().map(ToString::to_string));
         })
+        .unwrap();
+    }
+
+    pub fn set_unmerged_paths_for_repo(
+        &self,
+        dot_git: &Path,
+        unmerged_state: &[(RepoPath, UnmergedStatus)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.unmerged_paths.clear();
+            state.unmerged_paths.extend(
+                unmerged_state
+                    .iter()
+                    .map(|(path, content)| (path.clone(), *content)),
+            );
+        })
+        .unwrap();
     }
 
     pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(RepoPath, String)]) {
@@ -1310,7 +1334,8 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), content.clone())),
             );
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_head_for_repo(&self, dot_git: &Path, head_state: &[(RepoPath, String)]) {
@@ -1321,7 +1346,8 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), content.clone())),
             );
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_git_content_for_repo(
@@ -1345,130 +1371,121 @@ impl FakeFs {
                     )
                 },
             ));
-        });
-        self.recalculate_git_status(dot_git);
+        })
+        .unwrap();
     }
 
-    pub fn recalculate_git_status(&self, dot_git: &Path) {
-        let git_files: HashMap<_, _> = self
-            .files()
-            .iter()
-            .filter_map(|path| {
-                let repo_path =
-                    RepoPath::new(path.strip_prefix(dot_git.parent().unwrap()).ok()?.into());
-                let content = self
-                    .read_file_sync(path)
-                    .ok()
-                    .map(|content| String::from_utf8(content).unwrap());
-                Some((repo_path, content?))
-            })
-            .collect();
-        self.with_git_state(dot_git, false, |state| {
-            state.statuses.clear();
-            let mut paths: HashSet<_> = state.head_contents.keys().collect();
-            paths.extend(state.index_contents.keys());
-            paths.extend(git_files.keys());
-            for path in paths {
-                let head = state.head_contents.get(path);
-                let index = state.index_contents.get(path);
-                let fs = git_files.get(path);
-                let status = match (head, index, fs) {
-                    (Some(head), Some(index), Some(fs)) => FileStatus::Tracked(TrackedStatus {
-                        index_status: if head == index {
-                            StatusCode::Unmodified
-                        } else {
-                            StatusCode::Modified
-                        },
-                        worktree_status: if fs == index {
-                            StatusCode::Unmodified
-                        } else {
-                            StatusCode::Modified
-                        },
-                    }),
-                    (Some(head), Some(index), None) => FileStatus::Tracked(TrackedStatus {
-                        index_status: if head == index {
-                            StatusCode::Unmodified
-                        } else {
-                            StatusCode::Modified
-                        },
-                        worktree_status: StatusCode::Deleted,
-                    }),
-                    (Some(_), None, Some(_)) => FileStatus::Tracked(TrackedStatus {
-                        index_status: StatusCode::Deleted,
-                        worktree_status: StatusCode::Added,
-                    }),
-                    (Some(_), None, None) => FileStatus::Tracked(TrackedStatus {
-                        index_status: StatusCode::Deleted,
-                        worktree_status: StatusCode::Deleted,
-                    }),
-                    (None, Some(index), Some(fs)) => FileStatus::Tracked(TrackedStatus {
-                        index_status: StatusCode::Added,
-                        worktree_status: if fs == index {
-                            StatusCode::Unmodified
-                        } else {
-                            StatusCode::Modified
-                        },
-                    }),
-                    (None, Some(_), None) => FileStatus::Tracked(TrackedStatus {
-                        index_status: StatusCode::Added,
-                        worktree_status: StatusCode::Deleted,
-                    }),
-                    (None, None, Some(_)) => FileStatus::Untracked,
-                    (None, None, None) => {
-                        unreachable!();
-                    }
-                };
-                state.statuses.insert(path.clone(), status);
-            }
-        });
+    pub fn set_head_and_index_for_repo(
+        &self,
+        dot_git: &Path,
+        contents_by_path: &[(RepoPath, String)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.head_contents.clear();
+            state.index_contents.clear();
+            state.head_contents.extend(contents_by_path.iter().cloned());
+            state
+                .index_contents
+                .extend(contents_by_path.iter().cloned());
+        })
+        .unwrap();
     }
 
     pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(RepoPath, git::blame::Blame)>) {
         self.with_git_state(dot_git, true, |state| {
             state.blames.clear();
             state.blames.extend(blames);
-        });
+        })
+        .unwrap();
     }
 
-    pub fn set_status_for_repo_via_working_copy_change(
-        &self,
-        dot_git: &Path,
-        statuses: &[(&Path, FileStatus)],
-    ) {
-        self.with_git_state(dot_git, false, |state| {
-            state.statuses.clear();
-            state.statuses.extend(
-                statuses
-                    .iter()
-                    .map(|(path, content)| ((**path).into(), *content)),
-            );
-        });
-        self.state.lock().emit_event(
-            statuses
-                .iter()
-                .map(|(path, _)| (dot_git.parent().unwrap().join(path), None)),
-        );
-    }
-
-    pub fn set_status_for_repo_via_git_operation(
-        &self,
-        dot_git: &Path,
-        statuses: &[(&Path, FileStatus)],
-    ) {
+    /// Put the given git repository into a state with the given status,
+    /// by mutating the head, index, and unmerged state.
+    pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, FileStatus)]) {
+        let workdir_path = dot_git.parent().unwrap();
+        let workdir_contents = self.files_with_contents(&workdir_path);
         self.with_git_state(dot_git, true, |state| {
-            state.statuses.clear();
-            state.statuses.extend(
-                statuses
+            state.index_contents.clear();
+            state.head_contents.clear();
+            state.unmerged_paths.clear();
+            for (path, content) in workdir_contents {
+                let repo_path: RepoPath = path.strip_prefix(&workdir_path).unwrap().into();
+                let status = statuses
                     .iter()
-                    .map(|(path, content)| ((**path).into(), *content)),
-            );
-        });
+                    .find_map(|(p, status)| (**p == *repo_path.0).then_some(status));
+                let mut content = String::from_utf8_lossy(&content).to_string();
+
+                let mut index_content = None;
+                let mut head_content = None;
+                match status {
+                    None => {
+                        index_content = Some(content.clone());
+                        head_content = Some(content);
+                    }
+                    Some(FileStatus::Untracked | FileStatus::Ignored) => {}
+                    Some(FileStatus::Unmerged(unmerged_status)) => {
+                        state
+                            .unmerged_paths
+                            .insert(repo_path.clone(), *unmerged_status);
+                        content.push_str(" (unmerged)");
+                        index_content = Some(content.clone());
+                        head_content = Some(content);
+                    }
+                    Some(FileStatus::Tracked(TrackedStatus {
+                        index_status,
+                        worktree_status,
+                    })) => {
+                        match worktree_status {
+                            StatusCode::Modified => {
+                                let mut content = content.clone();
+                                content.push_str(" (modified in working copy)");
+                                index_content = Some(content);
+                            }
+                            StatusCode::TypeChanged | StatusCode::Unmodified => {
+                                index_content = Some(content.clone());
+                            }
+                            StatusCode::Added => {}
+                            StatusCode::Deleted | StatusCode::Renamed | StatusCode::Copied => {
+                                panic!("cannot create these statuses for an existing file");
+                            }
+                        };
+                        match index_status {
+                            StatusCode::Modified => {
+                                let mut content = index_content.clone().expect(
+                                    "file cannot be both modified in index and created in working copy",
+                                );
+                                content.push_str(" (modified in index)");
+                                head_content = Some(content);
+                            }
+                            StatusCode::TypeChanged | StatusCode::Unmodified => {
+                                head_content = Some(index_content.clone().expect("file cannot be both unmodified in index and created in working copy"));
+                            }
+                            StatusCode::Added => {}
+                            StatusCode::Deleted  => {
+                                head_content = Some("".into());
+                            }
+                            StatusCode::Renamed | StatusCode::Copied => {
+                                panic!("cannot create these statuses for an existing file");
+                            }
+                        };
+                    }
+                };
+
+                if let Some(content) = index_content {
+                    state.index_contents.insert(repo_path.clone(), content);
+                }
+                if let Some(content) = head_content {
+                    state.head_contents.insert(repo_path.clone(), content);
+                }
+            }
+        }).unwrap();
     }
 
     pub fn set_error_message_for_index_write(&self, dot_git: &Path, message: Option<String>) {
         self.with_git_state(dot_git, true, |state| {
             state.simulated_index_write_error_message = message;
-        });
+        })
+        .unwrap();
     }
 
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
@@ -1530,6 +1547,32 @@ impl FakeFs {
             let e = entry.lock();
             match &*e {
                 FakeFsEntry::File { .. } => result.push(path),
+                FakeFsEntry::Dir { entries, .. } => {
+                    for (name, entry) in entries {
+                        queue.push_back((path.join(name), entry.clone()));
+                    }
+                }
+                FakeFsEntry::Symlink { .. } => {}
+            }
+        }
+        result
+    }
+
+    pub fn files_with_contents(&self, prefix: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut result = Vec::new();
+        let mut queue = collections::VecDeque::new();
+        queue.push_back((
+            PathBuf::from(util::path!("/")),
+            self.state.lock().root.clone(),
+        ));
+        while let Some((path, entry)) = queue.pop_front() {
+            let e = entry.lock();
+            match &*e {
+                FakeFsEntry::File { content, .. } => {
+                    if path.starts_with(prefix) {
+                        result.push((path, content.clone()));
+                    }
+                }
                 FakeFsEntry::Dir { entries, .. } => {
                     for (name, entry) in entries {
                         queue.push_back((path.join(name), entry.clone()));
@@ -2087,15 +2130,17 @@ impl Fs for FakeFs {
         let entry = state.read_path(abs_dot_git).unwrap();
         let mut entry = entry.lock();
         if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
-            let state = git_repo_state
-                .get_or_insert_with(|| {
-                    Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                        abs_dot_git.to_path_buf(),
-                        state.git_event_tx.clone(),
-                    )))
-                })
-                .clone();
-            Some(git::FakeGitRepository::open(state))
+            git_repo_state.get_or_insert_with(|| {
+                Arc::new(Mutex::new(FakeGitRepositoryState::new(
+                    abs_dot_git.to_path_buf(),
+                    state.git_event_tx.clone(),
+                )))
+            });
+            Some(Arc::new(fake_git_repo::FakeGitRepository {
+                fs: self.this.upgrade().unwrap(),
+                executor: self.executor.clone(),
+                dot_git_path: abs_dot_git.to_path_buf(),
+            }))
         } else {
             None
         }
@@ -2255,7 +2300,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     use windows::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+            BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, GetFileInformationByHandle,
         },
     };
 

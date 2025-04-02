@@ -1,9 +1,9 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use client::{Client, TelemetrySettings};
-use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
+use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window,
+    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -252,9 +252,9 @@ impl AutoUpdater {
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             loop {
-                this.update(&mut cx, |this, cx| this.poll(cx))?;
+                this.update(cx, |this, cx| this.poll(cx))?;
                 cx.background_executor().timer(POLL_INTERVAL).await;
             }
         })
@@ -267,9 +267,9 @@ impl AutoUpdater {
 
         cx.notify();
 
-        self.pending_poll = Some(cx.spawn(|this, mut cx| async move {
+        self.pending_poll = Some(cx.spawn(async move |this, cx| {
             let result = Self::update(this.upgrade()?, cx.clone()).await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.pending_poll = None;
                 if let Err(error) = result {
                     log::error!("auto-update failed: error:{:?}", error);

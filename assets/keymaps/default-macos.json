@@ -14,6 +14,13 @@
   {
     "use_key_equivalents": true,
     "bindings": {
+      "f4": "debugger::Start",
+      "f5": "debugger::Continue",
+      "shift-f5": "debugger::Stop",
+      "f6": "debugger::Pause",
+      "f7": "debugger::StepOver",
+      "f11": "debugger::StepInto",
+      "shift-f11": "debugger::StepOut",
       "home": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
       "pageup": "menu::SelectFirst",
@@ -140,14 +147,12 @@
       "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
-      "cmd-alt-z": "git::Restore",
-      "cmd-alt-y": "git::ToggleStaged",
-      "cmd-y": "git::StageAndNext",
-      "cmd-shift-y": "git::UnstageAndNext",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "editor::ToggleGitBlame",
       "cmd-i": "editor::ShowSignatureHelp",
+      "f9": "editor::ToggleBreakpoint",
+      "shift-f9": "editor::EditLogBreakpoint",
       "ctrl-f12": "editor::GoToDeclaration",
       "alt-ctrl-f12": "editor::GoToDeclarationSplit",
       "ctrl-cmd-e": "editor::ToggleEditPrediction"
@@ -223,6 +228,24 @@
     }
   },
   {
+    "context": "Editor && !agent_diff",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-alt-z": "git::Restore",
+      "cmd-alt-y": "git::ToggleStaged",
+      "cmd-y": "git::StageAndNext",
+      "cmd-shift-y": "git::UnstageAndNext"
+    }
+  },
+  {
+    "context": "AgentDiff",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-y": "agent::Keep",
+      "cmd-alt-z": "agent::Reject"
+    }
+  },
+  {
     "context": "AssistantPanel",
     "use_key_equivalents": true,
     "bindings": {
@@ -232,7 +255,7 @@
       "cmd-shift-g": "search::SelectPreviousMatch",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
-      "cmd-k l": "assistant::DeployPromptLibrary",
+      "cmd-k l": "assistant::OpenPromptLibrary",
       "cmd-t": "assistant::NewChat",
       "cmd-n": "assistant::NewChat"
     }
@@ -254,31 +277,35 @@
     }
   },
   {
-    "context": "AssistantPanel2",
+    "context": "AgentPanel",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "assistant2::NewThread",
-      "cmd-alt-p": "assistant2::NewPromptEditor",
-      "cmd-shift-h": "assistant2::OpenHistory",
+      "cmd-n": "agent::NewThread",
+      "cmd-alt-n": "agent::NewPromptEditor",
+      "cmd-shift-h": "agent::OpenHistory",
+      "cmd-alt-c": "agent::OpenConfiguration",
+      "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
-      "cmd-shift-a": "assistant2::ToggleContextPicker",
-      "cmd-e": "assistant2::ChatMode",
-      "cmd-alt-e": "assistant2::RemoveAllContext"
+      "cmd-shift-a": "agent::ToggleContextPicker",
+      "cmd-e": "agent::ChatMode",
+      "cmd-alt-e": "agent::RemoveAllContext"
     }
   },
   {
-    "context": "AssistantPanel2 && prompt_editor",
+    "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "assistant2::NewPromptEditor",
-      "cmd-alt-t": "assistant2::NewThread"
+      "cmd-n": "agent::NewPromptEditor",
+      "cmd-alt-t": "agent::NewThread"
     }
   },
   {
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "enter": "assistant2::Chat"
+      "enter": "agent::Chat",
+      "cmd-i": "agent::ToggleProfileSelector",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
     }
   },
   {
@@ -294,18 +321,18 @@
     "context": "ContextStrip",
     "use_key_equivalents": true,
     "bindings": {
-      "up": "assistant2::FocusUp",
-      "right": "assistant2::FocusRight",
-      "left": "assistant2::FocusLeft",
-      "down": "assistant2::FocusDown",
-      "backspace": "assistant2::RemoveFocusedContext",
-      "enter": "assistant2::AcceptSuggestedContext"
+      "up": "agent::FocusUp",
+      "right": "agent::FocusRight",
+      "left": "agent::FocusLeft",
+      "down": "agent::FocusDown",
+      "backspace": "agent::RemoveFocusedContext",
+      "enter": "agent::AcceptSuggestedContext"
     }
   },
   {
     "context": "ThreadHistory",
     "bindings": {
-      "backspace": "assistant2::RemoveSelectedThread"
+      "backspace": "agent::RemoveSelectedThread"
     }
   },
   {
@@ -678,22 +705,24 @@
     }
   },
   {
-    "context": "ProposedChangesEditor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-shift-y": "editor::ApplyDiffHunk",
-      "cmd-shift-a": "editor::ApplyAllDiffHunks"
-    }
-  },
-  {
     "context": "PromptEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-alt-/": "assistant::ToggleModelSelector",
-      "cmd-alt-e": "assistant2::RemoveAllContext",
+      "cmd-alt-e": "agent::RemoveAllContext",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist"
+    }
+  },
+  {
+    "context": "Prompt",
+    "use_key_equivalents": true,
+    "bindings": {
+      "left": "menu::SelectPrevious",
+      "right": "menu::SelectNext",
+      "h": "menu::SelectPrevious",
+      "l": "menu::SelectNext"
     }
   },
   {
@@ -757,6 +786,14 @@
     }
   },
   {
+    "context": "VariableList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "left": "variable_list::CollapseSelectedEntry",
+      "right": "variable_list::ExpandSelectedEntry"
+    }
+  },
+  {
     "context": "GitPanel && ChangesList",
     "use_key_equivalents": true,
     "bindings": {
@@ -774,7 +811,10 @@
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "cmd-enter": "git::Commit",
-      "backspace": "git::RestoreFile"
+      "backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "cmd-backspace": ["git::RestoreFile", { "skip_prompt": true }],
+      "cmd-delete": ["git::RestoreFile", { "skip_prompt": true }]
     }
   },
   {

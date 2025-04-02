@@ -13,14 +13,15 @@ name = "assistant_eval"
 path = "src/main.rs"
 
 [dependencies]
+agent.workspace = true
 anyhow.workspace = true
-assistant2.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
 clap.workspace = true
 client.workspace = true
 collections.workspace = true
 context_server.workspace = true
+dap.workspace = true
 env_logger.workspace = true
 fs.workspace = true
 futures.workspace = true

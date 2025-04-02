@@ -3,13 +3,14 @@ use std::any::Any;
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
+mod blame_ui;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{actions, App, FocusHandle};
-use onboarding::{clear_dismissed, GitOnboardingModal};
+use gpui::{App, FocusHandle, actions};
+use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -17,6 +18,8 @@ use workspace::Workspace;
 mod askpass_modal;
 pub mod branch_picker;
 mod commit_modal;
+pub mod commit_tooltip;
+mod commit_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
@@ -29,6 +32,8 @@ actions!(git, [ResetOnboarding]);
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
+
+    editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
         ProjectDiff::register(workspace, cx);
@@ -103,7 +108,7 @@ pub fn init(cx: &mut App) {
             },
         );
         workspace.register_action(move |_, _: &ResetOnboarding, window, cx| {
-            clear_dismissed(cx);
+            cx.dispatch_action(&workspace::RestoreBanner);
             window.refresh();
         });
         workspace.register_action(|workspace, _action: &git::Init, window, cx| {
@@ -163,19 +168,18 @@ fn render_remote_button(
 }
 
 mod remote_button {
-    use gpui::{hsla, point, Action, AnyView, BoxShadow, ClickEvent, Corner, FocusHandle};
+    use gpui::{Action, AnyView, ClickEvent, Corner, FocusHandle};
     use ui::{
-        div, h_flex, px, rems, ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, Clickable,
-        ContextMenu, ElementId, ElevationIndex, FluentBuilder, Icon, IconName, IconSize,
-        IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement, PopoverMenu,
-        RenderOnce, SharedString, Styled, Tooltip, Window,
+        App, ButtonCommon, Clickable, ContextMenu, ElementId, FluentBuilder, Icon, IconName,
+        IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement,
+        PopoverMenu, SharedString, SplitButton, Styled, Tooltip, Window, div, h_flex, rems,
     };
 
     pub fn render_fetch_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
     ) -> SplitButton {
-        SplitButton::new(
+        split_button(
             id,
             "Fetch",
             0,
@@ -203,7 +207,7 @@ mod remote_button {
         id: SharedString,
         ahead: u32,
     ) -> SplitButton {
-        SplitButton::new(
+        split_button(
             id,
             "Push",
             ahead as usize,
@@ -232,7 +236,7 @@ mod remote_button {
         ahead: u32,
         behind: u32,
     ) -> SplitButton {
-        SplitButton::new(
+        split_button(
             id,
             "Pull",
             ahead as usize,
@@ -259,7 +263,7 @@ mod remote_button {
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
     ) -> SplitButton {
-        SplitButton::new(
+        split_button(
             id,
             "Publish",
             0,
@@ -286,7 +290,7 @@ mod remote_button {
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
     ) -> SplitButton {
-        SplitButton::new(
+        split_button(
             id,
             "Republish",
             0,
@@ -364,111 +368,76 @@ mod remote_button {
             })
             .anchor(Corner::TopRight)
     }
-
-    #[derive(IntoElement)]
-    pub struct SplitButton {
-        pub left: ButtonLike,
-        pub right: AnyElement,
-    }
-
-    impl SplitButton {
-        #[allow(clippy::too_many_arguments)]
-        fn new(
-            id: impl Into<SharedString>,
-            left_label: impl Into<SharedString>,
-            ahead_count: usize,
-            behind_count: usize,
-            left_icon: Option<IconName>,
-            keybinding_target: Option<FocusHandle>,
-            left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-            tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
-        ) -> Self {
-            let id = id.into();
-
-            fn count(count: usize) -> impl IntoElement {
-                h_flex()
-                    .ml_neg_px()
-                    .h(rems(0.875))
-                    .items_center()
-                    .overflow_hidden()
-                    .px_0p5()
-                    .child(
-                        Label::new(count.to_string())
-                            .size(LabelSize::XSmall)
-                            .line_height_style(LineHeightStyle::UiLabel),
-                    )
-            }
-
-            let should_render_counts = left_icon.is_none() && (ahead_count > 0 || behind_count > 0);
-
-            let left = ui::ButtonLike::new_rounded_left(ElementId::Name(
-                format!("split-button-left-{}", id).into(),
-            ))
-            .layer(ui::ElevationIndex::ModalSurface)
-            .size(ui::ButtonSize::Compact)
-            .when(should_render_counts, |this| {
-                this.child(
-                    h_flex()
-                        .ml_neg_0p5()
-                        .mr_1()
-                        .when(behind_count > 0, |this| {
-                            this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
-                                .child(count(behind_count))
-                        })
-                        .when(ahead_count > 0, |this| {
-                            this.child(Icon::new(IconName::ArrowUp).size(IconSize::XSmall))
-                                .child(count(ahead_count))
-                        }),
-                )
-            })
-            .when_some(left_icon, |this, left_icon| {
-                this.child(
-                    h_flex()
-                        .ml_neg_0p5()
-                        .mr_1()
-                        .child(Icon::new(left_icon).size(IconSize::XSmall)),
-                )
-            })
-            .child(
-                div()
-                    .child(Label::new(left_label).size(LabelSize::Small))
-                    .mr_0p5(),
-            )
-            .on_click(left_on_click)
-            .tooltip(tooltip);
-
-            let right = render_git_action_menu(
-                ElementId::Name(format!("split-button-right-{}", id).into()),
-                keybinding_target,
-            )
-            .into_any_element();
-
-            Self { left, right }
-        }
-    }
-
-    impl RenderOnce for SplitButton {
-        fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    #[allow(clippy::too_many_arguments)]
+    fn split_button(
+        id: SharedString,
+        left_label: impl Into<SharedString>,
+        ahead_count: usize,
+        behind_count: usize,
+        left_icon: Option<IconName>,
+        keybinding_target: Option<FocusHandle>,
+        left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> SplitButton {
+        fn count(count: usize) -> impl IntoElement {
             h_flex()
-                .rounded_sm()
-                .border_1()
-                .border_color(cx.theme().colors().text_muted.alpha(0.12))
-                .child(div().flex_grow().child(self.left))
+                .ml_neg_px()
+                .h(rems(0.875))
+                .items_center()
+                .overflow_hidden()
+                .px_0p5()
                 .child(
-                    div()
-                        .h_full()
-                        .w_px()
-                        .bg(cx.theme().colors().text_muted.alpha(0.16)),
+                    Label::new(count.to_string())
+                        .size(LabelSize::XSmall)
+                        .line_height_style(LineHeightStyle::UiLabel),
                 )
-                .child(self.right)
-                .bg(ElevationIndex::Surface.on_elevation_bg(cx))
-                .shadow(smallvec::smallvec![BoxShadow {
-                    color: hsla(0.0, 0.0, 0.0, 0.16),
-                    offset: point(px(0.), px(1.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(0.),
-                }])
         }
+
+        let should_render_counts = left_icon.is_none() && (ahead_count > 0 || behind_count > 0);
+
+        let left = ui::ButtonLike::new_rounded_left(ElementId::Name(
+            format!("split-button-left-{}", id).into(),
+        ))
+        .layer(ui::ElevationIndex::ModalSurface)
+        .size(ui::ButtonSize::Compact)
+        .when(should_render_counts, |this| {
+            this.child(
+                h_flex()
+                    .ml_neg_0p5()
+                    .mr_1()
+                    .when(behind_count > 0, |this| {
+                        this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
+                            .child(count(behind_count))
+                    })
+                    .when(ahead_count > 0, |this| {
+                        this.child(Icon::new(IconName::ArrowUp).size(IconSize::XSmall))
+                            .child(count(ahead_count))
+                    }),
+            )
+        })
+        .when_some(left_icon, |this, left_icon| {
+            this.child(
+                h_flex()
+                    .ml_neg_0p5()
+                    .mr_1()
+                    .child(Icon::new(left_icon).size(IconSize::XSmall)),
+            )
+        })
+        .child(
+            div()
+                .child(Label::new(left_label).size(LabelSize::Small))
+                .mr_0p5(),
+        )
+        .on_click(left_on_click)
+        .tooltip(tooltip);
+
+        let right = render_git_action_menu(
+            ElementId::Name(format!("split-button-right-{}", id).into()),
+            keybinding_target,
+        )
+        .into_any_element();
+
+        SplitButton { left, right }
     }
 }
 

@@ -1,9 +1,9 @@
 use crate::{
-    point, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle,
-    FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
-    ShapedGlyph, SharedString, Size, SUBPIXEL_VARIANTS,
+    Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
+    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
+    ShapedGlyph, SharedString, Size, point, size,
 };
-use anyhow::{anyhow, Context as _, Ok, Result};
+use anyhow::{Context as _, Ok, Result, anyhow};
 use collections::HashMap;
 use cosmic_text::{
     Attrs, AttrsList, CacheKey, Family, Font as CosmicTextFont, FontSystem, ShapeBuffer, ShapeLine,
@@ -376,15 +376,13 @@ impl CosmicTextSystemState {
             );
             offs += run.len;
         }
-        let mut line = ShapeLine::new_in_buffer(
-            &mut self.scratch,
+        let mut line = ShapeLine::new(
             &mut self.font_system,
             text,
             &attrs_list,
             cosmic_text::Shaping::Advanced,
             4,
         );
-
         let mut layout = Vec::with_capacity(1);
         line.layout_to_buffer(
             &mut self.scratch,

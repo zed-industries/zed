@@ -1,13 +1,17 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use itertools::Itertools;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
@@ -26,22 +30,47 @@ pub struct ReadFileToolInput {
     /// If you wanna access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
     /// </example>
     pub path: Arc<Path>,
+
+    /// Optional line number to start reading on (1-based index)
+    #[serde(default)]
+    pub start_line: Option<usize>,
+
+    /// Optional line number to end reading on (1-based index)
+    #[serde(default)]
+    pub end_line: Option<usize>,
 }
 
 pub struct ReadFileTool;
 
 impl Tool for ReadFileTool {
     fn name(&self) -> String {
-        "read-file".into()
+        "read_file".into()
+    }
+
+    fn needs_confirmation(&self) -> bool {
+        false
     }
 
     fn description(&self) -> String {
         include_str!("./read_file_tool/description.md").into()
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(ReadFileToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn icon(&self) -> IconName {
+        IconName::FileSearch
+    }
+
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<ReadFileToolInput>(format)
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
+            Ok(input) => {
+                let path = MarkdownString::inline_code(&input.path.display().to_string());
+                format!("Read file {path}")
+            }
+            Err(_) => "Read file".to_string(),
+        }
     }
 
     fn run(
@@ -58,28 +87,36 @@ impl Tool for ReadFileTool {
         };
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path not found in project")));
+            return Task::ready(Err(anyhow!(
+                "Path {} not found in project",
+                &input.path.display()
+            )));
         };
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
                 })?
                 .await?;
 
-            let result = buffer.read_with(&cx, |buffer, _cx| {
-                if buffer
-                    .file()
-                    .map_or(false, |file| file.disk_state().exists())
-                {
-                    Ok(buffer.text())
+            let result = buffer.read_with(cx, |buffer, _cx| {
+                let text = buffer.text();
+                if input.start_line.is_some() || input.end_line.is_some() {
+                    let start = input.start_line.unwrap_or(1);
+                    let lines = text.split('\n').skip(start - 1);
+                    if let Some(end) = input.end_line {
+                        let count = end.saturating_sub(start);
+                        Itertools::intersperse(lines.take(count), "\n").collect()
+                    } else {
+                        Itertools::intersperse(lines, "\n").collect()
+                    }
                 } else {
-                    Err(anyhow!("File does not exist"))
+                    text
                 }
-            })??;
+            })?;
 
-            action_log.update(&mut cx, |log, cx| {
+            action_log.update(cx, |log, cx| {
                 log.buffer_read(buffer, cx);
             })?;
 

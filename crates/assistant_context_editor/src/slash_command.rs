@@ -2,20 +2,20 @@ use crate::context_editor::ContextEditor;
 use anyhow::Result;
 pub use assistant_slash_command::SlashCommand;
 use assistant_slash_command::{AfterCompletion, SlashCommandLine, SlashCommandWorkingSet};
-use editor::{CompletionProvider, Editor};
-use fuzzy::{match_strings, StringMatchCandidate};
+use editor::{CompletionProvider, Editor, ExcerptId};
+use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity, Window};
 use language::{Anchor, Buffer, ToPoint};
 use parking_lot::Mutex;
-use project::{lsp_store::CompletionDocumentation, CompletionIntent, CompletionSource};
+use project::{CompletionIntent, CompletionSource, lsp_store::CompletionDocumentation};
 use rope::Point;
 use std::{
     cell::RefCell,
     ops::Range,
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
 };
 use workspace::Workspace;
@@ -59,7 +59,7 @@ impl SlashCommandCompletionProvider {
         let command_name = command_name.to_string();
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let matches = match_strings(
                 &candidates,
                 &command_name,
@@ -126,6 +126,7 @@ impl SlashCommandCompletionProvider {
                                 )),
                                 new_text,
                                 label: command.label(cx),
+                                icon_path: None,
                                 confirm,
                                 source: CompletionSource::Custom,
                             })
@@ -223,6 +224,7 @@ impl SlashCommandCompletionProvider {
                                     last_argument_range.clone()
                                 },
                                 label: new_argument.label,
+                                icon_path: None,
                                 new_text,
                                 documentation: None,
                                 confirm,
@@ -241,6 +243,7 @@ impl SlashCommandCompletionProvider {
 impl CompletionProvider for SlashCommandCompletionProvider {
     fn completions(
         &self,
+        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _: editor::CompletionContext,

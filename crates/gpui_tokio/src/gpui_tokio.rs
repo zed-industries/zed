@@ -32,7 +32,7 @@ pub struct Tokio {}
 impl Tokio {
     /// Spawns the given future on Tokio's thread pool, and returns it via a GPUI task
     /// Note that the Tokio task will be cancelled if the GPUI task is dropped
-    pub fn spawn<C, Fut, R>(cx: &mut C, f: Fut) -> C::Result<Task<Result<R, JoinError>>>
+    pub fn spawn<C, Fut, R>(cx: &C, f: Fut) -> C::Result<Task<Result<R, JoinError>>>
     where
         C: AppContext,
         Fut: Future<Output = R> + Send + 'static,
@@ -52,7 +52,7 @@ impl Tokio {
         })
     }
 
-    pub fn handle(cx: &mut App) -> tokio::runtime::Handle {
+    pub fn handle(cx: &App) -> tokio::runtime::Handle {
         GlobalTokio::global(cx).runtime.handle().clone()
     }
 }

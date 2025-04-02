@@ -1,18 +1,18 @@
 use editor::Editor;
-use gpui::{actions, impl_actions, impl_internal_actions, Context, Window};
+use gpui::{Context, Window, actions, impl_actions, impl_internal_actions};
 use language::Point;
 use schemars::JsonSchema;
-use search::{buffer_search, BufferSearchBar, SearchOptions};
+use search::{BufferSearchBar, SearchOptions, buffer_search};
 use serde_derive::Deserialize;
 use std::{iter::Peekable, str::Chars, time::Duration};
 use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
+    Vim,
     command::CommandRange,
     motion::Motion,
     state::{Mode, SearchState},
-    Vim,
 };
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
@@ -341,9 +341,9 @@ impl Vim {
             let Some(search) = search else { return false };
 
             let search_bar = search_bar.downgrade();
-            cx.spawn_in(window, |_, mut cx| async move {
+            cx.spawn_in(window, async move |_, cx| {
                 search.await?;
-                search_bar.update_in(&mut cx, |search_bar, window, cx| {
+                search_bar.update_in(cx, |search_bar, window, cx| {
                     search_bar.select_match(direction, count, window, cx);
 
                     vim.update(cx, |vim, cx| {
@@ -404,9 +404,9 @@ impl Vim {
                 } else {
                     Direction::Next
                 };
-                cx.spawn_in(window, |_, mut cx| async move {
+                cx.spawn_in(window, async move |_, cx| {
                     search.await?;
-                    search_bar.update_in(&mut cx, |search_bar, window, cx| {
+                    search_bar.update_in(cx, |search_bar, window, cx| {
                         search_bar.select_match(direction, 1, window, cx)
                     })?;
                     anyhow::Ok(())
@@ -473,18 +473,18 @@ impl Vim {
             });
             let Some(search) = search else { return };
             let search_bar = search_bar.downgrade();
-            cx.spawn_in(window, |_, mut cx| async move {
+            cx.spawn_in(window, async move |_, cx| {
                 search.await?;
-                search_bar.update_in(&mut cx, |search_bar, window, cx| {
+                search_bar.update_in(cx, |search_bar, window, cx| {
                     if replacement.should_replace_all {
                         search_bar.select_last_match(window, cx);
                         search_bar.replace_all(&Default::default(), window, cx);
-                        cx.spawn(|_, mut cx| async move {
+                        cx.spawn(async move |_, cx| {
                             cx.background_executor()
                                 .timer(Duration::from_millis(200))
                                 .await;
                             editor
-                                .update(&mut cx, |editor, cx| editor.clear_search_within_ranges(cx))
+                                .update(cx, |editor, cx| editor.clear_search_within_ranges(cx))
                                 .ok();
                         })
                         .detach();
@@ -590,7 +590,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::EditorSettings;
-    use editor::{display_map::DisplayRow, DisplayPoint};
+    use editor::{DisplayPoint, display_map::DisplayRow};
 
     use indoc::indoc;
     use search::BufferSearchBar;
@@ -783,6 +783,7 @@ mod test {
     async fn test_non_vim_search(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, false).await;
         cx.cx.set_state("ˇone one one one");
+        cx.run_until_parked();
         cx.simulate_keystrokes("cmd-f");
         cx.run_until_parked();
 

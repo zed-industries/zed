@@ -8,15 +8,16 @@ use collab_ui::{
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    point, AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString,
-    TestAppContext, VisualTestContext,
+    AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString, TestAppContext,
+    VisualTestContext, point,
 };
 use language::Capability;
 use project::WorktreeSettings;
 use rpc::proto::PeerId;
 use serde_json::json;
 use settings::SettingsStore;
-use workspace::{item::ItemHandle as _, SplitDirection, Workspace};
+use util::path;
+use workspace::{SplitDirection, Workspace, item::ItemHandle as _};
 
 use super::TestClient;
 
@@ -50,7 +51,7 @@ async fn test_basic_following(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "1.txt": "one\none\none",
                 "2.txt": "two\ntwo\ntwo",
@@ -58,7 +59,7 @@ async fn test_basic_following(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
@@ -294,22 +295,8 @@ async fn test_basic_following(
                 .unwrap()
         });
         let mut result = MultiBuffer::new(Capability::ReadWrite);
-        result.push_excerpts(
-            buffer_a1,
-            [ExcerptRange {
-                context: 0..3,
-                primary: None,
-            }],
-            cx,
-        );
-        result.push_excerpts(
-            buffer_a2,
-            [ExcerptRange {
-                context: 4..7,
-                primary: None,
-            }],
-            cx,
-        );
+        result.push_excerpts(buffer_a1, [ExcerptRange::new(0..3)], cx);
+        result.push_excerpts(buffer_a2, [ExcerptRange::new(4..7)], cx);
         result
     });
     let multibuffer_editor_a = workspace_a.update_in(cx_a, |workspace, window, cx| {
@@ -435,13 +422,12 @@ async fn test_basic_following(
         editor_a1.item_id()
     );
 
-    // TODO: Re-enable this test once we can replace our swift Livekit SDK with the rust SDK
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         use crate::rpc::RECONNECT_TIMEOUT;
         use gpui::TestScreenCaptureSource;
         use workspace::{
-            dock::{test::TestPanel, DockPosition},
+            dock::{DockPosition, test::TestPanel},
             item::test::TestItem,
             shared_screen::SharedScreen,
         };
@@ -460,8 +446,9 @@ async fn test_basic_following(
                     .update(cx, |room, cx| room.share_screen(cx))
             })
             .await
-            .unwrap(); // This is what breaks
+            .unwrap();
         executor.run_until_parked();
+
         let shared_screen = workspace_a.update(cx_a, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -570,7 +557,7 @@ async fn test_following_tab_order(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "1.txt": "one",
                 "2.txt": "two",
@@ -578,7 +565,7 @@ async fn test_following_tab_order(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
@@ -1220,7 +1207,7 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "1.txt": "one",
                 "2.txt": "two",
@@ -1228,7 +1215,7 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
@@ -1435,7 +1422,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "w.rs": "",
                 "x.rs": "",
@@ -1446,7 +1433,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     client_b
         .fs()
         .insert_tree(
-            "/b",
+            path!("/b"),
             json!({
                 "y.rs": "",
                 "z.rs": "",
@@ -1460,8 +1447,8 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
 
-    let (project_a, worktree_id_a) = client_a.build_local_project("/a", cx_a).await;
-    let (project_b, worktree_id_b) = client_b.build_local_project("/b", cx_b).await;
+    let (project_a, worktree_id_a) = client_a.build_local_project(path!("/a"), cx_a).await;
+    let (project_b, worktree_id_b) = client_b.build_local_project(path!("/b"), cx_b).await;
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
@@ -1718,7 +1705,7 @@ async fn test_following_into_excluded_file(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 ".git": {
                     "COMMIT_EDITMSG": "write your commit message here",
@@ -1729,7 +1716,7 @@ async fn test_following_into_excluded_file(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
