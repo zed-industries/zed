@@ -1376,15 +1376,6 @@ impl Thread {
                         cx,
                     );
                 }
-            } else if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                self.run_tool(
-                    tool_use.id.clone(),
-                    tool_use.ui_text.clone(),
-                    tool_use.input.clone(),
-                    &messages,
-                    tool,
-                    cx,
-                );
             }
         }
 
