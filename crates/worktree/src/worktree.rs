@@ -3071,7 +3071,7 @@ impl BackgroundScannerState {
         log::info!("initializing git repo for {dot_git_abs_path:?}");
 
         let mut dot_git_worktree_abs_path = None;
-        let mut actual_dot_git_dir_abs_path = dot_git_abs_path.as_path().into();
+        let mut actual_dot_git_dir_abs_path = Arc::from(dot_git_abs_path.as_path());
         // For git submodules and worktrees, .git may be a regular file in a special format that points
         // to a subdirectory of an original or parent .git directory, e.g. `../../.git/modules/foo`.
         // In that case we want to make sure to watch this parent .git directory as well.
@@ -3104,6 +3104,8 @@ impl BackgroundScannerState {
             } else {
                 log::error!("failed to parse contents of .git file: {dot_git_contents:?}");
             }
+        } else {
+            watcher.add(&actual_dot_git_dir_abs_path).log_err();
         };
 
         let work_directory_id = work_dir_entry.id;
