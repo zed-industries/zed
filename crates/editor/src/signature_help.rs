@@ -328,14 +328,14 @@ impl SignatureHelpPopover {
         let label = signature
             .label
             .clone()
-            .when(signature.label.is_empty(), |_| "<No Parameter>".into());
+            .when(signature.label.is_empty(), |_| "<No Parameters>".into());
         let signature_count = self.signature.len();
         let signature_label = div()
             .id("signature_help_popover")
             .child(
                 div().px_2().py_0p5().child(
-                    StyledText::new(self.label.clone())
-                        .with_default_highlights(&self.style, self.highlights.iter().cloned()),
+                    StyledText::new(label)
+                        .with_default_highlights(&self.style, signature.highlights.iter().cloned()),
                 ),
             )
             .into_any_element();
