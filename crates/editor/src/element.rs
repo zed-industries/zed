@@ -1383,9 +1383,9 @@ impl EditorElement {
     fn layout_scrollbars(
         &self,
         snapshot: &EditorSnapshot,
-        scrollbar_layout_information: ScrollbarLayoutInformation,
+        scrollbar_layout_information: &ScrollbarLayoutInformation,
         content_offset: gpui::Point<Pixels>,
-        scroll_position: gpui::Point<f32>,
+        scroll_position: &gpui::Point<f32>,
         non_visible_cursors: bool,
         minimap_width: Pixels,
         window: &mut Window,
@@ -1437,7 +1437,7 @@ impl EditorElement {
 
         Some(EditorScrollbars::from_scrollbar_axes(
             scrollbar_settings.axes,
-            &scrollbar_layout_information,
+            scrollbar_layout_information,
             content_offset,
             scroll_position,
             self.style.scrollbar_width,
@@ -1449,32 +1449,40 @@ impl EditorElement {
 
     fn layout_minimap(
         &self,
-        window: &mut Window,
-        cx: &mut App,
         snapshot: &EditorSnapshot,
-        num_lines: f32,
         minimap_width: Pixels,
         minimap_wrap_width: Pixels,
         minimap_settings: &Minimap,
-        bounds: Bounds<Pixels>,
+        scroll_position: gpui::Point<f32>,
+        scrollbar_layout_information: ScrollbarLayoutInformation,
         scrollbars_layout: Option<&EditorScrollbars>,
-        line_height: Pixels,
-        visible_range: Range<DisplayRow>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Option<MinimapLayout> {
         if !Self::should_show_minimap(snapshot, minimap_settings, scrollbars_layout) {
             return None;
         }
+        const MINIMAP_AXIS: ScrollbarAxis = ScrollbarAxis::Vertical;
+
+        let ScrollbarLayoutInformation {
+            editor_bounds,
+            scroll_range,
+            glyph_grid_cell,
+        } = scrollbar_layout_information;
+
+        let line_height = glyph_grid_cell.height;
+        let scroll_position = scroll_position.along(MINIMAP_AXIS);
 
         let top_right_anchor = scrollbars_layout
             .and_then(|layout| layout.vertical.as_ref())
             .map(|vertical_scrollbar| vertical_scrollbar.hitbox.origin)
-            .unwrap_or_else(|| bounds.top_right());
+            .unwrap_or_else(|| editor_bounds.top_right());
 
         let mut editor = self
             .editor
             .update(cx, |editor, cx| editor.clone(window, cx));
 
-        let mut show_thumb = match minimap_settings.thumb {
+        let show_thumb = match minimap_settings.thumb {
             MinimapThumb::Always => true,
             MinimapThumb::Hover => self.editor.update(cx, |editor, _| {
                 editor.scroll_manager.minimap_thumb_visible()
@@ -1498,44 +1506,36 @@ impl EditorElement {
             }
         });
 
-        let minimap_bounds = Self::get_minimap_bounds(minimap_width, top_right_anchor, &bounds);
+        let minimap_bounds =
+            Self::get_minimap_bounds(minimap_width, top_right_anchor, &editor_bounds);
         let minimap_line_height = self.get_minimap_line_height(window, &minimap_settings, cx);
         let minimap_height = minimap_bounds.size.height;
 
-        let editor_scroll_top = visible_range.start.0 as f32;
-        let editor_viewport_height = bounds.size.height;
-        let editor_visible_lines = editor_viewport_height / line_height;
-
-        let thumb_height = editor_visible_lines * minimap_line_height;
-
-        // The actual maximum scroll_top we allow. Ensures the thumb doesn't go past the last line.
-        let max_scroll_top = num_lines - 1.;
+        let visible_editor_lines = editor_bounds.size.height / line_height;
+        let total_editor_lines = scroll_range.height / line_height;
+        let minimap_lines = minimap_height / minimap_line_height;
 
         // The total line height of the contents of the minimap. This ensures we can overscroll the contents until only the
         // last line is visible, matching the behavior of the main editor.
-        let minimap_contents_full_height = max_scroll_top + editor_visible_lines;
+        let minimap_content_height = total_editor_lines * minimap_line_height;
+        let minimap_thumb_height = visible_editor_lines * minimap_line_height;
+        let scroll_percentage =
+            (scroll_position / (total_editor_lines - visible_editor_lines)).clamp(0., 1.);
+        let minimap_top_offset = scroll_percentage * (total_editor_lines - minimap_lines);
 
-        // Clamp the thumb to the bounds of the minimap, or the height of the minimap contents, whichever is smaller.
-        let thumb_top_max = px(f32::max(
-            0.,
-            f32::min(
-                minimap_height.0,
-                minimap_contents_full_height * minimap_line_height.0,
-            ) - thumb_height.0,
-        ));
-        show_thumb &= thumb_top_max.0 > 0.;
-        let minimap_progress_pct = (editor_scroll_top / max_scroll_top).clamp(0., 1.);
-        let thumb_top = minimap_progress_pct * thumb_top_max;
-        let thumb_lines_from_top = thumb_top.0 / minimap_line_height.0;
-        let minimap_scroll_top = editor_scroll_top - thumb_lines_from_top;
-
-        let thumb_bounds = Bounds::new(
-            point(minimap_bounds.origin.x, minimap_bounds.origin.y + thumb_top),
-            size(minimap_bounds.size.width, thumb_height),
+        let layout = ScrollbarLayout::new_with_hitbox_and_track_length(
+            window.insert_hitbox(minimap_bounds, false),
+            minimap_content_height,
+            minimap_thumb_height,
+            minimap_content_height,
+            minimap_line_height,
+            -scroll_percentage * (minimap_content_height - minimap_height).max(Pixels::ZERO),
+            scroll_position,
+            MINIMAP_AXIS,
         );
 
         editor_entity.update(cx, |editor, cx| {
-            editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
+            editor.set_scroll_position(point(0., minimap_top_offset), window, cx)
         });
 
         let mut minimap_elem = editor_entity.update(cx, |editor, cx| {
@@ -1545,15 +1545,16 @@ impl EditorElement {
         window.with_absolute_element_offset(minimap_bounds.origin, |window| {
             minimap_elem.prepaint(window, cx)
         });
+        let thumb_bounds = layout.thumb_bounds();
         Some(MinimapLayout {
             minimap: minimap_elem,
-            hitbox: window.insert_hitbox(minimap_bounds, false),
-            thumb_hitbox: window.insert_hitbox(thumb_bounds, false),
+            hitbox: layout.hitbox,
+            thumb_bounds,
             show_thumb,
             minimap_line_height,
-            minimap_scroll_top,
-            max_scroll_top,
-            contents_full_height: minimap_contents_full_height,
+            minimap_scroll_top: minimap_top_offset,
+            max_scroll_top: total_editor_lines,
+            contents_full_height: total_editor_lines,
         })
     }
 
@@ -5486,7 +5487,7 @@ impl EditorElement {
     fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut layout) = layout.minimap.take() {
             let minimap_hitbox = layout.hitbox.clone();
-            let thumb_hitbox = layout.thumb_hitbox.clone();
+            let thumb_bounds = layout.thumb_bounds.clone();
 
             window.paint_layer(layout.hitbox.bounds, |window| {
                 window.with_element_namespace("minimap", |window| {
@@ -5494,7 +5495,7 @@ impl EditorElement {
                     if layout.show_thumb {
                         window.paint_layer(minimap_hitbox.bounds, |window| {
                             window.paint_quad(quad(
-                                thumb_hitbox.bounds,
+                                thumb_bounds,
                                 Corners::default(),
                                 cx.theme().colors().scrollbar_thumb_background,
                                 Edges {
@@ -5534,12 +5535,12 @@ impl EditorElement {
                                 let thumb_top = f32::max(
                                     event.position.y.0
                                         - minimap_hitbox.bounds.origin.y.0
-                                        - (thumb_hitbox.bounds.size.height.0 / 2.),
+                                        - (thumb_bounds.size.height.0 / 2.),
                                     0.,
                                 );
                                 let pct_progress = thumb_top
                                     / (minimap_hitbox.bounds.size.height.0
-                                        - thumb_hitbox.bounds.size.height.0);
+                                        - thumb_bounds.size.height.0);
                                 position.y = pct_progress * layout.contents_full_height;
                                 editor.set_scroll_position(position, window, cx);
                             }
@@ -5589,7 +5590,7 @@ impl EditorElement {
 
                             let thumb_top = event.position.y
                                 - minimap_hitbox.bounds.origin.y
-                                - (thumb_hitbox.bounds.size.height / 2.);
+                                - (thumb_bounds.size.height / 2.);
                             position.y = (layout.minimap_scroll_top
                                 + (thumb_top.0 / layout.minimap_line_height.0))
                                 .clamp(0., layout.max_scroll_top);
@@ -7579,9 +7580,9 @@ impl Element for EditorElement {
 
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
-                        scrollbar_layout_information,
+                        &scrollbar_layout_information,
                         content_offset,
-                        scroll_position,
+                        &scroll_position,
                         non_visible_cursors,
                         minimap_width,
                         window,
@@ -7763,17 +7764,15 @@ impl Element for EditorElement {
 
                     let minimap = window.with_element_namespace("minimap", |window| {
                         self.layout_minimap(
-                            window,
-                            cx,
                             &snapshot,
-                            max_row.as_f32(),
                             minimap_width,
                             minimap_wrap_width,
                             &minimap_settings,
-                            bounds,
+                            scroll_position,
+                            scrollbar_layout_information,
                             scrollbars_layout.as_ref(),
-                            line_height,
-                            start_row..end_row,
+                            window,
+                            cx,
                         )
                     });
 
@@ -8114,7 +8113,7 @@ impl EditorScrollbars {
         settings_visibility: ScrollbarAxes,
         layout_information: &ScrollbarLayoutInformation,
         content_offset: gpui::Point<Pixels>,
-        scroll_position: gpui::Point<f32>,
+        scroll_position: &gpui::Point<f32>,
         scrollbar_width: Pixels,
         minimap_width: Pixels,
         show_scrollbars: bool,
@@ -8228,6 +8227,28 @@ impl ScrollbarLayout {
         // exclude the content size here so that the thumb aligns with the content.
         let track_length = track_bounds.size.along(axis) - content_offset;
 
+        Self::new_with_hitbox_and_track_length(
+            scrollbar_track_hitbox,
+            track_length,
+            editor_content_size,
+            scroll_range,
+            glyph_space,
+            content_offset,
+            scroll_position,
+            axis,
+        )
+    }
+
+    fn new_with_hitbox_and_track_length(
+        scrollbar_track_hitbox: Hitbox,
+        track_length: Pixels,
+        editor_content_size: Pixels,
+        scroll_range: Pixels,
+        glyph_space: Pixels,
+        content_offset: Pixels,
+        scroll_position: f32,
+        axis: ScrollbarAxis,
+    ) -> Self {
         let text_units_per_page = editor_content_size / glyph_space;
         let visible_range = scroll_position..scroll_position + text_units_per_page;
         let total_text_units = scroll_range / glyph_space;
@@ -8350,7 +8371,7 @@ impl ScrollbarLayout {
 struct MinimapLayout {
     pub minimap: AnyElement,
     pub hitbox: Hitbox,
-    pub thumb_hitbox: Hitbox,
+    pub thumb_bounds: Bounds<Pixels>,
     pub minimap_scroll_top: f32,
     pub minimap_line_height: Pixels,
     pub show_thumb: bool,
