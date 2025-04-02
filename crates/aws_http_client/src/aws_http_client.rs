@@ -55,14 +55,12 @@ impl AwsConnector for AwsHttpConnector {
             let mut response =
                 HttpResponse::new(StatusCode::try_from(parts.status.as_u16()).unwrap(), body);
 
-            let headers = Headers::try_from(parts.headers);
+            let headers = match Headers::try_from(parts.headers) {
+                Ok(headers) => headers,
+                Err(err) => return Err(ConnectorError::other(err.into(), None)),
+            };
 
-            match headers {
-                Ok(headers) => *response.headers_mut() = headers,
-                Err(err) => {
-                    return Err(ConnectorError::other(err.into(), None));
-                }
-            }
+            *response.headers_mut() = headers;
 
             Ok(response)
         })
