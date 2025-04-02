@@ -276,8 +276,7 @@ impl ProjectSearch {
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
                 let mut buffers_with_ranges = Vec::with_capacity(results.len());
-                // TODO kb here
-                for result in dbg!(results) {
+                for result in results {
                     match result {
                         project::search::SearchResult::Buffer { buffer, ranges } => {
                             buffers_with_ranges.push((buffer, ranges));
@@ -293,7 +292,7 @@ impl ProjectSearch {
                     .ok()?;
                 let mut new_ranges = excerpts
                     .update(cx, |excerpts, cx| {
-                        dbg!(buffers_with_ranges)
+                        buffers_with_ranges
                             .into_iter()
                             .map(|(buffer, ranges)| {
                                 excerpts.set_anchored_excerpts_for_path(

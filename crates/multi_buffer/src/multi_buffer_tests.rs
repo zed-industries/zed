@@ -810,6 +810,7 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
             .collect::<Vec<_>>(),
         vec![
             Point::new(2, 2)..Point::new(3, 2),
+            Point::new(6, 1)..Point::new(6, 3),
             Point::new(11, 0)..Point::new(11, 0),
         ]
     );
