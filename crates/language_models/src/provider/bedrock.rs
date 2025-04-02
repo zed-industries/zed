@@ -482,12 +482,12 @@ impl LanguageModel for BedrockModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn supports_tools(&self) -> bool {
-        true
-    }
-
     fn telemetry_id(&self) -> String {
         format!("bedrock/{}", self.model.id())
+    }
+
+    fn supports_tools(&self) -> bool {
+        true
     }
 
     fn max_token_count(&self) -> usize {
@@ -1025,7 +1025,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).credentials_from_env;
         let creds_type = self.should_render_editor(cx).is_some();
 
@@ -1159,70 +1159,6 @@ impl ConfigurationView {
         )
     }
 
-    // Helper method to render the authentication method selector
-    // fn render_auth_method_selector(
-    //     &self,
-    //     window: &mut Window,
-    //     cx: &mut Context<Self>,
-    //     current_method: BedrockAuthMethod,
-    // ) -> impl IntoElement {
-    //     let context_menu = ContextMenu::build(window, cx, |mut menu, _, _| {
-    //         for method in BedrockAuthMethod::iter() {
-    //             let bedrock_string: &'static str = method.clone().into();
-    //             let state = self.state.clone();
-    //             menu = menu.custom_entry(
-    //                 move |_, _| Label::new(bedrock_string).into_any_element(),
-    //                 move |_, cx| {
-    //                     state.update(cx, |state, cx| {
-    //                         let owned_method = method.clone();
-    //                         state.set_authentication_method(owned_method, cx);
-    //                         cx.notify();
-    //                     })
-    //                 },
-    //             );
-    //         }
-    //         menu
-    //     });
-    //
-    //     DropdownMenu::new(
-    //         "aws-auth-selector",
-    //         <BedrockAuthMethod as Into<&'static str>>::into(current_method),
-    //         context_menu,
-    //     )
-    // }
-
-    // Render UI for Named Profile auth method
-    // fn render_named_profile_ui(&self, cx: &mut Context<Self>) -> AnyElement {
-    //     v_flex()
-    //         .my_2()
-    //         .gap_1p5()
-    //         .child(
-    //             Label::new("Named Profile")
-    //                 .size(LabelSize::Large)
-    //                 .weight(FontWeight::BOLD)
-    //         )
-    //         .child(
-    //             Label::new("This method uses an AWS profile configured in your ~/.aws/credentials file. This is typically created by the AWS CLI.")
-    //                 .size(LabelSize::Small)
-    //         )
-    //         .child(
-    //             List::new()
-    //                 .child(InstructionListItem::text_only("Install the AWS CLI if you haven't already: https://aws.amazon.com/cli/"))
-    //                 .child(InstructionListItem::text_only("Run 'aws configure' to set up your credentials"))
-    //                 .child(InstructionListItem::text_only("To use a profile other than 'default', enter the profile name below"))
-    //         )
-    //         .child(
-    //             v_flex()
-    //                 .gap_0p5()
-    //                 .child(Label::new("Profile").size(LabelSize::Small))
-    //                 .child(
-    //                     self.make_input_styles(cx)
-    //                         .child(self.render_profile_name_editor(cx)),
-    //                 ),
-    //         )
-    //         .into_any_element()
-    // }
-
     // Render UI for Static Credentials auth method
     fn render_static_credentials_ui(&self, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
@@ -1281,92 +1217,6 @@ impl ConfigurationView {
                         self.make_input_styles(cx)
                             .child(self.render_session_token_editor(cx)),
                     ),
-            )
-            .into_any_element()
-    }
-
-    // Render UI for SSO auth method
-    // fn render_sso_ui(&self, cx: &mut Context<Self>) -> AnyElement {
-    //     v_flex()
-    //         .my_2()
-    //         .gap_1p5()
-    //         .child(
-    //             Label::new("AWS Single Sign-On (SSO) Authentication")
-    //                 .size(LabelSize::Default)
-    //                 .weight(FontWeight::BOLD),
-    //         )
-    //         .child(
-    //             Label::new(
-    //                 "This method uses AWS IAM Identity Center (formerly SSO) to authenticate.",
-    //             )
-    //                 .size(LabelSize::Small),
-    //         )
-    //         .child(
-    //             List::new()
-    //                 .child(InstructionListItem::text_only(
-    //                     "Set up AWS SSO in your organization",
-    //                 ))
-    //                 .child(InstructionListItem::text_only(
-    //                     "Run 'aws configure sso' to configure your local environment",
-    //                 ))
-    //                 .child(InstructionListItem::text_only(
-    //                     "Then run 'aws sso login' to authenticate",
-    //                 ))
-    //                 .child(InstructionListItem::text_only(
-    //                     "Enter the named profile from the setup process here",
-    //                 )),
-    //         )
-    //         .child(
-    //             v_flex()
-    //                 .gap_0p5()
-    //                 .child(Label::new("SSO Profile").size(LabelSize::Small))
-    //                 .child(
-    //                     self.make_input_styles(cx)
-    //                         .child(self.render_profile_name_editor(cx)),
-    //                 ),
-    //         )
-    /*    //         .child(
-        //             v_flex()
-        //                 .gap_0p5()
-        //                 .child(Label::new("Start URL").size(LabelSize::Small))
-        //                 .child(
-        //                     self.make_input_styles(cx)
-        //                         .child(self.render_start_url_editor(cx)),
-        //                 ),
-        //         )
-        //         .child(
-        //             v_flex()
-        //                 .gap_0p5()
-        //                 .child(Label::new("Role ARN").size(LabelSize::Small))
-        //                 .child(
-        //                     self.make_input_styles(cx)
-        //                         .child(self.render_role_arn_editor(cx)),
-        //                 ),
-        //         )*/
-    //         .into_any_element()
-    // }
-
-    // Render UI for Automatic auth method
-    fn render_automatic_ui(&self) -> AnyElement {
-        v_flex()
-            .my_2()
-            .gap_1p5()
-            .child(
-                Label::new("AWS Automatic Authentication")
-                    .size(LabelSize::Default)
-                    .weight(FontWeight::BOLD)
-            )
-            .child(
-                Label::new("This method automatically discovers AWS credentials using the default credential provider chain.")
-                    .size(LabelSize::Small)
-            )
-            .child(
-                List::new()
-                    .child(InstructionListItem::text_only("Credentials will be sourced in this order:"))
-                    .child(InstructionListItem::text_only("1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)"))
-                    .child(InstructionListItem::text_only("2. Shared credentials file (~/.aws/credentials)"))
-                    .child(InstructionListItem::text_only("3. ECS container credentials"))
-                    .child(InstructionListItem::text_only("4. EC2 instance profile credentials"))
             )
             .into_any_element()
     }

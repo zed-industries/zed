@@ -164,7 +164,7 @@ pub struct AnthropicSettingsContentV1 {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AmazonBedrockSettingsContent {
     available_models: Option<Vec<provider::bedrock::AvailableModel>>,
-    api_url: Option<String>,
+    endpoint_url: Option<String>,
     region: Option<String>,
     profile: Option<String>,
     authentication_method: Option<provider::bedrock::BedrockAuthMethod>,
@@ -316,6 +316,14 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.bedrock.authentication_method,
                 bedrock.as_ref().map(|s| s.authentication_method.clone()),
+            );
+            merge(
+                &mut settings.bedrock.region,
+                bedrock.as_ref().map(|s| s.region.clone()),
+            );
+            merge(
+                &mut settings.bedrock.endpoint,
+                bedrock.as_ref().map(|s| s.endpoint_url.clone()),
             );
 
             // Ollama
