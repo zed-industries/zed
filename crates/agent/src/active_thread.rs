@@ -1862,7 +1862,7 @@ impl ActiveThread {
                                     .border_t_1()
                                     .border_color(self.tool_card_border_color(cx))
                                     .rounded_b_lg()
-                                    .child(Label::new("Action Confirmation").size(LabelSize::Small))
+                                    .child(Label::new("Action Confirmation").color(Color::Muted).size(LabelSize::Small))
                                     .child(
                                         h_flex()
                                             .gap_0p5()
