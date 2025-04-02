@@ -82,6 +82,7 @@ impl DebugAdapter for LldbDebugAdapter {
             }
             DebugRequestType::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
+                map.insert("args".into(), launch.args.clone().into());
                 map.insert(
                     "cwd".into(),
                     launch

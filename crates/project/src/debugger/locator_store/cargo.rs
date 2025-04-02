@@ -29,7 +29,7 @@ impl DapLocator for CargoLocator {
         };
 
         let mut child = Command::new("cargo")
-            .args(&debug_config.args)
+            .args(&launch_config.args)
             .arg("--message-format=json")
             .current_dir(cwd)
             .stdout(Stdio::piped())
@@ -59,7 +59,30 @@ impl DapLocator for CargoLocator {
         };
 
         launch_config.program = executable;
-        debug_config.args.clear();
+        let mut test_name = None;
+
+        if launch_config
+            .args
+            .first()
+            .map_or(false, |arg| arg == "test")
+        {
+            if let Some(package_index) = launch_config
+                .args
+                .iter()
+                .position(|arg| arg == "-p" || arg == "--package")
+            {
+                test_name = launch_config
+                    .args
+                    .get(package_index + 2)
+                    .filter(|name| !name.starts_with("--"))
+                    .cloned();
+            }
+        }
+
+        launch_config.args.clear();
+        if let Some(test_name) = test_name {
+            launch_config.args.push(test_name);
+        }
         Ok(())
     }
 }

@@ -471,7 +471,6 @@ impl DapStore {
             initialize_args: config.initialize_args.clone(),
             tcp_connection: config.tcp_connection.clone(),
             locator: None,
-            args: Default::default(),
             stop_on_entry: config.stop_on_entry,
         };
 
