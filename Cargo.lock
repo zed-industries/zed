@@ -12207,7 +12207,7 @@ dependencies = [
 [[package]]
 name = "scap"
 version = "0.0.8"
-source = "git+https://github.com/zed-industries/scap?rev=f6439a2508a219340ec34ff63069ee8b18116703#f6439a2508a219340ec34ff63069ee8b18116703"
+source = "git+https://github.com/zed-industries/scap?rev=5715067104794aa356977c543e2f3e95c6183044#5715067104794aa356977c543e2f3e95c6183044"
 dependencies = [
  "anyhow",
  "cocoa 0.25.0",
