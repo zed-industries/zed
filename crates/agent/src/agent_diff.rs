@@ -27,7 +27,7 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
-pub struct AssistantDiff {
+pub struct AgentDiff {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     thread: Entity<Thread>,
@@ -37,7 +37,7 @@ pub struct AssistantDiff {
     _subscriptions: Vec<Subscription>,
 }
 
-impl AssistantDiff {
+impl AgentDiff {
     pub fn deploy(
         thread: Entity<Thread>,
         workspace: WeakEntity<Workspace>,
@@ -46,7 +46,7 @@ impl AssistantDiff {
     ) -> Result<()> {
         let existing_diff = workspace.update(cx, |workspace, cx| {
             workspace
-                .items_of_type::<AssistantDiff>(cx)
+                .items_of_type::<AgentDiff>(cx)
                 .find(|diff| diff.read(cx).thread == thread)
         })?;
         if let Some(existing_diff) = existing_diff {
@@ -54,10 +54,10 @@ impl AssistantDiff {
                 workspace.activate_item(&existing_diff, true, true, window, cx);
             })
         } else {
-            let assistant_diff =
-                cx.new(|cx| AssistantDiff::new(thread.clone(), workspace.clone(), window, cx));
+            let agent_diff =
+                cx.new(|cx| AgentDiff::new(thread.clone(), workspace.clone(), window, cx));
             workspace.update(cx, |workspace, cx| {
-                workspace.add_item_to_center(Box::new(assistant_diff), window, cx);
+                workspace.add_item_to_center(Box::new(agent_diff), window, cx);
             })
         }
     }
@@ -73,7 +73,7 @@ impl AssistantDiff {
 
         let project = thread.read(cx).project().clone();
         let render_diff_hunk_controls = Arc::new({
-            let assistant_diff = cx.entity();
+            let agent_diff = cx.entity();
             move |row,
                   status: &DiffHunkStatus,
                   hunk_range,
@@ -88,7 +88,7 @@ impl AssistantDiff {
                     hunk_range,
                     is_created_file,
                     line_height,
-                    &assistant_diff,
+                    &agent_diff,
                     editor,
                     window,
                     cx,
@@ -101,7 +101,7 @@ impl AssistantDiff {
             editor.disable_inline_diagnostics();
             editor.set_expand_all_diff_hunks(cx);
             editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
-            editor.register_addon(AssistantDiffAddon);
+            editor.register_addon(AgentDiffAddon);
             editor
         });
 
@@ -376,9 +376,9 @@ impl AssistantDiff {
     }
 }
 
-impl EventEmitter<EditorEvent> for AssistantDiff {}
+impl EventEmitter<EditorEvent> for AgentDiff {}
 
-impl Focusable for AssistantDiff {
+impl Focusable for AgentDiff {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         if self.multibuffer.read(cx).is_empty() {
             self.focus_handle.clone()
@@ -388,7 +388,7 @@ impl Focusable for AssistantDiff {
     }
 }
 
-impl Item for AssistantDiff {
+impl Item for AgentDiff {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -415,7 +415,7 @@ impl Item for AssistantDiff {
     }
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
-        Some("Assistant Diff".into())
+        Some("Agent Diff".into())
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
@@ -552,7 +552,7 @@ impl Item for AssistantDiff {
     }
 }
 
-impl Render for AssistantDiff {
+impl Render for AgentDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
 
@@ -561,7 +561,7 @@ impl Render for AssistantDiff {
             .key_context(if is_empty {
                 "EmptyPane"
             } else {
-                "AssistantDiff"
+                "AgentDiff"
             })
             .on_action(cx.listener(Self::keep))
             .on_action(cx.listener(Self::reject))
@@ -583,7 +583,7 @@ fn render_diff_hunk_controls(
     hunk_range: Range<editor::Anchor>,
     is_created_file: bool,
     line_height: Pixels,
-    assistant_diff: &Entity<AssistantDiff>,
+    agent_diff: &Entity<AgentDiff>,
     editor: &Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -636,9 +636,9 @@ fn render_diff_hunk_controls(
                     .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click({
-                    let assistant_diff = assistant_diff.clone();
+                    let agent_diff = agent_diff.clone();
                     move |_event, window, cx| {
-                        assistant_diff.update(cx, |diff, cx| {
+                        agent_diff.update(cx, |diff, cx| {
                             diff.keep_edits_in_ranges(
                                 vec![hunk_range.start..hunk_range.start],
                                 window,
@@ -728,38 +728,38 @@ fn render_diff_hunk_controls(
         .into_any_element()
 }
 
-struct AssistantDiffAddon;
+struct AgentDiffAddon;
 
-impl editor::Addon for AssistantDiffAddon {
+impl editor::Addon for AgentDiffAddon {
     fn to_any(&self) -> &dyn std::any::Any {
         self
     }
 
     fn extend_key_context(&self, key_context: &mut gpui::KeyContext, _: &App) {
-        key_context.add("assistant_diff");
+        key_context.add("agent_diff");
     }
 }
 
-pub struct AssistantDiffToolbar {
-    assistant_diff: Option<WeakEntity<AssistantDiff>>,
+pub struct AgentDiffToolbar {
+    agent_diff: Option<WeakEntity<AgentDiff>>,
     _workspace: WeakEntity<Workspace>,
 }
 
-impl AssistantDiffToolbar {
+impl AgentDiffToolbar {
     pub fn new(workspace: &Workspace, _: &mut Context<Self>) -> Self {
         Self {
-            assistant_diff: None,
+            agent_diff: None,
             _workspace: workspace.weak_handle(),
         }
     }
 
-    fn assistant_diff(&self, _: &App) -> Option<Entity<AssistantDiff>> {
-        self.assistant_diff.as_ref()?.upgrade()
+    fn agent_diff(&self, _: &App) -> Option<Entity<AgentDiff>> {
+        self.agent_diff.as_ref()?.upgrade()
     }
 
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(assistant_diff) = self.assistant_diff(cx) {
-            assistant_diff.focus_handle(cx).focus(window);
+        if let Some(agent_diff) = self.agent_diff(cx) {
+            agent_diff.focus_handle(cx).focus(window);
         }
         let action = action.boxed_clone();
         cx.defer(move |cx| {
@@ -768,19 +768,19 @@ impl AssistantDiffToolbar {
     }
 }
 
-impl EventEmitter<ToolbarItemEvent> for AssistantDiffToolbar {}
+impl EventEmitter<ToolbarItemEvent> for AgentDiffToolbar {}
 
-impl ToolbarItemView for AssistantDiffToolbar {
+impl ToolbarItemView for AgentDiffToolbar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.assistant_diff = active_pane_item
-            .and_then(|item| item.act_as::<AssistantDiff>(cx))
+        self.agent_diff = active_pane_item
+            .and_then(|item| item.act_as::<AgentDiff>(cx))
             .map(|entity| entity.downgrade());
-        if self.assistant_diff.is_some() {
+        if self.agent_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
         } else {
             ToolbarItemLocation::Hidden
@@ -796,14 +796,14 @@ impl ToolbarItemView for AssistantDiffToolbar {
     }
 }
 
-impl Render for AssistantDiffToolbar {
+impl Render for AgentDiffToolbar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let assistant_diff = match self.assistant_diff(cx) {
+        let agent_diff = match self.agent_diff(cx) {
             Some(ad) => ad,
             None => return div(),
         };
 
-        let is_empty = assistant_diff.read(cx).multibuffer.read(cx).is_empty();
+        let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
 
         if is_empty {
             return div();
@@ -848,7 +848,7 @@ mod tests {
     use util::path;
 
     #[gpui::test]
-    async fn test_assistant_diff(cx: &mut TestAppContext) {
+    async fn test_agent_diff(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -889,10 +889,10 @@ mod tests {
 
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let assistant_diff = cx.new_window_entity(|window, cx| {
-            AssistantDiff::new(thread.clone(), workspace.downgrade(), window, cx)
+        let agent_diff = cx.new_window_entity(|window, cx| {
+            AgentDiff::new(thread.clone(), workspace.downgrade(), window, cx)
         });
-        let editor = assistant_diff.read_with(cx, |diff, _cx| diff.editor.clone());
+        let editor = agent_diff.read_with(cx, |diff, _cx| diff.editor.clone());
 
         let buffer = project
             .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
@@ -931,7 +931,7 @@ mod tests {
         );
 
         // After keeping a hunk, the cursor should be positioned on the second hunk.
-        assistant_diff.update_in(cx, |diff, window, cx| diff.keep(&crate::Keep, window, cx));
+        agent_diff.update_in(cx, |diff, window, cx| diff.keep(&crate::Keep, window, cx));
         cx.run_until_parked();
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.text(cx)),
@@ -950,7 +950,7 @@ mod tests {
                 selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
             });
         });
-        assistant_diff.update_in(cx, |diff, window, cx| {
+        agent_diff.update_in(cx, |diff, window, cx| {
             diff.reject(&crate::Reject, window, cx)
         });
         cx.run_until_parked();
@@ -966,7 +966,7 @@ mod tests {
         );
 
         // Keeping a range that doesn't intersect the current selection doesn't move it.
-        assistant_diff.update_in(cx, |diff, window, cx| {
+        agent_diff.update_in(cx, |diff, window, cx| {
             let position = editor
                 .read(cx)
                 .buffer()

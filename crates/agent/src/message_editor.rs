@@ -31,7 +31,7 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AssistantDiff, Chat, ChatMode, NewThread, OpenAssistantDiff, RemoveAllContext, ThreadEvent,
+    AgentDiff, Chat, ChatMode, NewThread, OpenAgentDiff, RemoveAllContext, ThreadEvent,
     ToggleContextPicker, ToggleProfileSelector,
 };
 
@@ -318,7 +318,7 @@ impl MessageEditor {
     }
 
     fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
-        AssistantDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
+        AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
     }
 }
 
@@ -527,7 +527,7 @@ impl Render for MessageEditor {
                                         .label_size(LabelSize::Small)
                                         .key_binding(
                                             KeyBinding::for_action_in(
-                                                &OpenAssistantDiff,
+                                                &OpenAgentDiff,
                                                 &focus_handle,
                                                 window,
                                                 cx,

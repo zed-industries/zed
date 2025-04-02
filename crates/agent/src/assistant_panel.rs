@@ -42,8 +42,8 @@ use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AssistantDiff, InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAssistantDiff, OpenConfiguration, OpenHistory, ToggleContextPicker,
+    AgentDiff, InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown,
+    OpenAgentDiff, OpenConfiguration, OpenHistory, ToggleContextPicker,
 };
 
 action_with_deprecated_aliases!(
@@ -94,11 +94,11 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &OpenAssistantDiff, window, cx| {
+                .register_action(|workspace, _: &OpenAgentDiff, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.open_assistant_diff(&OpenAssistantDiff, window, cx);
+                            panel.open_agent_diff(&OpenAgentDiff, window, cx);
                         });
                     }
                 });
@@ -475,14 +475,14 @@ impl AssistantPanel {
         })
     }
 
-    pub fn open_assistant_diff(
+    pub fn open_agent_diff(
         &mut self,
-        _: &OpenAssistantDiff,
+        _: &OpenAgentDiff,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let thread = self.thread.read(cx).thread().clone();
-        AssistantDiff::deploy(thread, self.workspace.clone(), window, cx).log_err();
+        AgentDiff::deploy(thread, self.workspace.clone(), window, cx).log_err();
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1330,7 +1330,7 @@ impl Render for AssistantPanel {
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
             .on_action(cx.listener(Self::deploy_prompt_library))
-            .on_action(cx.listener(Self::open_assistant_diff))
+            .on_action(cx.listener(Self::open_agent_diff))
             .child(self.render_toolbar(window, cx))
             .map(|parent| match self.active_view {
                 ActiveView::Thread => parent
