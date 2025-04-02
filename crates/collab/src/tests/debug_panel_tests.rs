@@ -1,7 +1,7 @@
 use call::ActiveCall;
-use dap::requests::{Initialize, Launch, StackTrace};
 use dap::DebugRequestType;
-use dap::{requests::SetBreakpoints, SourceBreakpoint};
+use dap::requests::{Initialize, Launch, StackTrace};
+use dap::{SourceBreakpoint, requests::SetBreakpoints};
 use debugger_ui::debugger_panel::DebugPanel;
 use debugger_ui::session::DebugSession;
 use editor::Editor;
@@ -13,7 +13,7 @@ use std::{
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
-use workspace::{dock::Panel, Workspace};
+use workspace::{Workspace, dock::Panel};
 
 use super::{TestClient, TestServer};
 

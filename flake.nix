@@ -24,7 +24,10 @@
   outputs =
     inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
-      imports = [ ./nix/overlay.nix ];
+      imports = [
+        ./nix/overlay.nix
+        ./nix/treefmt.nix
+      ];
 
       systems = [
         "x86_64-linux"

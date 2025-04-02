@@ -1,12 +1,12 @@
 use std::fmt::format;
 
 use gpui::{
-    colors, div, prelude::*, uniform_list, DefaultColor, DefaultThemeAppearance, Hsla, Render,
+    DefaultColor, DefaultThemeAppearance, Hsla, Render, colors, div, prelude::*, uniform_list,
 };
 use story::Story;
 use strum::IntoEnumIterator;
 use ui::{
-    h_flex, px, v_flex, AbsoluteLength, ActiveTheme, Color, DefiniteLength, Label, LabelCommon,
+    AbsoluteLength, ActiveTheme, Color, DefiniteLength, Label, LabelCommon, h_flex, px, v_flex,
 };
 
 const LENGTH: usize = 100;
