@@ -1,5 +1,5 @@
 use crate::SharedString;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::fmt;
 
 /// A datastructure for resolving whether an action should be dispatched
@@ -412,7 +412,7 @@ fn is_identifier_char(c: char) -> bool {
 }
 
 fn is_vim_operator_char(c: char) -> bool {
-    c == '>' || c == '<' || c == '~' || c == '"'
+    c == '>' || c == '<' || c == '~' || c == '"' || c == '?'
 }
 
 fn skip_whitespace(source: &str) -> &str {

@@ -3,23 +3,23 @@ use super::{
     locator_store::LocatorStore,
     session::{self, Session},
 };
-use crate::{debugger, worktree_store::WorktreeStore, ProjectEnvironment};
-use anyhow::{anyhow, Result};
+use crate::{ProjectEnvironment, debugger, worktree_store::WorktreeStore};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
+    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
+    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
+    Source, StartDebuggingRequestArguments,
     adapters::{DapStatus, DebugAdapterName},
     client::SessionId,
     messages::Message,
     requests::{Completions, Evaluate, Request as _, RunInTerminal, StartDebugging},
-    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
-    Source, StartDebuggingRequestArguments,
 };
 use fs::Fs;
 use futures::{
     channel::{mpsc, oneshot},
-    future::{join_all, Shared},
+    future::{Shared, join_all},
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
@@ -28,8 +28,8 @@ use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
 use rpc::{
-    proto::{self},
     AnyProtoClient, TypedEnvelope,
+    proto::{self},
 };
 use serde_json::Value;
 use settings::WorktreeId;
@@ -39,7 +39,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     ffi::OsStr,
     path::PathBuf,
-    sync::{atomic::Ordering::SeqCst, Arc},
+    sync::{Arc, atomic::Ordering::SeqCst},
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
 use task::{DebugAdapterConfig, DebugRequestDisposition};
@@ -339,7 +339,7 @@ impl DapStore {
             local_store.toolchain_store.clone(),
             local_store.environment.update(cx, |env, cx| {
                 let worktree = worktree.read(cx);
-                env.get_environment(Some(worktree.id()), Some(worktree.abs_path()), cx)
+                env.get_environment(worktree.abs_path().into(), cx)
             }),
         );
         let session_id = local_store.next_session_id();
@@ -407,7 +407,7 @@ impl DapStore {
             local_store.toolchain_store.clone(),
             local_store.environment.update(cx, |env, cx| {
                 let worktree = worktree.read(cx);
-                env.get_environment(Some(worktree.id()), Some(worktree.abs_path()), cx)
+                env.get_environment(Some(worktree.abs_path()), cx)
             }),
         );
         let session_id = local_store.next_session_id();
@@ -471,7 +471,7 @@ impl DapStore {
             initialize_args: config.initialize_args.clone(),
             tcp_connection: config.tcp_connection.clone(),
             locator: None,
-            args: Default::default(),
+            stop_on_entry: config.stop_on_entry,
         };
 
         #[cfg(any(test, feature = "test-support"))]

@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, parse_quote, DeriveInput, Field, FieldsNamed, PredicateType, TraitBound,
-    Type, TypeParamBound, WhereClause, WherePredicate,
+    DeriveInput, Field, FieldsNamed, PredicateType, TraitBound, Type, TypeParamBound, WhereClause,
+    WherePredicate, parse_macro_input, parse_quote,
 };
 
 #[proc_macro_derive(Refineable, attributes(refineable))]

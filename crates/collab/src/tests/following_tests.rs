@@ -8,8 +8,8 @@ use collab_ui::{
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    point, AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString,
-    TestAppContext, VisualTestContext,
+    AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString, TestAppContext,
+    VisualTestContext, point,
 };
 use language::Capability;
 use project::WorktreeSettings;
@@ -17,7 +17,7 @@ use rpc::proto::PeerId;
 use serde_json::json;
 use settings::SettingsStore;
 use util::path;
-use workspace::{item::ItemHandle as _, SplitDirection, Workspace};
+use workspace::{SplitDirection, Workspace, item::ItemHandle as _};
 
 use super::TestClient;
 
@@ -295,22 +295,8 @@ async fn test_basic_following(
                 .unwrap()
         });
         let mut result = MultiBuffer::new(Capability::ReadWrite);
-        result.push_excerpts(
-            buffer_a1,
-            [ExcerptRange {
-                context: 0..3,
-                primary: None,
-            }],
-            cx,
-        );
-        result.push_excerpts(
-            buffer_a2,
-            [ExcerptRange {
-                context: 4..7,
-                primary: None,
-            }],
-            cx,
-        );
+        result.push_excerpts(buffer_a1, [ExcerptRange::new(0..3)], cx);
+        result.push_excerpts(buffer_a2, [ExcerptRange::new(4..7)], cx);
         result
     });
     let multibuffer_editor_a = workspace_a.update_in(cx_a, |workspace, window, cx| {
@@ -441,7 +427,7 @@ async fn test_basic_following(
         use crate::rpc::RECONNECT_TIMEOUT;
         use gpui::TestScreenCaptureSource;
         use workspace::{
-            dock::{test::TestPanel, DockPosition},
+            dock::{DockPosition, test::TestPanel},
             item::test::TestItem,
             shared_screen::SharedScreen,
         };

@@ -1,7 +1,7 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use copilot::copilot_chat::{
     ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
     Role as CopilotChatRole,
@@ -11,8 +11,8 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
 use gpui::{
-    percentage, svg, Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render,
-    Subscription, Task, Transformation,
+    Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
+    Transformation, percentage, svg,
 };
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
@@ -179,6 +179,10 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn supports_tools(&self) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String {
@@ -357,168 +361,6 @@ impl LanguageModel for CopilotChatLanguageModel {
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        input_schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        log::error!(
-            "Using tool '{}' with description: {}",
-            tool_name,
-            tool_description
-        );
-
-        // For tool use, we need to use a Claude model since they support tool use
-        let mut copilot_request = self.to_copilot_chat_request(request);
-        copilot_request.model = match self.model {
-            CopilotChatModel::Claude3_5Sonnet => CopilotChatModel::Claude3_5Sonnet,
-            CopilotChatModel::Claude3_7Sonnet => CopilotChatModel::Claude3_7Sonnet,
-            CopilotChatModel::Claude3_7SonnetThinking => CopilotChatModel::Claude3_7SonnetThinking,
-            _ => CopilotChatModel::Claude3_5Sonnet, // Default to Claude 3.5 Sonnet for other models
-        };
-
-        copilot_request.tools = vec![copilot::copilot_chat::ToolWrapper {
-            function: copilot::copilot_chat::Tool {
-                name: tool_name.clone(),
-                description: tool_description,
-                parameters: input_schema,
-            },
-            tool_type: "function".to_string(),
-        }];
-
-        // let tools = request.tools.clone();
-        // // Add tools from the original request with proper function wrapper
-        // copilot_request.tools = tools
-        //     .into_iter()
-        //     .map(|tool| {
-        //         let name = tool.name.clone();
-        //         let description = tool.description.clone();
-        //         let parameters = tool.input_schema;
-        //         copilot::copilot_chat::ToolWrapper {
-        //             function: copilot::copilot_chat::Tool {
-        //                 name,
-        //                 description,
-        //                 parameters: serde_json::json!({
-        //                     "type": "object",
-        //                     "properties": parameters.get("properties").unwrap_or(&serde_json::json!({})),
-        //                     "required": parameters.get("required").unwrap_or(&serde_json::json!([])),
-        //                 }),
-        //             },
-        //             tool_type: "function".to_string(),
-        //         }
-        //     })
-        //     .collect();
-        // copilot_request.tool_choice = Some(copilot::copilot_chat::ToolChoice::Tool {
-        //     name: tool_name.clone(),
-        // });
-
-        let request_limiter = self.request_limiter.clone();
-        log::error!("BEFORE CALLING CopilotChat::stream_completion");
-        let response_stream = CopilotChat::stream_completion(copilot_request, cx.clone());
-        log::error!("AFTER CALLING CopilotChat::stream_completion");
-
-        let future = cx.spawn(async move |_cx| {
-            log::error!("Entering cx.spawn for tool use processing");
-            request_limiter
-                .run(async move {
-                    log::error!("Waiting for response stream from CopilotChat");
-                    let stream = response_stream.await?;
-                    log::error!("Response stream received successfully");
-
-                    let tool_args_stream = stream
-                        .filter_map(move |response| async move {
-                            log::error!("Processing a new response");
-                            match response {
-                                Ok(response) => {
-                                    for choice in response.choices {
-                                        log::error!("Processing choice in response");
-                                        if let Some(tool_calls) = choice.delta.tool_calls {
-                                            log::error!("Tool calls found in choice");
-                                            for tool_call in tool_calls {
-                                                if let Some(function) = tool_call.function {
-                                                    log::error!("Function found in tool call");
-                                                    if let Some(args) = function.arguments {
-                                                        log::error!("Function arguments extracted");
-                                                        return Some(Ok(args));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    log::error!("No tool arguments found in this response");
-                                    None
-                                }
-                                Err(e) => {
-                                    log::error!("Error processing response: {:?}", e);
-                                    Some(Err(e))
-                                }
-                            }
-                        })
-                        .boxed();
-
-                    log::error!("Returning tool arguments stream to caller");
-                    Ok(tool_args_stream)
-                })
-                .await
-        });
-
-        async move { future.await }.boxed()
-    }
-}
-
-pub fn map_to_language_model_completion_events(
-    events: Pin<
-        Box<dyn Send + Stream<Item = Result<copilot::copilot_chat::ResponseEvent, anyhow::Error>>>,
-    >,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
-    events
-        .filter_map(move |response| async move {
-            match response {
-                Ok(result) => {
-                    let choice = result.choices.first();
-                    match choice {
-                        Some(choice) => {
-                            if let Some(msg) = &choice.message {
-                                let content = msg.content.clone().unwrap_or_default();
-                                Some(Ok(LanguageModelCompletionEvent::StartMessage {
-                                    message_id: result.id,
-                                }))
-                            // }
-                            // else if let Some( msg) = &choice.delta.tool_calls {
-                            // Some(Ok(LanguageModelCompletionEvent::ToolUse(content)))
-                            } else if let Some(content) = &choice.delta.content {
-                                Some(Ok(LanguageModelCompletionEvent::Text(content.clone())))
-                            // } else if let Some(content) = &choice.finish_reason {
-                            // Some(Ok(LanguageModelCompletionEvent::Stop(content)))
-                            } else {
-                                None
-                            }
-                        }
-                        None => Some(Err(anyhow::anyhow!(
-                            "The Copilot Chat API returned a response with no choices"
-                        ))),
-                    }
-                }
-                Err(err) => Some(Err(anyhow::anyhow!(err))),
-            }
-        })
-        .boxed()
-}
-
-fn parse_content_to_completion_event(content: String) -> LanguageModelCompletionEvent {
-    // Try to parse the content as a JSON object that might be a tool use
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-        if json.is_object() {
-            if let Ok(tool_use) = serde_json::from_value::<LanguageModelToolUse>(json.clone()) {
-                return LanguageModelCompletionEvent::ToolUse(tool_use);
-            }
-        }
-    }
-    // If not a valid tool use JSON, treat as regular text
-    LanguageModelCompletionEvent::Text(content)
 }
 
 impl CopilotChatLanguageModel {

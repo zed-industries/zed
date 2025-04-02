@@ -1,7 +1,7 @@
 use crate::SharedString;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
-pub use no_action::{is_no_action, NoAction};
+pub use no_action::{NoAction, is_no_action};
 use serde_json::json;
 use std::{
     any::{Any, TypeId},

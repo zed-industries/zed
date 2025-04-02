@@ -1,21 +1,25 @@
+use crate::Editor;
 use anyhow::Result;
 use collections::HashMap;
 use git::{
-    blame::{Blame, BlameEntry},
-    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid,
+    GitHostingProviderRegistry, GitRemote, Oid,
+    blame::{Blame, BlameEntry, ParsedCommitMessage},
+    parse_git_remote_url,
 };
-use gpui::{App, AppContext as _, Context, Entity, Subscription, Task};
-use http_client::HttpClient;
+use gpui::{
+    AnyElement, App, AppContext as _, Context, Entity, Hsla, Subscription, Task, TextStyle,
+    WeakEntity, Window,
+};
 use language::{Bias, Buffer, BufferSnapshot, Edit};
 use multi_buffer::RowInfo;
-use project::{Project, ProjectItem};
+use project::{
+    Project, ProjectItem,
+    git_store::{GitStoreEvent, Repository, RepositoryEvent},
+};
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
-use ui::SharedString;
-use url::Url;
-
-use crate::commit_tooltip::ParsedCommitMessage;
+use workspace::Workspace;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -58,45 +62,11 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
     }
 }
 
-#[derive(Clone)]
-pub struct GitRemote {
-    pub host: Arc<dyn GitHostingProvider + Send + Sync + 'static>,
-    pub owner: String,
-    pub repo: String,
-}
-
-impl std::fmt::Debug for GitRemote {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GitRemote")
-            .field("host", &self.host.name())
-            .field("owner", &self.owner)
-            .field("repo", &self.repo)
-            .finish()
-    }
-}
-
-impl GitRemote {
-    pub fn host_supports_avatars(&self) -> bool {
-        self.host.supports_avatars()
-    }
-
-    pub async fn avatar_url(
-        &self,
-        commit: SharedString,
-        client: Arc<dyn HttpClient>,
-    ) -> Option<Url> {
-        self.host
-            .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
-            .await
-            .ok()
-            .flatten()
-    }
-}
 pub struct GitBlame {
     project: Entity<Project>,
     buffer: Entity<Buffer>,
     entries: SumTree<GitBlameEntry>,
-    commit_details: HashMap<Oid, crate::commit_tooltip::ParsedCommitMessage>,
+    commit_details: HashMap<Oid, ParsedCommitMessage>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
@@ -107,6 +77,91 @@ pub struct GitBlame {
     regenerate_on_edit_task: Task<Result<()>>,
     _regenerate_subscriptions: Vec<Subscription>,
 }
+
+pub trait BlameRenderer {
+    fn max_author_length(&self) -> usize;
+
+    fn render_blame_entry(
+        &self,
+        _: &TextStyle,
+        _: BlameEntry,
+        _: Option<ParsedCommitMessage>,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
+        _: Entity<Editor>,
+        _: usize,
+        _: Hsla,
+        _: &mut App,
+    ) -> Option<AnyElement>;
+
+    fn render_inline_blame_entry(
+        &self,
+        _: &TextStyle,
+        _: BlameEntry,
+        _: Option<ParsedCommitMessage>,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
+        _: Entity<Editor>,
+        _: &mut App,
+    ) -> Option<AnyElement>;
+
+    fn open_blame_commit(
+        &self,
+        _: BlameEntry,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
+        _: &mut Window,
+        _: &mut App,
+    );
+}
+
+impl BlameRenderer for () {
+    fn max_author_length(&self) -> usize {
+        0
+    }
+
+    fn render_blame_entry(
+        &self,
+        _: &TextStyle,
+        _: BlameEntry,
+        _: Option<ParsedCommitMessage>,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
+        _: Entity<Editor>,
+        _: usize,
+        _: Hsla,
+        _: &mut App,
+    ) -> Option<AnyElement> {
+        None
+    }
+
+    fn render_inline_blame_entry(
+        &self,
+        _: &TextStyle,
+        _: BlameEntry,
+        _: Option<ParsedCommitMessage>,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
+        _: Entity<Editor>,
+        _: &mut App,
+    ) -> Option<AnyElement> {
+        None
+    }
+
+    fn open_blame_commit(
+        &self,
+        _: BlameEntry,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+}
+
+pub(crate) struct GlobalBlameRenderer(pub Arc<dyn BlameRenderer>);
+
+impl gpui::Global for GlobalBlameRenderer {}
 
 impl GitBlame {
     pub fn new(
@@ -150,13 +205,21 @@ impl GitBlame {
                         this.generate(cx);
                     }
                 }
-                project::Event::GitStateUpdated => {
+                _ => {}
+            }
+        });
+
+        let git_store = project.read(cx).git_store().clone();
+        let git_store_subscription =
+            cx.subscribe(&git_store, move |this, _, event, cx| match event {
+                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
+                | GitStoreEvent::RepositoryAdded(_)
+                | GitStoreEvent::RepositoryRemoved(_) => {
                     log::debug!("Status of git repositories updated. Regenerating blame data...",);
                     this.generate(cx);
                 }
                 _ => {}
-            }
-        });
+            });
 
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -174,10 +237,23 @@ impl GitBlame {
             task: Task::ready(Ok(())),
             generated: false,
             regenerate_on_edit_task: Task::ready(Ok(())),
-            _regenerate_subscriptions: vec![buffer_subscriptions, project_subscription],
+            _regenerate_subscriptions: vec![
+                buffer_subscriptions,
+                project_subscription,
+                git_store_subscription,
+            ],
         };
         this.generate(cx);
         this
+    }
+
+    pub fn repository(&self, cx: &App) -> Option<Entity<Repository>> {
+        self.project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(self.buffer.read(cx).remote_id(), cx)
+            .map(|(repo, _)| repo)
     }
 
     pub fn has_generated_entries(&self) -> bool {
@@ -529,7 +605,7 @@ mod tests {
     use std::{cmp, env, ops::Range, path::Path};
     use text::BufferId;
     use unindent::Unindent as _;
-    use util::{path, RandomCharIter};
+    use util::{RandomCharIter, path};
 
     // macro_rules! assert_blame_rows {
     //     ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {

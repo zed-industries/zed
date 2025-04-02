@@ -1,13 +1,13 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
+    Bias, Editor, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
     scroll::Autoscroll,
-    Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_internal_actions, Action, App, AppContext as _, Context, Global, Window};
+use gpui::{Action, App, AppContext as _, Context, Global, Window, actions, impl_internal_actions};
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
@@ -27,19 +27,19 @@ use std::{
 use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, SaveIntent};
+use workspace::{SaveIntent, notifications::NotifyResultExt};
 use zed_actions::RevealTarget;
 
 use crate::{
+    ToggleMarksView, ToggleRegistersView, Vim,
     motion::{EndOfDocument, Motion, MotionKind, StartOfDocument},
     normal::{
-        search::{FindCommand, ReplaceCommand, Replacement},
         JoinLines,
+        search::{FindCommand, ReplaceCommand, Replacement},
     },
     object::Object,
     state::{Mark, Mode},
     visual::VisualDeleteLine,
-    ToggleMarksView, ToggleRegistersView, Vim,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,7 +92,7 @@ impl VimOption {
 
                 CommandInterceptResult {
                     string: format!(
-                        "set {}",
+                        ":set {}",
                         options.iter().map(|opt| opt.to_string()).join(" ")
                     ),
                     action: VimSet { options }.boxed_clone(),
@@ -795,6 +795,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
+        VimCommand::str(("buffers", ""), "tab_switcher::Toggle"),
+        VimCommand::str(("ls", ""), "tab_switcher::Toggle"),
         VimCommand::new(("new", ""), workspace::NewFileSplitHorizontal),
         VimCommand::new(("vne", "w"), workspace::NewFileSplitVertical),
         VimCommand::new(("tabe", "dit"), workspace::NewFile),
@@ -874,6 +876,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("Ch", "at"), "chat_panel::ToggleFocus"),
         VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
         VimCommand::str(("A", "I"), "assistant::ToggleFocus"),
+        VimCommand::str(("G", "it"), "git_panel::ToggleFocus"),
         VimCommand::new(("noh", "lsearch"), search::buffer_search::Dismiss),
         VimCommand::new(("$", ""), EndOfDocument),
         VimCommand::new(("%", ""), EndOfDocument),
@@ -882,6 +885,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             .bang(editor::actions::ReloadFile),
         VimCommand::new(("ex", ""), editor::actions::ReloadFile).bang(editor::actions::ReloadFile),
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
+        VimCommand::str(("opt", "ions"), "zed::OpenDefaultSettings"),
+        VimCommand::str(("map", ""), "vim::OpenDefaultKeymap"),
     ]
 }
 

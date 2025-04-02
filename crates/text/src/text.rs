@@ -11,9 +11,9 @@ mod tests;
 mod undo_map;
 
 pub use anchor::*;
-use anyhow::{anyhow, Context as _, Result};
-pub use clock::ReplicaId;
+use anyhow::{Context as _, Result, anyhow};
 use clock::LOCAL_BRANCH_REPLICA_ID;
+pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use locator::Locator;
 use operation_queue::OperationQueue;

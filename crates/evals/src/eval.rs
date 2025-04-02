@@ -18,19 +18,19 @@ use semantic_index::{
 };
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
+use smol::Timer;
 use smol::channel::bounded;
 use smol::io::AsyncReadExt;
-use smol::Timer;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::{
     fs,
     path::Path,
-    process::{exit, Stdio},
+    process::{Stdio, exit},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 
@@ -483,8 +483,8 @@ async fn run_eval_project(
             for (ix, result) in results.iter().enumerate() {
                 if result.path.as_ref() == Path::new(&expected_result.file) {
                     file_matched = true;
-                    let start_matched = result.row_range.contains(&expected_result.lines.start());
-                    let end_matched = result.row_range.contains(&expected_result.lines.end());
+                    let start_matched = result.row_range.contains(expected_result.lines.start());
+                    let end_matched = result.row_range.contains(expected_result.lines.end());
 
                     if start_matched || end_matched {
                         range_overlapped = true;

@@ -24,7 +24,7 @@ pub mod buffer_tests;
 
 pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use fs::Fs;
@@ -38,11 +38,11 @@ pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
+    JsonSchema,
     r#gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
-    JsonSchema,
 };
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
@@ -57,18 +57,18 @@ use std::{
     pin::Pin,
     str,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
         Arc, LazyLock,
+        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
 };
 use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
-pub use text_diff::{line_diff, text_diff, text_diff_with_options, unified_diff, DiffOptions};
+pub use text_diff::{DiffOptions, line_diff, text_diff, text_diff_with_options, unified_diff};
 use theme::SyntaxTheme;
 pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
-use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
+use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::serde::default_true;
 
 pub use buffer::Operation;

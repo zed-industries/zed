@@ -1,15 +1,15 @@
 use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use auto_update::AutoUpdater;
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
-    percentage, Animation, AnimationExt, AnyWindowHandle, App, AsyncApp, DismissEvent, Entity,
-    EventEmitter, Focusable, FontFeatures, ParentElement as _, PromptLevel, Render,
-    SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, WeakEntity,
+    Animation, AnimationExt, AnyWindowHandle, App, AsyncApp, DismissEvent, Entity, EventEmitter,
+    Focusable, FontFeatures, ParentElement as _, PromptLevel, Render, SemanticVersion,
+    SharedString, Task, TextStyleRefinement, Transformation, WeakEntity, percentage,
 };
 
 use language::CursorShape;
@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon, Styled, Window,
+    ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
+    LabelCommon, Styled, Window, prelude::*,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -599,7 +599,7 @@ pub async fn open_ssh_project(
 
         let did_open_ssh_project = cx
             .update(|cx| {
-                workspace::open_ssh_project(
+                workspace::open_ssh_project_with_new_connection(
                     window,
                     connection_options.clone(),
                     cancel_rx,

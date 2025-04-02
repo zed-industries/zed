@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use anyhow::{Result, anyhow};
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{AuthenticateError, LanguageModelCompletionEvent};
@@ -9,14 +9,14 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use lmstudio::{
-    get_models, preload_model, stream_chat_completion, ChatCompletionRequest, ChatMessage,
-    ModelType,
+    ChatCompletionRequest, ChatMessage, ModelType, get_models, preload_model,
+    stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{prelude::*, ButtonLike, Indicator};
+use ui::{ButtonLike, Indicator, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
@@ -273,6 +273,10 @@ impl LanguageModel for LmStudioLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("lmstudio/{}", self.model.id())
     }
@@ -359,17 +363,6 @@ impl LanguageModel for LmStudioLanguageModel {
                 .boxed())
         }
         .boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        _request: LanguageModelRequest,
-        _tool_name: String,
-        _tool_description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        async move { Ok(futures::stream::empty().boxed()) }.boxed()
     }
 }
 

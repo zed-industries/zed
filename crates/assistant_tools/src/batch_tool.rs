@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use futures::future::join_all;
 use gpui::{App, AppContext, Entity, Task};
@@ -148,7 +148,7 @@ pub struct BatchTool;
 
 impl Tool for BatchTool {
     fn name(&self) -> String {
-        "batch-tool".into()
+        "batch_tool".into()
     }
 
     fn needs_confirmation(&self) -> bool {

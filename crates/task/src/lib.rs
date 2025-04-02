@@ -6,7 +6,7 @@ pub mod static_source;
 mod task_template;
 mod vscode_format;
 
-use collections::{hash_map, HashMap, HashSet};
+use collections::{HashMap, HashSet, hash_map};
 use gpui::SharedString;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -134,6 +134,7 @@ impl ResolvedTask {
                             DebugRequestType::Launch(LaunchConfig {
                                 program: resolved.command.clone(),
                                 cwd: resolved.cwd.clone(),
+                                args,
                             })
                         }
                         crate::task_template::DebugArgsRequest::Attach(attach_config) => {
@@ -142,8 +143,8 @@ impl ResolvedTask {
                     }),
                     initialize_args: debug_args.initialize_args,
                     tcp_connection: debug_args.tcp_connection,
-                    args,
                     locator: debug_args.locator.clone(),
+                    stop_on_entry: debug_args.stop_on_entry,
                 })
             }
             _ => None,

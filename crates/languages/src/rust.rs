@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{io::BufReader, StreamExt};
+use futures::{StreamExt, io::BufReader};
 use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
-use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::LanguageServerBinary;
 use regex::Regex;
@@ -18,7 +18,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskType, TaskVariables, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{ResultExt, fs::remove_matching, maybe};
 
 use crate::language_settings::language_settings;
 
@@ -637,6 +637,7 @@ impl ContextProvider for RustContextProvider {
                     locator: Some("cargo".into()),
                     tcp_connection: None,
                     initialize_args: None,
+                    stop_on_entry: None,
                 }),
                 command: "cargo".into(),
                 args: vec![
@@ -728,7 +729,12 @@ impl ContextProvider for RustContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Debug".into(),
+                label: format!(
+                    "Debug {} {} (package: {})",
+                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
+                    RUST_BIN_NAME_TASK_VARIABLE.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
                 cwd: Some("$ZED_DIRNAME".to_owned()),
                 command: "cargo".into(),
                 task_type: TaskType::Debug(task::DebugArgs {
@@ -737,6 +743,7 @@ impl ContextProvider for RustContextProvider {
                     initialize_args: None,
                     locator: Some("cargo".into()),
                     tcp_connection: None,
+                    stop_on_entry: None,
                 }),
                 args: debug_task_args,
                 tags: vec!["rust-main".to_owned()],

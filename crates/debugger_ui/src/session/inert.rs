@@ -7,10 +7,10 @@ use settings::Settings as _;
 use task::{DebugTaskDefinition, LaunchConfig, TCPHost};
 use theme::ThemeSettings;
 use ui::{
-    div, h_flex, relative, v_flex, ActiveTheme as _, ButtonCommon, ButtonLike, Clickable, Context,
-    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconName, IconSize,
-    InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ParentElement, PopoverMenu,
-    PopoverMenuHandle, Render, SharedString, SplitButton, Styled, Window,
+    ActiveTheme as _, ButtonCommon, ButtonLike, Clickable, Context, ContextMenu, Disableable,
+    DropdownMenu, FluentBuilder, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
+    LabelCommon, LabelSize, ParentElement, PopoverMenu, PopoverMenuHandle, Render, SharedString,
+    SplitButton, Styled, Window, div, h_flex, relative, v_flex,
 };
 use workspace::Workspace;
 
@@ -156,11 +156,12 @@ impl Render for InertState {
                             request: DebugRequestType::Launch(LaunchConfig {
                                 program,
                                 cwd: Some(cwd),
+                                args: Default::default(),
                             }),
                             tcp_connection: Some(TCPHost::default()),
                             initialize_args: None,
-                            args: Default::default(),
                             locator: None,
+                            stop_on_entry: None,
                         },
                     });
                 } else {
@@ -321,9 +322,9 @@ impl InertState {
             adapter: kind,
             request: DebugRequestType::Attach(task::AttachConfig { process_id: None }),
             initialize_args: None,
-            args: Default::default(),
             locator: None,
             tcp_connection: Some(TCPHost::default()),
+            stop_on_entry: None,
         };
 
         let _ = self.workspace.update(cx, |workspace, cx| {

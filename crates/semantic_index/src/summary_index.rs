@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayString;
 use fs::{Fs, MTime};
-use futures::{stream::StreamExt, TryFutureExt};
+use futures::{TryFutureExt, stream::StreamExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{App, AppContext as _, Entity, Task};
 use heed::{
-    types::{SerdeBincode, Str},
     RoTxn,
+    types::{SerdeBincode, Str},
 };
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,

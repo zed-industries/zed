@@ -2,11 +2,11 @@ use crate::{
     call_settings::CallSettings,
     participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use audio::{Audio, Sound};
 use client::{
-    proto::{self, PeerId},
     ChannelId, Client, ParticipantIndex, TypedEnvelope, User, UserStore,
+    proto::{self, PeerId},
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
@@ -19,8 +19,8 @@ use livekit_client::{self as livekit, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
-use std::{any::Any, future::Future, mem, sync::Arc, time::Duration};
-use util::{post_inc, ResultExt, TryFutureExt};
+use std::{any::Any, future::Future, mem, rc::Rc, sync::Arc, time::Duration};
+use util::{ResultExt, TryFutureExt, post_inc};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -139,7 +139,7 @@ impl Room {
             pending_participants: Default::default(),
             pending_call_count: 0,
             client_subscriptions: vec![
-                client.add_message_handler(cx.weak_entity(), Self::handle_room_updated)
+                client.add_message_handler(cx.weak_entity(), Self::handle_room_updated),
             ],
             _subscriptions: vec![
                 cx.on_release(Self::released),
@@ -469,7 +469,7 @@ impl Room {
                         let repository = repository.read(cx);
                         repositories.push(proto::RejoinRepository {
                             id: entry_id.to_proto(),
-                            scan_id: repository.completed_scan_id as u64,
+                            scan_id: repository.scan_id,
                         });
                     }
 
@@ -1594,7 +1594,7 @@ fn spawn_room_connection(
 
                 let muted_by_user = Room::mute_on_join(cx);
                 this.live_kit = Some(LiveKitRoom {
-                    room: Arc::new(room),
+                    room: Rc::new(room),
                     screen_track: LocalTrack::None,
                     microphone_track: LocalTrack::None,
                     next_publish_id: 0,
@@ -1617,7 +1617,7 @@ fn spawn_room_connection(
 }
 
 struct LiveKitRoom {
-    room: Arc<livekit::Room>,
+    room: Rc<livekit::Room>,
     screen_track: LocalTrack,
     microphone_track: LocalTrack,
     /// Tracks whether we're currently in a muted state due to auto-mute from deafening or manual mute performed by user.

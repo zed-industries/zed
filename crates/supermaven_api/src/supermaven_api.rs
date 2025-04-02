@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Context as _, Result};
-use futures::io::BufReader;
+use anyhow::{Context as _, Result, anyhow};
 use futures::AsyncReadExt;
+use futures::io::BufReader;
 use http_client::{AsyncBody, HttpClient, Request as HttpRequest};
 use paths::supermaven_dir;
 use serde::{Deserialize, Serialize};

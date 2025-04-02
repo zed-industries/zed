@@ -1,16 +1,16 @@
 use gpui::{
-    actions, Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyBindingContextPredicate, KeyContext, Keystroke, MouseButton, Render, Subscription,
+    Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyBindingContextPredicate, KeyContext, Keystroke, MouseButton, Render, Subscription, actions,
 };
 use itertools::Itertools;
 use serde_json::json;
 use settings::get_key_equivalents;
-use ui::{
-    div, h_flex, px, v_flex, ButtonCommon, Clickable, Context, FluentBuilder, InteractiveElement,
-    Label, LabelCommon, LabelSize, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    Window,
-};
 use ui::{Button, ButtonStyle};
+use ui::{
+    ButtonCommon, Clickable, Context, FluentBuilder, InteractiveElement, Label, LabelCommon,
+    LabelSize, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    h_flex, px, v_flex,
+};
 use workspace::{Item, SplitDirection, Workspace};
 
 actions!(debug, [OpenKeyContextView]);

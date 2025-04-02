@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use base64::prelude::*;
-use rand::{thread_rng, Rng as _};
+use rand::{Rng as _, thread_rng};
 use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey};
 use rsa::traits::PaddingScheme;
 use rsa::{Oaep, Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};

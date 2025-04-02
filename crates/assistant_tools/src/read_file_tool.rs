@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use itertools::Itertools;
@@ -44,7 +44,7 @@ pub struct ReadFileTool;
 
 impl Tool for ReadFileTool {
     fn name(&self) -> String {
-        "read-file".into()
+        "read_file".into()
     }
 
     fn needs_confirmation(&self) -> bool {
@@ -56,7 +56,7 @@ impl Tool for ReadFileTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Eye
+        IconName::FileSearch
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {

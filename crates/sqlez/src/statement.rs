@@ -1,8 +1,8 @@
-use std::ffi::{c_int, CStr, CString};
+use std::ffi::{CStr, CString, c_int};
 use std::marker::PhantomData;
 use std::{ptr, slice, str};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use libsqlite3_sys::*;
 
 use crate::bindable::{Bind, Column};
@@ -477,11 +477,13 @@ mod test {
             .unwrap()()
         .unwrap();
 
-        assert!(connection
-            .select_row::<String>("SELECT text FROM texts")
-            .unwrap()()
-        .unwrap()
-        .is_none());
+        assert!(
+            connection
+                .select_row::<String>("SELECT text FROM texts")
+                .unwrap()()
+            .unwrap()
+            .is_none()
+        );
 
         let text_to_insert = "This is a test";
 

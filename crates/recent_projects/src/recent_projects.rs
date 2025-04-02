@@ -11,8 +11,8 @@ use gpui::{
 };
 use ordered_float::OrderedFloat;
 use picker::{
-    highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
     Picker, PickerDelegate,
+    highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
 pub use remote_servers::RemoteServerProjects;
 use settings::Settings;
@@ -21,11 +21,11 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{prelude::*, tooltip_container, KeyBinding, ListItem, ListItemSpacing, Tooltip};
-use util::{paths::PathExt, ResultExt};
+use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
+use util::{ResultExt, paths::PathExt};
 use workspace::{
-    CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId,
-    WORKSPACE_DB,
+    CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace,
+    WorkspaceId,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -594,11 +594,11 @@ mod tests {
     use dap::debugger_settings::DebuggerSettings;
     use editor::Editor;
     use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
-    use project::{project_settings::ProjectSettings, Project};
+    use project::{Project, project_settings::ProjectSettings};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::{open_paths, AppState};
+    use workspace::{AppState, open_paths};
 
     use super::*;
 

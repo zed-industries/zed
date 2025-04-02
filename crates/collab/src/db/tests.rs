@@ -20,8 +20,8 @@ use parking_lot::Mutex;
 use sea_orm::ConnectionTrait;
 use sqlx::migrate::MigrateDatabase;
 use std::sync::{
-    atomic::{AtomicI32, AtomicU32, Ordering::SeqCst},
     Arc,
+    atomic::{AtomicI32, AtomicU32, Ordering::SeqCst},
 };
 
 pub struct TestDb {

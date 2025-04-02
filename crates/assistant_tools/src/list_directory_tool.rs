@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -41,7 +41,7 @@ pub struct ListDirectoryTool;
 
 impl Tool for ListDirectoryTool {
     fn name(&self) -> String {
-        "list-directory".into()
+        "list_directory".into()
     }
 
     fn needs_confirmation(&self) -> bool {

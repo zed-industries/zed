@@ -17,13 +17,13 @@ use futures::channel::oneshot::{self, Receiver};
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use windows::{
-    core::*,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
+    core::*,
 };
 
 use crate::platform::blade::{BladeContext, BladeRenderer};
@@ -1326,7 +1326,7 @@ mod windows_renderer {
 #[cfg(test)]
 mod tests {
     use super::ClickState;
-    use crate::{point, DevicePixels, MouseButton};
+    use crate::{DevicePixels, MouseButton, point};
     use std::time::Duration;
 
     #[test]

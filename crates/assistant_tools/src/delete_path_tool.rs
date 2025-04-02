@@ -1,7 +1,7 @@
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
-use futures::{channel::mpsc, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{Project, ProjectPath};
@@ -30,7 +30,7 @@ pub struct DeletePathTool;
 
 impl Tool for DeletePathTool {
     fn name(&self) -> String {
-        "delete-path".into()
+        "delete_path".into()
     }
 
     fn needs_confirmation(&self) -> bool {

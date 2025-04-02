@@ -3,11 +3,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Entity, Task};
-use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
+use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;

@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use async_trait::async_trait;
 use collections::BTreeMap;
@@ -13,13 +13,13 @@ use gpui::{
 };
 use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
 use rpc::{
-    proto::{self, FromProto, ToProto},
     AnyProtoClient, TypedEnvelope,
+    proto::{self, FromProto, ToProto},
 };
 use settings::WorktreeId;
 use util::ResultExt as _;
 
-use crate::{worktree_store::WorktreeStore, ProjectEnvironment, ProjectPath};
+use crate::{ProjectEnvironment, ProjectPath, worktree_store::WorktreeStore};
 
 pub struct ToolchainStore(ToolchainStoreInner);
 enum ToolchainStoreInner {
@@ -331,11 +331,7 @@ impl LocalToolchainStore {
         cx.spawn(async move |cx| {
             let project_env = environment
                 .update(cx, |environment, cx| {
-                    environment.get_environment(
-                        Some(path.worktree_id),
-                        Some(Arc::from(abs_path.as_path())),
-                        cx,
-                    )
+                    environment.get_environment(Some(root.clone()), cx)
                 })
                 .ok()?
                 .await;

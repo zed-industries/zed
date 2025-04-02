@@ -13,8 +13,8 @@ name = "assistant_eval"
 path = "src/main.rs"
 
 [dependencies]
+agent.workspace = true
 anyhow.workspace = true
-assistant2.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
 clap.workspace = true
@@ -43,3 +43,4 @@ serde_json_lenient.workspace = true
 settings.workspace = true
 smol.workspace = true
 util.workspace = true
+workspace-hack.workspace = true

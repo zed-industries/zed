@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
@@ -30,7 +30,7 @@ pub struct CreateDirectoryTool;
 
 impl Tool for CreateDirectoryTool {
     fn name(&self) -> String {
-        "create-directory".into()
+        "create_directory".into()
     }
 
     fn needs_confirmation(&self) -> bool {

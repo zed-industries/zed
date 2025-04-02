@@ -1,8 +1,8 @@
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use axum::{
+    Extension, Json, Router,
     extract::{self, Query},
     routing::{get, post},
-    Extension, Json, Router,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use collections::HashSet;
@@ -24,17 +24,16 @@ use crate::api::events::SnowflakeRow;
 use crate::db::billing_subscription::{StripeCancellationReason, StripeSubscriptionStatus};
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::{ResultExt as _, Server};
+use crate::{AppState, Cents, Error, Result};
 use crate::{db::UserId, llm::db::LlmDatabase};
 use crate::{
     db::{
-        billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
-        CreateBillingSubscriptionParams, CreateProcessedStripeEventParams,
-        UpdateBillingCustomerParams, UpdateBillingPreferencesParams,
-        UpdateBillingSubscriptionParams,
+        BillingSubscriptionId, CreateBillingCustomerParams, CreateBillingSubscriptionParams,
+        CreateProcessedStripeEventParams, UpdateBillingCustomerParams,
+        UpdateBillingPreferencesParams, UpdateBillingSubscriptionParams, billing_customer,
     },
     stripe_billing::StripeBilling,
 };
-use crate::{AppState, Cents, Error, Result};
 
 pub fn router() -> Router {
     Router::new()
