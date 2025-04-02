@@ -3137,7 +3137,7 @@ impl LocalLspStore {
                         .as_path()
                         .strip_prefix(&worktree_root_path)
                         .ok()?;
-                    let literal_prefix = glob_literal_prefix(relative).into();
+                    let literal_prefix = glob_literal_prefix(relative);
                     Some((
                         worktree.clone(),
                         literal_prefix,
