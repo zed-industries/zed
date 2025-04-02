@@ -97,7 +97,7 @@ impl_actions!(agent, [NewThread, ManageProfiles]);
 
 const NAMESPACE: &str = "agent";
 
-/// Initializes the `assistant2` crate.
+/// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
@@ -123,10 +123,10 @@ pub fn init(
     cx.observe_new(AddContextServerModal::register).detach();
     cx.observe_new(ManageProfilesModal::register).detach();
 
-    feature_gate_assistant2_actions(cx);
+    feature_gate_agent_actions(cx);
 }
 
-fn feature_gate_assistant2_actions(cx: &mut App) {
+fn feature_gate_agent_actions(cx: &mut App) {
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(NAMESPACE);
     });
