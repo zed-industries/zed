@@ -15,8 +15,13 @@ use cocoa::{
 };
 use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
 use core_graphics::event::CGKeyCode;
-use objc::{msg_send, sel, sel_impl};
-use std::{borrow::Cow, ffi::c_void};
+use objc::{msg_send, runtime::Object, sel, sel_impl};
+use std::{
+    borrow::Cow,
+    ffi::{c_void, CStr},
+};
+
+use super::kTISPropertyInputSourceID;
 
 const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
@@ -721,5 +726,18 @@ fn parse_other_keys(scan_code: u16) -> KeyCode {
         0x0010 => KeyCode::Y,
         0x0006 => KeyCode::Z,
         _ => KeyCode::Unknown,
+    }
+}
+
+pub(crate) fn keyboard_layout() -> String {
+    unsafe {
+        let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
+
+        let input_source_id: *mut Object =
+            TISGetInputSourceProperty(current_keyboard, kTISPropertyInputSourceID as *const c_void);
+        let input_source_id: *const std::os::raw::c_char = msg_send![input_source_id, UTF8String];
+        let input_source_id = CStr::from_ptr(input_source_id).to_str().unwrap();
+
+        input_source_id.to_string()
     }
 }

@@ -374,58 +374,16 @@ impl KeyCode {
         if let Some(key) = Self::parse_immutable(input) {
             return Ok(key);
         }
-        match input {
-            "a" => Ok(Self::A),
-            "b" => Ok(Self::B),
-            "c" => Ok(Self::C),
-            "d" => Ok(Self::D),
-            "e" => Ok(Self::E),
-            "f" => Ok(Self::F),
-            "g" => Ok(Self::G),
-            "h" => Ok(Self::H),
-            "i" => Ok(Self::I),
-            "j" => Ok(Self::J),
-            "k" => Ok(Self::K),
-            "l" => Ok(Self::L),
-            "m" => Ok(Self::M),
-            "n" => Ok(Self::N),
-            "o" => Ok(Self::O),
-            "p" => Ok(Self::P),
-            "q" => Ok(Self::Q),
-            "r" => Ok(Self::R),
-            "s" => Ok(Self::S),
-            "t" => Ok(Self::T),
-            "u" => Ok(Self::U),
-            "v" => Ok(Self::V),
-            "w" => Ok(Self::W),
-            "x" => Ok(Self::X),
-            "y" => Ok(Self::Y),
-            "z" => Ok(Self::Z),
-            "0" => Ok(Self::Digital0),
-            "1" => Ok(Self::Digital1),
-            "2" => Ok(Self::Digital2),
-            "3" => Ok(Self::Digital3),
-            "4" => Ok(Self::Digital4),
-            "5" => Ok(Self::Digital5),
-            "6" => Ok(Self::Digital6),
-            "7" => Ok(Self::Digital7),
-            "8" => Ok(Self::Digital8),
-            "9" => Ok(Self::Digital9),
-            ";" => Ok(Self::Semicolon),
-            "=" => Ok(Self::Plus),
-            "," => Ok(Self::Comma),
-            "-" => Ok(Self::Minus),
-            "." => Ok(Self::Period),
-            "/" => Ok(Self::Slash),
-            "`" => Ok(Self::Tilde),
-            "[" => Ok(Self::LeftBracket),
-            "\\" => Ok(Self::Backslash),
-            "]" => Ok(Self::RightBracket),
-            "'" => Ok(Self::Quote),
-            _ => Err(anyhow::anyhow!(
-                "Error parsing keystroke to keycode: {input}"
-            )),
+        if let Some((code, _)) = KEYBOARD_MAPPER
+            .write()
+            .get_mapper(&keyboard_layout())
+            .parse(input, false)
+        {
+            return Ok(code);
         }
+        Err(anyhow::anyhow!(
+            "Error parsing keystroke to keycode: {input}"
+        ))
     }
 
     /// TODO:
@@ -433,39 +391,12 @@ impl KeyCode {
         if let Some(code) = Self::parse_immutable(input) {
             return Ok((code, Modifiers::default()));
         }
-        if always_use_command_layout() {
-            match input {
-                "a" => return Ok((Self::A, Modifiers::default())),
-                "b" => return Ok((Self::B, Modifiers::default())),
-                "c" => return Ok((Self::C, Modifiers::default())),
-                "d" => return Ok((Self::D, Modifiers::default())),
-                "e" => return Ok((Self::E, Modifiers::default())),
-                "f" => return Ok((Self::F, Modifiers::default())),
-                "g" => return Ok((Self::G, Modifiers::default())),
-                "h" => return Ok((Self::H, Modifiers::default())),
-                "i" => return Ok((Self::I, Modifiers::default())),
-                "j" => return Ok((Self::J, Modifiers::default())),
-                "k" => return Ok((Self::K, Modifiers::default())),
-                "l" => return Ok((Self::L, Modifiers::default())),
-                "m" => return Ok((Self::M, Modifiers::default())),
-                "n" => return Ok((Self::N, Modifiers::default())),
-                "o" => return Ok((Self::O, Modifiers::default())),
-                "p" => return Ok((Self::P, Modifiers::default())),
-                "q" => return Ok((Self::Q, Modifiers::default())),
-                "r" => return Ok((Self::R, Modifiers::default())),
-                "s" => return Ok((Self::S, Modifiers::default())),
-                "t" => return Ok((Self::T, Modifiers::default())),
-                "u" => return Ok((Self::U, Modifiers::default())),
-                "v" => return Ok((Self::V, Modifiers::default())),
-                "w" => return Ok((Self::W, Modifiers::default())),
-                "x" => return Ok((Self::X, Modifiers::default())),
-                "y" => return Ok((Self::Y, Modifiers::default())),
-                "z" => return Ok((Self::Z, Modifiers::default())),
-                _ => {}
-            }
-        }
-        if let Some((code, modifiers)) = CHAR_TO_KEY.get(input) {
-            return Ok((*code, *modifiers));
+        if let Some((code, modifiers)) = KEYBOARD_MAPPER
+            .write()
+            .get_mapper(&keyboard_layout())
+            .parse(input, true)
+        {
+            return Ok((code, modifiers));
         }
         Err(anyhow::anyhow!(
             "Error parsing keystroke to keycode: {input}"
@@ -1038,7 +969,7 @@ use collections::HashMap;
 
 use crate::chars_for_modified_key;
 
-use super::{always_use_command_layout, Modifiers};
+use super::{always_use_command_layout, keyboard_layout, Modifiers, KEYBOARD_MAPPER};
 
 fn generate_keymap_info(scan_code: u16) -> Vec<(String, Modifiers)> {
     let mut keymap = Vec::new();

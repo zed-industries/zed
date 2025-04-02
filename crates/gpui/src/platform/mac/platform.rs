@@ -2,7 +2,7 @@ use super::{
     BoolExt,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    renderer, screen_capture,
+    keyboard_layout, renderer, screen_capture,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
@@ -828,19 +828,7 @@ impl Platform for MacPlatform {
     }
 
     fn keyboard_layout(&self) -> String {
-        unsafe {
-            let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
-
-            let input_source_id: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyInputSourceID as *const c_void,
-            );
-            let input_source_id: *const std::os::raw::c_char =
-                msg_send![input_source_id, UTF8String];
-            let input_source_id = CStr::from_ptr(input_source_id).to_str().unwrap();
-
-            input_source_id.to_string()
-        }
+        keyboard_layout()
     }
 
     fn app_path(&self) -> Result<PathBuf> {

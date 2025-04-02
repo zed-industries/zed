@@ -2,6 +2,7 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
+mod keyboard_mapper;
 mod keycodes;
 mod keystroke;
 
@@ -66,6 +67,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub(crate) use keyboard_mapper::*;
 pub use keycodes::*;
 pub use keystroke::*;
 
