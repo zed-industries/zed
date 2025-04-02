@@ -22,6 +22,7 @@ use project::{
 use rpc::proto::{self};
 use settings::Settings;
 use std::{any::TypeId, path::PathBuf};
+use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
@@ -52,6 +53,8 @@ actions!(debug_panel, [ToggleFocus]);
 pub struct DebugPanel {
     size: Pixels,
     pane: Entity<Pane>,
+    /// This represents the last debug definition that was created in the new session modal
+    pub(crate) past_debug_definition: Option<DebugTaskDefinition>,
     project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
@@ -95,7 +98,7 @@ impl DebugPanel {
                 pane,
                 size: px(300.),
                 _subscriptions,
-
+                past_debug_definition: None,
                 project: project.downgrade(),
                 workspace: workspace.weak_handle(),
             };
@@ -642,11 +645,22 @@ impl DebugPanel {
                                 .icon_size(IconSize::Small)
                                 .on_click({
                                     let workspace = self.workspace.clone();
+                                    let weak_panel = cx.weak_entity();
+                                    let past_debug_definition = self.past_debug_definition.clone();
                                     move |_, window, cx| {
+                                        let weak_panel = weak_panel.clone();
+                                        let past_debug_definition = past_debug_definition.clone();
+
                                         let _ = workspace.update(cx, |this, cx| {
                                             let workspace = cx.weak_entity();
                                             this.toggle_modal(window, cx, |window, cx| {
-                                                NewSessionModal::new(workspace, window, cx)
+                                                NewSessionModal::new(
+                                                    past_debug_definition,
+                                                    weak_panel,
+                                                    workspace,
+                                                    window,
+                                                    cx,
+                                                )
                                             });
                                         });
                                     }

@@ -12,7 +12,7 @@ use gpui::{
     WeakEntity,
 };
 use settings::Settings;
-use task::DebugTaskDefinition;
+use task::{DebugTaskDefinition, LaunchConfig};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -23,11 +23,12 @@ use ui::{
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-use crate::attach_modal::AttachModal;
+use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
 
 #[derive(Clone)]
 pub(super) struct NewSessionModal {
     workspace: WeakEntity<Workspace>,
+    debug_panel: WeakEntity<DebugPanel>,
     mode: NewSessionMode,
     stop_on_entry: ToggleState,
     debugger: Option<SharedString>,
@@ -51,12 +52,34 @@ fn suggested_label(request: &DebugRequestType, debugger: &str) -> String {
 }
 
 impl NewSessionModal {
-    pub(super) fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) -> Self {
+    pub(super) fn new(
+        past_debug_definition: Option<DebugTaskDefinition>,
+        debug_panel: WeakEntity<DebugPanel>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let debugger = past_debug_definition
+            .as_ref()
+            .map(|def| def.adapter.clone().into());
+
+        let stop_on_entry = past_debug_definition
+            .as_ref()
+            .and_then(|def| def.stop_on_entry);
+
+        let launch_config = match past_debug_definition.map(|def| def.request) {
+            Some(DebugRequestType::Launch(launch_config)) => Some(launch_config),
+            _ => None,
+        };
+
         Self {
             workspace: workspace.clone(),
-            mode: NewSessionMode::launch(window, cx),
-            stop_on_entry: ToggleState::Unselected,
-            debugger: None,
+            debugger,
+            debug_panel,
+            mode: NewSessionMode::launch(launch_config, window, cx),
+            stop_on_entry: stop_on_entry
+                .map(Into::into)
+                .unwrap_or(ToggleState::Unselected),
         }
     }
 
@@ -81,6 +104,11 @@ impl NewSessionModal {
         let config = self
             .debug_config(cx)
             .ok_or_else(|| anyhow!("Failed to create a debug config"))?;
+
+        let _ = self.debug_panel.update(cx, |panel, _| {
+            panel.past_debug_definition = Some(config.clone());
+        });
+
         cx.spawn(async move |this, cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
             let task =
@@ -181,14 +209,29 @@ struct LaunchMode {
 }
 
 impl LaunchMode {
-    fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
+    fn new(
+        past_launch_config: Option<LaunchConfig>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let (past_program, past_cwd) = past_launch_config
+            .map(|config| (Some(config.program), config.cwd))
+            .unwrap_or_else(|| (None, None));
+
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
             this.set_placeholder_text("Program path", cx);
+
+            if let Some(past_program) = past_program {
+                this.set_text(past_program, window, cx);
+            };
         });
         let cwd = cx.new(|cx| Editor::single_line(window, cx));
         cwd.update(cx, |this, cx| {
             this.set_placeholder_text("Working Directory", cx);
+            if let Some(past_cwd) = past_cwd {
+                this.set_text(past_cwd.to_string_lossy(), window, cx);
+            };
         });
         cx.new(|_| Self { program, cwd })
     }
@@ -321,8 +364,8 @@ impl NewSessionMode {
     fn attach(workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut App) -> Self {
         Self::Attach(AttachMode::new(workspace, cx))
     }
-    fn launch(window: &mut Window, cx: &mut App) -> Self {
-        Self::Launch(LaunchMode::new(window, cx))
+    fn launch(past_launch_config: Option<LaunchConfig>, window: &mut Window, cx: &mut App) -> Self {
+        Self::Launch(LaunchMode::new(past_launch_config, window, cx))
     }
 }
 fn render_editor(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
@@ -389,7 +432,7 @@ impl Render for NewSessionModal {
                                 .style(ui::ButtonStyle::Subtle)
                                 .toggle_state(matches!(self.mode, NewSessionMode::Launch(_)))
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.mode = NewSessionMode::launch(window, cx);
+                                    this.mode = NewSessionMode::launch(None, window, cx);
                                     this.mode.focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
