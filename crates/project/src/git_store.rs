@@ -1,3 +1,4 @@
+mod conflict_set;
 pub mod git_traversal;
 
 use crate::{
@@ -10,6 +11,7 @@ use askpass::AskPassDelegate;
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
+use conflict_set::ConflictSet;
 use fs::Fs;
 use futures::{
     FutureExt as _, StreamExt as _,
@@ -117,223 +119,6 @@ enum DiffBasesChange {
 enum DiffKind {
     Unstaged,
     Uncommitted,
-}
-
-pub struct ConflictSet {
-    buffer_id: BufferId,
-    conflicts: Vec<Conflict>,
-    git_store: WeakEntity<GitStore>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Conflict {
-    pub range: Range<usize>,
-    pub ours: Range<usize>,
-    pub theirs: Range<usize>,
-    pub base: Option<Range<usize>>,
-}
-
-impl ConflictSet {
-    fn new(buffer_id: BufferId, git_store: WeakEntity<GitStore>, _: &mut Context<Self>) -> Self {
-        Self {
-            buffer_id,
-            conflicts: Vec::new(),
-            git_store,
-        }
-    }
-
-    pub fn conflicts(&self) -> &[Conflict] {
-        &self.conflicts
-    }
-}
-
-impl EventEmitter<()> for ConflictSet {}
-
-/// Parse git conflict markers in a string and return the ranges of the conflicts.
-fn parse_conflicts(text: &str) -> Result<Vec<Conflict>> {
-    let mut conflicts = Vec::new();
-    let mut current_conflict: Option<(Range<usize>, Option<Range<usize>>)> = None;
-    let mut ours: Option<Range<usize>> = None;
-
-    let mut line_start = 0;
-    for line in text.lines() {
-        let line_end = line_start + line.len();
-
-        if line.starts_with("<<<<<<< ") {
-            if current_conflict.is_some() {
-                bail!("Nested conflict markers not supported");
-            }
-            current_conflict = Some((line_start..line_end + 1, None));
-            ours = Some(line_end + 1..0);
-        } else if line.starts_with("=======") && current_conflict.is_some() {
-            if let Some(our_range) = ours.as_mut() {
-                our_range.end = line_start;
-            }
-            if let Some((range, _)) = current_conflict.as_mut() {
-                range.end = line_end + 1;
-            }
-        } else if line.starts_with("||||||| ") && current_conflict.is_some() {
-            if let Some(our_range) = ours.as_mut() {
-                our_range.end = line_start;
-            }
-            if let Some((_, base)) = current_conflict.as_mut() {
-                *base = Some(line_end + 1..0);
-            }
-        } else if line.starts_with(">>>>>>> ") && current_conflict.is_some() {
-            if let Some((mut conflict_range, base_range)) = current_conflict.take() {
-                conflict_range.end = line_end + 1;
-
-                let (theirs_start, base) = if let Some(base) = base_range {
-                    let mut base_range = base;
-                    base_range.end = line_start;
-                    (base_range.clone(), Some(base_range))
-                } else {
-                    let mut our_range = ours.take().unwrap();
-                    our_range.end = line_start;
-                    (our_range.end..line_start, None)
-                };
-
-                conflicts.push(Conflict {
-                    range: conflict_range,
-                    ours: ours.take().unwrap(),
-                    theirs: theirs_start,
-                    base,
-                });
-            }
-        }
-
-        line_start = line_end + 1;
-    }
-
-    Ok(conflicts)
-}
-
-fn parse_conflicts_in_buffer(buffer: &text::BufferSnapshot) -> Result<Vec<Conflict>> {
-    let mut conflicts = Vec::new();
-    let mut current_conflict: Option<(Range<usize>, Option<Range<usize>>)> = None;
-    let mut ours: Option<Range<usize>> = None;
-
-    let mut line_start = 0;
-    let mut lines = buffer.text_for_range(0..buffer.len()).lines();
-
-    while let Some(line) = lines.next() {
-        let line_end = line_start + line.len();
-
-        if line.starts_with("<<<<<<< ") {
-            if current_conflict.is_some() {
-                bail!("Nested conflict markers not supported");
-            }
-            current_conflict = Some((line_start..line_end + 1, None));
-            ours = Some(line_end + 1..0);
-        } else if line.starts_with("=======") && current_conflict.is_some() {
-            if let Some(our_range) = ours.as_mut() {
-                our_range.end = line_start;
-            }
-            if let Some((range, _)) = current_conflict.as_mut() {
-                range.end = line_end + 1;
-            }
-        } else if line.starts_with("||||||| ") && current_conflict.is_some() {
-            if let Some(our_range) = ours.as_mut() {
-                our_range.end = line_start;
-            }
-            if let Some((_, base)) = current_conflict.as_mut() {
-                *base = Some(line_end + 1..0);
-            }
-        } else if line.starts_with(">>>>>>> ") && current_conflict.is_some() {
-            if let Some((mut conflict_range, base_range)) = current_conflict.take() {
-                conflict_range.end = line_end + 1;
-
-                let (theirs_start, base) = if let Some(base) = base_range {
-                    let mut base_range = base;
-                    base_range.end = line_start;
-                    (base_range.clone(), Some(base_range))
-                } else {
-                    let mut our_range = ours.take().unwrap();
-                    our_range.end = line_start;
-                    (our_range.end..line_start, None)
-                };
-
-                conflicts.push(Conflict {
-                    range: conflict_range,
-                    ours: ours.take().unwrap(),
-                    theirs: theirs_start,
-                    base,
-                });
-            }
-        }
-
-        line_start = line_end + 1;
-    }
-
-    Ok(conflicts)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::num::NonZeroU64;
-    use text::{Buffer, BufferId};
-
-    #[test]
-    fn test_parse_conflicts_in_buffer() -> Result<()> {
-        // Create a buffer with conflict markers
-        let test_content = r#"This is some text before the conflict.
-<<<<<<< HEAD
-This is our version
-=======
-This is their version
->>>>>>> branch-name
-
-Another conflict:
-<<<<<<< HEAD
-Our second change
-||||||| merged common ancestors
-Original content
-=======
-Their second change
->>>>>>> branch-name
-"#;
-
-        let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(0, buffer_id, test_content.to_string());
-        let snapshot = buffer.snapshot();
-
-        // Parse conflicts
-        let conflicts = parse_conflicts_in_buffer(&snapshot)?;
-
-        // Verify there are 2 conflicts
-        assert_eq!(conflicts.len(), 2);
-
-        // First conflict should have our version, their version, but no base
-        let first = &conflicts[0];
-        assert!(first.base.is_none());
-        let our_text = snapshot
-            .text_for_range(first.ours.clone())
-            .collect::<String>();
-        let their_text = snapshot
-            .text_for_range(first.theirs.clone())
-            .collect::<String>();
-        assert_eq!(our_text, "This is our version\n");
-        assert_eq!(their_text, "This is their version\n");
-
-        // Second conflict should have our version, their version, and a base
-        let second = &conflicts[1];
-        assert!(second.base.is_some());
-        let our_text = snapshot
-            .text_for_range(second.ours.clone())
-            .collect::<String>();
-        let their_text = snapshot
-            .text_for_range(second.theirs.clone())
-            .collect::<String>();
-        let base_text = snapshot
-            .text_for_range(second.base.as_ref().unwrap().clone())
-            .collect::<String>();
-        assert_eq!(our_text, "Our second change\n");
-        assert_eq!(their_text, "Their second change\n");
-        assert_eq!(base_text, "Original content\n");
-
-        Ok(())
-    }
 }
 
 enum GitStoreState {
@@ -954,7 +739,7 @@ impl GitStore {
 
         // Create a new conflict set
         let git_store = cx.weak_entity();
-        let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, git_store, cx));
+        let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, cx));
 
         // Update the git state with the new conflict set
         buffer_git_state.update(cx, |state, cx| {
@@ -2502,7 +2287,7 @@ impl BufferGitState {
             self.conflict_updated_futures.push(tx);
             self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
                 // Use the extracted function to parse conflicts
-                let conflicts = parse_conflicts_in_buffer(&buffer)?;
+                let conflicts = ConflictSet::parse(&buffer)?;
 
                 conflict_set.update(cx, |conflict_set, _| {
                     conflict_set.conflicts = conflicts;
