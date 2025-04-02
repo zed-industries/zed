@@ -47,6 +47,7 @@ pub struct LayoutState {
     hyperlink_tooltip: Option<AnyElement>,
     gutter: Pixels,
     block_below_cursor_element: Option<AnyElement>,
+    pending_initialization: bool,
 }
 
 /// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
@@ -743,19 +744,22 @@ impl Element for TerminalElement {
                         .push((selection.start..=selection.end, player_color.selection));
                 }
 
-                // then have that representation be converted to the appropriate highlight data structure
-
-                let (cells, rects) = TerminalElement::layout_grid(
-                    cells.iter().cloned(),
-                    &text_style,
-                    window.text_system(),
-                    last_hovered_word
-                        .as_ref()
-                        .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
-                    window,
-                    cx,
-                );
-
+                let pending_initialization = self.terminal.read(cx).pending_initialization;
+                let (cells, rects) = if pending_initialization {
+                    (Vec::new(), Vec::new())
+                } else {
+                    // then have that representation be converted to the appropriate highlight data structure
+                    TerminalElement::layout_grid(
+                        cells.iter().cloned(),
+                        &text_style,
+                        window.text_system(),
+                        last_hovered_word
+                            .as_ref()
+                            .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                        window,
+                        cx,
+                    )
+                };
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
                 let cursor = if let AlacCursorShape::Hidden = cursor.shape {
@@ -852,6 +856,7 @@ impl Element for TerminalElement {
                     hyperlink_tooltip,
                     gutter,
                     block_below_cursor_element,
+                    pending_initialization,
                 }
             },
         )
@@ -921,35 +926,41 @@ impl Element for TerminalElement {
                         rect.paint(origin, &layout.dimensions, window);
                     }
 
-                    for (relative_highlighted_range, color) in
-                        layout.relative_highlighted_ranges.iter()
-                    {
-                        if let Some((start_y, highlighted_range_lines)) =
-                            to_highlighted_range_lines(relative_highlighted_range, layout, origin)
+                    if !layout.pending_initialization {
+                        for (relative_highlighted_range, color) in
+                            layout.relative_highlighted_ranges.iter()
                         {
-                            let hr = HighlightedRange {
-                                start_y,
-                                line_height: layout.dimensions.line_height,
-                                lines: highlighted_range_lines,
-                                color: *color,
-                                corner_radius: 0.15 * layout.dimensions.line_height,
-                            };
-                            hr.paint(bounds, window);
+                            if let Some((start_y, highlighted_range_lines)) =
+                                to_highlighted_range_lines(
+                                    relative_highlighted_range,
+                                    layout,
+                                    origin,
+                                )
+                            {
+                                let hr = HighlightedRange {
+                                    start_y,
+                                    line_height: layout.dimensions.line_height,
+                                    lines: highlighted_range_lines,
+                                    color: *color,
+                                    corner_radius: 0.15 * layout.dimensions.line_height,
+                                };
+                                hr.paint(bounds, window);
+                            }
                         }
-                    }
 
-                    for cell in &layout.cells {
-                        cell.paint(origin, &layout.dimensions, bounds, window, cx);
-                    }
-
-                    if self.cursor_visible {
-                        if let Some(mut cursor) = cursor {
-                            cursor.paint(origin, window, cx);
+                        for cell in &layout.cells {
+                            cell.paint(origin, &layout.dimensions, bounds, window, cx);
                         }
-                    }
 
-                    if let Some(mut element) = block_below_cursor_element {
-                        element.paint(window, cx);
+                        if self.cursor_visible {
+                            if let Some(mut cursor) = cursor {
+                                cursor.paint(origin, window, cx);
+                            }
+                        }
+
+                        if let Some(mut element) = block_below_cursor_element {
+                            element.paint(window, cx);
+                        }
                     }
 
                     if let Some(mut element) = hyperlink_tooltip {
