@@ -1548,6 +1548,7 @@ impl ActiveThread {
             .upgrade()
             .map(|workspace| workspace.read(cx).app_state().fs.clone());
         let is_pending = self.thread.read(cx).pending_tool(&tool_use.id).is_some();
+        let auto_run = AssistantSettings::get_global(cx).always_allow_tool_actions;
 
         let status_icons = div().child(match &tool_use.status {
             ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
@@ -1849,7 +1850,7 @@ impl ActiveThread {
                                     .child(results_content),
                             )
                         })
-                        .when(is_pending, |this| {
+                        .when(!auto_run && is_pending, |this| {
                             this.child(
                                 h_flex()
                                     .py_1()
@@ -1876,7 +1877,15 @@ impl ActiveThread {
                                                 .icon_position(IconPosition::Start)
                                                 .icon_size(IconSize::Small)
                                                 .icon_color(Color::Success)
-                                                .tooltip(Tooltip::text("This button toggles the setting to always allow every command that needs permission. You can change this behavior by going in the settings and looking for `always_allow_tool_actions`."))
+                                                .tooltip(move |window, cx|  {
+                                                    Tooltip::with_meta(
+                                                        "Never ask for permission",
+                                                        None,
+                                                        "Restore the original behavior in your Agent Panel settings",
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
                                                 .on_click(cx.listener(
                                                     move |this, event, window, cx| {
                                                         if let Some(fs) = fs.clone() {
