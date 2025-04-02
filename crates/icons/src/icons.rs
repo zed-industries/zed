@@ -46,6 +46,7 @@ pub enum IconName {
     Brain,
     CaseSensitive,
     Check,
+    CheckDouble,
     ChevronDown,
     /// This chevron indicates a popover menu.
     ChevronDownSmall,
