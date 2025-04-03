@@ -3,8 +3,9 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
 };
 use collections::HashMap;
-use gpui::{AnyElement, App, ElementId, Pixels};
-use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
+use gpui::{AnyElement, App, ElementId, HighlightStyle, Pixels, Window};
+use language::{Edit, HighlightId, Point, TextSummary};
+use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
 };
@@ -267,6 +268,7 @@ impl FoldMapWriter<'_> {
 
     pub(crate) fn update_fold_widths(
         &mut self,
+        // todo!("make this an iterator.")
         new_widths: HashMap<FoldId, Pixels>,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
@@ -274,6 +276,7 @@ impl FoldMapWriter<'_> {
         let buffer = &inlay_snapshot.buffer;
 
         for (id, new_width) in new_widths {
+            // todo!("fix this")
             let folds = self.0.snapshot.folds.items(buffer);
             let fold_option = folds.iter().find(|fold| fold.id == id);
 
@@ -518,6 +521,7 @@ impl FoldMap {
                                 placeholder: Some(TransformPlaceholder {
                                     text: ELLIPSIS,
                                     renderer: ChunkRenderer {
+                                        id: fold.id,
                                         render: Arc::new(move |cx| {
                                             (fold.placeholder.render)(
                                                 fold_id,
@@ -1049,7 +1053,7 @@ impl sum_tree::Summary for TransformSummary {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Ord, PartialOrd)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Ord, PartialOrd, Hash)]
 pub struct FoldId(usize);
 
 impl From<FoldId> for ElementId {
@@ -1224,10 +1228,74 @@ impl Iterator for FoldRows<'_> {
     }
 }
 
+/// A chunk of a buffer's text, along with its syntax highlight and
+/// diagnostic status.
+#[derive(Clone, Debug, Default)]
+pub struct Chunk<'a> {
+    /// The text of the chunk.
+    pub text: &'a str,
+    /// The syntax highlighting style of the chunk.
+    pub syntax_highlight_id: Option<HighlightId>,
+    /// The highlight style that has been applied to this chunk in
+    /// the editor.
+    pub highlight_style: Option<HighlightStyle>,
+    /// The severity of diagnostic associated with this chunk, if any.
+    pub diagnostic_severity: Option<DiagnosticSeverity>,
+    /// Whether this chunk of text is marked as unnecessary.
+    pub is_unnecessary: bool,
+    /// Whether this chunk of text was originally a tab character.
+    pub is_tab: bool,
+    /// An optional recipe for how the chunk should be presented.
+    pub renderer: Option<ChunkRenderer>,
+}
+
+/// A recipe for how the chunk should be presented.
+#[derive(Clone)]
+pub struct ChunkRenderer {
+    /// The id of the fold associated with this chunk.
+    pub id: FoldId,
+    /// Creates a custom element to represent this chunk.
+    pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
+    /// If true, the element is constrained to the shaped width of the text.
+    pub constrain_width: bool,
+    /// The width of the element, as measured during the last layout pass.
+    ///
+    /// This is None if the element has not been laid out yet.
+    pub measured_width: Option<Pixels>,
+}
+
+pub struct ChunkRendererContext<'a, 'b> {
+    pub window: &'a mut Window,
+    pub context: &'b mut App,
+    pub max_width: Pixels,
+}
+
+impl fmt::Debug for ChunkRenderer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ChunkRenderer")
+            .field("constrain_width", &self.constrain_width)
+            .finish()
+    }
+}
+
+impl Deref for ChunkRendererContext<'_, '_> {
+    type Target = App;
+
+    fn deref(&self) -> &Self::Target {
+        self.context
+    }
+}
+
+impl DerefMut for ChunkRendererContext<'_, '_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.context
+    }
+}
+
 pub struct FoldChunks<'a> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, InlayOffset)>,
     inlay_chunks: InlayChunks<'a>,
-    inlay_chunk: Option<(InlayOffset, Chunk<'a>)>,
+    inlay_chunk: Option<(InlayOffset, language::Chunk<'a>)>,
     inlay_offset: InlayOffset,
     output_offset: FoldOffset,
     max_output_offset: FoldOffset,
@@ -1335,7 +1403,15 @@ impl<'a> Iterator for FoldChunks<'a> {
 
             self.inlay_offset = chunk_end;
             self.output_offset.0 += chunk.text.len();
-            return Some(chunk);
+            return Some(Chunk {
+                text: chunk.text,
+                syntax_highlight_id: chunk.syntax_highlight_id,
+                highlight_style: chunk.highlight_style,
+                diagnostic_severity: chunk.diagnostic_severity,
+                is_unnecessary: chunk.is_unnecessary,
+                is_tab: chunk.is_tab,
+                renderer: None,
+            });
         }
 
         None

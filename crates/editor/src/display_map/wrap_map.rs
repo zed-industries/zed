@@ -1,10 +1,10 @@
 use super::{
     Highlights,
-    fold_map::FoldRows,
+    fold_map::{Chunk, FoldRows},
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
-use language::{Chunk, Point};
+use language::Point;
 use multi_buffer::{MultiBufferSnapshot, RowInfo};
 use smol::future::yield_now;
 use std::sync::LazyLock;

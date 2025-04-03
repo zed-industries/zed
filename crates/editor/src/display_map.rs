@@ -37,7 +37,7 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
+pub use fold_map::{ChunkRenderer, ChunkRendererContext, Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 pub use inlay_map::Inlay;
@@ -45,8 +45,7 @@ use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 use language::{
-    ChunkRenderer, OffsetUtf16, Point, Subscription as BufferSubscription,
-    language_settings::language_settings,
+    OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
