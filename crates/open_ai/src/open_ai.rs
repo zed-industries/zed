@@ -2,7 +2,7 @@ mod supported_countries;
 
 use anyhow::{Context as _, Result, anyhow};
 use futures::{
-    AsyncBufReadExt, AsyncReadExt, Stream, StreamExt,
+    AsyncBufReadExt, AsyncReadExt, StreamExt,
     io::BufReader,
     stream::{self, BoxStream},
 };
@@ -617,15 +617,4 @@ pub fn embed<'a>(
             ))
         }
     }
-}
-
-pub fn extract_text_from_events(
-    response: impl Stream<Item = Result<ResponseStreamEvent>>,
-) -> impl Stream<Item = Result<String>> {
-    response.filter_map(|response| async move {
-        match response {
-            Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
-            Err(error) => Some(Err(error)),
-        }
-    })
 }
