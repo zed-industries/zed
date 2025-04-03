@@ -178,6 +178,8 @@ impl Request {
 pub enum ChatMessage {
     Assistant {
         content: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<ToolCall>,
     },
     User {
         content: String,
@@ -189,6 +191,25 @@ pub enum ChatMessage {
         content: String,
         tool_call_id: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(flatten)]
+    pub content: ToolCallContent,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolCallContent {
+    Function { function: FunctionContent },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionContent {
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 #[derive(Deserialize, Debug)]
