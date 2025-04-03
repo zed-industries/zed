@@ -465,9 +465,11 @@ impl WrapSnapshot {
                 for _ in edit.new_rows.start..edit.new_rows.end {
                     while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
                         if let Some(ix) = chunk.text.find('\n') {
-                            line.push_str(&chunk.text[..ix + 1]);
+                            let (prefix, suffix) = chunk.text.split_at(ix + 1);
+                            line_fragments.push(gpui::LineFragment::text(prefix));
+                            line.push_str(prefix);
                             remaining = Some(Chunk {
-                                text: &chunk.text[ix + 1..],
+                                text: suffix,
                                 ..chunk
                             });
                             break;
@@ -1184,7 +1186,7 @@ mod tests {
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         test::test_font,
     };
-    use gpui::{px, test::observe};
+    use gpui::{LineFragment, px, test::observe};
     use rand::prelude::*;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
@@ -1443,53 +1445,19 @@ mod tests {
     ) -> String {
         if let Some(wrap_width) = wrap_width {
             let mut wrapped_text = String::new();
-
-            let mut line = String::new();
-            let mut line_fragments = Vec::new();
-            let mut remaining_chunk = None;
-            let mut chunks = tab_snapshot
-                .chunks(
-                    TabPoint::zero()..tab_snapshot.max_point(),
-                    false,
-                    Highlights::default(),
-                )
-                .peekable();
-            loop {
-                while let Some(chunk) = remaining_chunk.take().or_else(|| chunks.next()) {
-                    if let Some(ix) = chunk.text.find('\n') {
-                        line.push_str(&chunk.text[..ix + 1]);
-                        remaining_chunk = Some(Chunk {
-                            text: &chunk.text[ix + 1..],
-                            ..chunk
-                        });
-                        break;
-                    } else {
-                        if let Some(width) = chunk.renderer.as_ref().and_then(|r| r.measured_width)
-                        {
-                            line_fragments
-                                .push(gpui::LineFragment::element(width, chunk.text.len()));
-                        } else {
-                            line_fragments.push(gpui::LineFragment::text(chunk.text));
-                        }
-                        line.push_str(chunk.text);
-                    }
-                }
-
-                if line.is_empty() {
-                    break;
+            for (row, line) in tab_snapshot.text().split('\n').enumerate() {
+                if row > 0 {
+                    wrapped_text.push('\n');
                 }
 
                 let mut prev_ix = 0;
-                for boundary in line_wrapper.wrap_line(&line_fragments, wrap_width) {
+                for boundary in line_wrapper.wrap_line(&[LineFragment::text(&line)], wrap_width) {
                     wrapped_text.push_str(&line[prev_ix..boundary.ix]);
                     wrapped_text.push('\n');
                     wrapped_text.push_str(&" ".repeat(boundary.next_indent as usize));
                     prev_ix = boundary.ix;
                 }
                 wrapped_text.push_str(&line[prev_ix..]);
-
-                line.clear();
-                line_fragments.clear();
             }
 
             wrapped_text
