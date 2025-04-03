@@ -271,9 +271,9 @@ impl AudioStack {
                                         let mut sampled = resampler
                                             .remix_and_resample(
                                                 buf.as_slice(),
-                                                config.sample_rate().0 as u32 / 100,
+                                                config.sample_rate().0 / 100,
                                                 config.channels() as u32,
-                                                config.sample_rate().0 as u32,
+                                                config.sample_rate().0,
                                                 num_channels,
                                                 sample_rate,
                                             )

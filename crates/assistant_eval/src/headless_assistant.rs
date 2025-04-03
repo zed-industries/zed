@@ -1,6 +1,6 @@
+use agent::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use anyhow::anyhow;
 use assistant_tool::ToolWorkingSet;
-use assistant2::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use client::{Client, UserStore};
 use collections::HashMap;
 use dap::DapRegistry;
@@ -102,6 +102,40 @@ impl HeadlessAssistant {
                     thread.use_pending_tools(cx);
                 });
             }
+            ThreadEvent::ToolConfirmationNeeded => {
+                // Automatically approve all tools that need confirmation in headless mode
+                println!("Tool confirmation needed - automatically approving in headless mode");
+
+                // Get the tools needing confirmation
+                let tools_needing_confirmation: Vec<_> = thread
+                    .read(cx)
+                    .tools_needing_confirmation()
+                    .cloned()
+                    .collect();
+
+                // Run each tool that needs confirmation
+                for tool_use in tools_needing_confirmation {
+                    if let Some(tool) = thread.read(cx).tools().tool(&tool_use.name, cx) {
+                        thread.update(cx, |thread, cx| {
+                            println!("Auto-approving tool: {}", tool_use.name);
+
+                            // Create a request to send to the tool
+                            let request = thread.to_completion_request(RequestKind::Chat, cx);
+                            let messages = Arc::new(request.messages);
+
+                            // Run the tool
+                            thread.run_tool(
+                                tool_use.id.clone(),
+                                tool_use.ui_text.clone(),
+                                tool_use.input.clone(),
+                                &messages,
+                                tool,
+                                cx,
+                            );
+                        });
+                    }
+                }
+            }
             ThreadEvent::ToolFinished {
                 tool_use_id,
                 pending_tool_use,
@@ -127,6 +161,10 @@ impl HeadlessAssistant {
                             thread.attach_tool_results(vec![], cx);
                             thread.send_to_model(model, RequestKind::Chat, cx);
                         });
+                    } else {
+                        println!(
+                            "Warning: No active language model available to continue conversation"
+                        );
                     }
                 }
             }
@@ -167,7 +205,7 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     context_server::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
-    assistant2::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
+    agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
 
     Arc::new(HeadlessAppState {
         languages,

@@ -225,6 +225,7 @@ impl LocalMode {
                         DebugRequestType::Launch(task::LaunchConfig {
                             program: "".to_owned(),
                             cwd: None,
+                            args: Default::default(),
                         })
                     }
                     dap::StartDebuggingRequestArgumentsRequest::Attach => {
@@ -536,7 +537,11 @@ impl LocalMode {
         Ok((adapter, binary))
     }
 
-    pub fn initialize_sequence(
+    pub fn label(&self) -> String {
+        self.config.label.clone()
+    }
+
+    fn initialize_sequence(
         &self,
         capabilities: &Capabilities,
         initialized_rx: oneshot::Receiver<()>,

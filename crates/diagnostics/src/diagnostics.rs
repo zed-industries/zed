@@ -513,7 +513,7 @@ impl ProjectDiagnosticsEditor {
                                         buffer.clone(),
                                         [ExcerptRange {
                                             context: context_range.clone(),
-                                            primary: Some(range.clone()),
+                                            primary: range.clone(),
                                         }],
                                         cx,
                                     )

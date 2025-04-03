@@ -16,7 +16,6 @@ pub mod actions;
 mod blink_manager;
 mod clangd_ext;
 mod code_context_menus;
-pub mod commit_tooltip;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -82,19 +81,21 @@ use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
 };
-use git::blame::GitBlame;
+use git::blame::{GitBlame, GlobalBlameRenderer};
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
-    AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
-    DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size,
-    Stateful, Styled, StyledText, Subscription, Task, TextStyle, TextStyleRefinement,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
-    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size,
+    Action, Animation, AnimationExt, AnyElement, AnyWeakEntity, App, AppContext,
+    AsyncWindowContext, AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry,
+    ClipboardItem, Context, DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter,
+    FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla,
+    KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render,
+    SharedString, Size, Stateful, Styled, StyledText, Subscription, Task, TextStyle,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
+    WeakFocusHandle, Window, div, impl_actions, point, prelude::*, pulsating_between, px, relative,
+    size,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
+pub use hover_popover::hover_markdown_style;
 use hover_popover::{HoverState, hide_hover};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
@@ -124,6 +125,7 @@ use project::{
     },
 };
 
+pub use git::blame::BlameRenderer;
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
@@ -145,7 +147,7 @@ pub use multi_buffer::{
 };
 use multi_buffer::{
     ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
-    MultiOrSingleBufferOffsetRange, ToOffsetUtf16,
+    MultiOrSingleBufferOffsetRange, PathKey, ToOffsetUtf16,
 };
 use parking_lot::Mutex;
 use project::{
@@ -187,8 +189,8 @@ use theme::{
     observe_buffer_font_size_adjustment,
 };
 use ui::{
-    ButtonSize, ButtonStyle, Disclosure, IconButton, IconButtonShape, IconName, IconSize, Key,
-    Tooltip, h_flex, prelude::*,
+    ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
+    IconSize, Key, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
@@ -302,6 +304,8 @@ pub fn init_settings(cx: &mut App) {
 pub fn init(cx: &mut App) {
     init_settings(cx);
 
+    cx.set_global(GlobalBlameRenderer(Arc::new(())));
+
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
     workspace::register_serializable_item::<Editor>(cx);
@@ -345,6 +349,10 @@ pub fn init(cx: &mut App) {
             .detach();
         }
     });
+}
+
+pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
+    cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
 }
 
 pub struct SearchWithinRange;
@@ -767,7 +775,7 @@ pub struct Editor {
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
-    git_blame_inline_tooltip: Option<WeakEntity<crate::commit_tooltip::CommitTooltip>>,
+    pub git_blame_inline_tooltip: Option<AnyWeakEntity>,
     git_blame_inline_enabled: bool,
     render_diff_hunk_controls: RenderDiffHunkControlsFn,
     serialize_dirty_buffers: bool,
@@ -848,8 +856,6 @@ pub struct EditorSnapshot {
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
 }
-
-const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct GutterDimensions {
@@ -1642,6 +1648,21 @@ impl Editor {
 
         this.report_editor_event("Editor Opened", None, cx);
         this
+    }
+
+    pub fn deploy_mouse_context_menu(
+        &mut self,
+        position: gpui::Point<Pixels>,
+        context_menu: Entity<ContextMenu>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.mouse_context_menu = Some(MouseContextMenu::new(
+            crate::mouse_context_menu::MenuPosition::PinnedToScreen(position),
+            context_menu,
+            window,
+            cx,
+        ));
     }
 
     pub fn mouse_menu_is_focused(&self, window: &Window, cx: &App) -> bool {
@@ -5016,17 +5037,19 @@ impl Editor {
         let excerpt_buffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite).with_title(title);
             for (buffer_handle, transaction) in &entries {
-                let buffer = buffer_handle.read(cx);
-                ranges_to_highlight.extend(
-                    multibuffer.push_excerpts_with_context_lines(
-                        buffer_handle.clone(),
-                        buffer
-                            .edited_ranges_for_transaction::<usize>(transaction)
-                            .collect(),
-                        DEFAULT_MULTIBUFFER_CONTEXT,
-                        cx,
-                    ),
+                let edited_ranges = buffer_handle
+                    .read(cx)
+                    .edited_ranges_for_transaction::<Point>(transaction)
+                    .collect::<Vec<_>>();
+                let (ranges, _) = multibuffer.set_excerpts_for_path(
+                    PathKey::for_buffer(buffer_handle, cx),
+                    buffer_handle.clone(),
+                    edited_ranges,
+                    DEFAULT_MULTIBUFFER_CONTEXT,
+                    cx,
                 );
+
+                ranges_to_highlight.extend(ranges);
             }
             multibuffer.push_transaction(entries.iter().map(|(b, t)| (b, t)), cx);
             multibuffer
@@ -6161,6 +6184,7 @@ impl Editor {
     ) -> Option<IconButton> {
         let color = Color::Muted;
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
+        let show_tooltip = !self.context_menu_visible();
 
         if self.available_code_actions.is_some() {
             Some(
@@ -6169,19 +6193,21 @@ impl Editor {
                     .icon_size(IconSize::XSmall)
                     .icon_color(color)
                     .toggle_state(is_active)
-                    .tooltip({
-                        let focus_handle = self.focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Toggle Code Actions",
-                                &ToggleCodeActions {
-                                    deployed_from_indicator: None,
-                                },
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
+                    .when(show_tooltip, |this| {
+                        this.tooltip({
+                            let focus_handle = self.focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Toggle Code Actions",
+                                    &ToggleCodeActions {
+                                        deployed_from_indicator: None,
+                                    },
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
                     })
                     .on_click(cx.listener(move |editor, _e, window, cx| {
                         window.focus(&editor.focus_handle(cx));
@@ -6227,7 +6253,7 @@ impl Editor {
     /// It's also used to set the color of line numbers with breakpoints to the breakpoint color.
     /// TODO debugger: Use this function to color toggle symbols that house nested breakpoints
     fn active_breakpoints(
-        &mut self,
+        &self,
         range: Range<DisplayRow>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -6298,24 +6324,26 @@ impl Editor {
 
         let breakpoint = self
             .breakpoint_at_row(row, window, cx)
-            .map(|(_, bp)| Arc::from(bp));
+            .map(|(anchor, bp)| (anchor, Arc::from(bp)));
 
-        let log_breakpoint_msg = if breakpoint.as_ref().is_some_and(|bp| bp.message.is_some()) {
+        let log_breakpoint_msg = if breakpoint.as_ref().is_some_and(|bp| bp.1.message.is_some()) {
             "Edit Log Breakpoint"
         } else {
             "Set Log Breakpoint"
         };
 
-        let condition_breakpoint_msg =
-            if breakpoint.as_ref().is_some_and(|bp| bp.condition.is_some()) {
-                "Edit Condition Breakpoint"
-            } else {
-                "Set Condition Breakpoint"
-            };
+        let condition_breakpoint_msg = if breakpoint
+            .as_ref()
+            .is_some_and(|bp| bp.1.condition.is_some())
+        {
+            "Edit Condition Breakpoint"
+        } else {
+            "Set Condition Breakpoint"
+        };
 
         let hit_condition_breakpoint_msg = if breakpoint
             .as_ref()
-            .is_some_and(|bp| bp.hit_condition.is_some())
+            .is_some_and(|bp| bp.1.hit_condition.is_some())
         {
             "Edit Hit Condition Breakpoint"
         } else {
@@ -6328,12 +6356,13 @@ impl Editor {
             "Set Breakpoint"
         };
 
-        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.state {
+        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
             BreakpointState::Enabled => Some("Disable"),
             BreakpointState::Disabled => Some("Enable"),
         });
 
-        let breakpoint = breakpoint.unwrap_or_else(|| Arc::new(Breakpoint::new_standard()));
+        let (anchor, breakpoint) =
+            breakpoint.unwrap_or_else(|| (anchor, Arc::new(Breakpoint::new_standard())));
 
         ui::ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
@@ -7852,13 +7881,18 @@ impl Editor {
                         }
                     }
                     if let Some(pair) = bracket_pair {
-                        let start = snapshot.anchor_after(selection_head);
-                        let end = snapshot.anchor_after(selection_head);
-                        self.autoclose_regions.push(AutocloseRegion {
-                            selection_id: selection.id,
-                            range: start..end,
-                            pair,
-                        });
+                        let snapshot_settings = snapshot.language_settings_at(selection_head, cx);
+                        let autoclose_enabled =
+                            self.use_autoclose && snapshot_settings.use_autoclose;
+                        if autoclose_enabled {
+                            let start = snapshot.anchor_after(selection_head);
+                            let end = snapshot.anchor_after(selection_head);
+                            self.autoclose_regions.push(AutocloseRegion {
+                                selection_id: selection.id,
+                                range: start..end,
+                                pair,
+                            });
+                        }
                     }
                 }
             }
@@ -9141,6 +9175,42 @@ impl Editor {
                     }
                     t
                 })
+        })
+    }
+
+    pub fn convert_to_rot13(
+        &mut self,
+        _: &ConvertToRot13,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |text| {
+            text.chars()
+                .map(|c| match c {
+                    'A'..='M' | 'a'..='m' => ((c as u8) + 13) as char,
+                    'N'..='Z' | 'n'..='z' => ((c as u8) - 13) as char,
+                    _ => c,
+                })
+                .collect()
+        })
+    }
+
+    pub fn convert_to_rot47(
+        &mut self,
+        _: &ConvertToRot47,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |text| {
+            text.chars()
+                .map(|c| {
+                    let code_point = c as u32;
+                    if code_point >= 33 && code_point <= 126 {
+                        return char::from_u32(33 + ((code_point + 14) % 94)).unwrap();
+                    }
+                    c
+                })
+                .collect()
         })
     }
 
@@ -13509,7 +13579,7 @@ impl Editor {
         // If there are multiple definitions, open them in a multibuffer
         locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
         let mut locations = locations.into_iter().peekable();
-        let mut ranges = Vec::new();
+        let mut ranges: Vec<Range<Anchor>> = Vec::new();
         let capability = workspace.project().read(cx).capability();
 
         let excerpt_buffer = cx.new(|cx| {
@@ -13517,12 +13587,12 @@ impl Editor {
             while let Some(location) = locations.next() {
                 let buffer = location.buffer.read(cx);
                 let mut ranges_for_buffer = Vec::new();
-                let range = location.range.to_offset(buffer);
+                let range = location.range.to_point(buffer);
                 ranges_for_buffer.push(range.clone());
 
                 while let Some(next_location) = locations.peek() {
                     if next_location.buffer == location.buffer {
-                        ranges_for_buffer.push(next_location.range.to_offset(buffer));
+                        ranges_for_buffer.push(next_location.range.to_point(buffer));
                         locations.next();
                     } else {
                         break;
@@ -13530,12 +13600,14 @@ impl Editor {
                 }
 
                 ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
-                ranges.extend(multibuffer.push_excerpts_with_context_lines(
+                let (new_ranges, _) = multibuffer.set_excerpts_for_path(
+                    PathKey::for_buffer(&location.buffer, cx),
                     location.buffer.clone(),
                     ranges_for_buffer,
                     DEFAULT_MULTIBUFFER_CONTEXT,
                     cx,
-                ))
+                );
+                ranges.extend(new_ranges)
             }
 
             multibuffer.with_title(title)
@@ -14927,6 +14999,13 @@ impl Editor {
         self.display_map.read(cx).folded_buffers()
     }
 
+    pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.disable_header_for_buffer(buffer_id, cx);
+        });
+        cx.notify();
+    }
+
     /// Removes any folds with the given ranges.
     pub fn remove_folds_with_type<T: ToOffset + Clone>(
         &mut self,
@@ -15864,6 +15943,45 @@ impl Editor {
     ) {
         self.toggle_git_blame_inline_internal(true, window, cx);
         cx.notify();
+    }
+
+    pub fn open_git_blame_commit(
+        &mut self,
+        _: &OpenGitBlameCommit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_git_blame_commit_internal(window, cx);
+    }
+
+    fn open_git_blame_commit_internal(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let blame = self.blame.as_ref()?;
+        let snapshot = self.snapshot(window, cx);
+        let cursor = self.selections.newest::<Point>(cx).head();
+        let (buffer, point, _) = snapshot.buffer_snapshot.point_to_buffer_point(cursor)?;
+        let blame_entry = blame
+            .update(cx, |blame, cx| {
+                blame
+                    .blame_for_rows(
+                        &[RowInfo {
+                            buffer_id: Some(buffer.remote_id()),
+                            buffer_row: Some(point.row),
+                            ..Default::default()
+                        }],
+                        cx,
+                    )
+                    .next()
+            })
+            .flatten()?;
+        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+        let repo = blame.read(cx).repository(cx)?;
+        let workspace = self.workspace()?.downgrade();
+        renderer.open_blame_commit(blame_entry, repo, workspace, window, cx);
+        None
     }
 
     pub fn git_blame_inline_enabled(&self) -> bool {
@@ -17147,6 +17265,9 @@ impl Editor {
             }
         }
 
+        new_selections_by_buffer
+            .retain(|buffer, _| Self::can_open_excerpts_in_file(buffer.read(cx).file()));
+
         if new_selections_by_buffer.is_empty() {
             return;
         }
@@ -17213,6 +17334,12 @@ impl Editor {
                 }
             })
         });
+    }
+
+    // For now, don't allow opening excerpts in buffers that aren't backed by
+    // regular project files.
+    fn can_open_excerpts_in_file(file: Option<&Arc<dyn language::File>>) -> bool {
+        file.map_or(true, |file| project::File::from_dyn(Some(file)).is_some())
     }
 
     fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<OffsetUtf16>>> {
@@ -17802,7 +17929,9 @@ fn get_uncommitted_diff_for_buffer(
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
-            tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+            if project::File::from_dyn(buffer.read(cx).file()).is_some() {
+                tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+            }
         }
     });
     cx.spawn(async move |cx| {
@@ -18919,13 +19048,13 @@ impl EditorSnapshot {
         let git_blame_entries_width =
             self.git_blame_gutter_max_author_length
                 .map(|max_author_length| {
+                    let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
                     const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
 
                     /// The number of characters to dedicate to gaps and margins.
                     const SPACING_WIDTH: usize = 4;
 
-                    let max_char_count = max_author_length
-                        .min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
+                    let max_char_count = max_author_length.min(renderer.max_author_length())
                         + ::git::SHORT_SHA_LENGTH
                         + MAX_RELATIVE_TIMESTAMP.len()
                         + SPACING_WIDTH;
@@ -20283,7 +20412,7 @@ fn render_diff_hunk_controls(
                 })
         })
         .child(
-            Button::new("restore", "Restore")
+            Button::new(("restore", row as u64), "Restore")
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
                     move |window, cx| {

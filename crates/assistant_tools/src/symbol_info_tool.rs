@@ -69,7 +69,7 @@ pub struct SymbolInfoTool;
 
 impl Tool for SymbolInfoTool {
     fn name(&self) -> String {
-        "symbol-info".into()
+        "symbol_info".into()
     }
 
     fn needs_confirmation(&self) -> bool {
@@ -81,7 +81,7 @@ impl Tool for SymbolInfoTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Eye
+        IconName::Code
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {

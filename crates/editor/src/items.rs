@@ -200,14 +200,8 @@ impl FollowableItem for Editor {
                 buffer_id: buffer.remote_id().into(),
                 context_start: Some(serialize_text_anchor(&range.context.start)),
                 context_end: Some(serialize_text_anchor(&range.context.end)),
-                primary_start: range
-                    .primary
-                    .as_ref()
-                    .map(|range| serialize_text_anchor(&range.start)),
-                primary_end: range
-                    .primary
-                    .as_ref()
-                    .map(|range| serialize_text_anchor(&range.end)),
+                primary_start: Some(serialize_text_anchor(&range.primary.start)),
+                primary_end: Some(serialize_text_anchor(&range.primary.end)),
             })
             .collect();
 
@@ -481,14 +475,8 @@ fn serialize_excerpt(
         buffer_id: buffer_id.into(),
         context_start: Some(serialize_text_anchor(&range.context.start)),
         context_end: Some(serialize_text_anchor(&range.context.end)),
-        primary_start: range
-            .primary
-            .as_ref()
-            .map(|r| serialize_text_anchor(&r.start)),
-        primary_end: range
-            .primary
-            .as_ref()
-            .map(|r| serialize_text_anchor(&r.end)),
+        primary_start: Some(serialize_text_anchor(&range.primary.start)),
+        primary_end: Some(serialize_text_anchor(&range.primary.end)),
     })
 }
 
@@ -521,7 +509,8 @@ fn deserialize_excerpt_range(excerpt: proto::Excerpt) -> Option<ExcerptRange<lan
             let start = language::proto::deserialize_anchor(start)?;
             let end = language::proto::deserialize_anchor(end)?;
             Some(start..end)
-        });
+        })
+        .unwrap_or_else(|| context.clone());
     Some(ExcerptRange { context, primary })
 }
 

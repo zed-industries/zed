@@ -37,11 +37,11 @@ pub struct CreateFileTool;
 
 impl Tool for CreateFileTool {
     fn name(&self) -> String {
-        "create-file".into()
+        "create_file".into()
     }
 
     fn needs_confirmation(&self) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
@@ -92,10 +92,11 @@ impl Tool for CreateFileTool {
                 })?
                 .await
                 .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
-            let edit_id = buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx))?;
-
-            action_log.update(cx, |action_log, cx| {
-                action_log.will_create_buffer(buffer.clone(), edit_id, cx)
+            cx.update(|cx| {
+                buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
+                action_log.update(cx, |action_log, cx| {
+                    action_log.will_create_buffer(buffer.clone(), cx)
+                });
             })?;
 
             project

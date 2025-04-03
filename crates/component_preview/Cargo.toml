@@ -24,3 +24,4 @@ ui.workspace = true
 workspace.workspace = true
 notifications.workspace = true
 collections.workspace = true
+workspace-hack.workspace = true

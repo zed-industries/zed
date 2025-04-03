@@ -32,7 +32,7 @@ impl Tool for OpenTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::ExternalLink
+        IconName::ArrowUpRight
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {

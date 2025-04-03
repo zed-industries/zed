@@ -125,6 +125,22 @@ impl Inventory {
         cx.new(|_| Self::default())
     }
 
+    pub fn list_debug_tasks(&self) -> Vec<&TaskTemplate> {
+        self.templates_from_settings
+            .worktree
+            .values()
+            .flat_map(|tasks| {
+                tasks.iter().filter_map(|(kind, tasks)| {
+                    if matches!(kind.1, TaskKind::Debug) {
+                        Some(tasks)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .flatten()
+            .collect()
+    }
     /// Pulls its task sources relevant to the worktree and the language given,
     /// returns all task templates with their source kinds, worktree tasks first, language tasks second
     /// and global tasks last. No specific order inside source kinds groups.

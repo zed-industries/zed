@@ -227,6 +227,8 @@
       "g u": "vim::PushLowercase",
       "g shift-u": "vim::PushUppercase",
       "g ~": "vim::PushOppositeCase",
+      "g ?": "vim::PushRot13",
+      // "g ?": "vim::PushRot47",
       "\"": "vim::PushRegister",
       "g w": "vim::PushRewrap",
       "g q": "vim::PushRewrap",
@@ -298,6 +300,8 @@
       "g r": ["vim::Paste", { "preserve_clipboard": true }],
       "g c": "vim::ToggleComments",
       "g q": "vim::Rewrap",
+      "g ?": "vim::ConvertToRot13",
+      // "g ?": "vim::ConvertToRot47",
       "\"": "vim::PushRegister",
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
@@ -475,6 +479,13 @@
     "bindings": {
       "g ~": "vim::CurrentLine",
       "~": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == g?",
+    "bindings": {
+      "g ?": "vim::CurrentLine",
+      "?": "vim::CurrentLine"
     }
   },
   {

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
+use anyhow::{Result, bail};
 use deepseek::Model as DeepseekModel;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Pixels};
@@ -80,8 +81,8 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
-    pub default_profile: Arc<str>,
-    pub profiles: IndexMap<Arc<str>, AgentProfile>,
+    pub default_profile: AgentProfileId,
+    pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
 }
@@ -324,16 +325,63 @@ impl AssistantSettingsContent {
         }
     }
 
-    pub fn set_profile(&mut self, profile_id: Arc<str>) {
-        match self {
-            AssistantSettingsContent::Versioned(settings) => match settings {
-                VersionedAssistantSettingsContent::V2(settings) => {
-                    settings.default_profile = Some(profile_id);
-                }
-                VersionedAssistantSettingsContent::V1(_) => {}
-            },
-            AssistantSettingsContent::Legacy(_) => {}
+    pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
+        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
+            self
+        else {
+            return;
+        };
+        settings.always_allow_tool_actions = Some(allow);
+    }
+
+    pub fn set_profile(&mut self, profile_id: AgentProfileId) {
+        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
+            self
+        else {
+            return;
+        };
+
+        settings.default_profile = Some(profile_id);
+    }
+
+    pub fn create_profile(
+        &mut self,
+        profile_id: AgentProfileId,
+        profile: AgentProfile,
+    ) -> Result<()> {
+        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
+            self
+        else {
+            return Ok(());
+        };
+
+        let profiles = settings.profiles.get_or_insert_default();
+        if profiles.contains_key(&profile_id) {
+            bail!("profile with ID '{profile_id}' already exists");
         }
+
+        profiles.insert(
+            profile_id,
+            AgentProfileContent {
+                name: profile.name.into(),
+                tools: profile.tools,
+                enable_all_context_servers: Some(profile.enable_all_context_servers),
+                context_servers: profile
+                    .context_servers
+                    .into_iter()
+                    .map(|(server_id, preset)| {
+                        (
+                            server_id,
+                            ContextServerPresetContent {
+                                tools: preset.tools,
+                            },
+                        )
+                    })
+                    .collect(),
+            },
+        );
+
+        Ok(())
     }
 }
 
@@ -398,10 +446,12 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: false
     enable_experimental_live_diffs: Option<bool>,
-    #[schemars(skip)]
-    default_profile: Option<Arc<str>>,
-    #[schemars(skip)]
-    pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
+    /// The default profile to use in the Agent.
+    ///
+    /// Default: write
+    default_profile: Option<AgentProfileId>,
+    /// The available agent profiles.
+    pub profiles: Option<IndexMap<AgentProfileId, AgentProfileContent>>,
     /// Whenever a tool action would normally wait for your confirmation
     /// that you allow it, always choose to allow it.
     ///
@@ -450,7 +500,10 @@ impl Default for LanguageModelSelection {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
+    #[serde(default)]
     pub tools: IndexMap<Arc<str>, bool>,
+    /// Whether all context servers are enabled by default.
+    pub enable_all_context_servers: Option<bool>,
     #[serde(default)]
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
 }
@@ -573,6 +626,9 @@ impl Settings for AssistantSettings {
                             AgentProfile {
                                 name: profile.name.into(),
                                 tools: profile.tools,
+                                enable_all_context_servers: profile
+                                    .enable_all_context_servers
+                                    .unwrap_or_default(),
                                 context_servers: profile
                                     .context_servers
                                     .into_iter()
