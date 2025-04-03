@@ -1235,21 +1235,21 @@ impl BlockMapWriter<'_> {
     ) -> &[Arc<CustomBlock>] {
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
-        let start_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
-            probe
-                .end()
-                .to_offset(buffer)
-                .cmp(&range.start)
-                .then(if inclusive {
+
+        let start_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
+            let block_end = block.end().to_offset(buffer);
+            block_end.cmp(&range.start).then_with(|| {
+                if inclusive || (range.is_empty() && block.start().to_offset(buffer) == block_end) {
                     Ordering::Greater
                 } else {
                     Ordering::Less
-                })
+                }
+            })
         }) {
             Ok(ix) | Err(ix) => ix,
         };
-        let end_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
-            probe
+        let end_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
+            block
                 .start()
                 .to_offset(buffer)
                 .cmp(&range.end)
@@ -1261,6 +1261,7 @@ impl BlockMapWriter<'_> {
         }) {
             Ok(ix) | Err(ix) => ix,
         };
+
         &self.0.custom_blocks[start_block_ix..end_block_ix]
     }
 }
@@ -3503,6 +3504,42 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[gpui::test]
+    fn test_remove_intersecting_replace_blocks_edge_case(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "abc\ndef\nghi\njkl\nmno";
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let _block_id = writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
+            height: 1,
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+        }])[0];
+
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        writer.remove_intersecting_replace_blocks(
+            [buffer_snapshot.anchor_after(Point::new(1, 0))
+                ..buffer_snapshot.anchor_after(Point::new(1, 0))],
+            false,
+        );
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
     }
 
     fn init_test(cx: &mut gpui::App) {
