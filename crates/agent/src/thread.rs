@@ -1884,19 +1884,26 @@ mod tests {
         // Check content and context in message object
         let message = thread.read_with(cx, |thread, _| thread.message(message_id).unwrap().clone());
 
-        let expected_context = r#"
+        // Use different path format strings based on platform for the test
+        #[cfg(windows)]
+        let path_part = r"test\code.rs";
+        #[cfg(not(windows))]
+        let path_part = "test/code.rs";
+
+        let expected_context = format!(r#"
 <context>
 The following items were attached by the user. You don't need to use other tools to read them.
 
 <files>
-```rs test/code.rs
-fn main() {
+```rs {path_part}
+fn main() {{
     println!("Hello, world!");
-}
+}}
 ```
 </files>
 </context>
-"#;
+"#);
+        
         assert_eq!(message.role, Role::User);
         assert_eq!(message.segments.len(), 1);
         assert_eq!(
