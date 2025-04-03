@@ -3,20 +3,15 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::ui::InstructionListItem;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
-use bedrock::bedrock_client::config::timeout::TimeoutConfig;
-use bedrock::bedrock_client::types::{
-    ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
-};
 use bedrock::bedrock_client::Client as BedrockClient;
-use bedrock::{
-    value_to_aws_document, BedrockError, BedrockInnerContent, BedrockMessage, BedrockSpecificTool,
-    BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
-};
+use bedrock::bedrock_client::config::timeout::TimeoutConfig;
+use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ConverseStreamOutput};
+use bedrock::{BedrockError, BedrockInnerContent, BedrockMessage, BedrockStreamingResponse, Model};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -41,8 +36,8 @@ use smol::lock::OnceCell;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
-use ui::{prelude::*, ContextMenu, DropdownMenu, Icon, IconName, List, Tooltip};
-use util::{maybe, ResultExt};
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use util::{ResultExt, maybe};
 
 use crate::AllLanguageModelSettings;
 
@@ -150,29 +145,38 @@ impl State {
     }
 
     fn is_authenticated(&self) -> Option<String> {
-        match self.settings.as_ref().and_then(|s| s.authentication_method.as_ref()) {
-            Some(BedrockAuthMethod::StaticCredentials) => Some(String::from("You are authenticated using Static Credentials.")),
+        match self
+            .settings
+            .as_ref()
+            .and_then(|s| s.authentication_method.as_ref())
+        {
+            Some(BedrockAuthMethod::StaticCredentials) => Some(String::from(
+                "You are authenticated using Static Credentials.",
+            )),
             Some(BedrockAuthMethod::NamedProfile) | Some(BedrockAuthMethod::SingleSignOn) => {
                 match self.settings.as_ref() {
-                    None => {
-                        Some(String::from("You are authenticated using a Named Profile, but no profile is set."))
-                    }
-                    Some(settings) => {
-                        match settings.clone().profile_name {
-                            None => {
-                                Some(String::from("You are authenticated using a Named Profile, but no profile is set."))
-                            }
-                            Some(profile_name) => {
-                                Some(format!("You are authenticated using a Named Profile: {}", profile_name))
-                            }
-                        }
-                    }
+                    None => Some(String::from(
+                        "You are authenticated using a Named Profile, but no profile is set.",
+                    )),
+                    Some(settings) => match settings.clone().profile_name {
+                        None => Some(String::from(
+                            "You are authenticated using a Named Profile, but no profile is set.",
+                        )),
+                        Some(profile_name) => Some(format!(
+                            "You are authenticated using a Named Profile: {}",
+                            profile_name
+                        )),
+                    },
                 }
-            },
-            Some(BedrockAuthMethod::Automatic) => Some(String::from("You are authenticated using Automatic Credentials.")),
+            }
+            Some(BedrockAuthMethod::Automatic) => Some(String::from(
+                "You are authenticated using Automatic Credentials.",
+            )),
             None => {
                 if self.credentials.is_some() {
-                    Some(String::from("You are authenticated using Static Credentials."))
+                    Some(String::from(
+                        "You are authenticated using Static Credentials.",
+                    ))
                 } else {
                     None
                 }
@@ -664,9 +668,9 @@ pub fn get_bedrock_tokens(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
     struct RawToolUse {
         id: String,
         name: String,
@@ -674,7 +678,7 @@ pub fn map_to_language_model_completion_events(
     }
 
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
     }
 
