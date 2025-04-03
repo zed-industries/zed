@@ -99,8 +99,8 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
 
             debug_panel.update(cx, |this, cx| {
                 assert!(this.active_session(cx).is_some());
-                // we have one active session and one inert item
-                assert_eq!(2, this.pane().unwrap().read(cx).items_len());
+                // we have one active session
+                assert_eq!(1, this.pane().unwrap().read(cx).items_len());
                 assert!(running_state.read(cx).selected_thread_id().is_none());
             });
         })
@@ -245,8 +245,8 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
 
             debug_panel.update(cx, |this, cx| {
                 assert!(this.active_session(cx).is_some());
-                // we have one active session and one inert item
-                assert_eq!(2, this.pane().unwrap().read(cx).items_len());
+                // we have one active session
+                assert_eq!(1, this.pane().unwrap().read(cx).items_len());
             });
         })
         .unwrap();
