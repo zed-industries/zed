@@ -878,16 +878,7 @@ impl AssistantPanel {
                                             window,
                                             cx,
                                             |menu, _window, _cx| {
-                                                menu.when(!is_empty, |menu| {
-                                                    menu.action(
-                                                        "Fork Thread",
-                                                        Box::new(NewThread {
-                                                            from_thread_id: Some(thread_id.clone()),
-                                                        }),
-                                                    )
-                                                    .separator()
-                                                })
-                                                .action(
+                                                menu.action(
                                                     "New Thread",
                                                     Box::new(NewThread {
                                                         from_thread_id: None,
@@ -897,6 +888,14 @@ impl AssistantPanel {
                                                     "New Prompt Editor",
                                                     NewPromptEditor.boxed_clone(),
                                                 )
+                                                .when(!is_empty, |menu| {
+                                                    menu.action(
+                                                        "Continue in New Thread",
+                                                        Box::new(NewThread {
+                                                            from_thread_id: Some(thread_id.clone()),
+                                                        }),
+                                                    )
+                                                })
                                                 .separator()
                                                 .action("History", OpenHistory.boxed_clone())
                                                 .action("Settings", OpenConfiguration.boxed_clone())
