@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
-use collections::{BTreeMap, HashSet};
+use collections::BTreeMap;
 use futures::{StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::{Anchor, Buffer, BufferEvent, DiskState, Point};
@@ -10,9 +10,6 @@ use util::RangeExt;
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
-    /// Buffers that user manually added to the context, and whose content has
-    /// changed since the model last saw them.
-    stale_buffers_in_context: HashSet<Entity<Buffer>>,
     /// Buffers that we want to notify the model about when they change.
     tracked_buffers: BTreeMap<Entity<Buffer>, TrackedBuffer>,
     /// Has the model edited a file since it last checked diagnostics?
@@ -23,7 +20,6 @@ impl ActionLog {
     /// Creates a new, empty action log.
     pub fn new() -> Self {
         Self {
-            stale_buffers_in_context: HashSet::default(),
             tracked_buffers: BTreeMap::default(),
             edited_since_project_diagnostics_check: false,
         }
@@ -259,6 +255,11 @@ impl ActionLog {
         self.track_buffer(buffer, false, cx);
     }
 
+    /// Track a buffer that was added as context, so we can notify the model about user edits.
+    pub fn buffer_added_as_context(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.track_buffer(buffer, false, cx);
+    }
+
     /// Track a buffer as read, so we can notify the model about user edits.
     pub fn will_create_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.track_buffer(buffer.clone(), true, cx);
@@ -268,7 +269,6 @@ impl ActionLog {
     /// Mark a buffer as edited, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.edited_since_project_diagnostics_check = true;
-        self.stale_buffers_in_context.insert(buffer.clone());
 
         let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
@@ -390,11 +390,6 @@ impl ActionLog {
                         .map_or(false, |file| file.disk_state() != DiskState::Deleted)
             })
             .map(|(buffer, _)| buffer)
-    }
-
-    /// Takes and returns the set of buffers pending refresh, clearing internal state.
-    pub fn take_stale_buffers_in_context(&mut self) -> HashSet<Entity<Buffer>> {
-        std::mem::take(&mut self.stale_buffers_in_context)
     }
 }
 

@@ -34,7 +34,7 @@ use ui::{Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip,
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
-use crate::context_store::{ContextStore, refresh_context_store_text};
+use crate::context_store::ContextStore;
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
@@ -593,54 +593,14 @@ impl ActiveThread {
                 }
 
                 if self.thread.read(cx).all_tools_finished() {
-                    let pending_refresh_buffers = self.thread.update(cx, |thread, cx| {
-                        thread.action_log().update(cx, |action_log, _cx| {
-                            action_log.take_stale_buffers_in_context()
-                        })
-                    });
-
-                    let context_update_task = if !pending_refresh_buffers.is_empty() {
-                        let refresh_task = refresh_context_store_text(
-                            self.context_store.clone(),
-                            &pending_refresh_buffers,
-                            cx,
-                        );
-
-                        cx.spawn(async move |this, cx| {
-                            let updated_context_ids = refresh_task.await;
-
-                            this.update(cx, |this, cx| {
-                                this.context_store.read_with(cx, |context_store, _cx| {
-                                    context_store
-                                        .context()
-                                        .iter()
-                                        .filter(|context| {
-                                            updated_context_ids.contains(&context.id())
-                                        })
-                                        .cloned()
-                                        .collect()
-                                })
-                            })
-                        })
-                    } else {
-                        Task::ready(anyhow::Ok(Vec::new()))
-                    };
-
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
-                        cx.spawn(async move |this, cx| {
-                            let updated_context = context_update_task.await?;
-
-                            this.update(cx, |this, cx| {
-                                this.thread.update(cx, |thread, cx| {
-                                    thread.attach_tool_results(updated_context, cx);
-                                    if !canceled {
-                                        thread.send_to_model(model, RequestKind::Chat, cx);
-                                    }
-                                });
-                            })
-                        })
-                        .detach();
+                        self.thread.update(cx, |thread, cx| {
+                            thread.attach_tool_results(cx);
+                            if !canceled {
+                                thread.send_to_model(model, RequestKind::Chat, cx);
+                            }
+                        });
                     }
                 }
             }
