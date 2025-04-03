@@ -665,28 +665,6 @@ impl DebugPanel {
                                         });
                                     }
                                 }),
-                        )
-                        .child(
-                            IconButton::new("close-focused-debug-session", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    if this.pane.update(cx, |pane, cx| {
-                                        if let Some(active_item) = pane.active_item() {
-                                            pane.remove_item(
-                                                active_item.item_id(),
-                                                false,
-                                                true,
-                                                window,
-                                                cx,
-                                            );
-                                            false
-                                        } else {
-                                            true
-                                        }
-                                    }) {
-                                        cx.emit(PanelEvent::Close);
-                                    }
-                                })),
                         ),
                 ),
         )
