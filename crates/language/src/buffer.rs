@@ -4120,10 +4120,10 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn words_in_range(&self, query: WordsQuery) -> HashMap<String, Range<Anchor>> {
+    pub fn words_in_range(&self, query: WordsQuery) -> BTreeMap<String, Range<Anchor>> {
         let query_str = query.fuzzy_contents;
         if query_str.map_or(false, |query| query.is_empty()) {
-            return HashMap::default();
+            return BTreeMap::default();
         }
 
         let classifier = CharClassifier::new(self.language.clone().map(|language| LanguageScope {
@@ -4135,7 +4135,7 @@ impl BufferSnapshot {
         let query_chars = query_str.map(|query| query.chars().collect::<Vec<_>>());
         let query_len = query_chars.as_ref().map_or(0, |query| query.len());
 
-        let mut words = HashMap::default();
+        let mut words = BTreeMap::default();
         let mut current_word_start_ix = None;
         let mut chunk_ix = query.range.start;
         for chunk in self.chunks(query.range, false) {
