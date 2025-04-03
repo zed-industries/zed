@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     fmt::{Display, Write},
+    ops::BitOr,
 };
 
 use crate::chars_for_modified_key;
@@ -219,9 +220,9 @@ impl Keystroke {
                         face: key,
                         key_char: None,
                     });
+                    println!("parse key stroke key-based: {}, {:#?}", source, ret);
                     return ret;
                 }
-                println!("parse key stroke key-based: {}, {:#?}", source, ret);
             }
         }
         if let Some(key_equivalent) = key_equivalents {
@@ -592,6 +593,20 @@ impl Modifiers {
             && (other.shift || !self.shift)
             && (other.platform || !self.platform)
             && (other.function || !self.function)
+    }
+}
+
+impl BitOr for Modifiers {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Modifiers {
+            control: self.control || rhs.control,
+            alt: self.alt || rhs.alt,
+            shift: self.shift || rhs.shift,
+            platform: self.platform || rhs.platform,
+            function: self.function || rhs.function,
+        }
     }
 }
 

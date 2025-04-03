@@ -374,6 +374,14 @@ impl Project {
         )
         .map(|builder| {
             let terminal_handle = cx.new(|cx| builder.subscribe(cx));
+            cx.on_keyboard_layout_change({
+                let terminal_handle = terminal_handle.clone();
+                move |cx| {
+                terminal_handle.update(cx, |terminal, _| {
+                    // terminal.set_keyboard_layout(cx.keyboard_layout());
+                });
+            }})
+            .detach();
 
             this.terminals
                 .local_handles

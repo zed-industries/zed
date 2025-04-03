@@ -60,11 +60,14 @@ use thiserror::Error;
 
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    KeyCode, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
-use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
+use crate::mappings::{
+    colors::to_alac_rgb,
+    keys::{generate_esc_str_mapper, to_esc_str},
+};
 
 actions!(
     terminal,
@@ -505,6 +508,7 @@ impl TerminalBuilder {
             debug_terminal,
             is_ssh_terminal,
             python_venv_directory,
+            manual_esc_str_mapper: generate_esc_str_mapper(cx.get_mapper()),
         };
 
         Ok(TerminalBuilder {
@@ -662,6 +666,7 @@ pub struct Terminal {
     vi_mode_enabled: bool,
     debug_terminal: bool,
     is_ssh_terminal: bool,
+    manual_esc_str_mapper: HashMap<(KeyCode, Modifiers), String>,
 }
 
 pub struct TaskState {
