@@ -26,7 +26,7 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         ./nix/overlay.nix
-        ./nix/treefmt.nix
+        inputs.treefmt-nix.flakeModule
       ];
 
       systems = [
@@ -39,17 +39,14 @@
       perSystem =
         { self', pkgs, ... }:
         {
+          imports = [ ./nix/treefmt.nix ];
+
           packages = {
             default = pkgs.zed-editor;
             debug = self'.packages.default.override { profile = "dev"; };
           };
 
-          devShells = {
-            darwin = pkgs.callPackage ./nix/shell-darwin.nix { };
-            common = pkgs.callPackage ./nix/shell.nix { };
-            default =
-              if pkgs.stdenv.hostPlatform.isDarwin then self'.devShells.darwin else self'.devShells.common;
-          };
+          devShells.default = pkgs.callPackage ./nix/shell.nix { };
         };
     };
 }
