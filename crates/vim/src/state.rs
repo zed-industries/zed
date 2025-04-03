@@ -78,8 +78,6 @@ impl Default for Mode {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operator {
     Change,
-    //Delete,
-    //Delete2 {
     Delete {
         inclusive: bool,
     },
