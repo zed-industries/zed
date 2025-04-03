@@ -5575,7 +5575,6 @@ impl Render for Workspace {
                                                             this.child(p.border_r_1())
                                                         })
                                                         .child(self.center.render(
-                                                            &self.project,
                                                             self.zoomed.as_ref(),
                                                             &PaneRenderContext {
                                                                 follower_states:
@@ -5583,6 +5582,7 @@ impl Render for Workspace {
                                                                 active_call: self.active_call(),
                                                                 active_pane: &self.active_pane,
                                                                 app_state: &self.app_state,
+                                                                project: &self.project,
                                                             },
                                                             window,
                                                             cx,
