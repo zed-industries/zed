@@ -177,7 +177,7 @@ impl Request {
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
     Assistant {
-        content: String,
+        content: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
