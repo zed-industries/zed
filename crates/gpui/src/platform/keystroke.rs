@@ -26,6 +26,8 @@ pub struct Keystroke {
     /// key_char is the character that could have been typed when
     /// this binding was pressed.
     /// e.g. for s this is "s", for option-s "ß", and cmd-s None
+    /// NOTE:
+    /// This is only used in `with_ime_simulated`
     pub key_char: Option<String>,
 }
 
@@ -217,11 +219,9 @@ impl Keystroke {
                         face: key,
                         key_char: None,
                     });
-                    if source == "ctrl-shift-`" || code == KeyCode::Tilde {
-                        println!("parse key stroke key-based: {}, {:#?}", source, ret);
-                    }
                     return ret;
                 }
+                println!("parse key stroke key-based: {}, {:#?}", source, ret);
             }
         }
         if let Some(key_equivalent) = key_equivalents {
@@ -264,7 +264,7 @@ impl Keystroke {
             face: key,
             key_char,
         });
-        if code == KeyCode::Unknown || source == "ctrl-shift-`" || code == KeyCode::Tilde {
+        if code == KeyCode::Unknown {
             println!("parse key stroke char-based: {}, {:#?}", source, ret);
         }
         ret
