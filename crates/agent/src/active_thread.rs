@@ -1901,145 +1901,164 @@ impl ActiveThread {
                         }),
                 )
             } else {
-                element.py_2().child(
-                    v_flex()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .overflow_hidden()
-                        .child(
-                            h_flex()
-                                .group("disclosure-header")
-                                .relative()
-                                .justify_between()
-                                .py_1()
-                                .map(|element| {
-                                    if is_status_finished {
-                                        element.pl_2().pr_0p5()
-                                    } else {
-                                        element.px_2()
-                                    }
-                                })
-                                .bg(self.tool_card_header_bg(cx))
-                                .map(|element| {
-                                    if is_open {
-                                        element.border_b_1().rounded_t_md()
-                                    } else if needs_confirmation {
-                                        element.rounded_t_md()
-                                    } else {
-                                        element.rounded_md()
-                                    }
-                                })
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(
-                                    h_flex()
-                                        .id("tool-label-container")
-                                        .gap_1p5()
-                                        .max_w_full()
-                                        .overflow_x_scroll()
-                                        .child(
-                                            Icon::new(tool_use.icon)
-                                                .size(IconSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            h_flex().pr_8().text_ui_sm(cx).children(
-                                                self.rendered_tool_use_labels
-                                                    .get(&tool_use.id)
-                                                    .cloned(),
-                                            ),
-                                        ),
-                                )
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .child(
-                                            div().visible_on_hover("disclosure-header").child(
-                                                Disclosure::new("tool-use-disclosure", is_open)
-                                                    .opened_icon(IconName::ChevronUp)
-                                                    .closed_icon(IconName::ChevronDown)
-                                                    .on_click(cx.listener({
-                                                        let tool_use_id = tool_use.id.clone();
-                                                        move |this, _event, _window, _cx| {
-                                                            let is_open = this
-                                                                .expanded_tool_uses
-                                                                .entry(tool_use_id.clone())
-                                                                .or_insert(false);
-
-                                                            *is_open = !*is_open;
-                                                        }
-                                                    })),
-                                            ),
-                                        )
-                                        .child(status_icons),
-                                )
-                                .child(gradient_overlay(self.tool_card_header_bg(cx))),
-                        )
-                        .map(|parent| {
-                            if !is_open {
-                                return parent;
-                            }
-
-                            parent.child(
-                                v_flex()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .map(|element| {
-                                        if  needs_confirmation {
-                                            element.rounded_none()
-                                        } else {
-                                            element.rounded_b_lg()
-                                        }
-                                    })
-                                    .child(results_content),
-                            )
-                        })
-                        .when(needs_confirmation, |this| {
-                            this.child(
+                v_flex()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(self.tool_card_border_color(cx))
+                    .overflow_hidden()
+                    .child(
+                        h_flex()
+                            .group("disclosure-header")
+                            .relative()
+                            .justify_between()
+                            .py_1()
+                            .map(|element| {
+                                if is_status_finished {
+                                    element.pl_2().pr_0p5()
+                                } else {
+                                    element.px_2()
+                                }
+                            })
+                            .bg(self.tool_card_header_bg(cx))
+                            .map(|element| {
+                                if is_open {
+                                    element.border_b_1().rounded_t_md()
+                                } else if needs_confirmation {
+                                    element.rounded_t_md()
+                                } else {
+                                    element.rounded_md()
+                                }
+                            })
+                            .border_color(self.tool_card_border_color(cx))
+                            .child(
                                 h_flex()
-                                    .py_1()
-                                    .pl_2()
-                                    .pr_1()
-                                    .gap_1()
-                                    .justify_between()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .border_t_1()
-                                    .border_color(self.tool_card_border_color(cx))
-                                    .rounded_b_lg()
-                                    .child(Label::new("Action Confirmation").color(Color::Muted).size(LabelSize::Small))
+                                    .id("tool-label-container")
+                                    .gap_1p5()
+                                    .max_w_full()
+                                    .overflow_x_scroll()
                                     .child(
-                                        h_flex()
-                                            .gap_0p5()
-                                            .child({
-                                                let tool_id = tool_use.id.clone();
-                                                Button::new(
-                                                    "always-allow-tool-action",
-                                                    "Always Allow",
+                                        Icon::new(tool_use.icon)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        h_flex().pr_8().text_ui_sm(cx).children(
+                                            self.rendered_tool_use_labels
+                                                .get(&tool_use.id)
+                                                .cloned(),
+                                        ),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        div().visible_on_hover("disclosure-header").child(
+                                            Disclosure::new("tool-use-disclosure", is_open)
+                                                .opened_icon(IconName::ChevronUp)
+                                                .closed_icon(IconName::ChevronDown)
+                                                .on_click(cx.listener({
+                                                    let tool_use_id = tool_use.id.clone();
+                                                    move |this, _event, _window, _cx| {
+                                                        let is_open = this
+                                                            .expanded_tool_uses
+                                                            .entry(tool_use_id.clone())
+                                                            .or_insert(false);
+
+                                                        *is_open = !*is_open;
+                                                    }
+                                                })),
+                                        ),
+                                    )
+                                    .child(status_icons),
+                            )
+                            .child(gradient_overlay(self.tool_card_header_bg(cx))),
+                    )
+                    .map(|parent| {
+                        if !is_open {
+                            return parent;
+                        }
+
+                        parent.child(
+                            v_flex()
+                                .bg(cx.theme().colors().editor_background)
+                                .map(|element| {
+                                    if  needs_confirmation {
+                                        element.rounded_none()
+                                    } else {
+                                        element.rounded_b_lg()
+                                    }
+                                })
+                                .child(results_content),
+                        )
+                    })
+                    .when(needs_confirmation, |this| {
+                        this.child(
+                            h_flex()
+                                .py_1()
+                                .pl_2()
+                                .pr_1()
+                                .gap_1()
+                                .justify_between()
+                                .bg(cx.theme().colors().editor_background)
+                                .border_t_1()
+                                .border_color(self.tool_card_border_color(cx))
+                                .rounded_b_lg()
+                                .child(Label::new("Action Confirmation").color(Color::Muted).size(LabelSize::Small))
+                                .child(
+                                    h_flex()
+                                        .gap_0p5()
+                                        .child({
+                                            let tool_id = tool_use.id.clone();
+                                            Button::new(
+                                                "always-allow-tool-action",
+                                                "Always Allow",
+                                            )
+                                            .label_size(LabelSize::Small)
+                                            .icon(IconName::CheckDouble)
+                                            .icon_position(IconPosition::Start)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Success)
+                                            .tooltip(move |window, cx|  {
+                                                Tooltip::with_meta(
+                                                    "Never ask for permission",
+                                                    None,
+                                                    "Restore the original behavior in your Agent Panel settings",
+                                                    window,
+                                                    cx,
                                                 )
-                                                .label_size(LabelSize::Small)
-                                                .icon(IconName::CheckDouble)
-                                                .icon_position(IconPosition::Start)
-                                                .icon_size(IconSize::Small)
-                                                .icon_color(Color::Success)
-                                                .tooltip(move |window, cx|  {
-                                                    Tooltip::with_meta(
-                                                        "Never ask for permission",
-                                                        None,
-                                                        "Restore the original behavior in your Agent Panel settings",
+                                            })
+                                            .on_click(cx.listener(
+                                                move |this, event, window, cx| {
+                                                    if let Some(fs) = fs.clone() {
+                                                        update_settings_file::<AssistantSettings>(
+                                                            fs.clone(),
+                                                            cx,
+                                                            |settings, _| {
+                                                                settings.set_always_allow_tool_actions(true);
+                                                            },
+                                                        );
+                                                    }
+                                                    this.handle_allow_tool(
+                                                        tool_id.clone(),
+                                                        event,
                                                         window,
                                                         cx,
                                                     )
-                                                })
+                                                },
+                                            ))
+                                        })
+                                        .child(ui::Divider::vertical())
+                                        .child({
+                                            let tool_id = tool_use.id.clone();
+                                            Button::new("allow-tool-action", "Allow")
+                                                .label_size(LabelSize::Small)
+                                                .icon(IconName::Check)
+                                                .icon_position(IconPosition::Start)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Success)
                                                 .on_click(cx.listener(
                                                     move |this, event, window, cx| {
-                                                        if let Some(fs) = fs.clone() {
-                                                            update_settings_file::<AssistantSettings>(
-                                                                fs.clone(),
-                                                                cx,
-                                                                |settings, _| {
-                                                                    settings.set_always_allow_tool_actions(true);
-                                                                },
-                                                            );
-                                                        }
                                                         this.handle_allow_tool(
                                                             tool_id.clone(),
                                                             event,
@@ -2048,52 +2067,31 @@ impl ActiveThread {
                                                         )
                                                     },
                                                 ))
-                                            })
-                                            .child(ui::Divider::vertical())
-                                            .child({
-                                                let tool_id = tool_use.id.clone();
-                                                Button::new("allow-tool-action", "Allow")
-                                                    .label_size(LabelSize::Small)
-                                                    .icon(IconName::Check)
-                                                    .icon_position(IconPosition::Start)
-                                                    .icon_size(IconSize::Small)
-                                                    .icon_color(Color::Success)
-                                                    .on_click(cx.listener(
-                                                        move |this, event, window, cx| {
-                                                            this.handle_allow_tool(
-                                                                tool_id.clone(),
-                                                                event,
-                                                                window,
-                                                                cx,
-                                                            )
-                                                        },
-                                                    ))
-                                            })
-                                            .child({
-                                                let tool_id = tool_use.id.clone();
-                                                let tool_name: Arc<str> = tool_use.name.into();
-                                                Button::new("deny-tool", "Deny")
-                                                    .label_size(LabelSize::Small)
-                                                    .icon(IconName::Close)
-                                                    .icon_position(IconPosition::Start)
-                                                    .icon_size(IconSize::Small)
-                                                    .icon_color(Color::Error)
-                                                    .on_click(cx.listener(
-                                                        move |this, event, window, cx| {
-                                                            this.handle_deny_tool(
-                                                                tool_id.clone(),
-                                                                tool_name.clone(),
-                                                                event,
-                                                                window,
-                                                                cx,
-                                                            )
-                                                        },
-                                                    ))
-                                            }),
-                                    ),
-                            )
-                        }),
-                )
+                                        })
+                                        .child({
+                                            let tool_id = tool_use.id.clone();
+                                            let tool_name: Arc<str> = tool_use.name.into();
+                                            Button::new("deny-tool", "Deny")
+                                                .label_size(LabelSize::Small)
+                                                .icon(IconName::Close)
+                                                .icon_position(IconPosition::Start)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Error)
+                                                .on_click(cx.listener(
+                                                    move |this, event, window, cx| {
+                                                        this.handle_deny_tool(
+                                                            tool_id.clone(),
+                                                            tool_name.clone(),
+                                                            event,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    },
+                                                ))
+                                        }),
+                                ),
+                        )
+                    })
             }
         })
     }
