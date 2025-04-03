@@ -19,8 +19,8 @@ use gpui::{
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -377,53 +377,82 @@ impl CopilotChatLanguageModel {
     pub fn to_copilot_chat_request(&self, request: LanguageModelRequest) -> CopilotChatRequest {
         let model = self.model.clone();
 
-        let mut messages = Vec::new();
-        for message in request.messages {
-            for content in message.content {
-                match content {
-                    MessageContent::Text(text) => messages.push(match message.role {
-                        Role::User => ChatMessage::User { content: text },
-                        Role::Assistant => ChatMessage::Assistant {
-                            content: Some(text),
-                            tool_calls: Vec::new(),
-                        },
-                        Role::System => ChatMessage::System { content: text },
-                    }),
-                    MessageContent::Image(_) => {}
-                    MessageContent::ToolUse(tool_use) => {
-                        let tool_call = ToolCall {
-                            id: tool_use.id.to_string(),
-                            content: copilot::copilot_chat::ToolCallContent::Function {
-                                function: copilot::copilot_chat::FunctionContent {
-                                    name: tool_use.name.to_string(),
-                                    arguments: tool_use.input,
-                                },
-                            },
-                        };
+        // TODO: Remove before merging.
+        println!("\n\n\n====== COPILOT CHAT REQUEST ======");
 
-                        if let Some(last_assistant_message) = messages
-                            .iter_mut()
-                            .rfind(|message| matches!(message, ChatMessage::Assistant { .. }))
-                        {
-                            if let ChatMessage::Assistant { tool_calls, .. } =
-                                last_assistant_message
-                            {
-                                tool_calls.push(tool_call);
-                            }
-                        } else {
-                            messages.push(ChatMessage::Assistant {
-                                content: None,
-                                tool_calls: vec![tool_call],
+        let mut request_messages: Vec<LanguageModelRequestMessage> = Vec::new();
+        for message in request.messages {
+            if let Some(last_message) = request_messages.last_mut() {
+                if last_message.role == message.role {
+                    println!("Extending message");
+                    last_message.content.extend(message.content);
+                } else {
+                    request_messages.push(message);
+                }
+            } else {
+                request_messages.push(message);
+            }
+        }
+
+        let mut messages: Vec<ChatMessage> = Vec::new();
+        for message in request_messages {
+            let text_content = {
+                let mut buffer = String::new();
+                for string in message.content.iter().filter_map(|content| match content {
+                    MessageContent::Text(text) => Some(text.as_str()),
+                    MessageContent::ToolUse(_)
+                    | MessageContent::ToolResult(_)
+                    | MessageContent::Image(_) => None,
+                }) {
+                    buffer.push_str(string);
+                }
+
+                buffer
+            };
+
+            match message.role {
+                Role::User => {
+                    messages.push(ChatMessage::User {
+                        content: text_content,
+                    });
+
+                    for content in &message.content {
+                        if let MessageContent::ToolResult(tool_result) = content {
+                            messages.push(ChatMessage::Tool {
+                                tool_call_id: tool_result.tool_use_id.to_string(),
+                                content: tool_result.content.to_string(),
                             });
                         }
                     }
-                    MessageContent::ToolResult(tool_result) => {
-                        messages.push(ChatMessage::Tool {
-                            content: tool_result.content.to_string(),
-                            tool_call_id: tool_result.tool_use_id.to_string(),
-                        });
-                    }
                 }
+                Role::Assistant => {
+                    let mut tool_calls = Vec::new();
+                    for content in &message.content {
+                        if let MessageContent::ToolUse(tool_use) = content {
+                            tool_calls.push(ToolCall {
+                                id: tool_use.id.to_string(),
+                                content: copilot::copilot_chat::ToolCallContent::Function {
+                                    function: copilot::copilot_chat::FunctionContent {
+                                        name: tool_use.name.to_string(),
+                                        arguments: tool_use.input.clone(),
+                                    },
+                                },
+                            });
+                        }
+                    }
+
+                    messages.push(ChatMessage::Assistant {
+                        content: if text_content.is_empty() {
+                            None
+                        } else {
+                            Some(text_content)
+                        },
+                        tool_calls,
+                    });
+                }
+                Role::System => messages.push(ChatMessage::System {
+                    content: message.string_contents(),
+                }),
             }
         }
 
