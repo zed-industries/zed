@@ -664,33 +664,29 @@ impl DebugPanel {
                                             });
                                         });
                                     }
-                                    // cx.listener(move |this, _, window, cx| {
-                                    //     let config = this.last_inert_config.clone();
-                                    //     let project = this.project.clone();
-                                    //     let weak_workspace = this.workspace.clone();
-                                    //     let debug_panel = cx.weak_entity();
-                                    //     this.pane.update(cx, |this, cx| {
-                                    //         let project = project.upgrade();
-                                    //         if let Some(project) = project {
-                                    //             this.add_item(
-                                    //                 Box::new(DebugSession::inert(
-                                    //                     project.clone(),
-                                    //                     weak_workspace.clone(),
-                                    //                     debug_panel.clone(),
-                                    //                     config,
-                                    //                     window,
-                                    //                     cx,
-                                    //                 )),
-                                    //                 false,
-                                    //                 false,
-                                    //                 None,
-                                    //                 window,
-                                    //                 cx,
-                                    //             );
-                                    //         }
-                                    //     });
-                                    // })
                                 }),
+                        )
+                        .child(
+                            IconButton::new("close-focused-debug-session", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    if this.pane.update(cx, |pane, cx| {
+                                        if let Some(active_item) = pane.active_item() {
+                                            pane.remove_item(
+                                                active_item.item_id(),
+                                                false,
+                                                true,
+                                                window,
+                                                cx,
+                                            );
+                                            false
+                                        } else {
+                                            true
+                                        }
+                                    }) {
+                                        cx.emit(PanelEvent::Close);
+                                    }
+                                })),
                         ),
                 ),
         )
