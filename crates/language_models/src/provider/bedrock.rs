@@ -8,10 +8,19 @@ use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
+use bedrock::bedrock_client::types::{
+    ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
+    ReasoningContentBlockDelta,
+};
+use bedrock::bedrock_client::{self, Config};
+use bedrock::{
+    BedrockAutoToolChoice, BedrockError, BedrockInnerContent, BedrockMessage, BedrockModelMode,
+    BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolConfig,
+    BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock,
+    BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
+};
 use bedrock::bedrock_client::Client as BedrockClient;
 use bedrock::bedrock_client::config::timeout::TimeoutConfig;
-use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ConverseStreamOutput};
-use bedrock::{BedrockError, BedrockInnerContent, BedrockMessage, BedrockStreamingResponse, Model};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -26,7 +35,7 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    LanguageModelRequest, LanguageModelToolUse, MessageContent, RateLimiter, Role, TokenUsage,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -37,7 +46,7 @@ use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::{ResultExt, maybe};
+use util::{ResultExt, default};
 
 use crate::AllLanguageModelSettings;
 
@@ -81,6 +90,36 @@ pub struct AvailableModel {
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     pub max_output_tokens: Option<u32>,
     pub default_temperature: Option<f32>,
+    pub mode: Option<ModelMode>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
+        budget_tokens: Option<u64>,
+    },
+}
+
+impl From<ModelMode> for BedrockModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => BedrockModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => BedrockModelMode::Thinking { budget_tokens },
+        }
+    }
+}
+
+impl From<BedrockModelMode> for ModelMode {
+    fn from(value: BedrockModelMode) -> Self {
+        match value {
+            BedrockModelMode::Default => ModelMode::Default,
+            BedrockModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+        }
+    }
 }
 
 /// The URL of the base AWS service.
@@ -518,6 +557,7 @@ impl LanguageModel for BedrockModel {
             self.model.id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
+            self.model.mode(),
         );
 
         let owned_handle = self.handler.clone();
@@ -543,6 +583,7 @@ pub fn into_bedrock(
     model: String,
     default_temperature: f32,
     max_output_tokens: u32,
+    mode: BedrockModelMode,
 ) -> bedrock::Request {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
@@ -564,6 +605,32 @@ pub fn into_bedrock(
                             } else {
                                 None
                             }
+                        }
+                        MessageContent::ToolUse(tool_use) => Some(BedrockInnerContent::ToolUse(
+                            BedrockToolUseBlock::builder()
+                                .name(tool_use.name.to_string())
+                                .tool_use_id(tool_use.id.to_string())
+                                .input(value_to_aws_document(&tool_use.input))
+                                .build()
+                                .expect("failed to build Bedrock tool use block"),
+                        )),
+                        MessageContent::ToolResult(tool_result) => {
+                            Some(BedrockInnerContent::ToolResult(
+                                BedrockToolResultBlock::builder()
+                                    .tool_use_id(tool_result.tool_use_id.to_string())
+                                    .content(BedrockToolResultContentBlock::Text(
+                                        tool_result.content.to_string(),
+                                    ))
+                                    .status({
+                                        if tool_result.is_error {
+                                            BedrockToolResultStatus::Error
+                                        } else {
+                                            BedrockToolResultStatus::Success
+                                        }
+                                    })
+                                    .build()
+                                    .expect("failed to build Bedrock tool result block"),
+                            ))
                         }
                         _ => None,
                     })
@@ -596,13 +663,42 @@ pub fn into_bedrock(
         }
     }
 
+    let tool_spec: Vec<BedrockTool> = request
+        .tools
+        .iter()
+        .map(|tool| {
+            BedrockTool::ToolSpec(
+                BedrockToolSpec::builder()
+                    .name(tool.name.clone())
+                    .description(tool.description.clone())
+                    .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
+                        &tool.input_schema,
+                    )))
+                    .build()
+                    .unwrap(),
+            )
+        })
+        .collect();
+
+    let tool_config: BedrockToolConfig = BedrockToolConfig::builder()
+        .set_tools(Some(tool_spec))
+        .tool_choice(BedrockToolChoice::Auto(
+            BedrockAutoToolChoice::builder().build(),
+        ))
+        .build()
+        .unwrap();
+
     bedrock::Request {
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
         system: Some(system_message),
-        tools: vec![],
-        tool_choice: None,
+        tools: Some(tool_config),
+        thinking: if let BedrockModelMode::Thinking { budget_tokens } = mode {
+            Some(bedrock::Thinking::Enabled { budget_tokens })
+        } else {
+            None
+        },
         metadata: None,
         stop_sequences: Vec::new(),
         temperature: request.temperature.or(Some(default_temperature)),
@@ -683,92 +779,156 @@ pub fn map_to_language_model_completion_events(
     }
 
     futures::stream::unfold(
+        // Initial state
         State {
             events,
             tool_uses_by_index: HashMap::default(),
         },
         move |mut state: State| {
             let inner_handle = handle.clone();
+
             async move {
                 inner_handle
                     .spawn(async {
                         while let Some(event) = state.events.next().await {
                             match event {
-                                Ok(event) => match event {
-                                    ConverseStreamOutput::ContentBlockDelta(cb_delta) => {
-                                        if let Some(ContentBlockDelta::Text(text_out)) =
-                                            cb_delta.delta
-                                        {
-                                            return Some((
-                                                Some(Ok(LanguageModelCompletionEvent::Text(
-                                                    text_out,
-                                                ))),
-                                                state,
-                                            ));
-                                        } else if let Some(ContentBlockDelta::ToolUse(text_out)) =
-                                            cb_delta.delta
-                                        {
-                                            if let Some(tool_use) = state
-                                                .tool_uses_by_index
-                                                .get_mut(&cb_delta.content_block_index)
-                                            {
-                                                tool_use.input_json.push_str(text_out.input());
-                                                return Some((None, state));
-                                            };
-
-                                            return Some((None, state));
-                                        } else if cb_delta.delta.is_none() {
-                                            return Some((None, state));
-                                        }
-                                    }
-                                    ConverseStreamOutput::ContentBlockStart(cb_start) => {
-                                        if let Some(start) = cb_start.start {
-                                            match start {
-                                                ContentBlockStart::ToolUse(text_out) => {
-                                                    let tool_use = RawToolUse {
-                                                        id: text_out.tool_use_id,
-                                                        name: text_out.name,
-                                                        input_json: String::new(),
-                                                    };
-
-                                                    state.tool_uses_by_index.insert(
-                                                        cb_start.content_block_index,
-                                                        tool_use,
-                                                    );
+                                Ok(event) => {
+                                    match event {
+                                        // Handle content block delta events
+                                        ConverseStreamOutput::ContentBlockDelta(cb_delta) => {
+                                            match cb_delta.delta {
+                                                Some(ContentBlockDelta::Text(text_out)) => {
+                                                    let completion_event =
+                                                        LanguageModelCompletionEvent::Text(
+                                                            text_out,
+                                                        );
+                                                    return Some((
+                                                        Some(Ok(completion_event)),
+                                                        state,
+                                                    ));
                                                 }
-                                                _ => {}
+
+                                                Some(ContentBlockDelta::ToolUse(text_out)) => {
+                                                    // Update existing tool use with new input if it exists
+                                                    if let Some(tool_use) = state
+                                                        .tool_uses_by_index
+                                                        .get_mut(&cb_delta.content_block_index)
+                                                    {
+                                                        tool_use
+                                                            .input_json
+                                                            .push_str(text_out.input());
+                                                    }
+
+                                                    return Some((None, state));
+                                                }
+
+                                                Some(ContentBlockDelta::ReasoningContent(
+                                                         thinking,
+                                                     )) => match thinking {
+                                                    ReasoningContentBlockDelta::RedactedContent(
+                                                        redacted,
+                                                    ) => {
+                                                        let thinking_event =
+                                                            LanguageModelCompletionEvent::Thinking(
+                                                                String::from_utf8(
+                                                                    redacted.into_inner(),
+                                                                )
+                                                                    .unwrap_or("REDACTED".to_string()),
+                                                            );
+
+                                                        return Some((
+                                                            Some(Ok(thinking_event)),
+                                                            state,
+                                                        ));
+                                                    }
+                                                    ReasoningContentBlockDelta::Signature(_sig) => {}
+                                                    ReasoningContentBlockDelta::Text(thoughts) => {
+                                                        let thinking_event =
+                                                            LanguageModelCompletionEvent::Thinking(
+                                                                thoughts.to_string(),
+                                                            );
+
+                                                        return Some((
+                                                            Some(Ok(thinking_event)),
+                                                            state,
+                                                        ));
+                                                    }
+                                                    _ => return Some((None, state)),
+                                                },
+                                                None => return Some((None, state)),
+                                                _ => return Some((None, state)),
                                             }
                                         }
-                                    }
-                                    ConverseStreamOutput::ContentBlockStop(cb_stop) => {
-                                        if let Some(tool_use) = state
-                                            .tool_uses_by_index
-                                            .remove(&cb_stop.content_block_index)
-                                        {
-                                            return Some((
-                                                Some(maybe!({
-                                                    Ok(LanguageModelCompletionEvent::ToolUse(
-                                                        LanguageModelToolUse {
-                                                            id: tool_use.id.into(),
-                                                            name: tool_use.name.into(),
-                                                            input: if tool_use.input_json.is_empty()
-                                                            {
-                                                                Value::Null
-                                                            } else {
-                                                                serde_json::Value::from_str(
-                                                                    &tool_use.input_json,
-                                                                )
-                                                                .map_err(|err| anyhow!(err))?
-                                                            },
+
+                                        // Handle start of content blocks
+                                        ConverseStreamOutput::ContentBlockStart(cb_start) => {
+                                            if let Some(ContentBlockStart::ToolUse(text_out)) =
+                                                cb_start.start
+                                            {
+                                                let tool_use = RawToolUse {
+                                                    id: text_out.tool_use_id,
+                                                    name: text_out.name,
+                                                    input_json: String::new(),
+                                                };
+
+                                                state
+                                                    .tool_uses_by_index
+                                                    .insert(cb_start.content_block_index, tool_use);
+                                            }
+                                        }
+
+                                        // Handle end of content blocks
+                                        ConverseStreamOutput::ContentBlockStop(cb_stop) => {
+                                            if let Some(tool_use) = state
+                                                .tool_uses_by_index
+                                                .remove(&cb_stop.content_block_index)
+                                            {
+                                                let tool_use_event = LanguageModelToolUse {
+                                                    id: tool_use.id.into(),
+                                                    name: tool_use.name.into(),
+                                                    input: if tool_use.input_json.is_empty() {
+                                                        Value::Null
+                                                    } else {
+                                                        serde_json::Value::from_str(
+                                                            &tool_use.input_json,
+                                                        )
+                                                            .map_err(|err| anyhow!(err))
+                                                            .unwrap()
+                                                    },
+                                                };
+
+                                                return Some((
+                                                    Some(Ok(
+                                                        LanguageModelCompletionEvent::ToolUse(
+                                                            tool_use_event,
+                                                        ),
+                                                    )),
+                                                    state,
+                                                ));
+                                            }
+                                        }
+                                        ConverseStreamOutput::Metadata(cb_meta) => {
+                                            if let Some(metadata) = cb_meta.usage {
+                                                let completion_event =
+                                                    LanguageModelCompletionEvent::UsageUpdate(
+                                                        TokenUsage {
+                                                            input_tokens: metadata.input_tokens
+                                                                as u32,
+                                                            output_tokens: metadata.output_tokens
+                                                                as u32,
+                                                            cache_creation_input_tokens: default(),
+                                                            cache_read_input_tokens: default(),
                                                         },
-                                                    ))
-                                                })),
-                                                state,
-                                            ));
+                                                    );
+                                                return Some((Some(Ok(completion_event)), state));
+                                            }
+                                        }
+                                        _ => {
+                                            return Some((None, state));
                                         }
                                     }
-                                    _ => {}
-                                },
+                                }
+
                                 Err(err) => return Some((Some(Err(anyhow!(err))), state)),
                             }
                         }
