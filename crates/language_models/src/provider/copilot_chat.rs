@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
     ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
-    ResponseEvent, Tool,
+    ResponseEvent, Tool, ToolCall,
 };
 use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
@@ -399,28 +399,65 @@ pub fn map_to_language_model_completion_events(
 impl CopilotChatLanguageModel {
     pub fn to_copilot_chat_request(&self, request: LanguageModelRequest) -> CopilotChatRequest {
         let model = self.model.clone();
-        let messages = request
-            .messages
-            .into_iter()
-            .flat_map(|message| {
-                message
-                    .content
-                    .into_iter()
-                    .filter_map(move |content| match content {
-                        MessageContent::Text(text) => Some(match message.role {
+
+        let mut messages = Vec::new();
+        for message in request.messages {
+            for content in message.content {
+                match content {
+                    MessageContent::Text(text) => {
+                        messages.push(match message.role {
                             Role::User => ChatMessage::User { content: text },
-                            Role::Assistant => ChatMessage::Assistant { content: text },
+                            Role::Assistant => ChatMessage::Assistant {
+                                content: text,
+                                tool_calls: Vec::new(),
+                            },
                             Role::System => ChatMessage::System { content: text },
-                        }),
-                        MessageContent::Image(_) => None,
-                        MessageContent::ToolUse(_tool_use) => None,
-                        MessageContent::ToolResult(tool_result) => Some(ChatMessage::Tool {
+                        });
+                    }
+                    MessageContent::Image(_) => {}
+                    MessageContent::ToolUse(tool_use) => {
+                        if let Some(last_assistant_message) = messages
+                            .iter_mut()
+                            .rfind(|message| matches!(message, ChatMessage::Assistant { .. }))
+                        {
+                            if let ChatMessage::Assistant { tool_calls, .. } =
+                                last_assistant_message
+                            {
+                                tool_calls.push(ToolCall {
+                                    id: tool_use.id.to_string(),
+                                    content: copilot::copilot_chat::ToolCallContent::Function {
+                                        function: copilot::copilot_chat::FunctionContent {
+                                            name: tool_use.name.to_string(),
+                                            arguments: tool_use.input,
+                                        },
+                                    },
+                                });
+                            }
+                        } else {
+                            messages.push(ChatMessage::Assistant {
+                                content: String::new(),
+                                tool_calls: vec![ToolCall {
+                                    id: tool_use.id.to_string(),
+                                    content: copilot::copilot_chat::ToolCallContent::Function {
+                                        function: copilot::copilot_chat::FunctionContent {
+                                            name: tool_use.name.to_string(),
+                                            arguments: tool_use.input,
+                                        },
+                                    },
+                                }],
+                            });
+                        }
+                    }
+                    MessageContent::ToolResult(tool_result) => {
+                        messages.push(ChatMessage::Tool {
                             tool_call_id: tool_result.tool_use_id.to_string(),
                             content: tool_result.content.to_string(),
-                        }),
-                    })
-            })
-            .collect();
+                        });
+                    }
+                }
+            }
+        }
+
         let tools = request
             .tools
             .iter()
