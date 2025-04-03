@@ -125,25 +125,12 @@ impl PaneGroup {
     pub fn render(
         &self,
         project: &Entity<Project>,
-        follower_states: &HashMap<PeerId, FollowerState>,
-        active_call: Option<&Entity<ActiveCall>>,
-        active_pane: &Entity<Pane>,
         zoomed: Option<&AnyWeakView>,
-        app_state: &Arc<AppState>,
+        render_cx: &PaneRenderContext,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
-        self.root.render(
-            project,
-            0,
-            follower_states,
-            active_call,
-            active_pane,
-            zoomed,
-            app_state,
-            window,
-            cx,
-        )
+        self.root.render(project, 0, zoomed, render_cx, window, cx)
     }
 
     pub fn panes(&self) -> Vec<&Entity<Pane>> {
@@ -195,6 +182,13 @@ pub enum Member {
     Pane(Entity<Pane>),
 }
 
+pub struct PaneRenderContext<'a> {
+    pub follower_states: &'a HashMap<PeerId, FollowerState>,
+    pub active_call: Option<&'a Entity<ActiveCall>>,
+    pub active_pane: &'a Entity<Pane>,
+    pub app_state: &'a Arc<AppState>,
+}
+
 impl Member {
     fn new_axis(old_pane: Entity<Pane>, new_pane: Entity<Pane>, direction: SplitDirection) -> Self {
         use Axis::*;
@@ -224,11 +218,8 @@ impl Member {
         &self,
         project: &Entity<Project>,
         basis: usize,
-        follower_states: &HashMap<PeerId, FollowerState>,
-        active_call: Option<&Entity<ActiveCall>>,
-        active_pane: &Entity<Pane>,
         zoomed: Option<&AnyWeakView>,
-        app_state: &Arc<AppState>,
+        render_cx: &PaneRenderContext,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
@@ -238,16 +229,20 @@ impl Member {
                     return div().into_any();
                 }
 
-                let follower_state = follower_states.iter().find_map(|(leader_id, state)| {
-                    if state.center_pane == *pane {
-                        Some((*leader_id, state))
-                    } else {
-                        None
-                    }
-                });
+                let follower_state =
+                    render_cx
+                        .follower_states
+                        .iter()
+                        .find_map(|(leader_id, state)| {
+                            if state.center_pane == *pane {
+                                Some((*leader_id, state))
+                            } else {
+                                None
+                            }
+                        });
 
                 let leader = follower_state.as_ref().and_then(|(leader_id, _)| {
-                    let room = active_call?.read(cx).room()?.read(cx);
+                    let room = render_cx.active_call?.read(cx).room()?.read(cx);
                     room.remote_participant_for_peer_id(*leader_id)
                 });
 
@@ -360,17 +355,7 @@ impl Member {
                     .into_any()
             }
             Member::Axis(axis) => axis
-                .render(
-                    project,
-                    basis + 1,
-                    follower_states,
-                    active_call,
-                    active_pane,
-                    zoomed,
-                    app_state,
-                    window,
-                    cx,
-                )
+                .render(project, basis + 1, zoomed, render_cx, window, cx)
                 .into_any(),
         }
     }
@@ -673,11 +658,8 @@ impl PaneAxis {
         &self,
         project: &Entity<Project>,
         basis: usize,
-        follower_states: &HashMap<PeerId, FollowerState>,
-        active_call: Option<&Entity<ActiveCall>>,
-        active_pane: &Entity<Pane>,
         zoomed: Option<&AnyWeakView>,
-        app_state: &Arc<AppState>,
+        render_cx: &PaneRenderContext,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> gpui::AnyElement {
@@ -692,21 +674,11 @@ impl PaneAxis {
             cx.entity().downgrade(),
         )
         .children(self.members.iter().enumerate().map(|(ix, member)| {
-            if matches!(member, Member::Pane(pane) if pane == active_pane) {
+            if matches!(member, Member::Pane(pane) if pane == render_cx.active_pane) {
                 active_pane_ix = Some(ix);
             }
             member
-                .render(
-                    project,
-                    (basis + ix) * 10,
-                    follower_states,
-                    active_call,
-                    active_pane,
-                    zoomed,
-                    app_state,
-                    window,
-                    cx,
-                )
+                .render(project, (basis + ix) * 10, zoomed, render_cx, window, cx)
                 .into_any_element()
         }))
         .with_active_pane(active_pane_ix)

@@ -1203,11 +1203,13 @@ impl Render for TerminalPanel {
             .update(cx, |workspace, cx| {
                 registrar.size_full().child(self.center.render(
                     workspace.project(),
-                    &HashMap::default(),
-                    None,
-                    &self.active_pane,
                     workspace.zoomed_item(),
-                    workspace.app_state(),
+                    &workspace::PaneRenderContext {
+                        follower_states: &&HashMap::default(),
+                        active_call: workspace.active_call(),
+                        active_pane: &self.active_pane,
+                        app_state: &workspace.app_state(),
+                    },
                     window,
                     cx,
                 ))

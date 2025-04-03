@@ -5576,11 +5576,14 @@ impl Render for Workspace {
                                                         })
                                                         .child(self.center.render(
                                                             &self.project,
-                                                            &self.follower_states,
-                                                            self.active_call(),
-                                                            &self.active_pane,
                                                             self.zoomed.as_ref(),
-                                                            &self.app_state,
+                                                            &PaneRenderContext {
+                                                                follower_states:
+                                                                    &self.follower_states,
+                                                                active_call: self.active_call(),
+                                                                active_pane: &self.active_pane,
+                                                                app_state: &self.app_state,
+                                                            },
                                                             window,
                                                             cx,
                                                         ))
