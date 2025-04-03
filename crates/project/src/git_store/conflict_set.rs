@@ -1,4 +1,3 @@
-use anyhow::{Result, bail};
 use gpui::{Context, EventEmitter};
 use std::ops::Range;
 use text::{Anchor, BufferId};
@@ -16,6 +15,12 @@ pub struct Conflict {
     pub base: Option<Range<Anchor>>,
 }
 
+/// A snapshot of conflicts in a buffer, used for background parsing
+#[derive(Debug, Clone)]
+pub struct ConflictSetSnapshot {
+    pub conflicts: Vec<Conflict>,
+}
+
 impl ConflictSet {
     pub fn new(buffer_id: BufferId, _: &mut Context<Self>) -> Self {
         Self {
@@ -28,74 +33,87 @@ impl ConflictSet {
         &self.conflicts
     }
 
-    pub fn parse(buffer: &text::BufferSnapshot) -> Result<Vec<Conflict>> {
-        let mut conflicts = Vec::new();
-        let mut current_conflict: Option<(Range<usize>, Option<Range<usize>>)> = None;
-        let mut ours: Option<Range<usize>> = None;
+    pub fn set_snapshot(&mut self, snapshot: ConflictSetSnapshot) {
+        self.conflicts = snapshot.conflicts;
+    }
 
-        let mut line_start = 0;
+    pub fn parse(buffer: &text::BufferSnapshot) -> ConflictSetSnapshot {
+        let mut conflicts = Vec::new();
+
+        let mut line_pos = 0;
         let mut lines = buffer.text_for_range(0..buffer.len()).lines();
 
+        let mut conflict_start: Option<usize> = None;
+        let mut ours_start: Option<usize> = None;
+        let mut ours_end: Option<usize> = None;
+        let mut base_start: Option<usize> = None;
+        let mut base_end: Option<usize> = None;
+        let mut theirs_start: Option<usize> = None;
+
         while let Some(line) = lines.next() {
-            let line_end = line_start + line.len();
+            let line_end = line_pos + line.len();
 
             if line.starts_with("<<<<<<< ") {
-                if current_conflict.is_some() {
-                    bail!("Nested conflict markers not supported");
+                // If we see a new conflict marker while already parsing one,
+                // abandon the previous one and start a new one
+                conflict_start = Some(line_pos);
+                ours_start = Some(line_end + 1);
+            } else if line.starts_with("||||||| ")
+                && conflict_start.is_some()
+                && ours_start.is_some()
+            {
+                ours_end = Some(line_pos);
+                base_start = Some(line_end + 1);
+            } else if line.starts_with("=======")
+                && conflict_start.is_some()
+                && ours_start.is_some()
+            {
+                // Set ours_end if not already set (would be set if we have base markers)
+                if ours_end.is_none() {
+                    ours_end = Some(line_pos);
+                } else if base_start.is_some() {
+                    base_end = Some(line_pos);
                 }
-                current_conflict = Some((line_start..line_end + 1, None));
-                ours = Some(line_end + 1..0);
-            } else if line.starts_with("=======") && current_conflict.is_some() {
-                if let Some(our_range) = ours.as_mut() {
-                    our_range.end = line_start;
-                }
-                if let Some((range, _)) = current_conflict.as_mut() {
-                    range.end = line_end + 1;
-                }
-            } else if line.starts_with("||||||| ") && current_conflict.is_some() {
-                if let Some(our_range) = ours.as_mut() {
-                    our_range.end = line_start;
-                }
-                if let Some((_, base)) = current_conflict.as_mut() {
-                    *base = Some(line_end + 1..0);
-                }
-            } else if line.starts_with(">>>>>>> ") && current_conflict.is_some() {
-                if let Some((mut conflict_range, base_range)) = current_conflict.take() {
-                    conflict_range.end = line_end + 1;
+                theirs_start = Some(line_end + 1);
+            } else if line.starts_with(">>>>>>> ")
+                && conflict_start.is_some()
+                && ours_start.is_some()
+                && ours_end.is_some()
+                && theirs_start.is_some()
+            {
+                let theirs_end = line_pos;
+                let conflict_end = line_end + 1;
 
-                    let (theirs, base) = if let Some(base) = base_range {
-                        let mut base_range = base;
-                        base_range.end = line_start;
-                        (base_range.clone(), Some(base_range))
-                    } else {
-                        let mut our_range = ours.take().unwrap();
-                        our_range.end = line_start;
-                        (our_range.end..line_start, None)
-                    };
+                let range = buffer.anchor_after(conflict_start.unwrap())
+                    ..buffer.anchor_before(conflict_end);
+                let ours = buffer.anchor_after(ours_start.unwrap())
+                    ..buffer.anchor_before(ours_end.unwrap());
+                let theirs =
+                    buffer.anchor_after(theirs_start.unwrap())..buffer.anchor_before(theirs_end);
 
-                    let range = buffer.anchor_after(conflict_range.start)
-                        ..buffer.anchor_before(conflict_range.end);
-                    let ours = ours.take().unwrap();
-                    let ours = buffer.anchor_after(ours.start)..buffer.anchor_before(ours.end);
-                    let theirs =
-                        buffer.anchor_after(theirs.start)..buffer.anchor_before(theirs.end);
-                    let base = base.map(|base| {
-                        buffer.anchor_after(base.start)..buffer.anchor_before(base.end)
-                    });
+                let base = base_start
+                    .zip(base_end)
+                    .map(|(start, end)| buffer.anchor_after(start)..buffer.anchor_before(end));
 
-                    conflicts.push(Conflict {
-                        range,
-                        ours,
-                        theirs,
-                        base,
-                    });
-                }
+                conflicts.push(Conflict {
+                    range,
+                    ours,
+                    theirs,
+                    base,
+                });
+
+                conflict_start = None;
+                ours_start = None;
+                ours_end = None;
+                base_start = None;
+                base_end = None;
+                theirs_start = None;
             }
 
-            line_start = line_end + 1;
+            line_pos = line_end + 1;
         }
 
-        Ok(conflicts)
+        ConflictSetSnapshot { conflicts }
     }
 }
 
@@ -105,39 +123,38 @@ impl EventEmitter<()> for ConflictSet {}
 mod tests {
     use super::*;
     use text::{Buffer, BufferId};
+    use unindent::Unindent as _;
 
     #[test]
-    fn test_parse_conflicts_in_buffer() -> Result<()> {
+    fn test_parse_conflicts_in_buffer() {
         // Create a buffer with conflict markers
-        let test_content = r#"This is some text before the conflict.
-<<<<<<< HEAD
-This is our version
-=======
-This is their version
->>>>>>> branch-name
+        let test_content = r#"
+            This is some text before the conflict.
+            <<<<<<< HEAD
+            This is our version
+            =======
+            This is their version
+            >>>>>>> branch-name
 
-Another conflict:
-<<<<<<< HEAD
-Our second change
-||||||| merged common ancestors
-Original content
-=======
-Their second change
->>>>>>> branch-name
-"#;
+            Another conflict:
+            <<<<<<< HEAD
+            Our second change
+            ||||||| merged common ancestors
+            Original content
+            =======
+            Their second change
+            >>>>>>> branch-name
+        "#
+        .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(0, buffer_id, test_content.to_string());
+        let buffer = Buffer::new(0, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
-        // Parse conflicts
-        let conflicts = ConflictSet::parse(&snapshot)?;
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 2);
 
-        // Verify there are 2 conflicts
-        assert_eq!(conflicts.len(), 2);
-
-        // First conflict should have our version, their version, but no base
-        let first = &conflicts[0];
+        let first = &conflict_snapshot.conflicts[0];
         assert!(first.base.is_none());
         let our_text = snapshot
             .text_for_range(first.ours.clone())
@@ -148,8 +165,7 @@ Their second change
         assert_eq!(our_text, "This is our version\n");
         assert_eq!(their_text, "This is their version\n");
 
-        // Second conflict should have our version, their version, and a base
-        let second = &conflicts[1];
+        let second = &conflict_snapshot.conflicts[1];
         assert!(second.base.is_some());
         let our_text = snapshot
             .text_for_range(second.ours.clone())
@@ -163,7 +179,46 @@ Their second change
         assert_eq!(our_text, "Our second change\n");
         assert_eq!(their_text, "Their second change\n");
         assert_eq!(base_text, "Original content\n");
+    }
 
-        Ok(())
+    #[test]
+    fn test_nested_conflict_markers() {
+        // Create a buffer with nested conflict markers
+        let test_content = r#"
+            This is some text before the conflict.
+            <<<<<<< HEAD
+            This is our version
+            <<<<<<< HEAD
+            This is a nested conflict marker
+            =======
+            This is their version in a nested conflict
+            >>>>>>> branch-nested
+            =======
+            This is their version
+            >>>>>>> branch-name
+        "#
+        .unindent();
+
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(0, buffer_id, test_content.to_string());
+        let snapshot = buffer.snapshot();
+
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        // The conflict should have our version, their version, but no base
+        let conflict = &conflict_snapshot.conflicts[0];
+        assert!(conflict.base.is_none());
+
+        // Check that the nested conflict was detected correctly
+        let our_text = snapshot
+            .text_for_range(conflict.ours.clone())
+            .collect::<String>();
+        assert_eq!(our_text, "This is a nested conflict marker\n");
+        let their_text = snapshot
+            .text_for_range(conflict.theirs.clone())
+            .collect::<String>();
+        assert_eq!(their_text, "This is their version in a nested conflict\n");
     }
 }

@@ -738,7 +738,6 @@ impl GitStore {
             .or_insert_with(|| cx.new(|_| BufferGitState::default()));
 
         // Create a new conflict set
-        let git_store = cx.weak_entity();
         let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, cx));
 
         // Update the git state with the new conflict set
@@ -2282,31 +2281,22 @@ impl BufferGitState {
         let (tx, rx) = oneshot::channel();
 
         let conflict_set = self.conflict_set.as_ref().and_then(|weak| weak.upgrade());
-
         if let Some(conflict_set) = conflict_set {
             self.conflict_updated_futures.push(tx);
             self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
-                // Use the extracted function to parse conflicts
-                let conflicts = ConflictSet::parse(&buffer)?;
-
+                let snapshot = cx
+                    .background_spawn(async move { ConflictSet::parse(&buffer) })
+                    .await;
                 conflict_set.update(cx, |conflict_set, _| {
-                    conflict_set.conflicts = conflicts;
+                    conflict_set.set_snapshot(snapshot);
                 })?;
-
-                if let Some(this) = this.upgrade() {
-                    this.update(cx, |this, _| {
-                        let futures = std::mem::take(&mut this.conflict_updated_futures);
-                        for tx in futures {
-                            tx.send(()).ok();
-                        }
-                    })?;
-                }
-
-                Ok(())
+                this.update(cx, |this, _| {
+                    let futures = std::mem::take(&mut this.conflict_updated_futures);
+                    for tx in futures {
+                        tx.send(()).ok();
+                    }
+                })
             }));
-        } else {
-            // No conflict set to update, just resolve the future immediately
-            tx.send(()).ok();
         }
 
         rx
