@@ -11,7 +11,7 @@ use askpass::AskPassDelegate;
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
-use conflict_set::ConflictSet;
+pub use conflict_set::ConflictSet;
 use fs::Fs;
 use futures::{
     FutureExt as _, StreamExt as _,

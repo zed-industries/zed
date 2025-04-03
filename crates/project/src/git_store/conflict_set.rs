@@ -1,10 +1,14 @@
 use gpui::{Context, EventEmitter};
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 use text::{Anchor, BufferId};
 
 pub struct ConflictSet {
     pub has_conflict: bool,
     pub snapshot: ConflictSetSnapshot,
+}
+
+pub enum ConflictSetEvent {
+    ConflictsUpdated(Range<Anchor>),
 }
 
 #[derive(Debug, Clone)]
@@ -13,7 +17,44 @@ pub struct ConflictSetSnapshot {
     pub conflicts: Vec<Conflict>,
 }
 
-#[derive(Debug, Clone)]
+impl ConflictSetSnapshot {
+    pub fn conflicts_in_range(
+        &self,
+        range: Range<Anchor>,
+        buffer: &text::BufferSnapshot,
+    ) -> &[Conflict] {
+        let start_ix = self
+            .conflicts
+            .binary_search_by(|conflict| {
+                conflict
+                    .range
+                    .end
+                    .cmp(&range.start, buffer)
+                    .then(Ordering::Greater)
+            })
+            .unwrap_err();
+        let end_ix = start_ix
+            + self.conflicts[start_ix..]
+                .binary_search_by(|conflict| {
+                    conflict
+                        .range
+                        .start
+                        .cmp(&range.end, buffer)
+                        .then(Ordering::Less)
+                })
+                .unwrap_err();
+        &self.conflicts[start_ix..end_ix]
+    }
+
+    pub fn compare(&self, other: &Self, buffer: &text::BufferSnapshot) -> Option<Range<Anchor>> {
+        //
+        let start = self.conflicts.iter().zip(other.conflicts.iter()).position(|(old, new)| old != new)?
+        let end = self.conflicts.iter().rev().zip(other.conflicts.iter().rev()).position(|(old, new)| old != new)?;
+
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
     pub range: Range<Anchor>,
     pub ours: Range<Anchor>,
@@ -41,7 +82,7 @@ impl ConflictSet {
         &self.snapshot.conflicts
     }
 
-    pub fn set_snapshot(&mut self, snapshot: ConflictSetSnapshot) {
+    pub fn set_snapshot(&mut self, snapshot: ConflictSetSnapshot, cx: &mut Context<Self>) {
         self.snapshot = snapshot;
     }
 
@@ -133,7 +174,7 @@ impl EventEmitter<()> for ConflictSet {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use text::{Buffer, BufferId};
+    use text::{Buffer, BufferId, ToOffset as _};
     use unindent::Unindent as _;
 
     #[test]
@@ -190,6 +231,29 @@ mod tests {
         assert_eq!(our_text, "Our second change\n");
         assert_eq!(their_text, "Their second change\n");
         assert_eq!(base_text, "Original content\n");
+
+        // Test conflicts_in_range
+        let range = snapshot.anchor_before(0)..snapshot.anchor_before(snapshot.len());
+        let conflicts_in_range = conflict_snapshot.conflicts_in_range(range, &snapshot);
+        assert_eq!(conflicts_in_range.len(), 2);
+
+        // Test with a range that includes only the first conflict
+        let first_conflict_end = conflict_snapshot.conflicts[0].range.end;
+        let range = snapshot.anchor_before(0)..first_conflict_end;
+        let conflicts_in_range = conflict_snapshot.conflicts_in_range(range, &snapshot);
+        assert_eq!(conflicts_in_range.len(), 1);
+
+        // Test with a range that includes only the second conflict
+        let second_conflict_start = conflict_snapshot.conflicts[1].range.start;
+        let range = second_conflict_start..snapshot.anchor_before(snapshot.len());
+        let conflicts_in_range = conflict_snapshot.conflicts_in_range(range, &snapshot);
+        assert_eq!(conflicts_in_range.len(), 1);
+
+        // Test with a range that doesn't include any conflicts
+        let range = buffer.anchor_after(first_conflict_end.to_offset(&buffer) + 1)
+            ..buffer.anchor_before(second_conflict_start.to_offset(&buffer) - 1);
+        let conflicts_in_range = conflict_snapshot.conflicts_in_range(range, &snapshot);
+        assert_eq!(conflicts_in_range.len(), 0);
     }
 
     #[test]
@@ -231,5 +295,76 @@ mod tests {
             .text_for_range(conflict.theirs.clone())
             .collect::<String>();
         assert_eq!(their_text, "This is their version in a nested conflict\n");
+    }
+
+    #[test]
+    fn test_conflicts_in_range() {
+        // Create a buffer with conflict markers
+        let test_content = r#"
+            one
+            <<<<<<< HEAD1
+            two
+            =======
+            three
+            >>>>>>> branch1
+            four
+            five
+            <<<<<<< HEAD2
+            six
+            =======
+            seven
+            >>>>>>> branch2
+            eight
+            nine
+            <<<<<<< HEAD3
+            ten
+            =======
+            eleven
+            >>>>>>> branch3
+            twelve
+            <<<<<<< HEAD4
+            thirteen
+            =======
+            fourteen
+            >>>>>>> branch4
+            fifteen
+        "#
+        .unindent();
+
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(0, buffer_id, test_content.clone());
+        let snapshot = buffer.snapshot();
+
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 4);
+
+        let range = test_content.find("seven").unwrap()..test_content.find("eleven").unwrap();
+        let range = buffer.anchor_before(range.start)..buffer.anchor_after(range.end);
+        assert_eq!(
+            conflict_snapshot.conflicts_in_range(range, &snapshot),
+            &conflict_snapshot.conflicts[1..=2]
+        );
+
+        let range = test_content.find("one").unwrap()..test_content.find("<<<<<<< HEAD2").unwrap();
+        let range = buffer.anchor_before(range.start)..buffer.anchor_after(range.end);
+        assert_eq!(
+            conflict_snapshot.conflicts_in_range(range, &snapshot),
+            &conflict_snapshot.conflicts[0..=1]
+        );
+
+        let range =
+            test_content.find("eight").unwrap() - 1..test_content.find(">>>>>>> branch3").unwrap();
+        let range = buffer.anchor_before(range.start)..buffer.anchor_after(range.end);
+        assert_eq!(
+            conflict_snapshot.conflicts_in_range(range, &snapshot),
+            &conflict_snapshot.conflicts[1..=2]
+        );
+
+        let range = test_content.find("thirteen").unwrap() - 1..test_content.len();
+        let range = buffer.anchor_before(range.start)..buffer.anchor_after(range.end);
+        assert_eq!(
+            conflict_snapshot.conflicts_in_range(range, &snapshot),
+            &conflict_snapshot.conflicts[3..=3]
+        );
     }
 }
