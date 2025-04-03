@@ -12,7 +12,7 @@ license = "Apache-2.0"
 workspace = true
 
 [features]
-default = ["macos-blade", "http_client", "font-kit", "wayland", "x11"]
+default = ["http_client", "font-kit", "wayland", "x11"]
 test-support = [
     "leak-detection",
     "collections/test-support",
@@ -118,6 +118,7 @@ util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"
 lyon = "1.0"
+workspace-hack.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -226,7 +227,7 @@ embed-resource = "3.0"
 naga.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.70.0"
+bindgen = "0.71"
 cbindgen = { version = "0.28.0", default-features = false }
 naga.workspace = true
 

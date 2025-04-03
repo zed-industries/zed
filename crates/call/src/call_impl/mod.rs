@@ -2,11 +2,11 @@ pub mod participant;
 pub mod room;
 
 use crate::call_settings::CallSettings;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use audio::Audio;
-use client::{proto, ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE};
+use client::{ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE, proto};
 use collections::HashSet;
-use futures::{channel::oneshot, future::Shared, Future, FutureExt};
+use futures::{Future, FutureExt, channel::oneshot, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Subscription, Task,
     WeakEntity,

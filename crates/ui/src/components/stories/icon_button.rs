@@ -1,8 +1,8 @@
 use gpui::Render;
 use story::{Story, StoryItem, StorySection};
 
-use crate::{prelude::*, IconButtonShape, Tooltip};
 use crate::{IconButton, IconName};
+use crate::{IconButtonShape, Tooltip, prelude::*};
 
 pub struct IconButtonStory;
 

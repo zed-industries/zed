@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
@@ -12,19 +12,17 @@ use language_model::{
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
-use open_ai::{
-    stream_completion, FunctionDefinition, ResponseStreamEvent, ToolChoice, ToolDefinition,
-};
+use open_ai::{ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, List, Tooltip};
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
 
-use crate::{ui::InstructionListItem, AllLanguageModelSettings};
+use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
 const PROVIDER_ID: &str = "openai";
 const PROVIDER_NAME: &str = "OpenAI";
@@ -290,6 +288,10 @@ impl LanguageModel for OpenAiLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
@@ -326,43 +328,6 @@ impl LanguageModel for OpenAiLanguageModel {
                 .boxed())
         }
         .boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
-        request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
-            function: FunctionDefinition {
-                name: tool_name.clone(),
-                description: None,
-                parameters: None,
-            },
-        }));
-        request.tools = vec![ToolDefinition::Function {
-            function: FunctionDefinition {
-                name: tool_name.clone(),
-                description: Some(tool_description),
-                parameters: Some(schema),
-            },
-        }];
-
-        let response = self.stream_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                Ok(
-                    open_ai::extract_tool_args_from_events(tool_name, Box::pin(response))
-                        .await?
-                        .boxed(),
-                )
-            })
-            .boxed()
     }
 }
 

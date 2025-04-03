@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use git::{

@@ -1,30 +1,30 @@
 use crate::{
-    editor_settings::SeedQuerySetting,
-    persistence::{SerializedEditor, DB},
-    scroll::ScrollAnchor,
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
     MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
+    editor_settings::SeedQuerySetting,
+    persistence::{DB, SerializedEditor},
+    scroll::ScrollAnchor,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use clock::Global;
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::status::GitSummary;
 use gpui::{
-    point, AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
-    IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window,
+    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, IntoElement,
+    ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
-    SelectionGoal,
+    Bias, Buffer, CharKind, DiskState, Point, SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
 use project::{
-    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Project,
-    ProjectEntryId, ProjectItem as _, ProjectPath,
+    Project, ProjectEntryId, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
+    project_settings::ProjectSettings, search::SearchQuery,
 };
-use rpc::proto::{self, update_view, PeerId};
+use rpc::proto::{self, PeerId, update_view};
 use settings::Settings;
 use std::{
     any::TypeId,
@@ -38,21 +38,21 @@ use std::{
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
-use ui::{prelude::*, IconDecorationKind};
-use util::{paths::PathExt, ResultExt, TryFutureExt};
+use ui::{IconDecorationKind, prelude::*};
+use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    item::{BreadcrumbText, FollowEvent, ProjectItemKind},
-    searchable::SearchOptions,
-    OpenVisible, Pane, WorkspaceSettings,
-};
-use workspace::{
-    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
-    OpenOptions,
-};
-use workspace::{
+    ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+};
+use workspace::{
+    OpenOptions,
+    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
+};
+use workspace::{
+    OpenVisible, Pane, WorkspaceSettings,
+    item::{BreadcrumbText, FollowEvent, ProjectItemKind},
+    searchable::SearchOptions,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
@@ -200,14 +200,8 @@ impl FollowableItem for Editor {
                 buffer_id: buffer.remote_id().into(),
                 context_start: Some(serialize_text_anchor(&range.context.start)),
                 context_end: Some(serialize_text_anchor(&range.context.end)),
-                primary_start: range
-                    .primary
-                    .as_ref()
-                    .map(|range| serialize_text_anchor(&range.start)),
-                primary_end: range
-                    .primary
-                    .as_ref()
-                    .map(|range| serialize_text_anchor(&range.end)),
+                primary_start: Some(serialize_text_anchor(&range.primary.start)),
+                primary_end: Some(serialize_text_anchor(&range.primary.end)),
             })
             .collect();
 
@@ -481,14 +475,8 @@ fn serialize_excerpt(
         buffer_id: buffer_id.into(),
         context_start: Some(serialize_text_anchor(&range.context.start)),
         context_end: Some(serialize_text_anchor(&range.context.end)),
-        primary_start: range
-            .primary
-            .as_ref()
-            .map(|r| serialize_text_anchor(&r.start)),
-        primary_end: range
-            .primary
-            .as_ref()
-            .map(|r| serialize_text_anchor(&r.end)),
+        primary_start: Some(serialize_text_anchor(&range.primary.start)),
+        primary_end: Some(serialize_text_anchor(&range.primary.end)),
     })
 }
 
@@ -521,7 +509,8 @@ fn deserialize_excerpt_range(excerpt: proto::Excerpt) -> Option<ExcerptRange<lan
             let start = language::proto::deserialize_anchor(start)?;
             let end = language::proto::deserialize_anchor(end)?;
             Some(start..end)
-        });
+        })
+        .unwrap_or_else(|| context.clone());
     Some(ExcerptRange { context, primary })
 }
 

@@ -1,7 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,18 +39,28 @@ impl Tool for BashTool {
         IconName::Terminal
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(BashToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<BashToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<BashToolInput>(input.clone()) {
             Ok(input) => {
-                if input.command.contains('\n') {
-                    MarkdownString::code_block("bash", &input.command).0
-                } else {
-                    MarkdownString::inline_code(&input.command).0
+                let mut lines = input.command.lines();
+                let first_line = lines.next().unwrap_or_default();
+                let remaining_line_count = lines.count();
+                match remaining_line_count {
+                    0 => MarkdownString::inline_code(&first_line).0,
+                    1 => {
+                        MarkdownString::inline_code(&format!(
+                            "{} - {} more line",
+                            first_line, remaining_line_count
+                        ))
+                        .0
+                    }
+                    n => {
+                        MarkdownString::inline_code(&format!("{} - {} more lines", first_line, n)).0
+                    }
                 }
             }
             Err(_) => "Run bash command".to_string(),
@@ -81,7 +92,9 @@ impl Tool for BashTool {
             };
 
             if worktrees.next().is_some() {
-                return Task::ready(Err(anyhow!("'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.")));
+                return Task::ready(Err(anyhow!(
+                    "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly."
+                )));
             }
 
             only_worktree.read(cx).abs_path()

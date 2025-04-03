@@ -1,12 +1,12 @@
 use crate::{
-    parse_wasm_extension_version, ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry,
+    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, parse_wasm_extension_version,
 };
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use convert_case::{Case, Casing as _};
-use futures::io::BufReader;
 use futures::AsyncReadExt;
+use futures::io::BufReader;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
 use std::{
@@ -26,8 +26,7 @@ use wit_component::ComponentEncoder;
 /// Once Rust 1.78 is released, there will be a `wasm32-wasip2` target available, so we will
 /// not need the adapter anymore.
 const RUST_TARGET: &str = "wasm32-wasip1";
-const WASI_ADAPTER_URL: &str =
-    "https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm";
+const WASI_ADAPTER_URL: &str = "https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm";
 
 /// Compiling Tree-sitter parsers from C to WASM requires Clang 17, and a WASM build of libc
 /// and clang's runtime library. The `wasi-sdk` provides these binaries.
@@ -100,7 +99,9 @@ impl ExtensionBuilder {
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
             let snake_cased_grammar_name = grammar_name.to_case(Case::Snake);
             if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
-                bail!("grammar name '{grammar_name}' must be written in snake_case: {snake_cased_grammar_name}");
+                bail!(
+                    "grammar name '{grammar_name}' must be written in snake_case: {snake_cased_grammar_name}"
+                );
             }
 
             log::info!(

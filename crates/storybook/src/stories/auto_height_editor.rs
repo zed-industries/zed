@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, white, App, AppContext as _, Context, Entity, IntoElement, KeyBinding, ParentElement,
-    Render, Styled, Window,
+    App, AppContext as _, Context, Entity, IntoElement, KeyBinding, ParentElement, Render, Styled,
+    Window, div, white,
 };
 
 pub struct AutoHeightEditorStory {

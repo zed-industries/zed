@@ -1,7 +1,6 @@
-use std::future;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use copilot::copilot_chat::{
     ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
     Role as CopilotChatRole,
@@ -11,8 +10,8 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    percentage, svg, Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render,
-    Subscription, Task, Transformation,
+    Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
+    Transformation, percentage, svg,
 };
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
@@ -125,11 +124,21 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
 
         let err = match copilot.read(cx).status() {
             Status::Authorized => return Task::ready(Ok(())),
-            Status::Disabled => anyhow!("Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."),
-            Status::Error(err) => anyhow!(format!("Received the following error while signing into Copilot: {err}")),
-            Status::Starting { task: _ } => anyhow!("Copilot is still starting, please wait for Copilot to start then try again"),
-            Status::Unauthorized => anyhow!("Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."),
-            Status::SignedOut {..} => anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."),
+            Status::Disabled => anyhow!(
+                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
+            ),
+            Status::Error(err) => anyhow!(format!(
+                "Received the following error while signing into Copilot: {err}"
+            )),
+            Status::Starting { task: _ } => anyhow!(
+                "Copilot is still starting, please wait for Copilot to start then try again"
+            ),
+            Status::Unauthorized => anyhow!(
+                "Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."
+            ),
+            Status::SignedOut { .. } => {
+                anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again.")
+            }
             Status::SigningIn { prompt: _ } => anyhow!("Still signing into Copilot..."),
         };
 
@@ -168,6 +177,10 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn supports_tools(&self) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String {
@@ -279,17 +292,6 @@ impl LanguageModel for CopilotChatLanguageModel {
         }
         .boxed()
     }
-
-    fn use_any_tool(
-        &self,
-        _request: LanguageModelRequest,
-        _name: String,
-        _description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
-    }
 }
 
 impl CopilotChatLanguageModel {
@@ -398,8 +400,7 @@ impl Render for ConfigurationView {
                             .child(svg().size_8().path(IconName::CopilotError.path()))
                     }
                     _ => {
-                        const LABEL: &str =
-                    "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+                        const LABEL: &str = "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
                         v_flex().gap_6().child(Label::new(LABEL)).child(
                             v_flex()
                                 .gap_2()

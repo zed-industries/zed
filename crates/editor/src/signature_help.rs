@@ -1,8 +1,8 @@
 use crate::actions::ShowSignatureHelp;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
 use gpui::{
-    combine_highlights, App, Context, HighlightStyle, MouseButton, Size, StyledText, Task,
-    TextStyle, Window,
+    App, Context, HighlightStyle, MouseButton, Size, StyledText, Task, TextStyle, Window,
+    combine_highlights,
 };
 use language::BufferSnapshot;
 use multi_buffer::{Anchor, ToOffset};
@@ -11,8 +11,8 @@ use std::ops::Range;
 use text::Rope;
 use theme::ThemeSettings;
 use ui::{
-    div, relative, ActiveTheme, AnyElement, InteractiveElement, IntoElement, ParentElement, Pixels,
-    SharedString, StatefulInteractiveElement, Styled, StyledExt,
+    ActiveTheme, AnyElement, InteractiveElement, IntoElement, ParentElement, Pixels, SharedString,
+    StatefulInteractiveElement, Styled, StyledExt, div, relative,
 };
 
 // Language-specific settings may define quotes as "brackets", so filter them out separately.
@@ -308,7 +308,7 @@ impl SignatureHelpPopover {
             .on_mouse_move(|_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                div().px_4().pb_1().child(
+                div().px_2().py_0p5().child(
                     StyledText::new(self.label.clone())
                         .with_default_highlights(&self.style, self.highlights.iter().cloned()),
                 ),

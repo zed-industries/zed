@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 use util::serde::default_true;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use collections::{HashMap, HashSet};
-use schemars::{gen::SchemaSettings, JsonSchema};
+use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use util::{truncate_and_remove_front, ResultExt};
+use util::{ResultExt, truncate_and_remove_front};
 
 use crate::{
     AttachConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TCPHost, TaskContext, TaskId,
@@ -97,6 +97,8 @@ pub struct DebugArgs {
     pub initialize_args: Option<serde_json::value::Value>,
     /// the locator to use
     pub locator: Option<String>,
+    /// Whether to tell the debug adapter to stop on entry
+    pub stop_on_entry: Option<bool>,
 }
 
 /// Represents the type of task that is being ran
@@ -649,7 +651,10 @@ mod tests {
             );
             assert_eq!(
                 spawn_in_terminal.command_label,
-                format!("{} arg1 test_selected_text arg2 5678 arg3 {long_value}", spawn_in_terminal.command),
+                format!(
+                    "{} arg1 test_selected_text arg2 5678 arg3 {long_value}",
+                    spawn_in_terminal.command
+                ),
                 "Command label args should be substituted with variables and those should not be shortened"
             );
 
@@ -686,7 +691,10 @@ mod tests {
                     project_env: HashMap::default(),
                 },
             );
-            assert_eq!(resolved_task_attempt, None, "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})");
+            assert_eq!(
+                resolved_task_attempt, None,
+                "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})"
+            );
         }
     }
 
@@ -716,9 +724,10 @@ mod tests {
             args: vec!["$ZED_VARIABLE".into()],
             ..TaskTemplate::default()
         };
-        assert!(task
-            .resolve_task(TEST_ID_BASE, &TaskContext::default())
-            .is_none());
+        assert!(
+            task.resolve_task(TEST_ID_BASE, &TaskContext::default())
+                .is_none()
+        );
     }
 
     #[test]

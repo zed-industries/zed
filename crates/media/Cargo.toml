@@ -14,6 +14,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
@@ -24,4 +25,4 @@ core-video.workspace = true
 objc = "0.2"
 
 [build-dependencies]
-bindgen = "0.70.0"
+bindgen = "0.71"

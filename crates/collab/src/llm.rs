@@ -2,30 +2,30 @@ mod authorization;
 pub mod db;
 mod token;
 
-use crate::api::events::SnowflakeRow;
 use crate::api::CloudflareIpCountryHeader;
+use crate::api::events::SnowflakeRow;
 use crate::build_kinesis_client;
 use crate::rpc::MIN_ACCOUNT_AGE_FOR_LLM_USE;
-use crate::{db::UserId, executor::Executor, Cents, Config, Error, Result};
-use anyhow::{anyhow, Context as _};
+use crate::{Cents, Config, Error, Result, db::UserId, executor::Executor};
+use anyhow::{Context as _, anyhow};
 use authorization::authorize_access_to_language_model;
 use axum::routing::get;
 use axum::{
+    Extension, Json, Router, TypedHeader,
     body::Body,
     http::{self, HeaderName, HeaderValue, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::post,
-    Extension, Json, Router, TypedHeader,
 };
 use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::TokenUsage;
-use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
+use db::{ActiveUserCount, LlmDatabase, usage_measure::UsageMeasure};
 use futures::{Stream, StreamExt as _};
 use reqwest_client::ReqwestClient;
 use rpc::{
-    proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    EXPIRED_LLM_TOKEN_HEADER_NAME, LanguageModelProvider, PerformCompletionParams, proto::Plan,
 };
 use rpc::{ListModelsResponse, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME};
 use serde_json::json;

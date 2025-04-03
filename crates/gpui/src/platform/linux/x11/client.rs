@@ -9,8 +9,8 @@ use std::{
 };
 
 use calloop::{
-    generic::{FdWrapper, Generic},
     EventLoop, LoopHandle, RegistrationToken,
+    generic::{FdWrapper, Generic},
 };
 
 use anyhow::Context as _;
@@ -30,38 +30,37 @@ use x11rb::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
         ConnectionExt as _, EventMask, KeyPressEvent,
     },
-    protocol::{randr, render, xinput, xkb, xproto, Event},
+    protocol::{Event, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
-use xim::{x11rb::X11rbClient, AttributeName, Client, InputStyle};
+use xim::{AttributeName, Client, InputStyle, x11rb::X11rbClient};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
-    button_or_scroll_from_event_detail, get_valuator_axis_index, modifiers_from_state,
-    pressed_button_from_mask, ButtonOrScroll, ScrollDirection,
+    ButtonOrScroll, ScrollDirection, button_or_scroll_from_event_detail, get_valuator_axis_index,
+    modifiers_from_state, pressed_button_from_mask,
 };
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
 
 use crate::platform::{
+    LinuxCommon, PlatformWindow,
     blade::BladeContext,
     linux::{
-        get_xkb_compose_state, is_within_click_distance, open_uri_internal,
+        LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal,
         platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-        LinuxClient,
     },
-    LinuxCommon, PlatformWindow,
 };
 use crate::{
-    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
-    Platform, PlatformDisplay, PlatformInput, Point, RequestFrameOptions, ScaledPixels,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform, PlatformDisplay,
+    PlatformInput, Point, RequestFrameOptions, ScaledPixels, ScrollDelta, Size, TouchPhase,
+    WindowParams, X11Window, modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.

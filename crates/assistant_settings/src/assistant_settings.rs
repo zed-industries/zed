@@ -4,14 +4,15 @@ use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
+use anyhow::{Result, bail};
 use deepseek::Model as DeepseekModel;
-use feature_flags::FeatureFlagAppExt;
+use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Pixels};
 use indexmap::IndexMap;
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
-use schemars::{schema::Schema, JsonSchema};
+use schemars::{JsonSchema, schema::Schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
@@ -24,6 +25,15 @@ pub enum AssistantDockPosition {
     #[default]
     Right,
     Bottom,
+}
+
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotifyWhenAgentWaiting {
+    #[default]
+    PrimaryScreen,
+    AllScreens,
+    Never,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -71,14 +81,18 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
-    pub default_profile: Arc<str>,
-    pub profiles: IndexMap<Arc<str>, AgentProfile>,
+    pub default_profile: AgentProfileId,
+    pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
-    pub notify_when_agent_waiting: bool,
+    pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
 }
 
 impl AssistantSettings {
     pub fn are_live_diffs_enabled(&self, cx: &App) -> bool {
+        if cx.has_flag::<Assistant2FeatureFlag>() {
+            return false;
+        }
+
         cx.is_staff() || self.enable_experimental_live_diffs
     }
 }
@@ -96,8 +110,8 @@ impl JsonSchema for AssistantSettingsContent {
         VersionedAssistantSettingsContent::schema_name()
     }
 
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema {
-        VersionedAssistantSettingsContent::json_schema(gen)
+    fn json_schema(r#gen: &mut schemars::r#gen::SchemaGenerator) -> Schema {
+        VersionedAssistantSettingsContent::json_schema(r#gen)
     }
 
     fn is_referenceable() -> bool {
@@ -311,16 +325,63 @@ impl AssistantSettingsContent {
         }
     }
 
-    pub fn set_profile(&mut self, profile_id: Arc<str>) {
-        match self {
-            AssistantSettingsContent::Versioned(settings) => match settings {
-                VersionedAssistantSettingsContent::V2(settings) => {
-                    settings.default_profile = Some(profile_id);
-                }
-                VersionedAssistantSettingsContent::V1(_) => {}
-            },
-            AssistantSettingsContent::Legacy(_) => {}
+    pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
+        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
+            self
+        else {
+            return;
+        };
+        settings.always_allow_tool_actions = Some(allow);
+    }
+
+    pub fn set_profile(&mut self, profile_id: AgentProfileId) {
+        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
+            self
+        else {
+            return;
+        };
+
+        settings.default_profile = Some(profile_id);
+    }
+
+    pub fn create_profile(
+        &mut self,
+        profile_id: AgentProfileId,
+        profile: AgentProfile,
+    ) -> Result<()> {
+        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
+            self
+        else {
+            return Ok(());
+        };
+
+        let profiles = settings.profiles.get_or_insert_default();
+        if profiles.contains_key(&profile_id) {
+            bail!("profile with ID '{profile_id}' already exists");
         }
+
+        profiles.insert(
+            profile_id,
+            AgentProfileContent {
+                name: profile.name.into(),
+                tools: profile.tools,
+                enable_all_context_servers: Some(profile.enable_all_context_servers),
+                context_servers: profile
+                    .context_servers
+                    .into_iter()
+                    .map(|(server_id, preset)| {
+                        (
+                            server_id,
+                            ContextServerPresetContent {
+                                tools: preset.tools,
+                            },
+                        )
+                    })
+                    .collect(),
+            },
+        );
+
+        Ok(())
     }
 }
 
@@ -385,19 +446,21 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: false
     enable_experimental_live_diffs: Option<bool>,
-    #[schemars(skip)]
-    default_profile: Option<Arc<str>>,
-    #[schemars(skip)]
-    pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
+    /// The default profile to use in the Agent.
+    ///
+    /// Default: write
+    default_profile: Option<AgentProfileId>,
+    /// The available agent profiles.
+    pub profiles: Option<IndexMap<AgentProfileId, AgentProfileContent>>,
     /// Whenever a tool action would normally wait for your confirmation
     /// that you allow it, always choose to allow it.
     ///
     /// Default: false
     always_allow_tool_actions: Option<bool>,
-    /// Whether to show a popup notification when the agent is waiting for user input.
+    /// Where to show a popup notification when the agent is waiting for user input.
     ///
-    /// Default: true
-    notify_when_agent_waiting: Option<bool>,
+    /// Default: "primary_screen"
+    notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -407,7 +470,7 @@ pub struct LanguageModelSelection {
     pub model: String,
 }
 
-fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+fn providers_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
     schemars::schema::SchemaObject {
         enum_values: Some(vec![
             "anthropic".into(),
@@ -437,7 +500,10 @@ impl Default for LanguageModelSelection {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
+    #[serde(default)]
     pub tools: IndexMap<Arc<str>, bool>,
+    /// Whether all context servers are enabled by default.
+    pub enable_all_context_servers: Option<bool>,
     #[serde(default)]
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
 }
@@ -560,6 +626,9 @@ impl Settings for AssistantSettings {
                             AgentProfile {
                                 name: profile.name.into(),
                                 tools: profile.tools,
+                                enable_all_context_servers: profile
+                                    .enable_all_context_servers
+                                    .unwrap_or_default(),
                                 context_servers: profile
                                     .context_servers
                                     .into_iter()

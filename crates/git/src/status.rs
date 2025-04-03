@@ -1,5 +1,5 @@
 use crate::repository::RepoPath;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, str::FromStr, sync::Arc};
 use util::ResultExt;

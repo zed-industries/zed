@@ -8,10 +8,10 @@ pub mod core_media {
     #![allow(non_snake_case)]
 
     pub use crate::bindings::{
-        kCMSampleAttachmentKey_NotSync, kCMTimeInvalid, kCMVideoCodecType_H264, CMItemIndex,
-        CMSampleTimingInfo, CMTime, CMTimeMake, CMVideoCodecType,
+        CMItemIndex, CMSampleTimingInfo, CMTime, CMTimeMake, CMVideoCodecType,
+        kCMSampleAttachmentKey_NotSync, kCMTimeInvalid, kCMVideoCodecType_H264,
     };
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
     use core_foundation::{
         array::{CFArray, CFArrayRef},
         base::{CFTypeID, OSStatus, TCFType},
@@ -96,7 +96,7 @@ pub mod core_media {
     }
 
     #[link(name = "CoreMedia", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn CMSampleBufferGetTypeID() -> CFTypeID;
         fn CMSampleBufferGetSampleAttachmentsArray(
             buffer: CMSampleBufferRef,
@@ -163,7 +163,7 @@ pub mod core_media {
     }
 
     #[link(name = "CoreMedia", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn CMFormatDescriptionGetTypeID() -> CFTypeID;
         fn CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
             video_desc: CMFormatDescriptionRef,
@@ -202,7 +202,7 @@ pub mod core_media {
     }
 
     #[link(name = "CoreMedia", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn CMBlockBufferGetTypeID() -> CFTypeID;
         fn CMBlockBufferGetDataPointer(
             buffer: CMBlockBufferRef,
@@ -226,12 +226,12 @@ pub mod core_video {
     #[cfg(target_os = "macos")]
     use std::ffi::c_void;
 
+    use crate::bindings::{CVReturn, kCVReturnSuccess};
     pub use crate::bindings::{
         kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
     };
-    use crate::bindings::{kCVReturnSuccess, CVReturn};
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
     use core_foundation::{
         base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,
     };
@@ -258,15 +258,17 @@ pub mod core_video {
         /// metal_device must be valid according to CVMetalTextureCacheCreate
         pub unsafe fn new(metal_device: *mut MTLDevice) -> Result<Self> {
             let mut this = ptr::null();
-            let result = CVMetalTextureCacheCreate(
-                kCFAllocatorDefault,
-                ptr::null(),
-                metal_device,
-                ptr::null(),
-                &mut this,
-            );
+            let result = unsafe {
+                CVMetalTextureCacheCreate(
+                    kCFAllocatorDefault,
+                    ptr::null(),
+                    metal_device,
+                    ptr::null(),
+                    &mut this,
+                )
+            };
             if result == kCVReturnSuccess {
-                Ok(CVMetalTextureCache::wrap_under_create_rule(this))
+                unsafe { Ok(CVMetalTextureCache::wrap_under_create_rule(this)) }
             } else {
                 Err(anyhow!("could not create texture cache, code: {}", result))
             }
@@ -285,19 +287,21 @@ pub mod core_video {
             plane_index: usize,
         ) -> Result<CVMetalTexture> {
             let mut this = ptr::null();
-            let result = CVMetalTextureCacheCreateTextureFromImage(
-                kCFAllocatorDefault,
-                self.as_concrete_TypeRef(),
-                source,
-                texture_attributes,
-                pixel_format,
-                width,
-                height,
-                plane_index,
-                &mut this,
-            );
+            let result = unsafe {
+                CVMetalTextureCacheCreateTextureFromImage(
+                    kCFAllocatorDefault,
+                    self.as_concrete_TypeRef(),
+                    source,
+                    texture_attributes,
+                    pixel_format,
+                    width,
+                    height,
+                    plane_index,
+                    &mut this,
+                )
+            };
             if result == kCVReturnSuccess {
-                Ok(CVMetalTexture::wrap_under_create_rule(this))
+                unsafe { Ok(CVMetalTexture::wrap_under_create_rule(this)) }
             } else {
                 Err(anyhow!("could not create texture, code: {}", result))
             }
@@ -305,7 +309,7 @@ pub mod core_video {
     }
 
     #[link(name = "CoreVideo", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn CVMetalTextureCacheGetTypeID() -> CFTypeID;
         fn CVMetalTextureCacheCreate(
             allocator: CFAllocatorRef,
@@ -345,7 +349,7 @@ pub mod core_video {
     }
 
     #[link(name = "CoreVideo", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn CVMetalTextureGetTypeID() -> CFTypeID;
         fn CVMetalTextureGetTexture(texture: CVMetalTextureRef) -> *mut c_void;
     }

@@ -1,6 +1,6 @@
 use std::ffi::OsStr;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use gpui::AsyncApp;
 use task::{DebugAdapterConfig, DebugTaskDefinition};
@@ -79,7 +79,7 @@ impl DebugAdapter for GdbDebugAdapter {
                 json!({"pid": attach_config.process_id})
             }
             dap::DebugRequestType::Launch(launch_config) => {
-                json!({"program": launch_config.program, "cwd": launch_config.cwd})
+                json!({"program": launch_config.program, "cwd": launch_config.cwd, "stopOnEntry": config.stop_on_entry, "args": launch_config.args.clone()})
             }
         }
     }

@@ -1,8 +1,9 @@
 use crate::command::command_interceptor;
+use crate::motion::MotionKind;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
-use crate::{motion::Motion, object::Object};
 use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAddon, VimSettings};
+use crate::{motion::Motion, object::Object};
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
@@ -27,8 +28,8 @@ use std::{fmt::Display, ops::Range, sync::Arc};
 use text::{Bias, ToPoint};
 use theme::ThemeSettings;
 use ui::{
-    h_flex, rems, ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement,
-    SharedString, Styled, StyledTypography, Window,
+    ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement, SharedString, Styled,
+    StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
 use workspace::searchable::Direction;
@@ -115,6 +116,8 @@ pub enum Operator {
     Lowercase,
     Uppercase,
     OppositeCase,
+    Rot13,
+    Rot47,
     Digraph {
         first_char: Option<char>,
     },
@@ -695,7 +698,7 @@ impl VimGlobals {
         content: Register,
         register: Option<char>,
         is_yank: bool,
-        linewise: bool,
+        kind: MotionKind,
         cx: &mut Context<Editor>,
     ) {
         if let Some(register) = register {
@@ -752,7 +755,7 @@ impl VimGlobals {
                 if !contains_newline {
                     self.registers.insert('-', content.clone());
                 }
-                if linewise || contains_newline {
+                if kind.linewise() || contains_newline {
                     let mut content = content;
                     for i in '1'..'8' {
                         if let Some(moved) = self.registers.insert(i, content) {
@@ -957,6 +960,8 @@ impl Operator {
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
             Operator::OppositeCase => "g~",
+            Operator::Rot13 => "g?",
+            Operator::Rot47 => "g?",
             Operator::Register => "\"",
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
@@ -1005,6 +1010,8 @@ impl Operator {
             | Operator::ShellCommand
             | Operator::Lowercase
             | Operator::Uppercase
+            | Operator::Rot13
+            | Operator::Rot47
             | Operator::ReplaceWithRegister
             | Operator::Exchange
             | Operator::Object { .. }
@@ -1025,6 +1032,8 @@ impl Operator {
             | Operator::Lowercase
             | Operator::Uppercase
             | Operator::OppositeCase
+            | Operator::Rot13
+            | Operator::Rot47
             | Operator::ToggleComments
             | Operator::ReplaceWithRegister
             | Operator::Rewrap

@@ -10,17 +10,17 @@ use gpui::{
 };
 use http_client::BlockedHttpClient;
 use language::{
+    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
     language_settings::{
-        language_settings, AllLanguageSettings, Formatter, FormatterList, PrettierSettings,
-        SelectedFormatter,
+        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
+        language_settings,
     },
-    tree_sitter_typescript, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
-    LanguageRegistry,
+    tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
 use project::{
-    lsp_store::{FormatTrigger, LspFormatTarget},
     ProjectPath,
+    lsp_store::{FormatTrigger, LspFormatTarget},
 };
 use remote::SshRemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};
@@ -313,7 +313,8 @@ async fn test_ssh_collaboration_git_branches(
                     .next()
                     .unwrap()
                     .read(cx)
-                    .current_branch()
+                    .branch
+                    .as_ref()
                     .unwrap()
                     .clone()
             })
@@ -352,7 +353,8 @@ async fn test_ssh_collaboration_git_branches(
                     .next()
                     .unwrap()
                     .read(cx)
-                    .current_branch()
+                    .branch
+                    .as_ref()
                     .unwrap()
                     .clone()
             })

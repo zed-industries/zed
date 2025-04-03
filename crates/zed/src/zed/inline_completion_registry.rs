@@ -3,7 +3,7 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
-use language::language_settings::{all_language_settings, EditPredictionProvider};
+use language::language_settings::{EditPredictionProvider, all_language_settings};
 use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
