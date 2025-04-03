@@ -4377,7 +4377,7 @@ impl Editor {
                 );
 
                 let words = match completion_settings.words {
-                    WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
+                    WordsCompletionMode::Disabled => Task::ready(BTreeMap::default()),
                     WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => cx
                         .background_spawn(async move {
                             buffer_snapshot.words_in_range(WordsQuery {
@@ -4404,7 +4404,7 @@ impl Editor {
 
         let sort_completions = provider
             .as_ref()
-            .map_or(true, |provider| provider.sort_completions());
+            .map_or(false, |provider| provider.sort_completions());
 
         let filter_completions = provider
             .as_ref()
@@ -4421,7 +4421,7 @@ impl Editor {
                 if let Some(provided_completions) = provided_completions.await.log_err().flatten() {
                     completions.extend(provided_completions);
                     if completion_settings.words == WordsCompletionMode::Fallback {
-                        words = Task::ready(HashMap::default());
+                        words = Task::ready(BTreeMap::default());
                     }
                 }
 
