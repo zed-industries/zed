@@ -442,7 +442,7 @@ globset = "0.4"
 handlebars = "4.3"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
-html5ever = "0.27.0"
+html5ever = "0.30.0"
 hyper = "0.14"
 http = "1.1"
 ignore = "0.4.22"
