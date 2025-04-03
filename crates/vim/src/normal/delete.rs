@@ -34,16 +34,21 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let original_head = selection.head();
                         original_columns.insert(selection.id, original_head.column());
-                        let mut kind =
-                            motion.expand_selection(map, selection, times, &text_layout_details);
+                        let kind = match motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                        ) {
+                            Some(motion_kind) => Some(motion_kind),
+                            None if inclusive => Some(MotionKind::Inclusive),
+                            None => None,
+                        };
 
                         ranges_to_copy
                             .push(selection.start.to_point(map)..selection.end.to_point(map));
 
                         if inclusive {
-                            if kind == None {
-                                kind = Some(MotionKind::Inclusive);
-                            }
                             let end = selection.end.to_point(map);
                             let new_end = Point::new(end.row, end.column + 1).to_display_point(map);
                             selection.end = map.clip_point(new_end, Bias::Right);
