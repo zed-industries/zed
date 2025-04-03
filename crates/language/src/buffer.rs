@@ -2876,7 +2876,7 @@ impl BufferSnapshot {
             if let Some(range_to_truncate) = indent_ranges
                 .iter_mut()
                 .filter(|indent_range| indent_range.contains(&outdent_position))
-                .last()
+                .next_back()
             {
                 range_to_truncate.end = outdent_position;
             }

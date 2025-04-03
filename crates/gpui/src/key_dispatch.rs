@@ -488,7 +488,7 @@ impl DispatchTree {
             let (bindings, _) = self.bindings_for_input(&input[0..=last], dispatch_path);
             if !bindings.is_empty() {
                 to_replay.push(Replay {
-                    keystroke: input.drain(0..=last).last().unwrap(),
+                    keystroke: input.drain(0..=last).next_back().unwrap(),
                     bindings,
                 });
                 break;
