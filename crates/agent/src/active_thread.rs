@@ -24,7 +24,7 @@ use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use project::ProjectItem as _;
-use settings::Settings as _;
+use settings::{Settings as _, update_settings_file};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -2183,8 +2183,6 @@ impl ActiveThread {
                                                 .icon_color(Color::Success)
                                                 .on_click(cx.listener(
                                                     move |this, event, window, cx| {
-                                                        let _ = fs; // Use variable to avoid warning
-
                                                         this.handle_allow_tool(
                                                             tool_id.clone(),
                                                             event,
