@@ -3,6 +3,7 @@ pub mod mappings;
 pub use alacritty_terminal;
 
 mod pty_info;
+mod terminal_hyperlinks;
 pub mod terminal_settings;
 
 use alacritty_terminal::{
@@ -39,11 +40,11 @@ use mappings::mouse::{
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use pty_info::PtyProcessInfo;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
+use terminal_hyperlinks::HyperlinkFinder;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::{paths::home_dir, truncate_and_trailoff};
@@ -51,9 +52,9 @@ use util::{paths::home_dir, truncate_and_trailoff};
 use std::{
     cmp::{self, min},
     fmt::Display,
-    ops::{Deref, Index, RangeInclusive},
+    ops::{Deref, RangeInclusive},
     path::PathBuf,
-    sync::{Arc, LazyLock},
+    sync::Arc,
     time::Duration,
 };
 use thiserror::Error;
@@ -91,7 +92,6 @@ actions!(
 const SCROLL_MULTIPLIER: f32 = 4.;
 #[cfg(not(target_os = "macos"))]
 const SCROLL_MULTIPLIER: f32 = 1.;
-const MAX_SEARCH_LINES: usize = 100;
 const DEBUG_TERMINAL_WIDTH: Pixels = px(500.);
 const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
@@ -314,25 +314,6 @@ impl Display for TerminalError {
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
 const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
-const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#;
-// Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
-// https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-const WORD_REGEX: &str =
-    r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
-const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
-
-static PYTHON_FILE_LINE_MATCHER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(PYTHON_FILE_LINE_REGEX).unwrap());
-
-fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
-    if let Some(captures) = PYTHON_FILE_LINE_MATCHER.captures(input) {
-        let path_part = captures.name("file")?.as_str();
-
-        let line_number: u32 = captures.name("line")?.as_str().parse().ok()?;
-        return Some((path_part, line_number));
-    }
-    None
-}
 
 pub struct TerminalBuilder {
     terminal: Terminal,
@@ -498,9 +479,7 @@ impl TerminalBuilder {
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
             // hovered_word: false,
-            url_regex: RegexSearch::new(URL_REGEX).unwrap(),
-            word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
-            python_file_line_regex: RegexSearch::new(PYTHON_FILE_LINE_REGEX).unwrap(),
+            hyperlink_finder: HyperlinkFinder::new(),
             vi_mode_enabled: false,
             debug_terminal,
             is_ssh_terminal,
@@ -655,9 +634,7 @@ pub struct Terminal {
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
-    url_regex: RegexSearch,
-    word_regex: RegexSearch,
-    python_file_line_regex: RegexSearch,
+    hyperlink_finder: HyperlinkFinder,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
     debug_terminal: bool,
@@ -924,144 +901,20 @@ impl Terminal {
                     term.grid().display_offset(),
                 )
                 .grid_clamp(term, Boundary::Grid);
-
-                let link = term.grid().index(point).hyperlink();
-                let found_word = if link.is_some() {
-                    let mut min_index = point;
-                    loop {
-                        let new_min_index = min_index.sub(term, Boundary::Cursor, 1);
-                        if new_min_index == min_index
-                            || term.grid().index(new_min_index).hyperlink() != link
-                        {
-                            break;
-                        } else {
-                            min_index = new_min_index
-                        }
-                    }
-
-                    let mut max_index = point;
-                    loop {
-                        let new_max_index = max_index.add(term, Boundary::Cursor, 1);
-                        if new_max_index == max_index
-                            || term.grid().index(new_max_index).hyperlink() != link
-                        {
-                            break;
-                        } else {
-                            max_index = new_max_index
-                        }
-                    }
-
-                    let url = link.unwrap().uri().to_owned();
-                    let url_match = min_index..=max_index;
-
-                    Some((url, true, url_match))
-                } else if let Some(url_match) = regex_match_at(term, point, &mut self.url_regex) {
-                    let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-                    Some((url, true, url_match))
-                } else if let Some(python_match) =
-                    regex_match_at(term, point, &mut self.python_file_line_regex)
+                if let Some((mut target, hyperlink_match)) =
+                    self.hyperlink_finder.find_from_grid_point(point, term)
                 {
-                    let matching_line =
-                        term.bounds_to_string(*python_match.start(), *python_match.end());
-                    python_extract_path_and_line(&matching_line).map(|(file_path, line_number)| {
-                        (format!("{file_path}:{line_number}"), false, python_match)
-                    })
-                } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
-                    let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
+                    if let MaybeNavigationTarget::PathLike(path_like_target) = &mut target {
+                        path_like_target.terminal_dir = self.working_directory();
+                    }
 
-                    let (sanitized_match, sanitized_word) = 'sanitize: {
-                        let mut word_match = word_match;
-                        let mut file_path = file_path;
-
-                        if is_path_surrounded_by_common_symbols(&file_path) {
-                            word_match = Match::new(
-                                word_match.start().add(term, Boundary::Grid, 1),
-                                word_match.end().sub(term, Boundary::Grid, 1),
-                            );
-                            file_path = file_path[1..file_path.len() - 1].to_owned();
-                        }
-
-                        while file_path.ends_with(':') {
-                            file_path.pop();
-                            word_match = Match::new(
-                                *word_match.start(),
-                                word_match.end().sub(term, Boundary::Grid, 1),
-                            );
-                        }
-                        let mut colon_count = 0;
-                        for c in file_path.chars() {
-                            if c == ':' {
-                                colon_count += 1;
-                            }
-                        }
-                        // strip trailing comment after colon in case of
-                        // file/at/path.rs:row:column:description or error message
-                        // so that the file path is `file/at/path.rs:row:column`
-                        if colon_count > 2 {
-                            let last_index = file_path.rfind(':').unwrap();
-                            let prev_is_digit = last_index > 0
-                                && file_path
-                                    .chars()
-                                    .nth(last_index - 1)
-                                    .map_or(false, |c| c.is_ascii_digit());
-                            let next_is_digit = last_index < file_path.len() - 1
-                                && file_path
-                                    .chars()
-                                    .nth(last_index + 1)
-                                    .map_or(true, |c| c.is_ascii_digit());
-                            if prev_is_digit && !next_is_digit {
-                                let stripped_len = file_path.len() - last_index;
-                                word_match = Match::new(
-                                    *word_match.start(),
-                                    word_match.end().sub(term, Boundary::Grid, stripped_len),
-                                );
-                                file_path = file_path[0..last_index].to_owned();
-                            }
-                        }
-
-                        break 'sanitize (word_match, file_path);
-                    };
-
-                    Some((sanitized_word, false, sanitized_match))
+                    if *open {
+                        cx.emit(Event::Open(target));
+                    } else {
+                        self.update_selected_word(prev_hovered_word, hyperlink_match, target, cx);
+                    }
                 } else {
-                    None
-                };
-
-                match found_word {
-                    Some((maybe_url_or_path, is_url, url_match)) => {
-                        let target = if is_url {
-                            // Treat "file://" URLs like file paths to ensure
-                            // that line numbers at the end of the path are
-                            // handled correctly
-                            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
-                                MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                    maybe_path: path.to_string(),
-                                    terminal_dir: self.working_directory(),
-                                })
-                            } else {
-                                MaybeNavigationTarget::Url(maybe_url_or_path.clone())
-                            }
-                        } else {
-                            MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                maybe_path: maybe_url_or_path.clone(),
-                                terminal_dir: self.working_directory(),
-                            })
-                        };
-                        if *open {
-                            cx.emit(Event::Open(target));
-                        } else {
-                            self.update_selected_word(
-                                prev_hovered_word,
-                                url_match,
-                                maybe_url_or_path,
-                                target,
-                                cx,
-                            );
-                        }
-                    }
-                    None => {
-                        cx.emit(Event::NewNavigationTarget(None));
-                    }
+                    cx.emit(Event::NewNavigationTarget(None));
                 }
             }
         }
@@ -1071,14 +924,18 @@ impl Terminal {
         &mut self,
         prev_word: Option<HoveredWord>,
         word_match: RangeInclusive<AlacPoint>,
-        word: String,
         navigation_target: MaybeNavigationTarget,
         cx: &mut Context<Self>,
     ) {
+        let word = match &navigation_target {
+            MaybeNavigationTarget::Url(word) => word,
+            MaybeNavigationTarget::PathLike(PathLikeTarget { maybe_path, .. }) => maybe_path,
+        };
+
         if let Some(prev_word) = prev_word {
-            if prev_word.word == word && prev_word.word_match == word_match {
+            if prev_word.word == *word && prev_word.word_match == word_match {
                 self.last_content.last_hovered_word = Some(HoveredWord {
-                    word,
+                    word: word.clone(),
                     word_match,
                     id: prev_word.id,
                 });
@@ -1930,14 +1787,6 @@ pub fn row_to_string(row: &Row<Cell>) -> String {
         .collect::<String>()
 }
 
-fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
-    // Avoid detecting `[]` or `()` strings as paths, surrounded by common symbols
-    path.len() > 2
-        // The rest of the brackets and various quotes cannot be matched by the [`WORD_REGEX`] hence not checked for.
-        && (path.starts_with('[') && path.ends_with(']')
-            || path.starts_with('(') && path.ends_with(')'))
-}
-
 const TASK_DELIMITER: &str = "⏵ ";
 fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, String) {
     let escaped_full_label = task.full_label.replace("\r\n", "\r").replace('\n', "\r");
@@ -2006,30 +1855,6 @@ impl Drop for Terminal {
 }
 
 impl EventEmitter<Event> for Terminal {}
-
-/// Based on alacritty/src/display/hint.rs > regex_match_at
-/// Retrieve the match, if the specified point is inside the content matching the regex.
-fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) -> Option<Match> {
-    visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
-}
-
-/// Copied from alacritty/src/display/hint.rs:
-/// Iterate over all visible regex matches.
-pub fn visible_regex_match_iter<'a, T>(
-    term: &'a Term<T>,
-    regex: &'a mut RegexSearch,
-) -> impl Iterator<Item = Match> + 'a {
-    let viewport_start = Line(-(term.grid().display_offset() as i32));
-    let viewport_end = viewport_start + term.bottommost_line();
-    let mut start = term.line_search_left(AlacPoint::new(viewport_start, Column(0)));
-    let mut end = term.line_search_right(AlacPoint::new(viewport_end, Column(0)));
-    start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
-    end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
-
-    RegexIter::new(start, end, AlacDirection::Right, term, regex)
-        .skip_while(move |rm| rm.end().line < viewport_start)
-        .take_while(move |rm| rm.start().line <= viewport_end)
-}
 
 fn make_selection(range: &RangeInclusive<AlacPoint>) -> Selection {
     let mut selection = Selection::new(SelectionType::Simple, *range.start(), AlacDirection::Left);
@@ -2149,8 +1974,7 @@ mod tests {
     use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
 
     use crate::{
-        IndexedCell, TerminalBounds, TerminalContent, content_index_for_mouse,
-        python_extract_path_and_line, rgb_for_index,
+        IndexedCell, TerminalBounds, TerminalContent, content_index_for_mouse, rgb_for_index,
     };
 
     #[test]
@@ -2283,88 +2107,5 @@ mod tests {
             terminal_bounds,
             ..Default::default()
         }
-    }
-
-    fn re_test(re: &str, hay: &str, expected: Vec<&str>) {
-        let results: Vec<_> = regex::Regex::new(re)
-            .unwrap()
-            .find_iter(hay)
-            .map(|m| m.as_str())
-            .collect();
-        assert_eq!(results, expected);
-    }
-    #[test]
-    fn test_url_regex() {
-        re_test(
-            crate::URL_REGEX,
-            "test http://example.com test mailto:bob@example.com train",
-            vec!["http://example.com", "mailto:bob@example.com"],
-        );
-    }
-    #[test]
-    fn test_word_regex() {
-        re_test(
-            crate::WORD_REGEX,
-            "hello, world! \"What\" is this?",
-            vec!["hello", "world", "What", "is", "this"],
-        );
-    }
-    #[test]
-    fn test_word_regex_with_linenum() {
-        // filename(line) and filename(line,col) as used in MSBuild output
-        // should be considered a single "word", even though comma is
-        // usually a word separator
-        re_test(
-            crate::WORD_REGEX,
-            "a Main.cs(20) b",
-            vec!["a", "Main.cs(20)", "b"],
-        );
-        re_test(
-            crate::WORD_REGEX,
-            "Main.cs(20,5) Error desc",
-            vec!["Main.cs(20,5)", "Error", "desc"],
-        );
-        // filename:line:col is a popular format for unix tools
-        re_test(
-            crate::WORD_REGEX,
-            "a Main.cs:20:5 b",
-            vec!["a", "Main.cs:20:5", "b"],
-        );
-        // Some tools output "filename:line:col:message", which currently isn't
-        // handled correctly, but might be in the future
-        re_test(
-            crate::WORD_REGEX,
-            "Main.cs:20:5:Error desc",
-            vec!["Main.cs:20:5:Error", "desc"],
-        );
-    }
-
-    #[test]
-    fn test_python_file_line_regex() {
-        re_test(
-            crate::PYTHON_FILE_LINE_REGEX,
-            "hay File \"/zed/bad_py.py\", line 8 stack",
-            vec!["File \"/zed/bad_py.py\", line 8"],
-        );
-        re_test(crate::PYTHON_FILE_LINE_REGEX, "unrelated", vec![]);
-    }
-
-    #[test]
-    fn test_python_file_line() {
-        let inputs: Vec<(&str, Option<(&str, u32)>)> = vec![
-            (
-                "File \"/zed/bad_py.py\", line 8",
-                Some(("/zed/bad_py.py", 8u32)),
-            ),
-            ("File \"path/to/zed/bad_py.py\"", None),
-            ("unrelated", None),
-            ("", None),
-        ];
-        let actual = inputs
-            .iter()
-            .map(|input| python_extract_path_and_line(input.0))
-            .collect::<Vec<_>>();
-        let expected = inputs.iter().map(|(_, output)| *output).collect::<Vec<_>>();
-        assert_eq!(actual, expected);
     }
 }
