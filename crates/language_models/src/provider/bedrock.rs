@@ -394,7 +394,8 @@ impl LanguageModel for BedrockModel {
             // Get region - from credentials or directly from settings
             let region = state
                 .credentials
-                .as_ref().map(|s| s.region.clone())
+                .as_ref()
+                .map(|s| s.region.clone())
                 .unwrap_or(String::from("us-east-1"));
 
             region
