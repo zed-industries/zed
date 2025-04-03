@@ -1,17 +1,17 @@
 use collections::HashSet;
 use editor::{
     Editor,
-    display_map::{BlockContext, BlockProperties, BlockStyle, CustomBlockId},
+    display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{App, Context, Entity, InteractiveElement as _, ParentElement as _, WeakEntity};
 use language::{Anchor, Buffer, OffsetRangeExt as _};
 use project::{ConflictRegion, ConflictSet, ConflictSetUpdate};
 use std::{ops::Range, sync::Arc};
-use ui::{AnyElement, Button, Clickable as _, Element as _, Styled, h_flex};
+use ui::{ActiveTheme, AnyElement, Button, Clickable as _, Element as _, Styled, h_flex};
 
 struct ConflictAddon {
     conflict_set: Entity<ConflictSet>,
-    block_ids: Vec<(Range<Anchor>, CustomBlockId)>,
+    block_ids: Vec<(Anchor, CustomBlockId)>,
 }
 
 impl editor::Addon for ConflictAddon {
@@ -74,7 +74,7 @@ fn conflicts_updated(editor: &mut Editor, event: &ConflictSetUpdate, cx: &mut Co
     let blocks = changed_conflicts.iter().map(|conflict| {
         let editor_handle = editor_handle.clone();
         BlockProperties {
-            placement: editor::display_map::BlockPlacement::Above(
+            placement: BlockPlacement::Above(
                 buffer
                     .anchor_in_excerpt(*excerpt_id, conflict.range.start)
                     .unwrap(),
@@ -91,13 +91,18 @@ fn conflicts_updated(editor: &mut Editor, event: &ConflictSetUpdate, cx: &mut Co
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
 
     let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
-    conflict_addon.block_ids.splice(
-        event.old_range.clone(),
-        changed_conflicts
-            .iter()
-            .map(|conflict| conflict.range.clone())
-            .zip(new_block_ids),
-    );
+    let removed_block_ids = conflict_addon
+        .block_ids
+        .splice(
+            event.old_range.clone(),
+            changed_conflicts
+                .iter()
+                .map(|conflict| conflict.range.start)
+                .zip(new_block_ids),
+        )
+        .map(|(_, id)| id)
+        .collect();
+    editor.remove_blocks(removed_block_ids, None, cx);
 
     update_conflict_highlighting(
         editor,
@@ -115,8 +120,10 @@ fn update_conflict_highlighting<'a>(
     excerpt_id: editor::ExcerptId,
     cx: &mut Context<Editor>,
 ) {
-    let mut ours = Vec::new();
-    let mut theirs = Vec::new();
+    let theme = cx.theme().clone();
+    let colors = theme.colors();
+    editor.clear_row_highlights::<ConflictsOurs>();
+    editor.clear_row_highlights::<ConflictsTheirs>();
     for conflict in conflicts {
         let our_start = buffer
             .anchor_in_excerpt(excerpt_id, conflict.ours.start)
@@ -130,19 +137,19 @@ fn update_conflict_highlighting<'a>(
         let their_end = buffer
             .anchor_in_excerpt(excerpt_id, conflict.theirs.end)
             .unwrap();
-        ours.push(our_start..our_end);
-        theirs.push(their_start..their_end);
+        editor.highlight_rows::<ConflictsOurs>(
+            our_start..our_end,
+            colors.version_control_conflict_ours,
+            false,
+            cx,
+        );
+        editor.highlight_rows::<ConflictsTheirs>(
+            their_start..their_end,
+            colors.version_control_conflict_theirs,
+            false,
+            cx,
+        );
     }
-    editor.highlight_background::<ConflictsOurs>(
-        &ours,
-        |theme| theme.editor_highlighted_line_background,
-        cx,
-    );
-    editor.highlight_background::<ConflictsTheirs>(
-        &theirs,
-        |theme| theme.editor_active_line_background,
-        cx,
-    );
 }
 
 fn render_conflict_buttons(
@@ -229,11 +236,11 @@ fn resolve_conflict(
             .filter(|conflict| conflict.range != conflict_range);
         let Ok(ix) = conflict_addon
             .block_ids
-            .binary_search_by(|(range, _)| range.start.cmp(&conflict_range.start, &buffer))
+            .binary_search_by(|(start, _)| start.cmp(&conflict_range.start, &buffer))
         else {
             return;
         };
-        let (_, block_id) = conflict_addon.block_ids.remove(ix);
+        let &(_, block_id) = &conflict_addon.block_ids[ix];
         update_conflict_highlighting(editor, conflicts, &multibuffer, *excerpt_id, cx);
         editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
     })

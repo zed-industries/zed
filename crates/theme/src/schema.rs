@@ -583,6 +583,12 @@ pub struct ThemeColorsContent {
     #[serde(rename = "version_control.conflict")]
     pub version_control_conflict: Option<String>,
 
+    #[serde(rename = "version_control.conflict_ours")]
+    pub version_control_conflict_ours: Option<String>,
+
+    #[serde(rename = "version_control.conflict_theirs")]
+    pub version_control_conflict_theirs: Option<String>,
+
     /// Ignored version control color.
     #[serde(rename = "version_control.ignored")]
     pub version_control_ignored: Option<String>,
@@ -1031,6 +1037,14 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok())
                 // Fall back to `ignored`, for backwards compatibility.
                 .or(status_colors.ignored),
+            version_control_conflict_ours: self
+                .version_control_conflict_ours
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_conflict_theirs: self
+                .version_control_conflict_theirs
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
             version_control_ignored: self
                 .version_control_ignored
                 .as_ref()

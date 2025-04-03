@@ -200,6 +200,8 @@ pub(crate) fn zed_default_dark() -> Theme {
                 version_control_modified: MODIFIED_COLOR,
                 version_control_renamed: MODIFIED_COLOR,
                 version_control_conflict: crate::orange().light().step_12(),
+                version_control_conflict_ours: crate::purple().light().step_12(),
+                version_control_conflict_theirs: crate::pink().light().step_12(),
                 version_control_ignored: crate::gray().light().step_12(),
             },
             status: StatusColors {
