@@ -1889,7 +1889,7 @@ mod tests {
 The following items were attached by the user. You don't need to use other tools to read them.
 
 <files>
-```rs code.rs
+```rs test/code.rs
 fn main() {
     println!("Hello, world!");
 }
