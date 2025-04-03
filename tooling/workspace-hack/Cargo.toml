@@ -90,7 +90,7 @@ regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["fs", "net"] }
-rustls-2b5c6dc72f624058 = { package = "rustls", version = "0.23", features = ["ring"] }
+rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
 sea-query-binder = { version = "0.7", default-features = false, features = ["postgres-array", "sqlx-postgres", "sqlx-sqlite", "with-bigdecimal", "with-chrono", "with-json", "with-rust_decimal", "with-time", "with-uuid"] }
@@ -108,7 +108,7 @@ subtle = { version = "2" }
 thiserror = { version = "2" }
 time = { version = "0.3", features = ["local-offset", "macros", "serde-well-known"] }
 tokio = { version = "1", features = ["full"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
 tokio-util = { version = "0.7", features = ["codec", "compat", "io"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-core = { version = "0.1" }
@@ -203,7 +203,7 @@ regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["fs", "net"] }
-rustls-2b5c6dc72f624058 = { package = "rustls", version = "0.23", features = ["ring"] }
+rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
 sea-query-binder = { version = "0.7", default-features = false, features = ["postgres-array", "sqlx-postgres", "sqlx-sqlite", "with-bigdecimal", "with-chrono", "with-json", "with-rust_decimal", "with-time", "with-uuid"] }
@@ -227,7 +227,7 @@ thiserror = { version = "2" }
 time = { version = "0.3", features = ["local-offset", "macros", "serde-well-known"] }
 time-macros = { version = "0.2", default-features = false, features = ["formatting", "parsing", "serde"] }
 tokio = { version = "1", features = ["full"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
 tokio-util = { version = "0.7", features = ["codec", "compat", "io"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-core = { version = "0.1" }
@@ -248,24 +248,19 @@ flate2 = { version = "1" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools = { version = "0.12" }
 naga = { version = "23", features = ["msl-out", "wgsl-in"] }
-native-tls = { version = "0.2", default-features = false, features = ["alpn", "vendored"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
 security-framework-7b89eefb6aaa9bf3 = { package = "security-framework", version = "3", features = ["OSX_10_14"] }
 security-framework-f595c2ba2a3f28df = { package = "security-framework", version = "2", features = ["alpn"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 
@@ -278,25 +273,20 @@ flate2 = { version = "1" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools = { version = "0.12" }
 naga = { version = "23", features = ["msl-out", "wgsl-in"] }
-native-tls = { version = "0.2", default-features = false, features = ["alpn", "vendored"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
 security-framework-7b89eefb6aaa9bf3 = { package = "security-framework", version = "3", features = ["OSX_10_14"] }
 security-framework-f595c2ba2a3f28df = { package = "security-framework", version = "2", features = ["alpn"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 
@@ -308,24 +298,19 @@ flate2 = { version = "1" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools = { version = "0.12" }
 naga = { version = "23", features = ["msl-out", "wgsl-in"] }
-native-tls = { version = "0.2", default-features = false, features = ["alpn", "vendored"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
 security-framework-7b89eefb6aaa9bf3 = { package = "security-framework", version = "3", features = ["OSX_10_14"] }
 security-framework-f595c2ba2a3f28df = { package = "security-framework", version = "2", features = ["alpn"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 
@@ -338,25 +323,20 @@ flate2 = { version = "1" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools = { version = "0.12" }
 naga = { version = "23", features = ["msl-out", "wgsl-in"] }
-native-tls = { version = "0.2", default-features = false, features = ["alpn", "vendored"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
 security-framework-7b89eefb6aaa9bf3 = { package = "security-framework", version = "3", features = ["OSX_10_14"] }
 security-framework-f595c2ba2a3f28df = { package = "security-framework", version = "2", features = ["alpn"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 
@@ -373,8 +353,7 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
 itertools = { version = "0.12" }
 linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
@@ -387,16 +366,13 @@ object = { version = "0.36", default-features = false, features = ["archive", "r
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
@@ -417,8 +393,7 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
 itertools = { version = "0.12" }
 linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
@@ -430,15 +405,12 @@ num-iter = { version = "0.1", default-features = false, features = ["i128", "std
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
@@ -459,8 +431,7 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
 itertools = { version = "0.12" }
 linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
@@ -473,16 +444,13 @@ object = { version = "0.36", default-features = false, features = ["archive", "r
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
@@ -503,8 +471,7 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
 itertools = { version = "0.12" }
 linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
@@ -516,15 +483,12 @@ num-iter = { version = "0.1", default-features = false, features = ["i128", "std
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
@@ -538,17 +502,13 @@ flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools = { version = "0.12" }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 winapi = { version = "0.3", default-features = false, features = ["cfg", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "in6addr", "inaddr", "knownfolders", "minwinbase", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "sysinfoapi", "winbase", "windef", "winerror", "winioctl"] }
@@ -562,18 +522,14 @@ flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools = { version = "0.12" }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 winapi = { version = "0.3", default-features = false, features = ["cfg", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "in6addr", "inaddr", "knownfolders", "minwinbase", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "sysinfoapi", "winbase", "windef", "winerror", "winioctl"] }
@@ -594,8 +550,7 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
 itertools = { version = "0.12" }
 linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
@@ -608,16 +563,13 @@ object = { version = "0.36", default-features = false, features = ["archive", "r
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
@@ -638,8 +590,7 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
-hyper-rustls-754bda37e0fb3874 = { package = "hyper-rustls", version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-hyper-rustls-adf3d7031871b0af = { package = "hyper-rustls", version = "0.24", features = ["http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
 itertools = { version = "0.12" }
 linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
@@ -651,15 +602,12 @@ num-iter = { version = "0.1", default-features = false, features = ["i128", "std
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
-reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls-native-roots"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
-rustls-647d43efb71741da = { package = "rustls", version = "0.21", features = ["dangerous_configuration"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
-tokio-rustls-2f80eeee3b1b6c7e = { package = "tokio-rustls", version = "0.26", default-features = false, features = ["ring"] }
-tokio-rustls-adf3d7031871b0af = { package = "tokio-rustls", version = "0.24" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
