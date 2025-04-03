@@ -85,9 +85,8 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
     workspace
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-            let active_session = debug_panel.update(cx, |debug_panel, cx| {
-                debug_panel.active_session(cx).unwrap()
-            });
+            let active_session =
+                debug_panel.update(cx, |debug_panel, cx| debug_panel.active_session().unwrap());
 
             let running_state = active_session.update(cx, |active_session, _| {
                 active_session
@@ -98,7 +97,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
             });
 
             debug_panel.update(cx, |this, cx| {
-                assert!(this.active_session(cx).is_some());
+                assert!(this.active_session().is_some());
                 // we have one active session
                 assert_eq!(1, this.pane().unwrap().read(cx).items_len());
                 assert!(running_state.read(cx).selected_thread_id().is_none());
@@ -124,7 +123,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_session = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, cx| this.active_session())
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
@@ -162,7 +161,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
 
             let active_session = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, cx| this.active_session())
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
@@ -174,7 +173,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
             });
 
             debug_panel.update(cx, |this, cx| {
-                assert!(this.active_session(cx).is_some());
+                assert!(this.active_session().is_some());
                 assert_eq!(1, this.pane().unwrap().read(cx).items_len());
                 assert_eq!(
                     ThreadId(1),
@@ -361,7 +360,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
             });
 
             debug_panel.update(cx, |this, cx| {
-                assert!(this.active_session(cx).is_some());
+                assert!(this.active_session().is_some());
                 assert_eq!(1, this.pane().unwrap().read(cx).items_len());
                 assert_eq!(
                     ThreadId(1),

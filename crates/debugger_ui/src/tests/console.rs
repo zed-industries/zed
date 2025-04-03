@@ -112,7 +112,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_session_panel = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, cx| this.active_session())
                 .unwrap();
 
             assert_eq!(
@@ -162,7 +162,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_session_panel = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, cx| this.active_session())
                 .unwrap();
 
             assert_eq!(
