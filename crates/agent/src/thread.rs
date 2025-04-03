@@ -1890,7 +1890,8 @@ mod tests {
         #[cfg(not(windows))]
         let path_part = "test/code.rs";
 
-        let expected_context = format!(r#"
+        let expected_context = format!(
+            r#"
 <context>
 The following items were attached by the user. You don't need to use other tools to read them.
 
@@ -1902,8 +1903,9 @@ fn main() {{
 ```
 </files>
 </context>
-"#);
-        
+"#
+        );
+
         assert_eq!(message.role, Role::User);
         assert_eq!(message.segments.len(), 1);
         assert_eq!(
