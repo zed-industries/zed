@@ -416,6 +416,84 @@ mod tests {
                 Boundary::new(22, 3),
             ]
         );
+
+        // Test wrapping multiple text fragments
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[
+                        LineFragment::text("aa bbb "),
+                        LineFragment::text("cccc ddddd eeee")
+                    ],
+                    px(72.)
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(7, 0),
+                Boundary::new(12, 0),
+                Boundary::new(18, 0)
+            ],
+        );
+
+        // Test wrapping with a mix of text and element fragments
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[
+                        LineFragment::text("aa "),
+                        LineFragment::element(px(20.), 1),
+                        LineFragment::text(" bbb "),
+                        LineFragment::element(px(30.), 1),
+                        LineFragment::text(" cccc")
+                    ],
+                    px(72.)
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(5, 0),
+                Boundary::new(9, 0),
+                Boundary::new(11, 0)
+            ],
+        );
+
+        // Test with element at the beginning and text afterward
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[
+                        LineFragment::element(px(50.), 1),
+                        LineFragment::text(" aaaa bbbb cccc dddd")
+                    ],
+                    px(72.)
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(2, 0),
+                Boundary::new(7, 0),
+                Boundary::new(12, 0),
+                Boundary::new(17, 0)
+            ],
+        );
+
+        // Test with a large element that forces wrapping by itself
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[
+                        LineFragment::text("short text "),
+                        LineFragment::element(px(100.), 1),
+                        LineFragment::text(" more text")
+                    ],
+                    px(72.)
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(6, 0),
+                Boundary::new(11, 0),
+                Boundary::new(12, 0),
+                Boundary::new(18, 0)
+            ],
+        );
     }
 
     #[test]
