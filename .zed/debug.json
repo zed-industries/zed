@@ -1,14 +1,14 @@
 [
   {
     "label": "Debug Zed with LLDB",
-    "adapter": "lldb",
+    "adapter": "LLDB",
     "program": "$ZED_WORKTREE_ROOT/target/debug/zed",
     "request": "launch",
     "cwd": "$ZED_WORKTREE_ROOT"
   },
   {
     "label": "Debug Zed with GDB",
-    "adapter": "gdb",
+    "adapter": "GDB",
     "program": "$ZED_WORKTREE_ROOT/target/debug/zed",
     "request": "launch",
     "cwd": "$ZED_WORKTREE_ROOT",

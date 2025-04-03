@@ -468,15 +468,9 @@ impl Matches {
                 path: found_path.clone(),
                 panel_match: None,
             };
-            self.matches
-                .extend(currently_opened.into_iter().map(path_to_entry));
 
-            self.matches.extend(
-                history_items
-                    .into_iter()
-                    .filter(|found_path| Some(*found_path) != currently_opened)
-                    .map(path_to_entry),
-            );
+            self.matches
+                .extend(history_items.into_iter().map(path_to_entry));
             return;
         };
 

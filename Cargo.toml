@@ -579,6 +579,7 @@ unicode-script = "0.5.7"
 url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+walkdir = "2.3"
 wasmparser = "0.221"
 wasm-encoder = "0.221"
 wasmtime = { version = "29", default-features = false, features = [

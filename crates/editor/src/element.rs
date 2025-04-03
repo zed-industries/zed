@@ -2410,13 +2410,11 @@ impl EditorElement {
 
                 let color = active_rows
                     .get(&display_row)
-                    .and_then(|spec| {
+                    .map(|spec| {
                         if spec.breakpoint {
-                            Some(cx.theme().colors().debugger_accent)
-                        } else if spec.selection {
-                            Some(cx.theme().colors().editor_active_line_number)
+                            cx.theme().colors().debugger_accent
                         } else {
-                            None
+                            cx.theme().colors().editor_active_line_number
                         }
                     })
                     .unwrap_or_else(|| cx.theme().colors().editor_line_number);
