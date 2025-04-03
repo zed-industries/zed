@@ -20,7 +20,7 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role,
+    RateLimiter, Role, StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -246,7 +246,6 @@ impl LanguageModel for CopilotChatLanguageModel {
         }
 
         let copilot_request = self.to_copilot_chat_request(request);
-        let is_streaming = copilot_request.stream;
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(async move |cx| {
@@ -254,10 +253,7 @@ impl LanguageModel for CopilotChatLanguageModel {
             request_limiter
                 .stream(async move {
                     let response = request.await?;
-                    Ok(map_to_language_model_completion_events(
-                        response,
-                        is_streaming,
-                    ))
+                    Ok(map_to_language_model_completion_events(response))
                 })
                 .await
         });
@@ -267,14 +263,9 @@ impl LanguageModel for CopilotChatLanguageModel {
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
-    is_streaming: bool,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
-    const NO_CHOICES_ERROR_MESSAGE: &str = "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again.";
-    const NO_MESSAGE_CONTENT_ERROR_MESSAGE: &str =
-        "The Copilot Chat API returned a response with no message content";
-
     #[derive(Default)]
-    struct RawFunctionCall {
+    struct RawToolCall {
         id: String,
         name: String,
         arguments: String,
@@ -282,115 +273,101 @@ pub fn map_to_language_model_completion_events(
 
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
-        function_calls_by_index: HashMap<usize, RawFunctionCall>,
-        // usage: Usage,
-        // stop_reason: StopReason,
+        tool_calls_by_index: HashMap<usize, RawToolCall>,
     }
 
     futures::stream::unfold(
         State {
             events,
-            function_calls_by_index: HashMap::default(),
+            tool_calls_by_index: HashMap::default(),
         },
-        move |mut state| async move {
+        |mut state| async move {
             if let Some(event) = state.events.next().await {
                 match event {
-                    Ok(result) => {
-                        let choice = result.choices.first();
-                        match choice {
-                            Some(choice) if !is_streaming => match &choice.message {
-                                Some(msg) => {
-                                    let mut events = Vec::new();
-                                    if let Some(content) = msg.content.clone() {
-                                        events
-                                            .push(Ok(LanguageModelCompletionEvent::Text(content)));
-                                    }
+                    Ok(event) => {
+                        let Some(choice) = event.choices.first() else {
+                            return Some((
+                                vec![Err(anyhow!("Response contained no choices"))],
+                                state,
+                            ));
+                        };
 
-                                    Some((events, state))
-                                }
-                                None => Some((
-                                    vec![Err(anyhow::anyhow!(NO_MESSAGE_CONTENT_ERROR_MESSAGE))],
-                                    state,
-                                )),
-                            },
-                            Some(choice) => {
-                                let mut events = Vec::new();
+                        let Some(delta) = choice.delta.as_ref() else {
+                            return Some((
+                                vec![Err(anyhow!("Response contained no delta"))],
+                                state,
+                            ));
+                        };
 
-                                if let Some(msg) = choice.delta.as_ref() {
-                                    for tool_call in &msg.tool_calls {
-                                        let tool = state
-                                            .function_calls_by_index
-                                            .entry(tool_call.index)
-                                            .or_default();
-                                        if let Some(tool_id) = tool_call.id.clone() {
-                                            tool.id = tool_id;
-                                        }
-                                        if let Some(tool_name) = tool_call
-                                            .function
-                                            .as_ref()
-                                            .and_then(|function| function.name.as_ref())
-                                        {
-                                            tool.name = tool_name.clone();
-                                        }
-                                        if let Some(arguments) = tool_call
-                                            .function
-                                            .as_ref()
-                                            .and_then(|function| function.arguments.as_ref())
-                                        {
-                                            tool.arguments.push_str(&arguments);
-                                        }
-                                    }
-                                    if let Some(content) = msg.content.clone() {
-                                        events
-                                            .push(Ok(LanguageModelCompletionEvent::Text(content)));
-                                    }
-                                }
-
-                                match choice.finish_reason.as_deref() {
-                                    Some("stop") => {
-                                        events.push(Ok(LanguageModelCompletionEvent::Stop(
-                                            language_model::StopReason::EndTurn,
-                                        )));
-                                    }
-                                    Some("tool_calls") => {
-                                        events.extend(state.function_calls_by_index.drain().map(
-                                            |(_, function_call)| {
-                                                maybe!({
-                                                    Ok(LanguageModelCompletionEvent::ToolUse(
-                                                        LanguageModelToolUse {
-                                                            id: function_call.id.into(),
-                                                            name: function_call
-                                                                .name
-                                                                .as_str()
-                                                                .into(),
-                                                            input: serde_json::Value::from_str(
-                                                                &function_call.arguments,
-                                                            )?,
-                                                        },
-                                                    ))
-                                                })
-                                            },
-                                        ));
-
-                                        events.push(Ok(LanguageModelCompletionEvent::Stop(
-                                            language_model::StopReason::ToolUse,
-                                        )));
-                                    }
-                                    _ => {}
-                                }
-
-                                Some((events, state))
-                            }
-                            None => {
-                                Some((vec![Err(anyhow::anyhow!(NO_CHOICES_ERROR_MESSAGE))], state))
-                            }
+                        let mut events = Vec::new();
+                        if let Some(content) = delta.content.clone() {
+                            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                         }
+
+                            for tool_call in &delta.tool_calls {
+                                let entry = state
+                                    .tool_calls_by_index
+                                    .entry(tool_call.index)
+                                    .or_default();
+
+                                if let Some(tool_id) = tool_call.id.clone() {
+                                    entry.id = tool_id;
+                                }
+
+                                if let Some(function) = tool_call.function.as_ref() {
+                                    if let Some(name) = function.name.clone() {
+                                        entry.name = name;
+                                    }
+
+                                    if let Some(arguments) = function.arguments.clone() {
+                                        entry.arguments.push_str(&arguments);
+                                    }
+                                }
+                            }
+
+                        match choice.finish_reason.as_deref() {
+                            Some("stop") => {
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::EndTurn,
+                                )));
+                            }
+                            Some("tool_calls") => {
+                                events.extend(state.tool_calls_by_index.drain().map(
+                                    |(_, tool_call)| {
+                                        maybe!({
+                                            Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_call.id.into(),
+                                                    name: tool_call.name.as_str().into(),
+                                                    input: serde_json::Value::from_str(
+                                                        &tool_call.arguments,
+                                                    )?,
+                                                },
+                                            ))
+                                        })
+                                    },
+                                ));
+
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::ToolUse,
+                                )));
+                            }
+                            Some(stop_reason) => {
+                                log::error!("Unexpected Copilot Chat stop_reason: {stop_reason:?}",);
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::EndTurn,
+                                )));
+                            }
+                            None => {}
+                        }
+
+                        return Some((events, state));
                     }
-                    Err(err) => Some((vec![Err(err)], state)),
+                    Err(err) => return Some((vec![Err(err)], state)),
                 }
-            } else {
-                None
             }
+
+            None
         },
     )
     .flat_map(futures::stream::iter)
@@ -404,18 +381,26 @@ impl CopilotChatLanguageModel {
         for message in request.messages {
             for content in message.content {
                 match content {
-                    MessageContent::Text(text) => {
-                        messages.push(match message.role {
-                            Role::User => ChatMessage::User { content: text },
-                            Role::Assistant => ChatMessage::Assistant {
-                                content: text,
-                                tool_calls: Vec::new(),
-                            },
-                            Role::System => ChatMessage::System { content: text },
-                        });
-                    }
+                    MessageContent::Text(text) => messages.push(match message.role {
+                        Role::User => ChatMessage::User { content: text },
+                        Role::Assistant => ChatMessage::Assistant {
+                            content: Some(text),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => ChatMessage::System { content: text },
+                    }),
                     MessageContent::Image(_) => {}
                     MessageContent::ToolUse(tool_use) => {
+                        let tool_call = ToolCall {
+                            id: tool_use.id.to_string(),
+                            content: copilot::copilot_chat::ToolCallContent::Function {
+                                function: copilot::copilot_chat::FunctionContent {
+                                    name: tool_use.name.to_string(),
+                                    arguments: tool_use.input,
+                                },
+                            },
+                        };
+
                         if let Some(last_assistant_message) = messages
                             .iter_mut()
                             .rfind(|message| matches!(message, ChatMessage::Assistant { .. }))
@@ -423,35 +408,19 @@ impl CopilotChatLanguageModel {
                             if let ChatMessage::Assistant { tool_calls, .. } =
                                 last_assistant_message
                             {
-                                tool_calls.push(ToolCall {
-                                    id: tool_use.id.to_string(),
-                                    content: copilot::copilot_chat::ToolCallContent::Function {
-                                        function: copilot::copilot_chat::FunctionContent {
-                                            name: tool_use.name.to_string(),
-                                            arguments: tool_use.input,
-                                        },
-                                    },
-                                });
+                                tool_calls.push(tool_call);
                             }
                         } else {
                             messages.push(ChatMessage::Assistant {
-                                content: String::new(),
-                                tool_calls: vec![ToolCall {
-                                    id: tool_use.id.to_string(),
-                                    content: copilot::copilot_chat::ToolCallContent::Function {
-                                        function: copilot::copilot_chat::FunctionContent {
-                                            name: tool_use.name.to_string(),
-                                            arguments: tool_use.input,
-                                        },
-                                    },
-                                }],
+                                content: None,
+                                tool_calls: vec![tool_call],
                             });
                         }
                     }
                     MessageContent::ToolResult(tool_result) => {
                         messages.push(ChatMessage::Tool {
-                            tool_call_id: tool_result.tool_use_id.to_string(),
                             content: tool_result.content.to_string(),
+                            tool_call_id: tool_result.tool_use_id.to_string(),
                         });
                     }
                 }
