@@ -333,7 +333,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             },
             code,
             face: key,
-            key_char,
+            key_char: None,
         };
     }
 
@@ -362,7 +362,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         },
         code,
         face: key,
-            key_char,
+            key_char: None,
         }
     };
     println!("parse_keystroke: {:#?}", ret);
