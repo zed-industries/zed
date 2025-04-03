@@ -14149,6 +14149,25 @@ impl Editor {
         }
     }
 
+    fn stop_language_server(
+        &mut self,
+        _: &StopLanguageServer,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(project) = self.project.clone() {
+            self.buffer.update(cx, |multi_buffer, cx| {
+                project.update(cx, |project, cx| {
+                    project.stop_language_servers_for_buffers(
+                        multi_buffer.all_buffers().into_iter().collect(),
+                        cx,
+                    );
+                    cx.emit(project::Event::RefreshInlayHints);
+                });
+            });
+        }
+    }
+
     fn cancel_language_server_work(
         workspace: &mut Workspace,
         _: &actions::CancelLanguageServerWork,
