@@ -708,7 +708,7 @@ jobs:
 
   nix-build:
     timeout-minutes: 60
-    name: (${{ matrix.system.os || 'Skipped' }}) Nix Build
+    name: Nix Build
     continue-on-error: true
     if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
     strategy:
