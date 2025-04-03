@@ -24,7 +24,7 @@ use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use project::ProjectItem as _;
-use settings::Settings as _;
+use settings::{Settings as _, update_settings_file};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,8 +55,7 @@ pub struct ActiveThread {
     notifications: Vec<WindowHandle<AgentNotification>>,
     _subscriptions: Vec<Subscription>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    showing_feedback_comments: bool,
-    feedback_comments_editor: Option<Entity<Editor>>,
+    feedback_message_editor: Option<Entity<Editor>>,
 }
 
 struct RenderedMessage {
@@ -371,8 +370,7 @@ impl ActiveThread {
             notifications: Vec::new(),
             _subscriptions: subscriptions,
             notification_subscriptions: HashMap::default(),
-            showing_feedback_comments: false,
-            feedback_comments_editor: None,
+            feedback_message_editor: None,
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -863,19 +861,6 @@ impl ActiveThread {
         cx.notify();
     }
 
-    fn last_user_message(&self, cx: &Context<Self>) -> Option<MessageId> {
-        self.messages
-            .iter()
-            .rev()
-            .find(|message_id| {
-                self.thread
-                    .read(cx)
-                    .message(**message_id)
-                    .map_or(false, |message| message.role == Role::User)
-            })
-            .cloned()
-    }
-
     fn messages_after(&self, message_id: MessageId) -> &[MessageId] {
         self.messages
             .iter()
@@ -923,77 +908,59 @@ impl ActiveThread {
     }
 
     fn handle_show_feedback_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.showing_feedback_comments = true;
-
-        if self.feedback_comments_editor.is_none() {
-            let buffer = cx.new(|cx| {
-                let empty_string = String::new();
-                MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
-            });
-
-            let editor = cx.new(|cx| {
-                Editor::new(
-                    editor::EditorMode::AutoHeight { max_lines: 4 },
-                    buffer,
-                    None,
-                    window,
-                    cx,
-                )
-            });
-
-            self.feedback_comments_editor = Some(editor);
+        if self.feedback_message_editor.is_some() {
+            return;
         }
 
+        let buffer = cx.new(|cx| {
+            let empty_string = String::new();
+            MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
+        });
+
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(
+                editor::EditorMode::AutoHeight { max_lines: 4 },
+                buffer,
+                None,
+                window,
+                cx,
+            );
+            editor.set_placeholder_text(
+                "What went wrong? Share your feedback so we can improve.",
+                cx,
+            );
+            editor
+        });
+
+        editor.read(cx).focus_handle(cx).focus(window);
+        self.feedback_message_editor = Some(editor);
         cx.notify();
     }
 
-    fn handle_submit_comments(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(editor) = self.feedback_comments_editor.clone() {
-            let comments = editor.read(cx).text(cx);
+    fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.feedback_message_editor.clone() else {
+            return;
+        };
 
-            // Submit negative feedback
-            let report = self.thread.update(cx, |thread, cx| {
-                thread.report_feedback(ThreadFeedback::Negative, cx)
-            });
+        let report_task = self.thread.update(cx, |thread, cx| {
+            thread.report_feedback(ThreadFeedback::Negative, cx)
+        });
 
-            if !comments.is_empty() {
-                let thread_id = self.thread.read(cx).id().clone();
-                let comments_value = String::from(comments.as_str());
+        let comments = editor.read(cx).text(cx);
+        if !comments.is_empty() {
+            let thread_id = self.thread.read(cx).id().clone();
 
-                // Log comments as a separate telemetry event
-                telemetry::event!(
-                    "Assistant Thread Feedback Comments",
-                    thread_id,
-                    comments = comments_value
-                );
-            }
-
-            self.showing_feedback_comments = false;
-            self.feedback_comments_editor = None;
-
-            let this = cx.entity().downgrade();
-            cx.spawn(async move |_, cx| {
-                report.await?;
-                this.update(cx, |_this, cx| cx.notify())
-            })
-            .detach_and_log_err(cx);
+            telemetry::event!("Assistant Thread Feedback Comments", thread_id, comments);
         }
-    }
 
-    fn handle_cancel_comments(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.showing_feedback_comments = false;
-        self.feedback_comments_editor = None;
-        cx.notify();
+        self.feedback_message_editor = None;
+
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            report_task.await?;
+            this.update(cx, |_this, cx| cx.notify())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1021,8 +988,7 @@ impl ActiveThread {
             return Empty.into_any();
         }
 
-        let allow_editing_message =
-            message.role == Role::User && self.last_user_message(cx) == Some(message_id);
+        let allow_editing_message = message.role == Role::User;
 
         let edit_message_editor = self
             .editing_message
@@ -1133,36 +1099,47 @@ impl ActiveThread {
                 .into_any_element(),
         };
 
-        let message_content = v_flex()
-            .gap_1p5()
-            .child(
-                if let Some(edit_message_editor) = edit_message_editor.clone() {
-                    div()
-                        .key_context("EditMessageEditor")
-                        .on_action(cx.listener(Self::cancel_editing_message))
-                        .on_action(cx.listener(Self::confirm_editing_message))
-                        .min_h_6()
-                        .child(edit_message_editor)
-                } else {
-                    div()
-                        .min_h_6()
-                        .text_ui(cx)
-                        .child(self.render_message_content(
-                            message_id,
-                            rendered_message,
-                            has_tool_uses,
-                            cx,
-                        ))
-                },
-            )
-            .when(!context.is_empty(), |parent| {
-                parent.child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap_1()
-                        .children(context.into_iter().map(|context| {
-                            let context_id = context.id();
-                            ContextPill::added(AddedContext::new(context, cx), false, false, None)
+        let message_is_empty = message.should_display_content();
+        let has_content = !message_is_empty || !context.is_empty();
+
+        let message_content =
+            has_content.then(|| {
+                v_flex()
+                    .gap_1p5()
+                    .when(!message_is_empty, |parent| {
+                        parent.child(
+                            if let Some(edit_message_editor) = edit_message_editor.clone() {
+                                div()
+                                    .key_context("EditMessageEditor")
+                                    .on_action(cx.listener(Self::cancel_editing_message))
+                                    .on_action(cx.listener(Self::confirm_editing_message))
+                                    .min_h_6()
+                                    .child(edit_message_editor)
+                                    .into_any()
+                            } else {
+                                div()
+                                    .min_h_6()
+                                    .text_ui(cx)
+                                    .child(self.render_message_content(
+                                        message_id,
+                                        rendered_message,
+                                        has_tool_uses,
+                                        cx,
+                                    ))
+                                    .into_any()
+                            },
+                        )
+                    })
+                    .when(!context.is_empty(), |parent| {
+                        parent.child(h_flex().flex_wrap().gap_1().children(
+                            context.into_iter().map(|context| {
+                                let context_id = context.id();
+                                ContextPill::added(
+                                    AddedContext::new(context, cx),
+                                    false,
+                                    false,
+                                    None,
+                                )
                                 .on_click(Rc::new(cx.listener({
                                     let workspace = workspace.clone();
                                     let context_store = context_store.clone();
@@ -1179,8 +1156,9 @@ impl ActiveThread {
                                         }
                                     }
                                 })))
-                        })),
-                )
+                            }),
+                        ))
+                    })
             });
 
         let styled_message = match message.role {
@@ -1229,10 +1207,6 @@ impl ActiveThread {
                                 )
                                 .child(
                                     h_flex()
-                                        // DL: To double-check whether we want to fully remove
-                                        // the editing feature from meassages. Checkpoint sort of
-                                        // solve the same problem.
-                                        .invisible()
                                         .gap_1()
                                         .when_some(
                                             edit_message_editor.clone(),
@@ -1299,7 +1273,7 @@ impl ActiveThread {
                                         ),
                                 ),
                         )
-                        .child(div().p_2().child(message_content)),
+                        .child(div().p_2().children(message_content)),
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
@@ -1308,7 +1282,9 @@ impl ActiveThread {
                 .pr_4()
                 .border_l_1()
                 .border_color(cx.theme().colors().border_variant)
-                .child(message_content)
+                .children(message_content)
+                .gap_2p5()
+                .pb_2p5()
                 .when(!tool_uses.is_empty(), |parent| {
                     parent.child(
                         v_flex().children(
@@ -1322,7 +1298,7 @@ impl ActiveThread {
                 v_flex()
                     .bg(colors.editor_background)
                     .rounded_sm()
-                    .child(div().p_4().child(message_content)),
+                    .child(div().p_4().children(message_content)),
             ),
         };
 
@@ -1404,51 +1380,76 @@ impl ActiveThread {
             .when(
                 show_feedback && !self.thread.read(cx).is_generating(),
                 |parent| {
-                    parent
-                        .child(feedback_items)
-                        .when(self.showing_feedback_comments, |parent| {
+                    parent.child(feedback_items).when_some(
+                        self.feedback_message_editor.clone(),
+                        |parent, feedback_editor| {
+                            let focus_handle = feedback_editor.focus_handle(cx);
                             parent.child(
                                 v_flex()
-                                    .gap_1()
-                                    .px_4()
-                                    .child(
-                                        Label::new(
-                                            "Please share your feedback to help us improve:",
-                                        )
-                                        .size(LabelSize::Small),
-                                    )
-                                    .child(
-                                        div()
-                                            .p_2()
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(cx.theme().colors().border)
-                                            .bg(cx.theme().colors().editor_background)
-                                            .child(
-                                                self.feedback_comments_editor
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .clone(),
-                                            ),
-                                    )
+                                    .key_context("AgentFeedbackMessageEditor")
+                                    .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                                        this.feedback_message_editor = None;
+                                        cx.notify();
+                                    }))
+                                    .on_action(cx.listener(|this, _: &menu::Confirm, _, cx| {
+                                        this.submit_feedback_message(cx);
+                                        cx.notify();
+                                    }))
+                                    .on_action(cx.listener(Self::confirm_editing_message))
+                                    .mx_4()
+                                    .mb_3()
+                                    .p_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().editor_background)
+                                    .child(feedback_editor)
                                     .child(
                                         h_flex()
                                             .gap_1()
                                             .justify_end()
-                                            .pb_2()
                                             .child(
-                                                Button::new("cancel-comments", "Cancel").on_click(
-                                                    cx.listener(Self::handle_cancel_comments),
-                                                ),
+                                                Button::new("dismiss-feedback-message", "Cancel")
+                                                    .label_size(LabelSize::Small)
+                                                    .key_binding(
+                                                        KeyBinding::for_action_in(
+                                                            &menu::Cancel,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                                    )
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.feedback_message_editor = None;
+                                                        cx.notify();
+                                                    })),
                                             )
                                             .child(
-                                                Button::new("submit-comments", "Submit").on_click(
-                                                    cx.listener(Self::handle_submit_comments),
-                                                ),
+                                                Button::new(
+                                                    "submit-feedback-message",
+                                                    "Share Feedback",
+                                                )
+                                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                                .label_size(LabelSize::Small)
+                                                .key_binding(
+                                                    KeyBinding::for_action_in(
+                                                        &menu::Confirm,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                                )
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.submit_feedback_message(cx);
+                                                    cx.notify();
+                                                })),
                                             ),
                                     ),
                             )
-                        })
+                        },
+                    )
                 },
             )
             .into_any()
@@ -1462,7 +1463,8 @@ impl ActiveThread {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_last_message = self.messages.last() == Some(&message_id);
-        let pending_thinking_segment_index = if is_last_message && !has_tool_uses {
+        let is_generating = self.thread.read(cx).is_generating();
+        let pending_thinking_segment_index = if is_generating && is_last_message && !has_tool_uses {
             rendered_message
                 .segments
                 .iter()
@@ -1686,6 +1688,12 @@ impl ActiveThread {
 
         let is_status_finished = matches!(&tool_use.status, ToolUseStatus::Finished(_));
 
+        let fs = self
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).app_state().fs.clone());
+        let needs_confirmation = matches!(&tool_use.status, ToolUseStatus::NeedsConfirmation);
+
         let status_icons = div().child(match &tool_use.status {
             ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
                 let icon = Icon::new(IconName::Warning)
@@ -1810,7 +1818,7 @@ impl ActiveThread {
                     if is_status_finished {
                         element.right_7()
                     } else {
-                        element.right_12()
+                        element.right(px(46.))
                     }
                 })
                 .bg(linear_gradient(
@@ -1822,7 +1830,7 @@ impl ActiveThread {
 
         div().map(|element| {
             if !tool_use.needs_confirmation {
-                element.py_2p5().child(
+                element.child(
                     v_flex()
                         .child(
                             h_flex()
@@ -1894,92 +1902,197 @@ impl ActiveThread {
                         }),
                 )
             } else {
-                element.py_2().child(
-                    v_flex()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .overflow_hidden()
-                        .child(
-                            h_flex()
-                                .group("disclosure-header")
-                                .relative()
-                                .gap_1p5()
-                                .justify_between()
-                                .py_1()
-                                .map(|element| {
-                                    if is_status_finished {
-                                        element.pl_2().pr_0p5()
-                                    } else {
-                                        element.px_2()
-                                    }
-                                })
-                                .bg(self.tool_card_header_bg(cx))
-                                .map(|element| {
-                                    if is_open {
-                                        element.border_b_1().rounded_t_md()
-                                    } else {
-                                        element.rounded_md()
-                                    }
-                                })
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(
-                                    h_flex()
-                                        .id("tool-label-container")
-                                        .gap_1p5()
-                                        .max_w_full()
-                                        .overflow_x_scroll()
-                                        .child(
-                                            Icon::new(tool_use.icon)
-                                                .size(IconSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            h_flex().pr_8().text_ui_sm(cx).children(
-                                                self.rendered_tool_use_labels
-                                                    .get(&tool_use.id)
-                                                    .cloned(),
-                                            ),
+                v_flex()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(self.tool_card_border_color(cx))
+                    .overflow_hidden()
+                    .child(
+                        h_flex()
+                            .group("disclosure-header")
+                            .relative()
+                            .justify_between()
+                            .py_1()
+                            .map(|element| {
+                                if is_status_finished {
+                                    element.pl_2().pr_0p5()
+                                } else {
+                                    element.px_2()
+                                }
+                            })
+                            .bg(self.tool_card_header_bg(cx))
+                            .map(|element| {
+                                if is_open {
+                                    element.border_b_1().rounded_t_md()
+                                } else if needs_confirmation {
+                                    element.rounded_t_md()
+                                } else {
+                                    element.rounded_md()
+                                }
+                            })
+                            .border_color(self.tool_card_border_color(cx))
+                            .child(
+                                h_flex()
+                                    .id("tool-label-container")
+                                    .gap_1p5()
+                                    .max_w_full()
+                                    .overflow_x_scroll()
+                                    .child(
+                                        Icon::new(tool_use.icon)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        h_flex().pr_8().text_ui_sm(cx).children(
+                                            self.rendered_tool_use_labels
+                                                .get(&tool_use.id)
+                                                .cloned(),
                                         ),
-                                )
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        div().visible_on_hover("disclosure-header").child(
+                                            Disclosure::new("tool-use-disclosure", is_open)
+                                                .opened_icon(IconName::ChevronUp)
+                                                .closed_icon(IconName::ChevronDown)
+                                                .on_click(cx.listener({
+                                                    let tool_use_id = tool_use.id.clone();
+                                                    move |this, _event, _window, _cx| {
+                                                        let is_open = this
+                                                            .expanded_tool_uses
+                                                            .entry(tool_use_id.clone())
+                                                            .or_insert(false);
+
+                                                        *is_open = !*is_open;
+                                                    }
+                                                })),
+                                        ),
+                                    )
+                                    .child(status_icons),
+                            )
+                            .child(gradient_overlay(self.tool_card_header_bg(cx))),
+                    )
+                    .map(|parent| {
+                        if !is_open {
+                            return parent;
+                        }
+
+                        parent.child(
+                            v_flex()
+                                .bg(cx.theme().colors().editor_background)
+                                .map(|element| {
+                                    if  needs_confirmation {
+                                        element.rounded_none()
+                                    } else {
+                                        element.rounded_b_lg()
+                                    }
+                                })
+                                .child(results_content),
+                        )
+                    })
+                    .when(needs_confirmation, |this| {
+                        this.child(
+                            h_flex()
+                                .py_1()
+                                .pl_2()
+                                .pr_1()
+                                .gap_1()
+                                .justify_between()
+                                .bg(cx.theme().colors().editor_background)
+                                .border_t_1()
+                                .border_color(self.tool_card_border_color(cx))
+                                .rounded_b_lg()
+                                .child(Label::new("Action Confirmation").color(Color::Muted).size(LabelSize::Small))
                                 .child(
                                     h_flex()
-                                        .gap_1()
-                                        .child(
-                                            div().visible_on_hover("disclosure-header").child(
-                                                Disclosure::new("tool-use-disclosure", is_open)
-                                                    .opened_icon(IconName::ChevronUp)
-                                                    .closed_icon(IconName::ChevronDown)
-                                                    .on_click(cx.listener({
-                                                        let tool_use_id = tool_use.id.clone();
-                                                        move |this, _event, _window, _cx| {
-                                                            let is_open = this
-                                                                .expanded_tool_uses
-                                                                .entry(tool_use_id.clone())
-                                                                .or_insert(false);
-
-                                                            *is_open = !*is_open;
-                                                        }
-                                                    })),
-                                            ),
-                                        )
-                                        .child(status_icons),
-                                )
-                                .child(gradient_overlay(self.tool_card_header_bg(cx))),
+                                        .gap_0p5()
+                                        .child({
+                                            let tool_id = tool_use.id.clone();
+                                            Button::new(
+                                                "always-allow-tool-action",
+                                                "Always Allow",
+                                            )
+                                            .label_size(LabelSize::Small)
+                                            .icon(IconName::CheckDouble)
+                                            .icon_position(IconPosition::Start)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Success)
+                                            .tooltip(move |window, cx|  {
+                                                Tooltip::with_meta(
+                                                    "Never ask for permission",
+                                                    None,
+                                                    "Restore the original behavior in your Agent Panel settings",
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(cx.listener(
+                                                move |this, event, window, cx| {
+                                                    if let Some(fs) = fs.clone() {
+                                                        update_settings_file::<AssistantSettings>(
+                                                            fs.clone(),
+                                                            cx,
+                                                            |settings, _| {
+                                                                settings.set_always_allow_tool_actions(true);
+                                                            },
+                                                        );
+                                                    }
+                                                    this.handle_allow_tool(
+                                                        tool_id.clone(),
+                                                        event,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                },
+                                            ))
+                                        })
+                                        .child(ui::Divider::vertical())
+                                        .child({
+                                            let tool_id = tool_use.id.clone();
+                                            Button::new("allow-tool-action", "Allow")
+                                                .label_size(LabelSize::Small)
+                                                .icon(IconName::Check)
+                                                .icon_position(IconPosition::Start)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Success)
+                                                .on_click(cx.listener(
+                                                    move |this, event, window, cx| {
+                                                        this.handle_allow_tool(
+                                                            tool_id.clone(),
+                                                            event,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    },
+                                                ))
+                                        })
+                                        .child({
+                                            let tool_id = tool_use.id.clone();
+                                            let tool_name: Arc<str> = tool_use.name.into();
+                                            Button::new("deny-tool", "Deny")
+                                                .label_size(LabelSize::Small)
+                                                .icon(IconName::Close)
+                                                .icon_position(IconPosition::Start)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Error)
+                                                .on_click(cx.listener(
+                                                    move |this, event, window, cx| {
+                                                        this.handle_deny_tool(
+                                                            tool_id.clone(),
+                                                            tool_name.clone(),
+                                                            event,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    },
+                                                ))
+                                        }),
+                                ),
                         )
-                        .map(|parent| {
-                            if !is_open {
-                                return parent;
-                            }
-
-                            parent.child(
-                                v_flex()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .rounded_b_lg()
-                                    .child(results_content),
-                            )
-                        }),
-                )
+                    })
             }
         })
     }
@@ -2102,114 +2215,6 @@ impl ActiveThread {
         }
     }
 
-    fn render_confirmations<'a>(
-        &'a mut self,
-        cx: &'a mut Context<Self>,
-    ) -> impl Iterator<Item = AnyElement> + 'a {
-        let thread = self.thread.read(cx);
-
-        thread.tools_needing_confirmation().map(|tool| {
-            // Note: This element should be removed once a more full-fledged permission UX is implemented.
-            let beta_tag = h_flex()
-                .id("beta-tag")
-                .h(px(18.))
-                .px_1()
-                .gap_1()
-                .border_1()
-                .border_color(cx.theme().colors().text_accent.opacity(0.2))
-                .border_dashed()
-                .rounded_sm()
-                .bg(cx.theme().colors().text_accent.opacity(0.1))
-                .hover(|style| style.bg(cx.theme().colors().text_accent.opacity(0.2)))
-                .child(Label::new("Beta").size(LabelSize::XSmall))
-                .child(Icon::new(IconName::Info).color(Color::Accent).size(IconSize::Indicator))
-                .tooltip(
-                    Tooltip::text(
-                        "A future release will introduce a way to remember your answers to these. In the meantime, you can avoid these prompts by adding \"assistant\": { \"always_allow_tool_actions\": true } to your settings.json."
-                    )
-                );
-
-            v_flex()
-                .mt_2()
-                .mx_4()
-                .border_1()
-                .border_color(self.tool_card_border_color(cx))
-                .rounded_lg()
-                .child(
-                    h_flex()
-                        .py_1()
-                        .pl_2()
-                        .pr_1()
-                        .justify_between()
-                        .rounded_t_lg()
-                        .border_b_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .bg(self.tool_card_header_bg(cx))
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Label::new("Action Confirmation").size(LabelSize::Small))
-                                .child(beta_tag),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child({
-                                    let tool_id = tool.id.clone();
-                                    Button::new("allow-tool-action", "Allow")
-                                        .label_size(LabelSize::Small)
-                                        .icon(IconName::Check)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Success)
-                                        .on_click(cx.listener(move |this, event, window, cx| {
-                                            this.handle_allow_tool(
-                                                tool_id.clone(),
-                                                event,
-                                                window,
-                                                cx,
-                                            )
-                                        }))
-                                })
-                                .child({
-                                    let tool_id = tool.id.clone();
-                                    let tool_name = tool.name.clone();
-                                    Button::new("deny-tool", "Deny")
-                                        .label_size(LabelSize::Small)
-                                        .icon(IconName::Close)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Error)
-                                        .on_click(cx.listener(move |this, event, window, cx| {
-                                            this.handle_deny_tool(
-                                                tool_id.clone(),
-                                                tool_name.clone(),
-                                                event,
-                                                window,
-                                                cx,
-                                            )
-                                        }))
-                                }),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("action_container")
-                        .rounded_b_lg()
-                        .bg(cx.theme().colors().editor_background)
-                        .overflow_y_scroll()
-                        .max_h_40()
-                        .p_2p5()
-                        .child(
-                            Label::new(&tool.ui_text)
-                                .size(LabelSize::Small)
-                                .buffer_font(cx),
-                        ),
-                )
-                .into_any()
-        })
-    }
-
     fn dismiss_notifications(&mut self, cx: &mut Context<ActiveThread>) {
         for window in self.notifications.drain(..) {
             window
@@ -2262,7 +2267,6 @@ impl Render for ActiveThread {
             .size_full()
             .relative()
             .child(list(self.list_state.clone()).flex_grow())
-            .children(self.render_confirmations(cx))
             .child(self.render_vertical_scrollbar(cx))
     }
 }

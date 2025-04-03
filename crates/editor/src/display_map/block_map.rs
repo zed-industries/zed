@@ -1,11 +1,12 @@
 use super::{
     Highlights,
+    fold_map::Chunk,
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
-use language::{Chunk, Patch, Point};
+use language::{Patch, Point};
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, RowInfo,
     ToOffset, ToPoint as _,

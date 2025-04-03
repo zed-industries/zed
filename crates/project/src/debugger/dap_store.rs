@@ -48,6 +48,7 @@ use worktree::Worktree;
 
 pub enum DapStoreEvent {
     DebugClientStarted(SessionId),
+    DebugSessionInitialized(SessionId),
     DebugClientShutdown(SessionId),
     DebugClientEvent {
         session_id: SessionId,
@@ -358,7 +359,14 @@ impl DapStore {
 
         let task = cx.spawn(async move |this, cx| {
             if config.locator.is_some() {
-                locator_store.resolve_debug_config(&mut config).await?;
+                config = cx
+                    .background_spawn(async move {
+                        locator_store
+                            .resolve_debug_config(&mut config)
+                            .await
+                            .map(|_| config)
+                    })
+                    .await?;
             }
 
             let start_client_task = this.update(cx, |this, cx| {
@@ -471,7 +479,7 @@ impl DapStore {
             initialize_args: config.initialize_args.clone(),
             tcp_connection: config.tcp_connection.clone(),
             locator: None,
-            args: Default::default(),
+            stop_on_entry: config.stop_on_entry,
         };
 
         #[cfg(any(test, feature = "test-support"))]
@@ -854,6 +862,10 @@ fn create_new_session(
                 return Err(error);
             }
         }
+
+        this.update(cx, |_, cx| {
+            cx.emit(DapStoreEvent::DebugSessionInitialized(session_id));
+        })?;
 
         Ok(session)
     });

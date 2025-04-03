@@ -1,4 +1,4 @@
-use crate::{Thread, ThreadEvent};
+use crate::{Keep, Reject, Thread, ThreadEvent};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
@@ -26,6 +26,7 @@ use workspace::{
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
 };
+use zed_actions::assistant::ToggleFocus;
 
 pub struct AgentDiff {
     multibuffer: Entity<MultiBuffer>,
@@ -553,11 +554,12 @@ impl Item for AgentDiff {
 }
 
 impl Render for AgentDiff {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
+        let focus_handle = &self.focus_handle;
 
         div()
-            .track_focus(&self.focus_handle)
+            .track_focus(focus_handle)
             .key_context(if is_empty { "EmptyPane" } else { "AgentDiff" })
             .on_action(cx.listener(Self::keep))
             .on_action(cx.listener(Self::reject))
@@ -568,7 +570,32 @@ impl Render for AgentDiff {
             .items_center()
             .justify_center()
             .size_full()
-            .when(is_empty, |el| el.child("No changes to review"))
+            .when(is_empty, |el| {
+                el.child(
+                    v_flex()
+                        .items_center()
+                        .gap_2()
+                        .child("No changes to review")
+                        .child(
+                            Button::new("continue-iterating", "Continue Iterating")
+                                .style(ButtonStyle::Filled)
+                                .icon(IconName::ForwardArrow)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .full_width()
+                                .key_binding(KeyBinding::for_action_in(
+                                    &ToggleFocus,
+                                    &focus_handle.clone(),
+                                    window,
+                                    cx,
+                                ))
+                                .on_click(|_event, window, cx| {
+                                    window.dispatch_action(ToggleFocus.boxed_clone(), cx)
+                                }),
+                        ),
+                )
+            })
             .when(!is_empty, |el| el.child(self.editor.clone()))
     }
 }
@@ -604,7 +631,7 @@ fn render_diff_hunk_controls(
                 .disabled(is_created_file)
                 .key_binding(
                     KeyBinding::for_action_in(
-                        &crate::Reject,
+                        &Reject,
                         &editor.read(cx).focus_handle(cx),
                         window,
                         cx,
@@ -625,13 +652,8 @@ fn render_diff_hunk_controls(
                 }),
             Button::new(("keep", row as u64), "Keep")
                 .key_binding(
-                    KeyBinding::for_action_in(
-                        &crate::Keep,
-                        &editor.read(cx).focus_handle(cx),
-                        window,
-                        cx,
-                    )
-                    .map(|kb| kb.size(rems_from_px(12.))),
+                    KeyBinding::for_action_in(&Keep, &editor.read(cx).focus_handle(cx), window, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click({
                     let agent_diff = agent_diff.clone();

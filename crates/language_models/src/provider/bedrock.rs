@@ -453,9 +453,7 @@ impl BedrockModel {
             .clone();
         let owned_handle = self.handler.clone();
 
-        // Configure AWS based on the authentication method
         Ok(async move {
-            // Stream completion with the configured client
             let request = bedrock::stream_completion(runtime_client, request, owned_handle);
             request.await.unwrap_or_else(|e| {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
@@ -663,70 +661,6 @@ pub fn get_bedrock_tokens(
                 .map(|tokens| tokens + tokens_from_images)
         })
         .boxed()
-}
-
-pub async fn extract_tool_args_from_events(
-    name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
-    handle: Handle,
-) -> Result<impl Send + Stream<Item=Result<String>>> {
-    handle
-        .spawn(async move {
-            let mut tool_use_index = None;
-            while let Some(event) = events.next().await {
-                if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                                                                       content_block_index,
-                                                                       start,
-                                                                       ..
-                                                                   }) = event?
-                {
-                    match start {
-                        None => {
-                            continue;
-                        }
-                        Some(start) => match start.as_tool_use() {
-                            Ok(tool_use) => {
-                                if name == tool_use.name {
-                                    tool_use_index = Some(content_block_index);
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                return Err(anyhow!("Failed to parse tool use event: {:?}", err));
-                            }
-                        },
-                    }
-                }
-            }
-
-            let Some(tool_use_index) = tool_use_index else {
-                return Err(anyhow!("Tool is not used"));
-            };
-
-            Ok(events.filter_map(move |event| {
-                let result = match event {
-                    Err(_err) => None,
-                    Ok(output) => match output.clone() {
-                        BedrockStreamingResponse::ContentBlockDelta(inner) => {
-                            match inner.clone().delta {
-                                Some(ContentBlockDelta::ToolUse(tool_use)) => {
-                                    if inner.content_block_index == tool_use_index {
-                                        Some(Ok(tool_use.input))
-                                    } else {
-                                        None
-                                    }
-                                }
-                                _ => None,
-                            }
-                        }
-                        _ => None,
-                    },
-                };
-
-                async move { result }
-            }))
-        })
-        .await?
 }
 
 pub fn map_to_language_model_completion_events(

@@ -32,6 +32,7 @@ ui.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zeta.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 copilot = { workspace = true, features = ["test-support"] }
