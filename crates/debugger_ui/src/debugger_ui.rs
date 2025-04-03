@@ -53,7 +53,7 @@ pub fn init(cx: &mut App) {
 
                     if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                         panel
-                            .active_session(cx)
+                            .active_session()
                             .and_then(|session| session.read(cx).mode().as_running().cloned())
                     }) {
                         active_item.update(cx, |item, cx| item.pause_thread(cx))
@@ -64,7 +64,7 @@ pub fn init(cx: &mut App) {
 
                     if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                         panel
-                            .active_session(cx)
+                            .active_session()
                             .and_then(|session| session.read(cx).mode().as_running().cloned())
                     }) {
                         active_item.update(cx, |item, cx| item.restart_session(cx))
@@ -75,7 +75,7 @@ pub fn init(cx: &mut App) {
 
                     if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                         panel
-                            .active_session(cx)
+                            .active_session()
                             .and_then(|session| session.read(cx).mode().as_running().cloned())
                     }) {
                         active_item.update(cx, |item, cx| item.step_in(cx))
@@ -86,7 +86,7 @@ pub fn init(cx: &mut App) {
 
                     if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                         panel
-                            .active_session(cx)
+                            .active_session()
                             .and_then(|session| session.read(cx).mode().as_running().cloned())
                     }) {
                         active_item.update(cx, |item, cx| item.step_over(cx))
@@ -97,7 +97,7 @@ pub fn init(cx: &mut App) {
 
                     if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                         panel
-                            .active_session(cx)
+                            .active_session()
                             .and_then(|session| session.read(cx).mode().as_running().cloned())
                     }) {
                         active_item.update(cx, |item, cx| item.step_back(cx))
@@ -108,7 +108,7 @@ pub fn init(cx: &mut App) {
 
                     if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                         panel
-                            .active_session(cx)
+                            .active_session()
                             .and_then(|session| session.read(cx).mode().as_running().cloned())
                     }) {
                         active_item.update(cx, |item, cx| item.stop_thread(cx))
@@ -119,7 +119,7 @@ pub fn init(cx: &mut App) {
 
                     if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                         panel
-                            .active_session(cx)
+                            .active_session()
                             .and_then(|session| session.read(cx).mode().as_running().cloned())
                     }) {
                         active_item.update(cx, |item, cx| item.toggle_ignore_breakpoints(cx))

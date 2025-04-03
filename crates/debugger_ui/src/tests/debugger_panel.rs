@@ -244,7 +244,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
 
             debug_panel.update(cx, |this, cx| {
-                assert!(this.active_session(cx).is_some());
+                assert!(this.active_session().is_some());
                 // we have one active session
                 assert_eq!(1, this.pane().unwrap().read(cx).items_len());
             });
@@ -270,7 +270,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_session = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, cx| this.active_session())
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
@@ -312,7 +312,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_session = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, cx| this.active_session())
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
@@ -349,7 +349,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_session = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, cx| this.active_session())
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
