@@ -1429,8 +1429,10 @@ impl Workspace {
     ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> {
         let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
         let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
+
         for pane in &self.panes {
             let pane = pane.read(cx);
+
             pane.nav_history()
                 .for_each_entry(cx, |entry, (project_path, fs_path)| {
                     if let Some(fs_path) = &fs_path {
@@ -1452,11 +1454,26 @@ impl Workspace {
                         }
                     }
                 });
+
+            if let Some(item) = pane.active_item() {
+                if let Some(project_path) = item.project_path(cx) {
+                    let fs_path = self.project.read(cx).absolute_path(&project_path, cx);
+
+                    if let Some(fs_path) = &fs_path {
+                        abs_paths_opened
+                            .entry(fs_path.clone())
+                            .or_default()
+                            .insert(project_path.clone());
+                    }
+
+                    history.insert(project_path, (fs_path, std::usize::MAX));
+                }
+            }
         }
 
         history
             .into_iter()
-            .sorted_by_key(|(_, (_, timestamp))| *timestamp)
+            .sorted_by_key(|(_, (_, order))| *order)
             .map(|(project_path, (fs_path, _))| (project_path, fs_path))
             .rev()
             .filter(move |(history_path, abs_path)| {
