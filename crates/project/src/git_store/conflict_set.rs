@@ -3,7 +3,13 @@ use std::ops::Range;
 use text::{Anchor, BufferId};
 
 pub struct ConflictSet {
-    buffer_id: BufferId,
+    pub has_conflict: bool,
+    pub snapshot: ConflictSetSnapshot,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConflictSetSnapshot {
+    pub buffer_id: BufferId,
     pub conflicts: Vec<Conflict>,
 }
 
@@ -15,26 +21,28 @@ pub struct Conflict {
     pub base: Option<Range<Anchor>>,
 }
 
-/// A snapshot of conflicts in a buffer, used for background parsing
-#[derive(Debug, Clone)]
-pub struct ConflictSetSnapshot {
-    pub conflicts: Vec<Conflict>,
-}
-
 impl ConflictSet {
-    pub fn new(buffer_id: BufferId, _: &mut Context<Self>) -> Self {
+    pub fn new(buffer_id: BufferId, has_conflict: bool, _: &mut Context<Self>) -> Self {
         Self {
-            buffer_id,
-            conflicts: Vec::new(),
+            has_conflict,
+            snapshot: ConflictSetSnapshot {
+                buffer_id,
+                conflicts: Vec::new(),
+            },
         }
     }
 
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.snapshot.conflicts.clear();
+        cx.notify();
+    }
+
     pub fn conflicts(&self) -> &[Conflict] {
-        &self.conflicts
+        &self.snapshot.conflicts
     }
 
     pub fn set_snapshot(&mut self, snapshot: ConflictSetSnapshot) {
-        self.conflicts = snapshot.conflicts;
+        self.snapshot = snapshot;
     }
 
     pub fn parse(buffer: &text::BufferSnapshot) -> ConflictSetSnapshot {
@@ -113,7 +121,10 @@ impl ConflictSet {
             line_pos = line_end + 1;
         }
 
-        ConflictSetSnapshot { conflicts }
+        ConflictSetSnapshot {
+            conflicts,
+            buffer_id: buffer.remote_id(),
+        }
     }
 }
 
