@@ -2,7 +2,6 @@ use super::{
     Highlights,
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
 };
-use collections::HashMap;
 use gpui::{AnyElement, App, ElementId, HighlightStyle, Pixels, Window};
 use language::{Edit, HighlightId, Point, TextSummary};
 use lsp::DiagnosticSeverity;
@@ -179,6 +178,13 @@ impl FoldMapWriter<'_> {
             let mut new_tree = SumTree::new(buffer);
             let mut cursor = self.0.snapshot.folds.cursor::<FoldRange>(buffer);
             for fold in folds {
+                self.0.snapshot.fold_metadata_by_id.insert(
+                    fold.id,
+                    FoldMetadata {
+                        range: fold.range.clone(),
+                        width: None,
+                    },
+                );
                 new_tree.append(cursor.slice(&fold.range, Bias::Right, buffer), buffer);
                 new_tree.push(fold, buffer);
             }
@@ -242,6 +248,7 @@ impl FoldMapWriter<'_> {
                         });
                     }
                     fold_ixs_to_delete.push(*folds_cursor.start());
+                    self.0.snapshot.fold_metadata_by_id.remove(&fold.id);
                 }
                 folds_cursor.next(buffer);
             }
@@ -275,24 +282,24 @@ impl FoldMapWriter<'_> {
         let buffer = &inlay_snapshot.buffer;
 
         for (id, new_width) in new_widths {
-            // todo!("fix this")
-            let folds = self.0.snapshot.folds.items(buffer);
-            let fold_option = folds.iter().find(|fold| fold.id == id);
-
-            if let Some(fold) = fold_option {
-                let old_width = self.0.snapshot.fold_widths.get(&id).copied();
-
-                // If width has changed meaningfully
-                if Some(new_width) != old_width {
-                    self.0.snapshot.fold_widths.insert(id, new_width);
-                    let buffer_start = fold.range.start.to_offset(buffer);
-                    let buffer_end = fold.range.end.to_offset(buffer);
+            if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned() {
+                if Some(new_width) != metadata.width {
+                    let buffer_start = metadata.range.start.to_offset(buffer);
+                    let buffer_end = metadata.range.end.to_offset(buffer);
                     let inlay_range = inlay_snapshot.to_inlay_offset(buffer_start)
                         ..inlay_snapshot.to_inlay_offset(buffer_end);
                     edits.push(InlayEdit {
                         old: inlay_range.clone(),
                         new: inlay_range.clone(),
                     });
+
+                    self.0.snapshot.fold_metadata_by_id.insert(
+                        id,
+                        FoldMetadata {
+                            range: metadata.range,
+                            width: Some(new_width),
+                        },
+                    );
                 }
             }
         }
@@ -328,7 +335,7 @@ impl FoldMap {
                 ),
                 inlay_snapshot: inlay_snapshot.clone(),
                 version: 0,
-                fold_widths: TreeMap::default(),
+                fold_metadata_by_id: TreeMap::default(),
             },
             next_fold_id: FoldId::default(),
         };
@@ -614,9 +621,9 @@ impl FoldMap {
 pub struct FoldSnapshot {
     transforms: SumTree<Transform>,
     folds: SumTree<Fold>,
+    fold_metadata_by_id: TreeMap<FoldId, FoldMetadata>,
     pub inlay_snapshot: InlaySnapshot,
     pub version: usize,
-    pub fold_widths: TreeMap<FoldId, Pixels>,
 }
 
 impl FoldSnapshot {
@@ -625,7 +632,7 @@ impl FoldSnapshot {
     }
 
     pub fn fold_width(&self, fold_id: &FoldId) -> Option<Pixels> {
-        self.fold_widths.get(fold_id).copied()
+        self.fold_metadata_by_id.get(fold_id)?.width
     }
 
     #[cfg(test)]
@@ -1089,6 +1096,12 @@ impl Default for FoldRange {
     fn default() -> Self {
         Self(Anchor::min()..Anchor::max())
     }
+}
+
+#[derive(Clone, Debug)]
+struct FoldMetadata {
+    range: FoldRange,
+    width: Option<Pixels>,
 }
 
 impl sum_tree::Item for Fold {
