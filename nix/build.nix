@@ -96,7 +96,6 @@ let
         ]
         ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
         ++ lib.optionals stdenv'.hostPlatform.isDarwin [
-          # TODO: move to overlay so it's usable in the shell
           (cargo-bundle.overrideAttrs (
             new: old: {
               version = "0.6.1-zed";
@@ -107,11 +106,10 @@ let
                 hash = "sha256-cSvW0ND148AGdIGWg/ku0yIacVgW+9f1Nsi+kAQxVrI=";
               };
               # https://nixos.asia/en/buildRustPackage
-              cargoDeps = old.cargoDeps.overrideAttrs ({
-                inherit src;
-                name = "${new.pname}-${new.version}-vendor.tar.gz";
-                outputHash = "sha256-Q49FnXNHWhvbH1LtMUpXFcvGKu9VHwqOXXd+MjswO64=";
-              });
+              cargoDeps = rustPlatform.fetchCargoVendor {
+                inherit (new) pname version src;
+                hash = "sha256-urn+A3yuw2uAO4HGmvQnKvWtHqvG9KHxNCCWTiytE4k=";
+              };
             }
           ))
         ];
