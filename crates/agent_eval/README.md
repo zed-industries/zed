@@ -43,16 +43,16 @@ Ensure you have the required API keys set, either from a dev run of Zed or via t
 
 ```bash
 # Run all tests
-cargo run -p assistant_eval -- --all
+cargo run -p agent_eval -- --all
 
 # Run only specific languages
-cargo run -p assistant_eval -- --all --languages python,rust
+cargo run -p agent_eval -- --all --languages python,rust
 
 # Limit concurrent evaluations
-cargo run -p assistant_eval -- --all --concurrency 5
+cargo run -p agent_eval -- --all --concurrency 5
 
 # Limit number of exercises per language
-cargo run -p assistant_eval -- --all --max-exercises-per-language 3
+cargo run -p agent_eval -- --all --max-exercises-per-language 3
 ```
 
 ### Evaluation Template Types

@@ -19,7 +19,7 @@ use templates_eval::all_templates;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "assistant_eval",
+    name = "agent_eval",
     disable_version_flag = true,
     before_help = "Tool eval runner"
 )]
