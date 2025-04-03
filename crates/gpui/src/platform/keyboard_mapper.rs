@@ -88,7 +88,8 @@ impl KeyboardMapper {
         }
     }
 
-    pub(crate) fn parse(&self, input: &str, char_matching: bool) -> Option<(KeyCode, Modifiers)> {
+    /// TODO:
+    pub fn parse(&self, input: &str, char_matching: bool) -> Option<(KeyCode, Modifiers)> {
         if !char_matching {
             if let Some(code) = self.letter.get(input) {
                 return Some((*code, Modifiers::none()));

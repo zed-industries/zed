@@ -1,6 +1,8 @@
 /// The mappings defined in this file where created from reading the alacritty source
 use alacritty_terminal::term::TermMode;
-use gpui::Keystroke;
+use gpui::{KeyCode, Keystroke, Modifiers, KeyboardMapper};
+
+use collections::HashMap;
 
 #[derive(Debug, PartialEq, Eq)]
 enum AlacModifiers {
@@ -39,6 +41,128 @@ impl AlacModifiers {
             AlacModifiers::Other => true,
         }
     }
+}
+
+pub fn generate_esc_str_mapper(
+    keyboard_mapper: &KeyboardMapper,
+) -> HashMap<(KeyCode, Modifiers), String> {
+    let mut esc_str_mapper = HashMap::new();
+    //Mappings for caret notation keys
+    let (key_a, _) = keyboard_mapper.parse("a", true).unwrap();
+    esc_str_mapper.insert((key_a, Modifiers::control()), "\x01".to_string()); //1
+    esc_str_mapper.insert((key_a, Modifiers::control_shift()), "\x01".to_string()); //1
+    let (key_b, _) = keyboard_mapper.parse("b", true).unwrap();
+    esc_str_mapper.insert((key_b, Modifiers::control()), "\x02".to_string()); //2
+    esc_str_mapper.insert((key_b, Modifiers::control_shift()), "\x02".to_string()); //2
+    let (key_c, _) = keyboard_mapper.parse("c", true).unwrap();
+    esc_str_mapper.insert((key_c, Modifiers::control()), "\x03".to_string()); //3
+    esc_str_mapper.insert((key_c, Modifiers::control_shift()), "\x03".to_string()); //3
+    let (key_d, _) = keyboard_mapper.parse("d", true).unwrap();
+    esc_str_mapper.insert((key_d, Modifiers::control()), "\x04".to_string()); //4
+    esc_str_mapper.insert((key_d, Modifiers::control_shift()), "\x04".to_string()); //4
+    let (key_e, _) = keyboard_mapper.parse("e", true).unwrap();
+    esc_str_mapper.insert((key_e, Modifiers::control()), "\x05".to_string()); //5
+    esc_str_mapper.insert((key_e, Modifiers::control_shift()), "\x05".to_string()); //5
+    let (key_f, _) = keyboard_mapper.parse("f", true).unwrap();
+    esc_str_mapper.insert((key_f, Modifiers::control()), "\x06".to_string()); //6
+    esc_str_mapper.insert((key_f, Modifiers::control_shift()), "\x06".to_string()); //6
+    let (key_g, _) = keyboard_mapper.parse("g", true).unwrap();
+    esc_str_mapper.insert((key_g, Modifiers::control()), "\x07".to_string()); //7
+    esc_str_mapper.insert((key_g, Modifiers::control_shift()), "\x07".to_string()); //7
+    let (key_h, _) = keyboard_mapper.parse("h", true).unwrap();
+    esc_str_mapper.insert((key_h, Modifiers::control()), "\x08".to_string()); //8
+    esc_str_mapper.insert((key_h, Modifiers::control_shift()), "\x08".to_string()); //8
+    let (key_i, _) = keyboard_mapper.parse("i", true).unwrap();
+    esc_str_mapper.insert((key_i, Modifiers::control()), "\x09".to_string()); //9
+    esc_str_mapper.insert((key_i, Modifiers::control_shift()), "\x09".to_string()); //9
+    let (key_j, _) = keyboard_mapper.parse("j", true).unwrap();
+    esc_str_mapper.insert((key_j, Modifiers::control()), "\x0a".to_string()); //10
+    esc_str_mapper.insert((key_j, Modifiers::control_shift()), "\x0a".to_string()); //10
+    let (key_k, _) = keyboard_mapper.parse("k", true).unwrap();
+    esc_str_mapper.insert((key_k, Modifiers::control()), "\x0b".to_string()); //11
+    esc_str_mapper.insert((key_k, Modifiers::control_shift()), "\x0b".to_string()); //11
+    let (key_l, _) = keyboard_mapper.parse("l", true).unwrap();
+    esc_str_mapper.insert((key_l, Modifiers::control()), "\x0c".to_string()); //12
+    esc_str_mapper.insert((key_l, Modifiers::control_shift()), "\x0c".to_string()); //12
+    let (key_m, _) = keyboard_mapper.parse("m", true).unwrap();
+    esc_str_mapper.insert((key_m, Modifiers::control()), "\x0d".to_string()); //13
+    esc_str_mapper.insert((key_m, Modifiers::control_shift()), "\x0d".to_string()); //13
+    let (key_n, _) = keyboard_mapper.parse("n", true).unwrap();
+    esc_str_mapper.insert((key_n, Modifiers::control()), "\x0e".to_string()); //14
+    esc_str_mapper.insert((key_n, Modifiers::control_shift()), "\x0e".to_string()); //14
+    let (key_o, _) = keyboard_mapper.parse("o", true).unwrap();
+    esc_str_mapper.insert((key_o, Modifiers::control()), "\x0f".to_string()); //15
+    esc_str_mapper.insert((key_o, Modifiers::control_shift()), "\x0f".to_string()); //15
+    let (key_p, _) = keyboard_mapper.parse("p", true).unwrap();
+    esc_str_mapper.insert((key_p, Modifiers::control()), "\x10".to_string()); //16
+    esc_str_mapper.insert((key_p, Modifiers::control_shift()), "\x10".to_string()); //16
+    let (key_q, _) = keyboard_mapper.parse("q", true).unwrap();
+    esc_str_mapper.insert((key_q, Modifiers::control()), "\x11".to_string()); //17
+    esc_str_mapper.insert((key_q, Modifiers::control_shift()), "\x11".to_string()); //17
+    let (key_r, _) = keyboard_mapper.parse("r", true).unwrap();
+    esc_str_mapper.insert((key_r, Modifiers::control()), "\x12".to_string()); //18
+    esc_str_mapper.insert((key_r, Modifiers::control_shift()), "\x12".to_string()); //18
+    let (key_s, _) = keyboard_mapper.parse("s", true).unwrap();
+    esc_str_mapper.insert((key_s, Modifiers::control()), "\x13".to_string()); //19
+    esc_str_mapper.insert((key_s, Modifiers::control_shift()), "\x13".to_string()); //19
+    let (key_t, _) = keyboard_mapper.parse("t", true).unwrap();
+    esc_str_mapper.insert((key_t, Modifiers::control()), "\x14".to_string()); //20
+    esc_str_mapper.insert((key_t, Modifiers::control_shift()), "\x14".to_string()); //20
+    let (key_u, _) = keyboard_mapper.parse("u", true).unwrap();
+    esc_str_mapper.insert((key_u, Modifiers::control()), "\x15".to_string()); //21
+    esc_str_mapper.insert((key_u, Modifiers::control_shift()), "\x15".to_string()); //21
+    let (key_v, _) = keyboard_mapper.parse("v", true).unwrap();
+    esc_str_mapper.insert((key_v, Modifiers::control()), "\x16".to_string()); //22
+    esc_str_mapper.insert((key_v, Modifiers::control_shift()), "\x16".to_string()); //22
+    let (key_w, _) = keyboard_mapper.parse("w", true).unwrap();
+    esc_str_mapper.insert((key_w, Modifiers::control()), "\x17".to_string()); //23
+    esc_str_mapper.insert((key_w, Modifiers::control_shift()), "\x17".to_string()); //23
+    let (key_x, _) = keyboard_mapper.parse("x", true).unwrap();
+    esc_str_mapper.insert((key_x, Modifiers::control()), "\x18".to_string()); //24
+    esc_str_mapper.insert((key_x, Modifiers::control_shift()), "\x18".to_string()); //24
+    let (key_y, _) = keyboard_mapper.parse("y", true).unwrap();
+    esc_str_mapper.insert((key_y, Modifiers::control()), "\x19".to_string()); //25
+    esc_str_mapper.insert((key_y, Modifiers::control_shift()), "\x19".to_string()); //25
+    let (key_z, _) = keyboard_mapper.parse("z", true).unwrap();
+    esc_str_mapper.insert((key_z, Modifiers::control()), "\x1a".to_string()); //26
+    esc_str_mapper.insert((key_z, Modifiers::control_shift()), "\x1a".to_string()); //26
+    let (key_at, modifiers) = keyboard_mapper.parse("@", true).unwrap();
+    esc_str_mapper.insert(
+        (key_at, modifiers | Modifiers::control()),
+        "\x00".to_string(),
+    ); //0
+    let (key_left_bracket, modifiers) = keyboard_mapper.parse("[", true).unwrap();
+    esc_str_mapper.insert(
+        (key_left_bracket, modifiers | Modifiers::control()),
+        "\x1b".to_string(),
+    ); //27
+    let (key_backslash, modifiers) = keyboard_mapper.parse("\\", true).unwrap();
+    esc_str_mapper.insert(
+        (key_backslash, modifiers | Modifiers::control()),
+        "\x1c".to_string(),
+    ); //28
+    let (key_right_bracket, modifiers) = keyboard_mapper.parse("]", true).unwrap();
+    esc_str_mapper.insert(
+        (key_right_bracket, modifiers | Modifiers::control()),
+        "\x1d".to_string(),
+    ); //29
+    let (key_caret, modifiers) = keyboard_mapper.parse("^", true).unwrap();
+    esc_str_mapper.insert(
+        (key_caret, modifiers | Modifiers::control()),
+        "\x1e".to_string(),
+    ); //30
+    let (key_underscore, modifiers) = keyboard_mapper.parse("_", true).unwrap();
+    esc_str_mapper.insert(
+        (key_underscore, modifiers | Modifiers::control()),
+        "\x1f".to_string(),
+    ); //31
+    let (key_question, modifiers) = keyboard_mapper.parse("?", true).unwrap();
+    esc_str_mapper.insert(
+        (key_question, modifiers | Modifiers::control()),
+        "\x7f".to_string(),
+    ); //127
+
+    esc_str_mapper
 }
 
 pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> Option<String> {
