@@ -487,10 +487,16 @@ pub fn into_anthropic(
                     .content
                     .into_iter()
                     .filter_map(|content| match content {
-                        MessageContent::Text(text) => Some(anthropic::RequestContent::Text {
-                            text,
-                            cache_control,
-                        }),
+                        MessageContent::Text(text) => {
+                            if !text.is_empty() {
+                                Some(anthropic::RequestContent::Text {
+                                    text,
+                                    cache_control,
+                                })
+                            } else {
+                                None
+                            }
+                        }
                         MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
                             source: anthropic::ImageSource {
                                 source_type: "base64".to_string(),
