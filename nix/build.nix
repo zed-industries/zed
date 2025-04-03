@@ -106,12 +106,18 @@ let
                 rev = "2be2669972dff3ddd4daf89a2cb29d2d06cad7c7";
                 hash = "sha256-cSvW0ND148AGdIGWg/ku0yIacVgW+9f1Nsi+kAQxVrI=";
               };
-              # https://nixos.asia/en/buildRustPackage
-              cargoDeps = old.cargoDeps.overrideAttrs ({
-                inherit src;
-                name = "${new.pname}-${new.version}-vendor.tar.gz";
-                outputHash = "sha256-Q49FnXNHWhvbH1LtMUpXFcvGKu9VHwqOXXd+MjswO64=";
-              });
+              cargoHash = "sha256-Q49FnXNHWhvbH1LtMUpXFcvGKu9VHwqOXXd+MjswO64=";
+
+              # NOTE: can drop once upstream uses `finalAttrs` here:
+              # https://github.com/NixOS/nixpkgs/blob/10214747f5e6e7cb5b9bdf9e018a3c7b3032f5af/pkgs/build-support/rust/build-rust-package/default.nix#L104
+              #
+              # See (for context): https://github.com/NixOS/nixpkgs/pull/382550
+              cargoDeps = rustPlatform.fetchCargoTarball {
+                inherit (new) src;
+                hash = new.cargoHash;
+                patches = new.cargoPatches or [];
+                name = new.cargoDepsName or new.finalPackage.name;
+              };
             }
           ))
         ];
