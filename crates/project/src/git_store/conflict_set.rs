@@ -1,5 +1,5 @@
 use gpui::{Context, EventEmitter};
-use std::{cmp::Ordering, ops::Range};
+use std::{cmp::Ordering, ops::Range, sync::Arc};
 use text::{Anchor, BufferId};
 
 pub struct ConflictSet {
@@ -7,14 +7,16 @@ pub struct ConflictSet {
     pub snapshot: ConflictSetSnapshot,
 }
 
-pub enum ConflictSetEvent {
-    ConflictsUpdated(Range<Anchor>),
+pub struct ConflictSetUpdate {
+    pub buffer_range: Option<Range<Anchor>>,
+    pub old_range: Range<usize>,
+    pub new_range: Range<usize>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ConflictSetSnapshot {
     pub buffer_id: BufferId,
-    pub conflicts: Vec<Conflict>,
+    pub conflicts: Arc<[ConflictRegion]>,
 }
 
 impl ConflictSetSnapshot {
@@ -22,7 +24,7 @@ impl ConflictSetSnapshot {
         &self,
         range: Range<Anchor>,
         buffer: &text::BufferSnapshot,
-    ) -> &[Conflict] {
+    ) -> &[ConflictRegion] {
         let start_ix = self
             .conflicts
             .binary_search_by(|conflict| {
@@ -46,16 +48,47 @@ impl ConflictSetSnapshot {
         &self.conflicts[start_ix..end_ix]
     }
 
-    pub fn compare(&self, other: &Self, buffer: &text::BufferSnapshot) -> Option<Range<Anchor>> {
-        //
-        let start = self.conflicts.iter().zip(other.conflicts.iter()).position(|(old, new)| old != new)?
-        let end = self.conflicts.iter().rev().zip(other.conflicts.iter().rev()).position(|(old, new)| old != new)?;
-
+    pub fn compare(&self, other: &Self, buffer: &text::BufferSnapshot) -> ConflictSetUpdate {
+        let common_prefix_len = self
+            .conflicts
+            .iter()
+            .zip(other.conflicts.iter())
+            .take_while(|(old, new)| old == new)
+            .count();
+        let common_suffix_len = self.conflicts[common_prefix_len..]
+            .iter()
+            .rev()
+            .zip(other.conflicts[common_prefix_len..].iter().rev())
+            .take_while(|(old, new)| old == new)
+            .count();
+        let old_conflicts =
+            &self.conflicts[common_prefix_len..(self.conflicts.len() - common_suffix_len)];
+        let new_conflicts =
+            &other.conflicts[common_prefix_len..(other.conflicts.len() - common_suffix_len)];
+        let old_range = common_prefix_len..(common_prefix_len + old_conflicts.len());
+        let new_range = common_prefix_len..(common_prefix_len + new_conflicts.len());
+        let start = match (old_conflicts.first(), new_conflicts.first()) {
+            (None, None) => None,
+            (None, Some(conflict)) => Some(conflict.range.start),
+            (Some(conflict), None) => Some(conflict.range.start),
+            (Some(first), Some(second)) => Some(first.range.start.min(&second.range.start, buffer)),
+        };
+        let end = match (old_conflicts.last(), new_conflicts.last()) {
+            (None, None) => None,
+            (None, Some(conflict)) => Some(conflict.range.end),
+            (Some(first), None) => Some(first.range.end),
+            (Some(first), Some(second)) => Some(first.range.end.max(&second.range.end, buffer)),
+        };
+        ConflictSetUpdate {
+            buffer_range: start.zip(end).map(|(start, end)| start..end),
+            old_range,
+            new_range,
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Conflict {
+pub struct ConflictRegion {
     pub range: Range<Anchor>,
     pub ours: Range<Anchor>,
     pub theirs: Range<Anchor>,
@@ -68,22 +101,28 @@ impl ConflictSet {
             has_conflict,
             snapshot: ConflictSetSnapshot {
                 buffer_id,
-                conflicts: Vec::new(),
+                conflicts: Default::default(),
             },
         }
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        self.snapshot.conflicts.clear();
+        self.snapshot.conflicts = Default::default();
         cx.notify();
     }
 
-    pub fn conflicts(&self) -> &[Conflict] {
-        &self.snapshot.conflicts
+    pub fn snapshot(&self) -> ConflictSetSnapshot {
+        self.snapshot.clone()
     }
 
-    pub fn set_snapshot(&mut self, snapshot: ConflictSetSnapshot, cx: &mut Context<Self>) {
+    pub fn set_snapshot(
+        &mut self,
+        snapshot: ConflictSetSnapshot,
+        update: ConflictSetUpdate,
+        cx: &mut Context<Self>,
+    ) {
         self.snapshot = snapshot;
+        cx.emit(update);
     }
 
     pub fn parse(buffer: &text::BufferSnapshot) -> ConflictSetSnapshot {
@@ -144,7 +183,7 @@ impl ConflictSet {
                     .zip(base_end)
                     .map(|(start, end)| buffer.anchor_after(start)..buffer.anchor_before(end));
 
-                conflicts.push(Conflict {
+                conflicts.push(ConflictRegion {
                     range,
                     ours,
                     theirs,
@@ -163,13 +202,13 @@ impl ConflictSet {
         }
 
         ConflictSetSnapshot {
-            conflicts,
+            conflicts: conflicts.into(),
             buffer_id: buffer.remote_id(),
         }
     }
 }
 
-impl EventEmitter<()> for ConflictSet {}
+impl EventEmitter<ConflictSetUpdate> for ConflictSet {}
 
 #[cfg(test)]
 mod tests {

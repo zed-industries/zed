@@ -11,7 +11,7 @@ use askpass::AskPassDelegate;
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
-pub use conflict_set::ConflictSet;
+pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetUpdate};
 use fs::Fs;
 use futures::{
     FutureExt as _, StreamExt as _,
@@ -2316,17 +2316,27 @@ impl BufferGitState {
         let (tx, rx) = oneshot::channel();
 
         let conflict_set = self.conflict_set.as_ref().and_then(|weak| weak.upgrade());
-        if let Some(conflict_set) = conflict_set {
-            if conflict_set.read(cx).has_conflict {
+        if let Some(conflict_set_handle) = conflict_set {
+            let conflict_set = conflict_set_handle.read(cx);
+            if conflict_set.has_conflict {
                 self.conflict_updated_futures.push(tx);
+                let old_snapshot = conflict_set.snapshot.clone();
                 self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
-                    let snapshot = cx
-                        .background_spawn(async move { ConflictSet::parse(&buffer) })
+                    let (snapshot, changed_range) = cx
+                        .background_spawn(async move {
+                            let new_snapshot = ConflictSet::parse(&buffer);
+                            let changed_range = old_snapshot.compare(&new_snapshot, &buffer);
+                            (new_snapshot, changed_range)
+                        })
                         .await;
-                    conflict_set.update(cx, |conflict_set, _| {
-                        conflict_set.set_snapshot(snapshot);
-                    })?;
-                    this.update(cx, |this, _| {
+                    this.update(cx, |this, cx| {
+                        if let Some(conflict_set) = &this.conflict_set {
+                            conflict_set
+                                .update(cx, |conflict_set, cx| {
+                                    conflict_set.set_snapshot(snapshot, changed_range, cx);
+                                })
+                                .ok();
+                        }
                         let futures = std::mem::take(&mut this.conflict_updated_futures);
                         for tx in futures {
                             tx.send(()).ok();
@@ -2334,7 +2344,7 @@ impl BufferGitState {
                     })
                 }));
             } else {
-                conflict_set.update(cx, |conflict_set, cx| conflict_set.clear(cx));
+                conflict_set_handle.update(cx, |conflict_set, cx| conflict_set.clear(cx));
             }
         }
 

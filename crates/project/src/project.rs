@@ -30,7 +30,7 @@ mod yarn;
 
 use crate::git_store::GitStore;
 pub use git_store::{
-    ConflictSet,
+    ConflictRegion, ConflictSet, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
 };
 
