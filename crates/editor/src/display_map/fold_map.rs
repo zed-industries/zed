@@ -268,8 +268,7 @@ impl FoldMapWriter<'_> {
 
     pub(crate) fn update_fold_widths(
         &mut self,
-        // todo!("make this an iterator.")
-        new_widths: HashMap<FoldId, Pixels>,
+        new_widths: impl IntoIterator<Item = (FoldId, Pixels)>,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
         let inlay_snapshot = self.0.snapshot.inlay_snapshot.clone();

@@ -6872,8 +6872,7 @@ impl Element for EditorElement {
                             } else {
                                 None
                             }
-                        })
-                        .collect::<HashMap<_, _>>();
+                        });
                     if self.editor.update(cx, |editor, cx| {
                         editor.update_fold_widths(new_fold_widths, cx)
                     }) {

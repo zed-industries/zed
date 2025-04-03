@@ -516,7 +516,7 @@ impl DisplayMap {
 
     pub fn update_fold_widths(
         &mut self,
-        widths: HashMap<FoldId, Pixels>,
+        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);

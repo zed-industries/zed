@@ -15047,7 +15047,7 @@ impl Editor {
 
     pub fn update_fold_widths(
         &mut self,
-        widths: HashMap<FoldId, Pixels>,
+        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
         self.display_map
