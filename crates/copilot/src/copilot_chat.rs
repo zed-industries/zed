@@ -131,6 +131,31 @@ pub struct Request {
     pub temperature: f32,
     pub model: Model,
     pub messages: Vec<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Function {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Tool {
+    Function { function: Function },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolChoice {
+    Auto,
+    Any,
+    Tool { name: String },
 }
 
 impl Request {
@@ -142,14 +167,28 @@ impl Request {
             temperature: 0.1,
             model,
             messages,
+            tools: Vec::new(),
+            tool_choice: None,
         }
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ChatMessage {
-    pub role: Role,
-    pub content: String,
+#[serde(tag = "role", rename_all = "lowercase")]
+pub enum ChatMessage {
+    Assistant {
+        content: String,
+    },
+    User {
+        content: String,
+    },
+    System {
+        content: String,
+    },
+    Tool {
+        content: String,
+        tool_call_id: String,
+    },
 }
 
 #[derive(Deserialize, Debug)]
@@ -172,6 +211,21 @@ pub struct ResponseChoice {
 pub struct ResponseDelta {
     pub content: Option<String>,
     pub role: Option<Role>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallChunk>,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCallChunk {
+    pub id: String,
+    pub index: usize,
+    pub function: FunctionChunk,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionChunk {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Deserialize)]

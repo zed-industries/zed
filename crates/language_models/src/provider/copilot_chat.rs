@@ -1,14 +1,15 @@
+use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use copilot::copilot_chat::{
     ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
-    Role as CopilotChatRole,
+    ResponseEvent, Tool,
 };
 use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
-use futures::{FutureExt, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
     Transformation, percentage, svg,
@@ -16,7 +17,8 @@ use gpui::{
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -245,72 +247,137 @@ impl LanguageModel for CopilotChatLanguageModel {
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(async move |cx| {
-            let response = CopilotChat::stream_completion(copilot_request, cx.clone());
-            request_limiter.stream(async move {
-                let response = response.await?;
-                let stream = response
-                    .filter_map(move |response| async move {
-                        match response {
-                            Ok(result) => {
-                                let choice = result.choices.first();
-                                match choice {
-                                    Some(choice) if !is_streaming => {
-                                        match &choice.message {
-                                            Some(msg) => Some(Ok(msg.content.clone().unwrap_or_default())),
-                                            None => Some(Err(anyhow::anyhow!(
-                                                "The Copilot Chat API returned a response with no message content"
-                                            ))),
-                                        }
-                                    },
-                                    Some(choice) => {
-                                        match &choice.delta {
-                                            Some(delta) => Some(Ok(delta.content.clone().unwrap_or_default())),
-                                            None => Some(Err(anyhow::anyhow!(
-                                                "The Copilot Chat API returned a response with no delta content"
-                                            ))),
-                                        }
-                                    },
-                                    None => Some(Err(anyhow::anyhow!(
-                                        "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."
-                                    ))),
-                                }
-                            }
-                            Err(err) => Some(Err(err)),
-                        }
-                    })
-                    .boxed();
-
-                Ok(stream)
-            }).await
+            let request = CopilotChat::stream_completion(copilot_request, cx.clone());
+            request_limiter
+                .stream(async move {
+                    let response = request.await?;
+                    Ok(map_to_language_model_completion_events(
+                        response,
+                        is_streaming,
+                    ))
+                })
+                .await
         });
-
-        async move {
-            Ok(future
-                .await?
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                .boxed())
-        }
-        .boxed()
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
+}
+
+pub fn map_to_language_model_completion_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
+    is_streaming: bool,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
+        // tool_uses_by_index: HashMap<usize, RawToolUse>,
+        // usage: Usage,
+        // stop_reason: StopReason,
+    }
+
+    futures::stream::unfold(State { events }, move |mut state| async move {
+        if let Some(event) = state.events.next().await {
+            match event {
+                Ok(result) => {
+                    let choice = result.choices.first();
+                    match choice {
+                        Some(choice) if !is_streaming => match &choice.message {
+                            Some(msg) => {
+                                let mut events = Vec::new();
+                                if let Some(content) = msg.content.clone() {
+                                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                                }
+                                events.extend(msg.tool_calls.iter().filter_map(|tool_use| {
+                                    Some(Ok(LanguageModelCompletionEvent::ToolUse(
+                                        LanguageModelToolUse {
+                                            id: tool_use.id.as_str().into(),
+                                            name: tool_use.function.name.clone().into(),
+                                            input: tool_use.function.arguments.clone().into(),
+                                        },
+                                    )))
+                                }));
+
+                                Some((events, state))
+                            }
+                            None => Some((vec![Err(anyhow::anyhow!("The Copilot Chat API returned a response with no message content"))], state)),
+                        },
+                        Some(choice) => match &choice.delta {
+                            Some(msg) => {
+                                let mut events = Vec::new();
+                                if let Some(content) = msg.content.clone() {
+                                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                                }
+                                events.extend(msg.tool_calls.iter().filter_map(|tool_use| {
+                                    Some(Ok(LanguageModelCompletionEvent::ToolUse(
+                                        LanguageModelToolUse {
+                                            id: tool_use.id.as_str().into(),
+                                            name: tool_use.function.name.clone().into(),
+                                            input: tool_use.function.arguments.clone().into(),
+                                        },
+                                    )))
+                                }));
+
+                                Some((events, state))
+                            }
+                            None => Some((vec![Err(anyhow::anyhow!("The Copilot Chat API returned a response with no message content"))], state)),
+                        },
+                        None => Some((vec![Err(anyhow::anyhow!("The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."))], state)),
+                    }
+                }
+                Err(err) => Some((vec![Err(err)], state)),
+            }
+        } else {
+            None
+        }
+    })
+    .flat_map(futures::stream::iter)
 }
 
 impl CopilotChatLanguageModel {
     pub fn to_copilot_chat_request(&self, request: LanguageModelRequest) -> CopilotChatRequest {
-        CopilotChatRequest::new(
-            self.model.clone(),
-            request
-                .messages
-                .into_iter()
-                .map(|msg| ChatMessage {
-                    role: match msg.role {
-                        Role::User => CopilotChatRole::User,
-                        Role::Assistant => CopilotChatRole::Assistant,
-                        Role::System => CopilotChatRole::System,
-                    },
-                    content: msg.string_contents(),
-                })
-                .collect(),
-        )
+        let model = self.model.clone();
+        let messages = request
+            .messages
+            .into_iter()
+            .flat_map(|message| {
+                message
+                    .content
+                    .into_iter()
+                    .filter_map(move |content| match content {
+                        MessageContent::Text(text) => Some(match message.role {
+                            Role::User => ChatMessage::User { content: text },
+                            Role::Assistant => ChatMessage::Assistant { content: text },
+                            Role::System => ChatMessage::System { content: text },
+                        }),
+                        MessageContent::Image(_) => None,
+                        MessageContent::ToolUse(_tool_use) => None,
+                        MessageContent::ToolResult(tool_result) => Some(ChatMessage::Tool {
+                            tool_call_id: tool_result.tool_use_id.to_string(),
+                            content: tool_result.content.to_string(),
+                        }),
+                    })
+            })
+            .collect();
+        let tools = request
+            .tools
+            .iter()
+            .map(|tool| Tool::Function {
+                function: copilot::copilot_chat::Function {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    parameters: tool.input_schema.clone(),
+                },
+            })
+            .collect();
+
+        CopilotChatRequest {
+            intent: true,
+            n: 1,
+            stream: model.uses_streaming(),
+            temperature: 0.1,
+            model,
+            messages,
+            tools,
+            tool_choice: None,
+        }
     }
 }
 
