@@ -3391,6 +3391,7 @@ impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_multi_lsp_query);
         client.add_entity_request_handler(Self::handle_restart_language_servers);
+        client.add_entity_request_handler(Self::handle_stop_language_servers);
         client.add_entity_request_handler(Self::handle_cancel_language_server_work);
         client.add_entity_message_handler(Self::handle_start_language_server);
         client.add_entity_message_handler(Self::handle_update_language_server);
@@ -7970,6 +7971,19 @@ impl LspStore {
         Ok(proto::Ack {})
     }
 
+    pub async fn handle_stop_language_servers(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::StopLanguageServers>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        this.update(&mut cx, |this, cx| {
+            let buffers = this.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
+            this.stop_language_servers_for_buffers(buffers, cx);
+        })?;
+
+        Ok(proto::Ack {})
+    }
+
     pub async fn handle_cancel_language_server_work(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::CancelLanguageServerWork>,
@@ -8352,6 +8366,7 @@ impl LspStore {
         self.buffer_store.update(cx, |buffer_store, cx| {
             for buffer in buffer_store.buffers() {
                 buffer.update(cx, |buffer, cx| {
+                    // TODO kb clean inlays
                     buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
                     buffer.set_completion_triggers(server_id, Default::default(), cx);
                 });
@@ -8418,34 +8433,9 @@ impl LspStore {
             });
             cx.background_spawn(request).detach_and_log_err(cx);
         } else {
-            let Some(local) = self.as_local_mut() else {
-                return;
-            };
-            let language_servers_to_stop = buffers
-                .iter()
-                .flat_map(|buffer| {
-                    buffer.update(cx, |buffer, cx| {
-                        local.language_server_ids_for_buffer(buffer, cx)
-                    })
-                })
-                .collect::<BTreeSet<_>>();
-            local.lsp_tree.update(cx, |this, _| {
-                this.remove_nodes(&language_servers_to_stop);
-            });
-            let tasks = language_servers_to_stop
-                .into_iter()
-                .map(|server| {
-                    let name = self
-                        .language_server_statuses
-                        .get(&server)
-                        .map(|state| state.name.as_str().into())
-                        .unwrap_or_else(|| LanguageServerName::from("Unknown"));
-                    self.stop_local_language_server(server, name, cx)
-                })
-                .collect::<Vec<_>>();
-
+            let stop_task = self.stop_local_language_servers_for_buffers(&buffers, cx);
             cx.spawn(async move |this, cx| {
-                cx.background_spawn(futures::future::join_all(tasks)).await;
+                stop_task.await;
                 this.update(cx, |this, cx| {
                     for buffer in buffers {
                         this.register_buffer_with_language_servers(&buffer, true, cx);
@@ -8455,6 +8445,60 @@ impl LspStore {
             })
             .detach();
         }
+    }
+
+    pub fn stop_language_servers_for_buffers(
+        &mut self,
+        buffers: Vec<Entity<Buffer>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((client, project_id)) = self.upstream_client() {
+            let request = client.request(proto::StopLanguageServers {
+                project_id,
+                buffer_ids: buffers
+                    .into_iter()
+                    .map(|b| b.read(cx).remote_id().to_proto())
+                    .collect(),
+            });
+            cx.background_spawn(request).detach_and_log_err(cx);
+        } else {
+            self.stop_local_language_servers_for_buffers(&buffers, cx)
+                .detach();
+        }
+    }
+
+    fn stop_local_language_servers_for_buffers(
+        &mut self,
+        buffers: &[Entity<Buffer>],
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let Some(local) = self.as_local_mut() else {
+            return Task::ready(());
+        };
+        let language_servers_to_stop = buffers
+            .iter()
+            .flat_map(|buffer| {
+                buffer.update(cx, |buffer, cx| {
+                    local.language_server_ids_for_buffer(buffer, cx)
+                })
+            })
+            .collect::<BTreeSet<_>>();
+        local.lsp_tree.update(cx, |this, _| {
+            this.remove_nodes(&language_servers_to_stop);
+        });
+        let tasks = language_servers_to_stop
+            .into_iter()
+            .map(|server| {
+                let name = self
+                    .language_server_statuses
+                    .get(&server)
+                    .map(|state| state.name.as_str().into())
+                    .unwrap_or_else(|| LanguageServerName::from("Unknown"));
+                self.stop_local_language_server(server, name, cx)
+            })
+            .collect::<Vec<_>>();
+
+        cx.background_spawn(futures::future::join_all(tasks).map(|_| ()))
     }
 
     fn get_buffer<'a>(&self, abs_path: &Path, cx: &'a App) -> Option<&'a Buffer> {

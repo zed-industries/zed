@@ -356,6 +356,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::MultiLspQuery>)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
+            .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
