@@ -665,6 +665,7 @@ pub struct Editor {
     /// Map of how text in the buffer should be displayed.
     /// Handles soft wraps, folds, fake inlay text insertions, etc.
     pub display_map: Entity<DisplayMap>,
+    pub display_snapshot: Option<DisplaySnapshot>,
     pub selections: SelectionsCollection,
     pub scroll_manager: ScrollManager,
     /// When inline assist editors are linked, they all render cursors because
@@ -1439,6 +1440,7 @@ impl Editor {
             last_focused_descendant: None,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
+            display_snapshot: None,
             selections,
             scroll_manager: ScrollManager::new(cx),
             columnar_selection_tail: None,
@@ -1941,7 +1943,10 @@ impl Editor {
             show_runnables: self.show_runnables,
             show_breakpoints: self.show_breakpoints,
             git_blame_gutter_max_author_length,
-            display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
+            display_snapshot: self
+                .display_snapshot
+                .clone()
+                .unwrap_or_else(|| self.display_map.update(cx, |map, cx| map.snapshot(cx))),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
@@ -1951,6 +1956,11 @@ impl Editor {
                 .unwrap_or_else(|| EditorSettings::get_global(cx).current_line_highlight),
             gutter_hovered: self.gutter_hovered,
         }
+    }
+
+    pub fn with_cached_snapshot(mut self, snapshot: DisplaySnapshot) -> Self {
+        self.display_snapshot = Some(snapshot);
+        self
     }
 
     pub fn language_at<T: ToOffset>(&self, point: T, cx: &App) -> Option<Arc<Language>> {
