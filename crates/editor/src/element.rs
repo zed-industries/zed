@@ -56,6 +56,7 @@ use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
     MultiBufferRow, RowInfo,
 };
+use ordered_float::Float;
 use project::{
     debugger::breakpoint_store::Breakpoint,
     project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
@@ -1451,14 +1452,14 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
         snapshot: &EditorSnapshot,
-        num_lines: f32,
+        max_scroll_top: f32,
+        editor_scroll_top: f32,
+        editor_height_in_lines: f32,
         minimap_width: Pixels,
         minimap_wrap_width: Pixels,
         minimap_settings: &Minimap,
         bounds: Bounds<Pixels>,
         scrollbars_layout: Option<&EditorScrollbars>,
-        line_height: Pixels,
-        visible_range: Range<DisplayRow>,
     ) -> Option<MinimapLayout> {
         if !Self::should_show_minimap(snapshot, minimap_settings, scrollbars_layout) {
             return None;
@@ -1501,27 +1502,16 @@ impl EditorElement {
         let minimap_line_height = self.get_minimap_line_height(window, &minimap_settings, cx);
         let minimap_height = minimap_bounds.size.height;
 
-        let editor_scroll_top = visible_range.start.0 as f32;
-        let editor_viewport_height = bounds.size.height;
-        let editor_visible_lines = editor_viewport_height / line_height;
-
-        let thumb_height = editor_visible_lines * minimap_line_height;
-
-        // The actual maximum scroll_top we allow. Ensures the thumb doesn't go past the last line.
-        let max_scroll_top = num_lines - 1.;
+        let thumb_height = editor_height_in_lines * minimap_line_height;
 
         // The total line height of the contents of the minimap. This ensures we can overscroll the contents until only the
         // last line is visible, matching the behavior of the main editor.
-        let minimap_contents_full_height = max_scroll_top + editor_visible_lines;
+        // let minimap_contents_full_height = max_scroll_top + editor_height_in_lines;
 
         // Clamp the thumb to the bounds of the minimap, or the height of the minimap contents, whichever is smaller.
-        let thumb_top_max = px(f32::max(
-            0.,
-            f32::min(
-                minimap_height.0,
-                minimap_contents_full_height * minimap_line_height.0,
-            ) - thumb_height.0,
-        ));
+        let thumb_top_max = px(
+            (0.).max(minimap_height.0.min(max_scroll_top * minimap_line_height.0) - thumb_height.0)
+        );
         show_thumb &= thumb_top_max.0 > 0.;
         let minimap_progress_pct = (editor_scroll_top / max_scroll_top).clamp(0., 1.);
         let thumb_top = minimap_progress_pct * thumb_top_max;
@@ -1534,7 +1524,7 @@ impl EditorElement {
         );
 
         editor_entity.update(cx, |editor, cx| {
-            editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
+            editor.set_scroll_position(point(0., minimap_scroll_top), window, cx);
         });
 
         let mut minimap_elem = editor_entity.update(cx, |editor, cx| {
@@ -1552,7 +1542,6 @@ impl EditorElement {
             minimap_line_height,
             minimap_scroll_top,
             max_scroll_top,
-            contents_full_height: minimap_contents_full_height,
         })
     }
 
@@ -1582,7 +1571,7 @@ impl EditorElement {
     }
 
     fn get_minimap_width(minimap_wrap_width: Pixels, minimap_settings: &Minimap) -> Pixels {
-        px(f32::min(minimap_wrap_width.0, minimap_settings.width))
+        px(minimap_wrap_width.0.min(minimap_settings.width))
     }
 
     fn get_minimap_wrap_width(
@@ -1603,6 +1592,27 @@ impl EditorElement {
         let mut text_style = self.style.text.clone();
         text_style.font_size = px(minimap_settings.font_size).into();
         text_style.line_height_in_pixels(rem_size)
+    }
+
+    fn get_max_scroll_top(
+        snapshot: &EditorSnapshot,
+        max_row: f32,
+        height_in_lines: f32,
+        cx: &App,
+    ) -> f32 {
+        // The max scroll position for the top of the window
+        if matches!(snapshot.mode, EditorMode::AutoHeight { .. }) {
+            (max_row - height_in_lines + 1.).max(0.)
+        } else {
+            let settings = EditorSettings::get_global(cx);
+            match settings.scroll_beyond_last_line {
+                ScrollBeyondLastLine::OnePage => max_row,
+                ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.).max(0.),
+                ScrollBeyondLastLine::VerticalScrollMargin => {
+                    (max_row - height_in_lines + 1. + settings.vertical_scroll_margin).max(0.)
+                }
+            }
+        }
     }
 
     fn prepaint_crease_toggles(
@@ -5529,19 +5539,19 @@ impl EditorElement {
                         {
                             let y = mouse_position.y;
                             if (minimap_hitbox.top()..minimap_hitbox.bottom()).contains(&y) {
-                                let mut position = editor.scroll_position(cx);
-
-                                let thumb_top = f32::max(
+                                let thumb_top = (0.).max(
                                     event.position.y.0
                                         - minimap_hitbox.bounds.origin.y.0
                                         - (thumb_hitbox.bounds.size.height.0 / 2.),
-                                    0.,
                                 );
                                 let pct_progress = thumb_top
                                     / (minimap_hitbox.bounds.size.height.0
                                         - thumb_hitbox.bounds.size.height.0);
-                                position.y = pct_progress * layout.contents_full_height;
-                                editor.set_scroll_position(position, window, cx);
+                                editor.set_scroll_top_row(
+                                    DisplayRow((pct_progress * layout.max_scroll_top) as u32),
+                                    window,
+                                    cx,
+                                );
                             }
 
                             cx.stop_propagation();
@@ -5585,15 +5595,19 @@ impl EditorElement {
                         editor.update(cx, |editor, cx| {
                             editor.scroll_manager.set_is_dragging_minimap(true, cx);
 
-                            let mut position = editor.scroll_position(cx);
-
                             let thumb_top = event.position.y
                                 - minimap_hitbox.bounds.origin.y
                                 - (thumb_hitbox.bounds.size.height / 2.);
-                            position.y = (layout.minimap_scroll_top
-                                + (thumb_top.0 / layout.minimap_line_height.0))
-                                .clamp(0., layout.max_scroll_top);
-                            editor.set_scroll_position(position, window, cx);
+                            editor.set_scroll_top_row(
+                                DisplayRow(
+                                    (layout.minimap_scroll_top
+                                        + (thumb_top.0 / layout.minimap_line_height.0))
+                                        .clamp(0., layout.max_scroll_top)
+                                        as u32,
+                                ),
+                                window,
+                                cx,
+                            );
                             cx.stop_propagation();
                         });
                     }
@@ -6969,20 +6983,9 @@ impl Element for EditorElement {
 
                     let max_row = snapshot.max_point().row().as_f32();
 
-                    // The max scroll position for the top of the window
-                    let max_scroll_top = if matches!(snapshot.mode, EditorMode::AutoHeight { .. }) {
-                        (max_row - height_in_lines + 1.).max(0.)
-                    } else {
-                        let settings = EditorSettings::get_global(cx);
-                        match settings.scroll_beyond_last_line {
-                            ScrollBeyondLastLine::OnePage => max_row,
-                            ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.).max(0.),
-                            ScrollBeyondLastLine::VerticalScrollMargin => {
-                                (max_row - height_in_lines + 1. + settings.vertical_scroll_margin)
-                                    .max(0.)
-                            }
-                        }
-                    };
+                    // TODO: max_scroll_top
+                    let max_scroll_top =
+                        Self::get_max_scroll_top(&snapshot, max_row, height_in_lines, cx);
 
                     // TODO: Autoscrolling for both axes
                     let mut autoscroll_request = None;
@@ -7766,14 +7769,14 @@ impl Element for EditorElement {
                             window,
                             cx,
                             &snapshot,
-                            max_row.as_f32(),
+                            max_scroll_top,
+                            scroll_position.y,
+                            height_in_lines,
                             minimap_width,
                             minimap_wrap_width,
                             &minimap_settings,
                             bounds,
                             scrollbars_layout.as_ref(),
-                            line_height,
-                            start_row..end_row,
                         )
                     });
 
@@ -8355,7 +8358,6 @@ struct MinimapLayout {
     pub minimap_line_height: Pixels,
     pub show_thumb: bool,
     pub max_scroll_top: f32,
-    pub contents_full_height: f32,
 }
 
 struct CreaseTrailerLayout {
