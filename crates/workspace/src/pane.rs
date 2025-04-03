@@ -2298,8 +2298,7 @@ impl Pane {
             .on_click(cx.listener(move |pane: &mut Self, _, window, cx| {
                 pane.activate_item(ix, true, true, window, cx)
             }))
-            // TODO: This should be a click listener with the middle mouse button instead of a mouse down listener.
-            .on_mouse_down(
+            .on_button_click(
                 MouseButton::Middle,
                 cx.listener(move |pane, _event, window, cx| {
                     pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
@@ -3154,11 +3153,12 @@ impl Render for Pane {
         let should_display_tab_bar = self.should_display_tab_bar.clone();
         let display_tab_bar = should_display_tab_bar(window, cx);
         let Some(project) = self.project.upgrade() else {
-            return div().track_focus(&self.focus_handle(cx));
+            return div().id("pane").track_focus(&self.focus_handle(cx));
         };
         let is_local = project.read(cx).is_local();
 
         v_flex()
+            .id("pane")
             .key_context(key_context)
             .track_focus(&self.focus_handle(cx))
             .size_full()
@@ -3400,7 +3400,7 @@ impl Render for Pane {
                             }),
                     )
             })
-            .on_mouse_down(
+            .on_button_click(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|pane, _, window, cx| {
                     if let Some(workspace) = pane.workspace.upgrade() {
@@ -3413,7 +3413,7 @@ impl Render for Pane {
                     }
                 }),
             )
-            .on_mouse_down(
+            .on_button_click(
                 MouseButton::Navigate(NavigationDirection::Forward),
                 cx.listener(|pane, _, window, cx| {
                     if let Some(workspace) = pane.workspace.upgrade() {
