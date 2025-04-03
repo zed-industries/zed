@@ -1449,7 +1449,8 @@ impl ActiveThread {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_last_message = self.messages.last() == Some(&message_id);
-        let pending_thinking_segment_index = if is_last_message && !has_tool_uses {
+        let is_generating = self.thread.read(cx).is_generating();
+        let pending_thinking_segment_index = if is_generating && is_last_message && !has_tool_uses {
             rendered_message
                 .segments
                 .iter()
