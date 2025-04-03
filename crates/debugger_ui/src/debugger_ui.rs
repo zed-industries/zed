@@ -15,7 +15,7 @@ mod new_session_modal;
 pub(crate) mod session;
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 pub fn init(cx: &mut App) {
     DebuggerSettings::register(cx);

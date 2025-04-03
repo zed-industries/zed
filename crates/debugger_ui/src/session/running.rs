@@ -221,35 +221,30 @@ impl RunningState {
         self.session_id
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn set_thread_item(&mut self, thread_item: ThreadItem, cx: &mut Context<Self>) {
         self.active_thread_item = thread_item;
         cx.notify()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn stack_frame_list(&self) -> &Entity<StackFrameList> {
         &self.stack_frame_list
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn console(&self) -> &Entity<Console> {
         &self.console
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn module_list(&self) -> &Entity<ModuleList> {
+    #[cfg(test)]
+    pub(crate) fn module_list(&self) -> &Entity<ModuleList> {
         &self.module_list
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn variable_list(&self) -> &Entity<VariableList> {
+    #[cfg(test)]
+    pub(crate) fn variable_list(&self) -> &Entity<VariableList> {
         &self.variable_list
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn are_breakpoints_ignored(&self, cx: &App) -> bool {
-        self.session.read(cx).ignore_breakpoints()
     }
 
     pub fn capabilities(&self, cx: &App) -> Capabilities {
@@ -275,8 +270,8 @@ impl RunningState {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn selected_thread_id(&self) -> Option<ThreadId> {
+    #[cfg(test)]
+    pub(crate) fn selected_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
 
