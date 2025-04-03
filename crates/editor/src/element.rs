@@ -2750,7 +2750,7 @@ impl EditorElement {
         };
 
         if let BlockId::Custom(custom_block_id) = block_id {
-            if block.height() > 0 {
+            if block.has_height() {
                 let element_height_in_lines =
                     ((final_size.height / line_height).ceil() as u32).max(1);
                 if element_height_in_lines != block.height() {
@@ -8604,7 +8604,7 @@ mod tests {
                     [BlockProperties {
                         style: BlockStyle::Fixed,
                         placement: BlockPlacement::Above(Anchor::min()),
-                        height: 3,
+                        height: Some(3),
                         render: Arc::new(|cx| div().h(3. * cx.window.line_height()).into_any()),
                         priority: 0,
                     }],
