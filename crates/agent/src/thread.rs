@@ -35,7 +35,7 @@ use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse,
 };
-use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState};
+use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState, USING_TOOL_MARKER};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -85,6 +85,12 @@ pub struct Message {
 }
 
 impl Message {
+    /// Returns whether the message contains any meaningful text that should be displayed
+    /// The model sometimes runs tool without producing any text or just a marker ([`USING_TOOL_MARKER`])
+    pub fn should_display_content(&self) -> bool {
+        self.segments.iter().all(|segment| segment.should_display())
+    }
+
     pub fn push_thinking(&mut self, text: &str) {
         if let Some(MessageSegment::Thinking(segment)) = self.segments.last_mut() {
             segment.push_str(text);
@@ -129,6 +135,16 @@ impl MessageSegment {
         match self {
             Self::Text(text) => text,
             Self::Thinking(text) => text,
+        }
+    }
+
+    pub fn should_display(&self) -> bool {
+        // We add USING_TOOL_MARKER when making a request that includes tool uses
+        // without non-whitespace text around them, and this can cause the model
+        // to mimic the pattern, so we consider those segments not displayable.
+        match self {
+            Self::Text(text) => text.is_empty() || text.trim() == USING_TOOL_MARKER,
+            Self::Thinking(text) => text.is_empty() || text.trim() == USING_TOOL_MARKER,
         }
     }
 }
@@ -1083,32 +1099,15 @@ impl Thread {
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                let last_assistant_message = thread
+                                let last_assistant_message_id = thread
                                     .messages
                                     .iter_mut()
-                                    .rfind(|message| message.role == Role::Assistant);
+                                    .rfind(|message| message.role == Role::Assistant)
+                                    .map(|message| message.id)
+                                    .unwrap_or_else(|| {
+                                        thread.insert_message(Role::Assistant, vec![], cx)
+                                    });
 
-                                let last_assistant_message_id =
-                                    if let Some(message) = last_assistant_message {
-                                        if let Some(segment) = message.segments.first_mut() {
-                                            let text = segment.text_mut();
-                                            if text.is_empty() {
-                                                text.push_str("Using tool...");
-                                            }
-                                        } else {
-                                            message.segments.push(MessageSegment::Text(
-                                                "Using tool...".to_string(),
-                                            ));
-                                        }
-
-                                        message.id
-                                    } else {
-                                        thread.insert_message(
-                                            Role::Assistant,
-                                            vec![MessageSegment::Text("Using tool...".to_string())],
-                                            cx,
-                                        )
-                                    };
                                 thread.tool_use.request_tool_use(
                                     last_assistant_message_id,
                                     tool_use,
