@@ -57,7 +57,7 @@ impl ImageCache {
     }
 
     /// Create a new image cache with a maximum number of items.
-    pub fn max_items(cx: &mut App, max_items: usize) -> Self {
+    pub fn max_items(max_items: usize, cx: &mut App) -> Self {
         ImageCache(Rc::new(ImageCacheInner {
             app: cx.to_async(),
             images: RefCell::new(LruCache::unbounded()),
