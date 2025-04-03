@@ -1360,7 +1360,7 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
 }
 
 #[gpui::test]
-async fn test_setting_focus_skip_active_file_false_and_select_active_file(cx: &mut TestAppContext) {
+async fn test_setting_auto_select_first_and_select_active_file(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
@@ -1368,7 +1368,7 @@ async fn test_setting_focus_skip_active_file_false_and_select_active_file(cx: &m
 
         FileFinderSettings::override_global(
             FileFinderSettings {
-                focus_skip_active_file: false,
+                auto_select: FileFinderAutoSelect::First,
                 ..settings
             },
             cx,
