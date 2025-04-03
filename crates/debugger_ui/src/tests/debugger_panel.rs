@@ -1447,7 +1447,7 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
         })
         .await;
 
-    cx.dispatch_action(workspace::ClearAllBreakpoints);
+    cx.dispatch_action(crate::ClearAllBreakpoints);
     cx.run_until_parked();
 
     let shutdown_session = project.update(cx, |project, cx| {
