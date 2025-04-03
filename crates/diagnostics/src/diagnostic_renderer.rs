@@ -5,200 +5,31 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use collections::HashMap;
 use editor::{
     Anchor, Bias, Direction, DisplayPoint, Editor, EditorElement, EditorSnapshot, EditorStyle,
-    MultiBuffer, MultiBufferSnapshot,
-    actions::{Cancel, GoToDiagnostic},
+    MultiBuffer,
+    actions::Cancel,
     diagnostic_style,
-    display_map::{
-        BlockContext, BlockPlacement, BlockProperties, BlockStyle, DisplayRow, RenderBlock,
-    },
+    display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, RenderBlock},
     scroll::Autoscroll,
 };
 use gpui::{
     AppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Entity, FontWeight,
-    HighlightStyle, Size, StyledText, Task, TextStyle, TextStyleRefinement, WeakEntity, size,
+    HighlightStyle, StyledText, Task, TextStyle, TextStyleRefinement, WeakEntity, size,
 };
-use gpui::{Hsla, Refineable};
 use indoc;
-use language::{Buffer, BufferId, Diagnostic, DiagnosticEntry, DiagnosticSet, Point, PointUtf16};
+use language::{Buffer, BufferId, Diagnostic, DiagnosticEntry, DiagnosticSet, PointUtf16};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
-use theme::{StatusColors, ThemeSettings};
+use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, ButtonSize, ButtonStyle, Clickable, Color,
-    ComponentPreview, Context, DefiniteLength, Element, FluentBuilder, IconButton, IconName,
-    InteractiveElement, IntoComponent, IntoElement, ParentElement, Pixels, SharedString,
-    StatefulInteractiveElement, Styled, Tooltip, VisibleOnHover, VisualContext, Window, div,
-    h_flex, px, relative, v_flex,
+    ComponentPreview, Context, FluentBuilder, IconButton, IconName, InteractiveElement,
+    IntoComponent, IntoElement, ParentElement, Pixels, SharedString, StatefulInteractiveElement,
+    Styled, Tooltip, VisibleOnHover, VisualContext, Window, div, h_flex, px, relative, v_flex,
 };
 use util::{ResultExt, maybe};
-
-pub fn diagnostic_block_renderer(
-    diagnostic: Diagnostic,
-    max_message_rows: Option<u8>,
-    allow_closing: bool,
-) -> RenderBlock {
-    let (text_without_backticks, code_ranges) =
-        highlight_diagnostic_message(&diagnostic, max_message_rows);
-
-    Arc::new(move |cx: &mut BlockContext| {
-        let group_id: SharedString = cx.block_id.to_string().into();
-
-        let mut text_style = cx.window.text_style().clone();
-        text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
-        let theme_settings = ThemeSettings::get_global(cx);
-        text_style.font_family = theme_settings.buffer_font.family.clone();
-        text_style.font_style = theme_settings.buffer_font.style;
-        text_style.font_features = theme_settings.buffer_font.features.clone();
-        text_style.font_weight = theme_settings.buffer_font.weight;
-
-        let multi_line_diagnostic = diagnostic.message.contains('\n');
-
-        let buttons = |diagnostic: &Diagnostic| {
-            if multi_line_diagnostic {
-                v_flex()
-            } else {
-                h_flex()
-            }
-            .when(allow_closing, |div| {
-                div.children(diagnostic.is_primary.then(|| {
-                    IconButton::new("close-block", IconName::XCircle)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::Compact)
-                        .style(ButtonStyle::Transparent)
-                        .visible_on_hover(group_id.clone())
-                        .on_click(move |_click, window, cx| {
-                            window.dispatch_action(Box::new(Cancel), cx)
-                        })
-                        .tooltip(|window, cx| {
-                            Tooltip::for_action("Close Diagnostics", &Cancel, window, cx)
-                        })
-                }))
-            })
-            .child(
-                IconButton::new("copy-block", IconName::Copy)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Transparent)
-                    .visible_on_hover(group_id.clone())
-                    .on_click({
-                        let message = diagnostic.message.clone();
-                        move |_click, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
-                        }
-                    })
-                    .tooltip(Tooltip::text("Copy diagnostic message")),
-            )
-        };
-
-        let icon_size = buttons(&diagnostic).into_any_element().layout_as_root(
-            AvailableSpace::min_size(),
-            cx.window,
-            cx.app,
-        );
-
-        h_flex()
-            .id(cx.block_id)
-            .group(group_id.clone())
-            .relative()
-            .size_full()
-            .block_mouse_down()
-            .pl(cx.gutter_dimensions.width)
-            .w(cx.max_width - cx.gutter_dimensions.full_width())
-            .child(
-                div()
-                    .flex()
-                    .w(cx.anchor_x - cx.gutter_dimensions.width - icon_size.width)
-                    .flex_shrink(),
-            )
-            .child(buttons(&diagnostic))
-            .child(div().flex().flex_shrink_0().child(
-                StyledText::new(text_without_backticks.clone()).with_default_highlights(
-                    &text_style,
-                    code_ranges.iter().map(|range| {
-                        (
-                            range.clone(),
-                            HighlightStyle {
-                                font_weight: Some(FontWeight::BOLD),
-                                ..Default::default()
-                            },
-                        )
-                    }),
-                ),
-            ))
-            .into_any_element()
-    })
-}
-
-pub fn highlight_diagnostic_message(
-    diagnostic: &Diagnostic,
-    mut max_message_rows: Option<u8>,
-) -> (SharedString, Vec<Range<usize>>) {
-    let mut text_without_backticks = String::new();
-    let mut code_ranges = Vec::new();
-
-    if let Some(source) = &diagnostic.source {
-        text_without_backticks.push_str(source);
-        code_ranges.push(0..source.len());
-        text_without_backticks.push_str(": ");
-    }
-
-    let mut prev_offset = 0;
-    let mut in_code_block = false;
-    let has_row_limit = max_message_rows.is_some();
-    let mut newline_indices = diagnostic
-        .message
-        .match_indices('\n')
-        .filter(|_| has_row_limit)
-        .map(|(ix, _)| ix)
-        .fuse()
-        .peekable();
-
-    for (quote_ix, _) in diagnostic
-        .message
-        .match_indices('`')
-        .chain([(diagnostic.message.len(), "")])
-    {
-        let mut first_newline_ix = None;
-        let mut last_newline_ix = None;
-        while let Some(newline_ix) = newline_indices.peek() {
-            if *newline_ix < quote_ix {
-                if first_newline_ix.is_none() {
-                    first_newline_ix = Some(*newline_ix);
-                }
-                last_newline_ix = Some(*newline_ix);
-
-                if let Some(rows_left) = &mut max_message_rows {
-                    if *rows_left == 0 {
-                        break;
-                    } else {
-                        *rows_left -= 1;
-                    }
-                }
-                let _ = newline_indices.next();
-            } else {
-                break;
-            }
-        }
-        let prev_len = text_without_backticks.len();
-        let new_text = &diagnostic.message[prev_offset..first_newline_ix.unwrap_or(quote_ix)];
-        text_without_backticks.push_str(new_text);
-        if in_code_block {
-            code_ranges.push(prev_len..text_without_backticks.len());
-        }
-        prev_offset = last_newline_ix.unwrap_or(quote_ix) + 1;
-        in_code_block = !in_code_block;
-        if first_newline_ix.map_or(false, |newline_ix| newline_ix < quote_ix) {
-            text_without_backticks.push_str("...");
-            break;
-        }
-    }
-
-    (text_without_backticks.into(), code_ranges)
-}
 
 fn escape_markdown<'a>(s: &'a str) -> Cow<'a, str> {
     if s.chars().any(|c| c.is_ascii_punctuation()) {
@@ -366,12 +197,10 @@ impl DiagnosticRenderer {
     ) -> Result<BlockProperties<Anchor>> {
         let mut editor_line_height = px(0.);
         let mut text_style = None;
-        let markdown = cx.new_window_entity(|window, cx| {
+        let markdown = cx.new(|cx| {
             let settings = ThemeSettings::get_global(cx);
-            dbg!(settings.line_height());
             let settings = ThemeSettings::get_global(cx);
             editor_line_height = (settings.line_height() * settings.buffer_font_size(cx)).round();
-            dbg!(editor_line_height);
             text_style.replace(TextStyleRefinement {
                 font_family: Some(settings.ui_font.family.clone()),
                 font_fallbacks: settings.ui_font.fallbacks.clone(),
@@ -406,11 +235,10 @@ impl DiagnosticRenderer {
         })?;
 
         markdown
-            .update(cx, |parsed, cx| parsed.when_parsing_complete())?
+            .update(cx, |parsed, _| parsed.when_parsing_complete())?
             .await
             .ok();
         let measured = cx.update(|window, cx| {
-            dbg!("MEASURING...");
             let mut d = div()
                 .max_w(px(600.))
                 .border_l_2()
@@ -423,24 +251,19 @@ impl DiagnosticRenderer {
                 cx,
             )
         })?;
-        dbg!("MEASURED...", &measured);
         let block = DiagnosticBlock {
             severity,
             id,
             markdown,
         };
 
-        dbg!(measured.height, editor_line_height);
         let lines = ((measured.height - px(1.)) / editor_line_height).ceil();
         let lines = lines.min(4.);
-
-        let true_size = size(measured.width + px(4.), editor_line_height * lines);
 
         Ok(BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Below(position),
-            // todo!()
-            height: lines as u32,
+            height: 4,
             render: Arc::new(move |bcx| block.render_block(measured.width + px(4.), lines, bcx)),
             priority: 0,
         })

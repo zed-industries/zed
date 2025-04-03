@@ -7,10 +7,10 @@ mod diagnostic_renderer;
 mod diagnostics_tests;
 
 use anyhow::Result;
-use collections::{BTreeSet, HashSet};
-use diagnostic_renderer::highlight_diagnostic_message;
+use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
-    DiagnosticRenderer, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
+    DiagnosticRenderer, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
+    RangeToAnchorExt, ToOffset,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
     scroll::Autoscroll,
 };
@@ -21,7 +21,7 @@ use gpui::{
 };
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
-    Point, Selection, SelectionGoal, ToTreeSitterPoint,
+    OffsetRangeExt, Point, Selection, SelectionGoal, ToTreeSitterPoint,
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath, project_settings::ProjectSettings};
@@ -381,9 +381,53 @@ impl ProjectDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        Task::ready(Ok(()))
         // let was_empty = self.path_states.is_empty();
-        // let snapshot = buffer.read(cx).snapshot();
+        let snapshot = buffer.read(cx).snapshot();
+        let editor = self.editor.downgrade();
+        let editor_snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
+        cx.spawn(async move |this, cx| {
+            let diagnostics = editor_snapshot
+                .buffer_snapshot
+                .diagnostics_in_range(Point::zero()..editor_snapshot.buffer_snapshot.max_point());
+            let mut groups = HashMap::default();
+            for entry in diagnostics {
+                groups
+                    .entry(entry.diagnostic.group_id)
+                    .or_insert(Vec::new())
+                    .push(entry);
+            }
+
+            for group in groups.values() {
+                let group = group
+                    .into_iter()
+                    .map(|entry| DiagnosticEntry {
+                        range: entry.range.to_display_points(&editor_snapshot),
+                        diagnostic: entry.diagnostic,
+                    })
+                    .collect();
+                let blocks = cx
+                    .update(|cx| {
+                        crate::diagnostic_renderer::DiagnosticRenderer.render_group(
+                            group,
+                            snapshot.remote_id(),
+                            editor_snapshot,
+                            editor.clone(),
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await;
+
+                self.excerpts.update(cx, |multi_buffer, cx| {
+                    multi_buffer.set_excerpts_for_path(path, buffer, ranges, context_line_count, cx)
+                })
+            }
+
+            Ok(())
+        })
+
         // let path_ix = match self
         //     .path_states
         //     .binary_search_by_key(&&path_to_update, |e| &e.path)
