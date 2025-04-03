@@ -1429,7 +1429,7 @@ impl ActiveThread {
                 .segments
                 .iter()
                 .enumerate()
-                .last()
+                .next_back()
                 .filter(|(_, segment)| matches!(segment, RenderedMessageSegment::Thinking { .. }))
                 .map(|(index, _)| index)
         } else {

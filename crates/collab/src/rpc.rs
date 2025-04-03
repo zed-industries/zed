@@ -984,7 +984,7 @@ impl Server {
         }
     }
 
-    pub async fn snapshot<'a>(self: &'a Arc<Self>) -> ServerSnapshot<'a> {
+    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot {
         ServerSnapshot {
             connection_pool: ConnectionPoolGuard {
                 guard: self.connection_pool.lock(),
