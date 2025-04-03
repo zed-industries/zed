@@ -14,7 +14,7 @@ use language_model::{
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
     RateLimiter, Role, StopReason,
 };
-use open_ai::{ResponseStreamEvent, stream_completion};
+use open_ai::{Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -324,7 +324,7 @@ impl LanguageModel for OpenAiLanguageModel {
         'static,
         Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
     > {
-        let request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
+        let request = into_open_ai(request, &self.model, self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
         async move { Ok(map_to_language_model_completion_events(completions.await?).boxed()) }
             .boxed()
@@ -333,10 +333,10 @@ impl LanguageModel for OpenAiLanguageModel {
 
 pub fn into_open_ai(
     request: LanguageModelRequest,
-    model: String,
+    model: &Model,
     max_output_tokens: Option<u32>,
 ) -> open_ai::Request {
-    let stream = !model.starts_with("o1-");
+    let stream = !model.id().starts_with("o1-");
 
     let mut messages = Vec::new();
     for message in request.messages {
@@ -389,12 +389,18 @@ pub fn into_open_ai(
     }
 
     open_ai::Request {
-        model,
+        model: model.id().into(),
         messages,
         stream,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
         max_tokens: max_output_tokens,
+        parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
+            // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
+            Some(false)
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()
