@@ -7,9 +7,9 @@ use anyhow::{Error, Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::{
-    ContentBlock as BedrockInnerContent, Tool as BedrockTool, ToolChoice as BedrockToolChoice,
-    ToolConfiguration as BedrockToolConfig, ToolInputSchema as BedrockToolInputSchema,
-    ToolSpecification as BedrockToolSpec, AutoToolChoice as BedrockAutoToolChoice
+    AutoToolChoice as BedrockAutoToolChoice, ContentBlock as BedrockInnerContent,
+    Tool as BedrockTool, ToolChoice as BedrockToolChoice, ToolConfiguration as BedrockToolConfig,
+    ToolInputSchema as BedrockToolInputSchema, ToolSpecification as BedrockToolSpec,
 };
 use aws_smithy_types::{Document, Number as AwsNumber};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
@@ -41,8 +41,8 @@ pub async fn stream_completion(
                 .set_tool_config(request.tool_choice);
 
             if let Some(Thinking::Enabled {
-                            budget_tokens: Some(budget_tokens),
-                        }) = request.thinking
+                budget_tokens: Some(budget_tokens),
+            }) = request.thinking
             {
                 response =
                     response.additional_model_request_fields(Document::Object(HashMap::from([(

@@ -13,7 +13,12 @@ use bedrock::bedrock_client::types::{
     ReasoningContentBlockDelta,
 };
 use bedrock::bedrock_client::{self, Config};
-use bedrock::{BedrockError, BedrockInnerContent, BedrockMessage, BedrockModelMode, BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock, BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document, BedrockAutoToolChoice};
+use bedrock::{
+    BedrockAutoToolChoice, BedrockError, BedrockInnerContent, BedrockMessage, BedrockModelMode,
+    BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolConfig,
+    BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock,
+    BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
+};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -531,22 +536,30 @@ pub fn into_bedrock(
         }
     }
 
-    let tool_spec: Vec<BedrockTool> = request.tools.iter().map(|tool| BedrockTool::ToolSpec(
-        BedrockToolSpec::builder()
-            .name(tool.name.clone())
-            .description(tool.description.clone())
-            .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
-                &tool.input_schema,
-            )))
-            .build()
-            .unwrap())).collect();
+    let tool_spec: Vec<BedrockTool> = request
+        .tools
+        .iter()
+        .map(|tool| {
+            BedrockTool::ToolSpec(
+                BedrockToolSpec::builder()
+                    .name(tool.name.clone())
+                    .description(tool.description.clone())
+                    .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
+                        &tool.input_schema,
+                    )))
+                    .build()
+                    .unwrap(),
+            )
+        })
+        .collect();
 
     let tool_config: BedrockToolConfig = BedrockToolConfig::builder()
         .set_tools(Some(tool_spec))
-        .tool_choice(BedrockToolChoice::Auto(BedrockAutoToolChoice::builder().build()))
+        .tool_choice(BedrockToolChoice::Auto(
+            BedrockAutoToolChoice::builder().build(),
+        ))
         .build()
         .unwrap();
-
 
     bedrock::Request {
         model,
@@ -747,8 +760,8 @@ pub fn map_to_language_model_completion_events(
                                                 }
 
                                                 Some(ContentBlockDelta::ReasoningContent(
-                                                         thinking,
-                                                     )) => match thinking {
+                                                    thinking,
+                                                )) => match thinking {
                                                     ReasoningContentBlockDelta::RedactedContent(
                                                         redacted,
                                                     ) => {
@@ -757,7 +770,7 @@ pub fn map_to_language_model_completion_events(
                                                                 String::from_utf8(
                                                                     redacted.into_inner(),
                                                                 )
-                                                                    .unwrap_or("REDACTED".to_string()),
+                                                                .unwrap_or("REDACTED".to_string()),
                                                             );
 
                                                         return Some((
@@ -765,7 +778,8 @@ pub fn map_to_language_model_completion_events(
                                                             state,
                                                         ));
                                                     }
-                                                    ReasoningContentBlockDelta::Signature(_sig) => {}
+                                                    ReasoningContentBlockDelta::Signature(_sig) => {
+                                                    }
                                                     ReasoningContentBlockDelta::Text(thoughts) => {
                                                         let thinking_event =
                                                             LanguageModelCompletionEvent::Thinking(
@@ -816,8 +830,8 @@ pub fn map_to_language_model_completion_events(
                                                         serde_json::Value::from_str(
                                                             &tool_use.input_json,
                                                         )
-                                                            .map_err(|err| anyhow!(err))
-                                                            .unwrap()
+                                                        .map_err(|err| anyhow!(err))
+                                                        .unwrap()
                                                     },
                                                 };
 
