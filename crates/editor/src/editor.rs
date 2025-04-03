@@ -358,7 +358,9 @@ pub trait DiagnosticRenderer {
     fn render_group(
         &self,
         diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
+        buffer_id: BufferId,
         snapshot: EditorSnapshot,
+        editor: WeakEntity<Editor>,
         window: &Window,
         cx: &App,
     ) -> Task<Vec<BlockProperties<Anchor>>>;
@@ -14209,6 +14211,7 @@ impl Editor {
             .filter_map(|entry| {
                 let start = entry.range.start;
                 let end = entry.range.end;
+                // todo!() don't filter out here...
                 if snapshot.is_line_folded(MultiBufferRow(start.row))
                     && (start.row == end.row || snapshot.is_line_folded(MultiBufferRow(end.row)))
                 {
@@ -14227,8 +14230,14 @@ impl Editor {
         let primary_range = primary_range?;
         let primary_message = primary_message?;
 
-        let blocks =
-            diagnostic_renderer.render_group(diagnostic_group.clone(), snapshot, window, cx);
+        let blocks = diagnostic_renderer.render_group(
+            diagnostic_group.clone(),
+            buffer_id,
+            snapshot,
+            cx.weak_entity(),
+            window,
+            cx,
+        );
         self.active_diagnostics_update = cx.spawn(async move |editor, cx| {
             let blocks = blocks.await;
             editor

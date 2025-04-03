@@ -14,26 +14,27 @@ use editor::{
     display_map::{
         BlockContext, BlockPlacement, BlockProperties, BlockStyle, DisplayRow, RenderBlock,
     },
+    scroll::Autoscroll,
 };
 use gpui::{
     AppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Entity, FontWeight,
-    HighlightStyle, Size, StyledText, Task, TextStyle, TextStyleRefinement, size,
+    HighlightStyle, Size, StyledText, Task, TextStyle, TextStyleRefinement, WeakEntity, size,
 };
 use gpui::{Hsla, Refineable};
 use indoc;
-use language::{Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Point, PointUtf16};
+use language::{Buffer, BufferId, Diagnostic, DiagnosticEntry, DiagnosticSet, Point, PointUtf16};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
 use theme::{StatusColors, ThemeSettings};
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, ButtonSize, ButtonStyle, Clickable, Color,
-    ComponentPreview, DefiniteLength, Element, FluentBuilder, IconButton, IconName,
+    ComponentPreview, Context, DefiniteLength, Element, FluentBuilder, IconButton, IconName,
     InteractiveElement, IntoComponent, IntoElement, ParentElement, Pixels, SharedString,
     StatefulInteractiveElement, Styled, Tooltip, VisibleOnHover, VisualContext, Window, div,
     h_flex, px, relative, v_flex,
 };
-use util::ResultExt;
+use util::{ResultExt, maybe};
 
 pub fn diagnostic_block_renderer(
     diagnostic: Diagnostic,
@@ -217,7 +218,9 @@ fn escape_markdown<'a>(s: &'a str) -> Cow<'a, str> {
 impl DiagnosticRenderer {
     async fn render(
         diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
+        buffer_id: BufferId,
         snapshot: EditorSnapshot,
+        editor: WeakEntity<Editor>,
         cx: &mut AsyncWindowContext,
     ) -> Result<Vec<BlockProperties<Anchor>>> {
         let primary_ix = diagnostic_group
@@ -228,11 +231,12 @@ impl DiagnosticRenderer {
         let mut same_row = Vec::new();
         let mut close = Vec::new();
         let mut distant = Vec::new();
-        for entry in diagnostic_group {
+        let group_id = primary.diagnostic.group_id;
+        for (ix, entry) in diagnostic_group.into_iter().enumerate() {
             if entry.diagnostic.is_primary {
                 continue;
             }
-            if false && entry.range.start.row() == primary.range.start.row() {
+            if entry.range.start.row() == primary.range.start.row() {
                 same_row.push(entry)
             } else if entry
                 .range
@@ -245,7 +249,7 @@ impl DiagnosticRenderer {
             {
                 close.push(entry)
             } else {
-                distant.push(entry)
+                distant.push((ix, entry))
             }
         }
 
@@ -261,10 +265,10 @@ impl DiagnosticRenderer {
             markdown.push_str(&escape_markdown(&entry.diagnostic.message))
         }
 
-        for entry in &distant {
+        for (ix, entry) in &distant {
             markdown.push_str("\n- hint: [");
             markdown.push_str(&escape_markdown(&entry.diagnostic.message));
-            markdown.push_str("](https://google.com)\n")
+            markdown.push_str(&format!("](file://#diagnostic-{group_id}-{ix})\n",))
         }
 
         let block = Self::create_block(
@@ -272,6 +276,8 @@ impl DiagnosticRenderer {
             primary.diagnostic.severity,
             snapshot.display_point_to_anchor(primary.range.start, Bias::Right),
             0,
+            buffer_id,
+            editor.clone(),
             cx,
         )
         .await?;
@@ -289,25 +295,31 @@ impl DiagnosticRenderer {
                 entry.diagnostic.severity,
                 snapshot.display_point_to_anchor(entry.range.start, Bias::Right),
                 results.len(),
+                buffer_id,
+                editor.clone(),
                 cx,
             )
             .await?;
             results.push(block)
         }
 
-        for entry in distant {
+        for (_, entry) in distant {
             let mut markdown = if let Some(source) = entry.diagnostic.source.as_ref() {
                 format!("{}: {}", source, entry.diagnostic.message)
             } else {
                 entry.diagnostic.message
             };
-            markdown.push_str(" ([back](https://google.com))");
+            markdown.push_str(&format!(
+                " ([back](file://#diagnostic-{group_id}-{primary_ix}))"
+            ));
 
             let block = Self::create_block(
                 markdown,
                 entry.diagnostic.severity,
                 snapshot.display_point_to_anchor(entry.range.start, Bias::Right),
                 results.len(),
+                buffer_id,
+                editor.clone(),
                 cx,
             )
             .await?;
@@ -317,11 +329,39 @@ impl DiagnosticRenderer {
         Ok(results)
     }
 
+    pub fn open_link(
+        editor: &mut Editor,
+        link: SharedString,
+        window: &mut Window,
+        buffer_id: BufferId,
+        cx: &mut Context<Editor>,
+    ) {
+        let diagnostic = maybe!({
+            let diagnostic = link.strip_prefix("file://#diagnostic-")?;
+            let (group_id, ix) = diagnostic.split_once('-')?;
+
+            editor
+                .snapshot(window, cx)
+                .buffer_snapshot
+                .diagnostic_group(buffer_id, group_id.parse().ok()?)
+                .nth(ix.parse().ok()?)
+        });
+        let Some(diagnostic) = diagnostic else {
+            editor::hover_popover::open_markdown_url(link, window, cx);
+            return;
+        };
+        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.select_ranges([diagnostic.range.start..diagnostic.range.start]);
+        })
+    }
+
     async fn create_block(
         markdown: String,
         severity: DiagnosticSeverity,
         position: Anchor,
         id: usize,
+        buffer_id: BufferId,
+        editor: WeakEntity<Editor>,
         cx: &mut AsyncWindowContext,
     ) -> Result<BlockProperties<Anchor>> {
         let mut editor_line_height = px(0.);
@@ -354,8 +394,15 @@ impl DiagnosticRenderer {
                 compact: true,
                 ..Default::default()
             };
-            Markdown::new(SharedString::new(markdown), markdown_style, None, None, cx)
-                .open_url(editor::hover_popover::open_markdown_url)
+            Markdown::new(SharedString::new(markdown), markdown_style, None, None, cx).open_url(
+                move |link, window, cx| {
+                    editor
+                        .update(cx, |editor, cx| {
+                            Self::open_link(editor, link, window, buffer_id, cx)
+                        })
+                        .ok();
+                },
+            )
         })?;
 
         markdown
@@ -449,13 +496,15 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
     fn render_group(
         &self,
         diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
+        buffer_id: BufferId,
         snapshot: EditorSnapshot,
+        editor: WeakEntity<Editor>,
         window: &Window,
         cx: &App,
     ) -> Task<Vec<BlockProperties<Anchor>>> {
         let mut window = window.to_async(cx);
         cx.spawn(async move |_| {
-            Self::render(diagnostic_group, snapshot, &mut window)
+            Self::render(diagnostic_group, buffer_id, snapshot, editor, &mut window)
                 .await
                 .log_err()
                 .unwrap_or_default()
