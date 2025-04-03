@@ -710,7 +710,7 @@ impl ActiveThread {
                         |this, _, event, window, cx| match event {
                             AgentNotificationEvent::Accepted => {
                                 let handle = window.window_handle();
-                                cx.activate(true); // Switch back to the Zed application
+                                cx.activate(true);
 
                                 let workspace_handle = this.workspace.clone();
 
@@ -1042,7 +1042,6 @@ impl ActiveThread {
             .map(|(_, state)| state.editor.clone());
 
         let first_message = ix == 0;
-        // Show feedback for all assistant messages
         let show_feedback = message.role == Role::Assistant;
 
         let colors = cx.theme().colors();
@@ -1437,7 +1436,6 @@ impl ActiveThread {
             .when(
                 show_feedback && !self.thread.read(cx).is_generating(),
                 |parent| {
-                    // Individual feedback controls for each assistant message
                     let message_id_for_feedback = message_id;
                     let feedback_status = self
                         .thread
@@ -1454,7 +1452,6 @@ impl ActiveThread {
                                 .gap_1()
                                 .justify_between()
                                 .child(
-                                    // Only show label when feedback has been given
                                     div()
                                         .id(("feedback-status-label", message_id_for_feedback.0))
                                         .child(if let Some(feedback) = feedback_status {

@@ -498,7 +498,6 @@ impl RateCompletionModal {
                                             cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            // Only affect the current active completion
                                             if this.active_completion.is_some() {
                                                 this.thumbs_down_active(
                                                     &ThumbsDownActiveCompletion,
@@ -520,7 +519,6 @@ impl RateCompletionModal {
                                             cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            // Only affect the current active completion
                                             if this.active_completion.is_some() {
                                                 this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
                                             }

@@ -238,7 +238,7 @@ pub struct Thread {
     pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
-    feedback: Option<ThreadFeedback>, // Keep for backward compatibility
+    feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
 }
 
@@ -1486,18 +1486,14 @@ impl Thread {
         canceled
     }
 
-    /// Returns the overall feedback given to the thread, if any.
     pub fn feedback(&self) -> Option<ThreadFeedback> {
         self.feedback
     }
 
-    /// Returns the feedback for a specific message, if any.
     pub fn message_feedback(&self, message_id: MessageId) -> Option<ThreadFeedback> {
         self.message_feedback.get(&message_id).copied()
     }
 
-    /// Reports feedback about a specific message and stores it in our telemetry backend.
-    /// Does NOT affect the overall thread feedback.
     pub fn report_message_feedback(
         &mut self,
         message_id: MessageId,
@@ -1509,12 +1505,10 @@ impl Thread {
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
 
-        // Store feedback for this specific message only
         self.message_feedback.insert(message_id, feedback);
 
         cx.notify();
 
-        // Get the message content
         let message_content = self
             .message(message_id)
             .map(|msg| msg.to_string())
@@ -1534,8 +1528,8 @@ impl Thread {
                 "Assistant Thread Rated",
                 rating,
                 thread_id,
-                message_id = message_id.0, // Include the message ID
-                message_content,           // Include the message content
+                message_id = message_id.0,
+                message_content,
                 thread_data,
                 final_project_snapshot
             );
@@ -1545,13 +1539,11 @@ impl Thread {
         })
     }
 
-    /// Reports feedback about the thread (for backward compatibility)
     pub fn report_feedback(
         &mut self,
         feedback: ThreadFeedback,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        // Find the last assistant message
         let last_assistant_message_id = self
             .messages
             .iter()
@@ -1562,7 +1554,6 @@ impl Thread {
         if let Some(message_id) = last_assistant_message_id {
             self.report_message_feedback(message_id, feedback, cx)
         } else {
-            // Fall back to the old behavior if there's no assistant message
             let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
             let serialized_thread = self.serialize(cx);
             let thread_id = self.id().clone();
