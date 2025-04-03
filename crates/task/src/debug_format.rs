@@ -41,7 +41,6 @@ impl TCPHost {
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct AttachConfig {
     /// The processId to attach to, if left empty we will show a process picker
-    #[serde(default)]
     pub process_id: Option<u32>,
 }
 
@@ -52,7 +51,8 @@ pub struct LaunchConfig {
     pub program: String,
     /// The current working directory of your project
     pub cwd: Option<PathBuf>,
-    /// Args to pass to a debuggee
+    /// Arguments to pass to a debuggee
+    #[serde(default)]
     pub args: Vec<String>,
 }
 
@@ -66,6 +66,17 @@ pub enum DebugRequestType {
     Attach(AttachConfig),
 }
 
+impl From<LaunchConfig> for DebugRequestType {
+    fn from(launch_config: LaunchConfig) -> Self {
+        DebugRequestType::Launch(launch_config)
+    }
+}
+
+impl From<AttachConfig> for DebugRequestType {
+    fn from(attach_config: AttachConfig) -> Self {
+        DebugRequestType::Attach(attach_config)
+    }
+}
 /// Represents a request for starting the debugger.
 /// Contrary to `DebugRequestType`, `DebugRequestDisposition` is not Serializable.
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -140,6 +151,37 @@ impl TryFrom<DebugAdapterConfig> for DebugTaskDefinition {
             tcp_connection: def.tcp_connection,
             locator: def.locator,
             stop_on_entry: def.stop_on_entry,
+        })
+    }
+}
+
+impl TryFrom<TaskTemplate> for DebugTaskDefinition {
+    type Error = ();
+
+    fn try_from(value: TaskTemplate) -> Result<Self, Self::Error> {
+        let TaskType::Debug(debug_args) = value.task_type else {
+            return Err(());
+        };
+
+        let request = match debug_args.request {
+            crate::DebugArgsRequest::Launch => DebugRequestType::Launch(LaunchConfig {
+                program: value.command,
+                cwd: value.cwd.map(PathBuf::from),
+                args: value.args,
+            }),
+            crate::DebugArgsRequest::Attach(attach_config) => {
+                DebugRequestType::Attach(attach_config)
+            }
+        };
+
+        Ok(DebugTaskDefinition {
+            adapter: debug_args.adapter,
+            request,
+            label: value.label,
+            initialize_args: debug_args.initialize_args,
+            tcp_connection: debug_args.tcp_connection,
+            locator: debug_args.locator,
+            stop_on_entry: debug_args.stop_on_entry,
         })
     }
 }
@@ -247,5 +289,23 @@ impl TryFrom<DebugTaskFile> for TaskTemplates {
             .collect();
 
         Ok(Self(templates))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{DebugRequestType, LaunchConfig};
+
+    #[test]
+    fn test_can_deserialize_non_attach_task() {
+        let deserialized: DebugRequestType =
+            serde_json::from_str(r#"{"program": "cafebabe"}"#).unwrap();
+        assert_eq!(
+            deserialized,
+            DebugRequestType::Launch(LaunchConfig {
+                program: "cafebabe".to_owned(),
+                ..Default::default()
+            })
+        );
     }
 }

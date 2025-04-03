@@ -48,6 +48,7 @@ use worktree::Worktree;
 
 pub enum DapStoreEvent {
     DebugClientStarted(SessionId),
+    DebugSessionInitialized(SessionId),
     DebugClientShutdown(SessionId),
     DebugClientEvent {
         session_id: SessionId,
@@ -861,6 +862,10 @@ fn create_new_session(
                 return Err(error);
             }
         }
+
+        this.update(cx, |_, cx| {
+            cx.emit(DapStoreEvent::DebugSessionInitialized(session_id));
+        })?;
 
         Ok(session)
     });

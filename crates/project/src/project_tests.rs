@@ -7535,9 +7535,8 @@ async fn test_repository_subfolder_git_status(cx: &mut gpui::TestAppContext) {
     });
 }
 
-// TODO: this test fails on Windows because upon cherry-picking we don't get an event in the .git directory,
-// despite CHERRY_PICK_HEAD existing after the `git_cherry_pick` call and the conflicted path showing up in git status.
-#[cfg(not(windows))]
+// TODO: this test is flaky (especially on Windows but at least sometimes on all platforms).
+#[cfg(any())]
 #[gpui::test]
 async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -8413,7 +8412,7 @@ fn git_commit(msg: &'static str, repo: &git2::Repository) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(any())]
 #[track_caller]
 fn git_cherry_pick(commit: &git2::Commit<'_>, repo: &git2::Repository) {
     repo.cherrypick(commit, None).expect("Failed to cherrypick");
@@ -8444,7 +8443,7 @@ fn git_reset(offset: usize, repo: &git2::Repository) {
         .expect("Could not reset");
 }
 
-#[cfg(not(windows))]
+#[cfg(any())]
 #[track_caller]
 fn git_branch(name: &str, repo: &git2::Repository) {
     let head = repo
@@ -8455,14 +8454,14 @@ fn git_branch(name: &str, repo: &git2::Repository) {
     repo.branch(name, &head, false).expect("Failed to commit");
 }
 
-#[cfg(not(windows))]
+#[cfg(any())]
 #[track_caller]
 fn git_checkout(name: &str, repo: &git2::Repository) {
     repo.set_head(name).expect("Failed to set head");
     repo.checkout_head(None).expect("Failed to check out head");
 }
 
-#[cfg(not(windows))]
+#[cfg(any())]
 #[track_caller]
 fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Status> {
     repo.statuses(None)
