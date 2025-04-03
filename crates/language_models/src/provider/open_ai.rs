@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
+use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
@@ -16,6 +17,7 @@ use open_ai::{ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::pin::Pin;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
@@ -289,7 +291,7 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        true
     }
 
     fn telemetry_id(&self) -> String {
@@ -322,12 +324,8 @@ impl LanguageModel for OpenAiLanguageModel {
     > {
         let request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
-        async move {
-            Ok(open_ai::extract_text_from_events(completions.await?)
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                .boxed())
-        }
-        .boxed()
+        async move { Ok(map_to_language_model_completion_events(completions.await?).boxed()) }
+            .boxed()
     }
 }
 
@@ -359,9 +357,54 @@ pub fn into_open_ai(
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
         max_tokens: max_output_tokens,
-        tools: Vec::new(),
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| open_ai::ToolDefinition::Function {
+                function: open_ai::FunctionDefinition {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.input_schema),
+                },
+            })
+            .collect(),
         tool_choice: None,
     }
+}
+
+pub fn map_to_language_model_completion_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+        // tool_uses_by_index: HashMap<usize, RawToolUse>,
+        // usage: Usage,
+        // stop_reason: StopReason,
+    }
+
+    futures::stream::unfold(State { events }, |mut state| async move {
+        while let Some(event) = state.events.next().await {
+            dbg!(&event);
+            match event {
+                Ok(event) => {
+                    let Some(choice) = event.choices.first() else {
+                        return Some((vec![Err(anyhow!("Response contained no choices"))], state));
+                    };
+
+                    let mut events = Vec::new();
+                    if let Some(content) = choice.delta.content.clone() {
+                        events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                    }
+
+                    return Some((events, state));
+                }
+                Err(err) => return Some((vec![Err(err)], state)),
+            }
+        }
+
+        None
+    })
+    .flat_map(futures::stream::iter)
 }
 
 pub fn count_open_ai_tokens(
