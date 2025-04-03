@@ -31,8 +31,8 @@ pub(super) struct NewSessionModal {
     debug_panel: WeakEntity<DebugPanel>,
     mode: NewSessionMode,
     stop_on_entry: ToggleState,
-    config_name: Option<SharedString>,
     debugger: Option<SharedString>,
+    last_selected_profile_name: Option<SharedString>,
 }
 
 fn suggested_label(request: &DebugRequestType, debugger: &str) -> String {
@@ -77,11 +77,11 @@ impl NewSessionModal {
             workspace: workspace.clone(),
             debugger,
             debug_panel,
-            config_name: None,
             mode: NewSessionMode::launch(launch_config, window, cx),
             stop_on_entry: stop_on_entry
                 .map(Into::into)
                 .unwrap_or(ToggleState::Unselected),
+            last_selected_profile_name: None,
         }
     }
 
@@ -216,20 +216,18 @@ impl NewSessionModal {
     ) -> ui::DropdownMenu {
         let workspace = self.workspace.clone();
         let weak = cx.weak_entity();
-        let config_name = self.config_name.clone();
+        let last_profile = self.last_selected_profile_name.clone();
         DropdownMenu::new(
             "debug-config-menu",
-            config_name
-                .clone()
-                .unwrap_or_else(|| SELECT_SCENARIO_LABEL.clone()),
+            last_profile.unwrap_or_else(|| SELECT_SCENARIO_LABEL.clone()),
             ContextMenu::build(window, cx, move |mut menu, _, cx| {
                 let setter_for_name = |task: DebugTaskDefinition| {
                     let weak = weak.clone();
                     let workspace = workspace.clone();
                     move |window: &mut Window, cx: &mut App| {
                         weak.update(cx, |this, cx| {
+                            this.last_selected_profile_name = Some(SharedString::from(&task.label));
                             this.debugger = Some(task.adapter.clone().into());
-                            this.config_name = Some(task.label.clone().into());
 
                             match &task.request {
                                 DebugRequestType::Launch(launch_config) => {
@@ -446,12 +444,7 @@ impl RenderOnce for LaunchMode {
 
 impl RenderOnce for AttachMode {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        v_flex()
-            .w_full()
-            .gap_2()
-            .when_some(self.attach_picker.clone(), |this, picker| {
-                this.child(picker)
-            })
+        v_flex().w_full().children(self.attach_picker.clone())
     }
 }
 
