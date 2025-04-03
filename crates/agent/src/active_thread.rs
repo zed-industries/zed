@@ -372,7 +372,6 @@ impl ActiveThread {
             _subscriptions: subscriptions,
             notification_subscriptions: HashMap::default(),
             showing_feedback_comments_for: None,
-            feedback_comments_editor: None,
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -863,19 +862,6 @@ impl ActiveThread {
         cx.notify();
     }
 
-    fn last_user_message(&self, cx: &Context<Self>) -> Option<MessageId> {
-        self.messages
-            .iter()
-            .rev()
-            .find(|message_id| {
-                self.thread
-                    .read(cx)
-                    .message(**message_id)
-                    .map_or(false, |message| message.role == Role::User)
-            })
-            .cloned()
-    }
-
     fn messages_after(&self, message_id: MessageId) -> &[MessageId] {
         self.messages
             .iter()
@@ -937,29 +923,33 @@ impl ActiveThread {
                 MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
             });
 
-            let editor = cx.new(|cx| {
-                Editor::new(
-                    editor::EditorMode::AutoHeight { max_lines: 4 },
-                    buffer,
-                    None,
-                    window,
-                    cx,
-                )
-            });
+        let buffer = cx.new(|cx| {
+            let empty_string = String::new();
+            MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
+        });
 
-            self.feedback_comments_editor = Some(editor);
-        }
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(
+                editor::EditorMode::AutoHeight { max_lines: 4 },
+                buffer,
+                None,
+                window,
+                cx,
+            );
+            editor.set_placeholder_text(
+                "What went wrong? Share your feedback so we can improve.",
+                cx,
+            );
+            editor
+        });
 
+        editor.read(cx).focus_handle(cx).focus(window);
+        self.feedback_message_editor = Some(editor);
         cx.notify();
     }
 
-    fn handle_submit_comments(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(editor) = self.feedback_comments_editor.clone() else {
+    fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.feedback_message_editor.clone() else {
             return;
         };
 
@@ -1037,8 +1027,7 @@ impl ActiveThread {
             return Empty.into_any();
         }
 
-        let allow_editing_message =
-            message.role == Role::User && self.last_user_message(cx) == Some(message_id);
+        let allow_editing_message = message.role == Role::User;
 
         let edit_message_editor = self
             .editing_message
@@ -1257,10 +1246,6 @@ impl ActiveThread {
                                 )
                                 .child(
                                     h_flex()
-                                        // DL: To double-check whether we want to fully remove
-                                        // the editing feature from meassages. Checkpoint sort of
-                                        // solve the same problem.
-                                        .invisible()
                                         .gap_1()
                                         .when_some(
                                             edit_message_editor.clone(),
@@ -1581,7 +1566,8 @@ impl ActiveThread {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_last_message = self.messages.last() == Some(&message_id);
-        let pending_thinking_segment_index = if is_last_message && !has_tool_uses {
+        let is_generating = self.thread.read(cx).is_generating();
+        let pending_thinking_segment_index = if is_generating && is_last_message && !has_tool_uses {
             rendered_message
                 .segments
                 .iter()
