@@ -3,6 +3,16 @@ use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum BedrockModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u64>,
+    },
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     // Anthropic models (already included)
@@ -11,6 +21,11 @@ pub enum Model {
     Claude3_5Sonnet,
     #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
     Claude3_7Sonnet,
+    #[serde(
+        rename = "claude-3-7-sonnet-thinking",
+        alias = "claude-3-7-sonnet-thinking-latest"
+    )]
+    Claude3_7SonnetThinking,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
     Claude3Opus,
     #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-latest")]
@@ -78,6 +93,8 @@ impl Model {
             Ok(Self::Claude3_5Haiku)
         } else if id.starts_with("claude-3-7-sonnet") {
             Ok(Self::Claude3_7Sonnet)
+        } else if id.starts_with("claude-3-7-sonnet-thinking") {
+            Ok(Self::Claude3_7SonnetThinking)
         } else {
             Err(anyhow!("invalid model id"))
         }
@@ -89,7 +106,9 @@ impl Model {
             Model::Claude3Opus => "us.anthropic.claude-3-opus-20240229-v1:0",
             Model::Claude3Sonnet => "us.anthropic.claude-3-sonnet-20240229-v1:0",
             Model::Claude3_5Haiku => "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-            Model::Claude3_7Sonnet => "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+            Model::Claude3_7Sonnet | Model::Claude3_7SonnetThinking => {
+                "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+            }
             Model::AmazonNovaLite => "us.amazon.nova-lite-v1:0",
             Model::AmazonNovaMicro => "us.amazon.nova-micro-v1:0",
             Model::AmazonNovaPro => "us.amazon.nova-pro-v1:0",
@@ -133,6 +152,7 @@ impl Model {
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3_5Haiku => "Claude 3.5 Haiku",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
+            Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
             Self::AmazonNovaLite => "Amazon Nova Lite",
             Self::AmazonNovaMicro => "Amazon Nova Micro",
             Self::AmazonNovaPro => "Amazon Nova Pro",
@@ -206,6 +226,15 @@ impl Model {
                 ..
             } => default_temperature.unwrap_or(1.0),
             _ => 1.0,
+        }
+    }
+
+    pub fn mode(&self) -> BedrockModelMode {
+        match self {
+            Model::Claude3_7SonnetThinking => BedrockModelMode::Thinking {
+                budget_tokens: Some(4096),
+            },
+            _ => BedrockModelMode::Default,
         }
     }
 }
