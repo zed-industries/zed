@@ -1,10 +1,10 @@
 mod supported_countries;
 
-use std::{pin::Pin, str::FromStr};
+use std::str::FromStr;
 
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
-use futures::{AsyncBufReadExt, AsyncReadExt, Stream, StreamExt, io::BufReader, stream::BoxStream};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
@@ -435,50 +435,6 @@ pub async fn stream_completion_with_rate_limit_info(
             ))),
         }
     }
-}
-
-pub async fn extract_tool_args_from_events(
-    tool_name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item = Result<Event>>>>,
-) -> Result<impl Send + Stream<Item = Result<String>>> {
-    let mut tool_use_index = None;
-    while let Some(event) = events.next().await {
-        if let Event::ContentBlockStart {
-            index,
-            content_block: ResponseContent::ToolUse { name, .. },
-        } = event?
-        {
-            if name == tool_name {
-                tool_use_index = Some(index);
-                break;
-            }
-        }
-    }
-
-    let Some(tool_use_index) = tool_use_index else {
-        return Err(anyhow!("tool not used"));
-    };
-
-    Ok(events.filter_map(move |event| {
-        let result = match event {
-            Err(error) => Some(Err(error)),
-            Ok(Event::ContentBlockDelta { index, delta }) => match delta {
-                ContentDelta::TextDelta { .. } => None,
-                ContentDelta::ThinkingDelta { .. } => None,
-                ContentDelta::SignatureDelta { .. } => None,
-                ContentDelta::InputJsonDelta { partial_json } => {
-                    if index == tool_use_index {
-                        Some(Ok(partial_json))
-                    } else {
-                        None
-                    }
-                }
-            },
-            _ => None,
-        };
-
-        async move { result }
-    }))
 }
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
