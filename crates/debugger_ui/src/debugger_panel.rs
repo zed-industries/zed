@@ -1,3 +1,7 @@
+use crate::{
+    ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, Pause, Restart, StepBack,
+    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
+};
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
 use collections::HashMap;
@@ -26,8 +30,7 @@ use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
-    ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut,
-    StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
+    Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     pane,
 };
@@ -664,6 +667,14 @@ impl DebugPanel {
                                             });
                                         });
                                     }
+                                })
+                                .tooltip(|window, cx| {
+                                    Tooltip::for_action(
+                                        "New Debug Session",
+                                        &CreateDebuggingSession,
+                                        window,
+                                        cx,
+                                    )
                                 }),
                         ),
                 ),
@@ -742,13 +753,44 @@ impl Panel for DebugPanel {
 
 impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_sessions = self.pane.read(cx).items().next().is_some();
+        let has_sessions = self.pane.read(cx).items_len() > 0;
         v_flex()
             .size_full()
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))
             .track_focus(&self.focus_handle(cx))
-            .when(has_sessions, |this| this.child(self.pane.clone()))
+            .map(|this| {
+                if has_sessions {
+                    this.child(self.pane.clone())
+                } else {
+                    this.child(
+                        v_flex()
+                            .h_full()
+                            .gap_1()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                h_flex().child(
+                                    Label::new("No Debugging Sessions")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                            )
+                            .child(
+                                h_flex().flex_shrink().child(
+                                    Button::new("spawn-new-session-empty-state", "New Session")
+                                        .size(ButtonSize::Large)
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                CreateDebuggingSession.boxed_clone(),
+                                                cx,
+                                            );
+                                        }),
+                                ),
+                            ),
+                    )
+                }
+            })
             .into_any()
     }
 }

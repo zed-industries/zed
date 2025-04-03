@@ -1,13 +1,11 @@
 use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::{DebugPanel, ToggleFocus};
 use feature_flags::{Debugger, FeatureFlagViewExt};
-use gpui::App;
+use gpui::{App, actions};
+use new_session_modal::NewSessionModal;
 use session::DebugSession;
 use settings::Settings;
-use workspace::{
-    Pause, Restart, ShutdownDebugAdapters, StepBack, StepInto, StepOver, Stop,
-    ToggleIgnoreBreakpoints, Workspace,
-};
+use workspace::{ShutdownDebugAdapters, Workspace};
 
 pub mod attach_modal;
 pub mod debugger_panel;
@@ -16,6 +14,25 @@ pub(crate) mod session;
 
 #[cfg(test)]
 pub mod tests;
+
+actions!(
+    debugger,
+    [
+        Start,
+        Continue,
+        Disconnect,
+        Pause,
+        Restart,
+        StepInto,
+        StepOver,
+        StepOut,
+        StepBack,
+        Stop,
+        ToggleIgnoreBreakpoints,
+        ClearAllBreakpoints,
+        CreateDebuggingSession,
+    ]
+);
 
 pub fn init(cx: &mut App) {
     DebuggerSettings::register(cx);
@@ -115,6 +132,23 @@ pub fn init(cx: &mut App) {
                                 store.shutdown_sessions(cx).detach();
                             })
                         })
+                    },
+                )
+                .register_action(
+                    |workspace: &mut Workspace, _: &CreateDebuggingSession, window, cx| {
+                        let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+                        let weak_panel = debug_panel.downgrade();
+                        let weak_workspace = cx.weak_entity();
+
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            NewSessionModal::new(
+                                debug_panel.read(cx).past_debug_definition.clone(),
+                                weak_panel,
+                                weak_workspace,
+                                window,
+                                cx,
+                            )
+                        });
                     },
                 );
         })
