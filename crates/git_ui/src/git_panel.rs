@@ -340,6 +340,7 @@ pub struct GitPanel {
     new_staged_count: usize,
     pending: Vec<PendingOperation>,
     pending_commit: Option<Task<()>>,
+    commit_being_amended: Option<CommitDetails>,
     pending_serialization: Task<Option<()>>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
@@ -492,6 +493,7 @@ impl GitPanel {
             new_staged_count: 0,
             pending: Vec::new(),
             pending_commit: None,
+            commit_being_amended: None,
             pending_serialization: Task::ready(None),
             single_staged_entry: None,
             single_tracked_entry: None,
@@ -1550,11 +1552,60 @@ impl GitPanel {
                     Ok(None) => {}
                     Ok(Some(prior_commit)) => {
                         this.commit_editor.update(cx, |editor, cx| {
-                            editor.set_text(prior_commit.message, window, cx)
+                            editor.set_text(prior_commit.message.clone(), window, cx)
                         });
+                        this.commit_being_amended = Some(prior_commit);
                     }
                     Err(e) => this.show_error_toast("reset", e, cx),
                 }
+            })
+            .ok();
+        });
+
+        self.pending_commit = Some(task);
+    }
+
+    fn amend(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        // TODO telemetry
+        let checkpoint = repo.read(cx).checkpoint();
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let checkpoint = checkpoint.await??;
+            anyhow::Ok(())
+        });
+        // create a checkpoint
+        // store the SHA for that checkpoint in commit_being_amended
+        // check out the HEAD^ state
+    }
+
+    fn escape_amend(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        // TODO telemetry
+        let Some(commit_being_amended) = self.commit_being_amended.clone() else {
+            return;
+        };
+
+        let task = cx.spawn_in(window, async move |this, mut cx| {
+            let result = maybe!({
+                let cx = &mut cx;
+                async move {
+                    repo.update(*cx, |repo, cx| {
+                        repo.reset(commit_being_amended.sha.to_string(), ResetMode::Soft, cx)
+                    })?
+                    .await??;
+                    anyhow::Ok(())
+                }
+            })
+            .await;
+            this.update_in(cx, |this, _, cx| match result {
+                Ok(()) => {
+                    this.commit_being_amended = None;
+                }
+                Err(e) => this.show_error_toast("escape amend", e, cx),
             })
             .ok();
         });

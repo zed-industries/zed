@@ -368,8 +368,8 @@ impl RealGitRepository {
 
 #[derive(Clone, Debug)]
 pub struct GitRepositoryCheckpoint {
-    ref_name: String,
-    commit_sha: Oid,
+    pub ref_name: String,
+    pub commit_sha: Oid,
 }
 
 impl GitRepository for RealGitRepository {
