@@ -591,7 +591,7 @@ impl Render for AgentDiff {
                                     cx,
                                 ))
                                 .on_click(|_event, window, cx| {
-                                    window.dispatch_action(ToggleFocus::default().boxed_clone(), cx)
+                                    window.dispatch_action(ToggleFocus.boxed_clone(), cx)
                                 }),
                         ),
                 )
