@@ -890,7 +890,7 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "editor dir/", 
+                    "editor dir/",
                     "seven.txt dir/b/",
                     "six.txt dir/b/",
                     "five.txt dir/b/",
