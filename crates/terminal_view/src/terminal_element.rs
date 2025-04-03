@@ -425,14 +425,23 @@ impl TerminalElement {
     fn register_mouse_listeners(&mut self, mode: TermMode, hitbox: &Hitbox, window: &mut Window) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
+        let terminal_view = self.terminal_view.clone();
 
         self.interactivity.on_mouse_down(MouseButton::Left, {
             let terminal = terminal.clone();
             let focus = focus.clone();
+            let terminal_view = terminal_view.clone();
+
             move |e, window, cx| {
                 window.focus(&focus);
+
+                let scroll_top = terminal_view.read(cx).scroll_top;
                 terminal.update(cx, |terminal, cx| {
-                    terminal.mouse_down(e, cx);
+                    let mut adjusted_event = e.clone();
+                    if scroll_top > Pixels::ZERO {
+                        adjusted_event.position.y += scroll_top;
+                    }
+                    terminal.mouse_down(&adjusted_event, cx);
                     cx.notify();
                 })
             }
@@ -442,6 +451,7 @@ impl TerminalElement {
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
             let focus = focus.clone();
+            let terminal_view = terminal_view.clone();
             move |e: &MouseMoveEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
@@ -449,9 +459,15 @@ impl TerminalElement {
 
                 if e.pressed_button.is_some() && !cx.has_active_drag() && focus.is_focused(window) {
                     let hovered = hitbox.is_hovered(window);
+
+                    let scroll_top = terminal_view.read(cx).scroll_top;
                     terminal.update(cx, |terminal, cx| {
                         if terminal.selection_started() || hovered {
-                            terminal.mouse_drag(e, hitbox.bounds, cx);
+                            let mut adjusted_event = e.clone();
+                            if scroll_top > Pixels::ZERO {
+                                adjusted_event.position.y += scroll_top;
+                            }
+                            terminal.mouse_drag(&adjusted_event, hitbox.bounds, cx);
                             cx.notify();
                         }
                     })
