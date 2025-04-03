@@ -1452,7 +1452,7 @@ impl ActiveThread {
                                 .pb_2()
                                 .px_4()
                                 .gap_1()
-                                .justify_end()
+                                .justify_between()
                                 .child(
                                     // Only show label when feedback has been given
                                     div()
@@ -1463,13 +1463,15 @@ impl ActiveThread {
                                                     "Thanks for your feedback!"
                                                 }
                                                 ThreadFeedback::Negative => {
-                                                    "Thanks for your feedback!"
+                                                    "We appreciate your feedback and will use it to improve."
                                                 }
                                             })
                                             .color(Color::Muted)
                                             .size(LabelSize::XSmall)
                                         } else {
-                                            Label::new("").size(LabelSize::XSmall)
+                                            Label::new("Rating the thread sends all of your current conversation to the Zed team.")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::XSmall)
                                         }),
                                 )
                                 .child(
