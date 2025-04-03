@@ -121,38 +121,23 @@ impl<T> BlockPlacement<T> {
             }
         }
     }
+
+    fn sort_order(&self) -> u8 {
+        match self {
+            BlockPlacement::Above(_) => 0,
+            // BlockPlacement::Near(_) => 1,
+            BlockPlacement::Replace(_) => 2,
+            BlockPlacement::Below(_) => 3,
+        }
+    }
 }
 
 impl BlockPlacement<Anchor> {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
-        match (self, other) {
-            (BlockPlacement::Above(anchor_a), BlockPlacement::Above(anchor_b))
-            | (BlockPlacement::Below(anchor_a), BlockPlacement::Below(anchor_b)) => {
-                anchor_a.cmp(anchor_b, buffer)
-            }
-            (BlockPlacement::Above(anchor_a), BlockPlacement::Below(anchor_b)) => {
-                anchor_a.cmp(anchor_b, buffer).then(Ordering::Less)
-            }
-            (BlockPlacement::Below(anchor_a), BlockPlacement::Above(anchor_b)) => {
-                anchor_a.cmp(anchor_b, buffer).then(Ordering::Greater)
-            }
-            (BlockPlacement::Above(anchor), BlockPlacement::Replace(range)) => {
-                anchor.cmp(range.start(), buffer).then(Ordering::Less)
-            }
-            (BlockPlacement::Replace(range), BlockPlacement::Above(anchor)) => {
-                range.start().cmp(anchor, buffer).then(Ordering::Greater)
-            }
-            (BlockPlacement::Below(anchor), BlockPlacement::Replace(range)) => {
-                anchor.cmp(range.start(), buffer).then(Ordering::Greater)
-            }
-            (BlockPlacement::Replace(range), BlockPlacement::Below(anchor)) => {
-                range.start().cmp(anchor, buffer).then(Ordering::Less)
-            }
-            (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => range_a
-                .start()
-                .cmp(range_b.start(), buffer)
-                .then_with(|| range_b.end().cmp(range_a.end(), buffer)),
-        }
+        self.start()
+            .cmp(other.start(), buffer)
+            .then_with(|| other.end().cmp(self.end(), buffer))
+            .then_with(|| self.sort_order().cmp(&other.sort_order()))
     }
 
     fn to_wrap_row(&self, wrap_snapshot: &WrapSnapshot) -> Option<BlockPlacement<WrapRow>> {
