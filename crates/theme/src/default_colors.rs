@@ -142,8 +142,8 @@ impl ThemeColors {
             version_control_modified: MODIFIED_COLOR,
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().light().step_12(),
-            version_control_conflict_ours: purple().light().step_12(),
-            version_control_conflict_theirs: pink().light().step_12(),
+            version_control_conflict_ours: green().light().step_10(),
+            version_control_conflict_theirs: blue().light().step_10(),
             version_control_ignored: gray().light().step_12(),
         }
     }

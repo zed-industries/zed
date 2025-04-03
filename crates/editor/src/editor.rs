@@ -996,11 +996,26 @@ impl SelectionHistory {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct RowHighlightOptions {
+    pub autoscroll: bool,
+    pub include_gutter: bool,
+}
+
+impl Default for RowHighlightOptions {
+    fn default() -> Self {
+        Self {
+            autoscroll: Default::default(),
+            include_gutter: true,
+        }
+    }
+}
+
 struct RowHighlight {
     index: usize,
     range: Range<Anchor>,
     color: Hsla,
-    should_autoscroll: bool,
+    options: RowHighlightOptions,
 }
 
 #[derive(Clone, Debug)]
@@ -5708,7 +5723,10 @@ impl Editor {
                         self.highlight_rows::<EditPredictionPreview>(
                             target..target,
                             cx.theme().colors().editor_highlighted_line_background,
-                            true,
+                            RowHighlightOptions {
+                                autoscroll: true,
+                                ..Default::default()
+                            },
                             cx,
                         );
                         self.request_autoscroll(Autoscroll::fit(), cx);
@@ -13045,7 +13063,7 @@ impl Editor {
             start..end,
             highlight_color
                 .unwrap_or_else(|| cx.theme().colors().editor_highlighted_line_background),
-            false,
+            Default::default(),
             cx,
         );
         self.request_autoscroll(Autoscroll::center().for_anchor(start), cx);
@@ -16328,7 +16346,7 @@ impl Editor {
         &mut self,
         range: Range<Anchor>,
         color: Hsla,
-        should_autoscroll: bool,
+        options: RowHighlightOptions,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer().read(cx).snapshot(cx);
@@ -16360,7 +16378,7 @@ impl Editor {
                     merged = true;
                     prev_highlight.index = index;
                     prev_highlight.color = color;
-                    prev_highlight.should_autoscroll = should_autoscroll;
+                    prev_highlight.options = options;
                 }
             }
 
@@ -16371,7 +16389,7 @@ impl Editor {
                         range: range.clone(),
                         index,
                         color,
-                        should_autoscroll,
+                        options,
                     },
                 );
             }
@@ -16477,7 +16495,14 @@ impl Editor {
                             used_highlight_orders.entry(row).or_insert(highlight.index);
                         if highlight.index >= *used_index {
                             *used_index = highlight.index;
-                            unique_rows.insert(DisplayRow(row), highlight.color.into());
+                            unique_rows.insert(
+                                DisplayRow(row),
+                                LineHighlight {
+                                    include_gutter: highlight.options.include_gutter,
+                                    border: None,
+                                    background: highlight.color.into(),
+                                },
+                            );
                         }
                     }
                     unique_rows
@@ -16493,7 +16518,7 @@ impl Editor {
             .values()
             .flat_map(|highlighted_rows| highlighted_rows.iter())
             .filter_map(|highlight| {
-                if highlight.should_autoscroll {
+                if highlight.options.autoscroll {
                     Some(highlight.range.start.to_display_point(snapshot).row())
                 } else {
                     None
@@ -20315,25 +20340,26 @@ impl Render for MissingEditPredictionKeybindingTooltip {
 pub struct LineHighlight {
     pub background: Background,
     pub border: Option<gpui::Hsla>,
+    pub include_gutter: bool,
 }
 
-impl From<Hsla> for LineHighlight {
-    fn from(hsla: Hsla) -> Self {
-        Self {
-            background: hsla.into(),
-            border: None,
-        }
-    }
-}
+//impl From<Hsla> for LineHighlight {
+//    fn from(hsla: Hsla) -> Self {
+//        Self {
+//            background: hsla.into(),
+//            border: None,
+//        }
+//    }
+//}
 
-impl From<Background> for LineHighlight {
-    fn from(background: Background) -> Self {
-        Self {
-            background,
-            border: None,
-        }
-    }
-}
+//impl From<Background> for LineHighlight {
+//    fn from(background: Background) -> Self {
+//        Self {
+//            background,
+//            border: None,
+//        }
+//    }
+//}
 
 fn render_diff_hunk_controls(
     row: u32,

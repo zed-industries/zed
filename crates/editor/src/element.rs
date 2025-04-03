@@ -4177,14 +4177,21 @@ impl EditorElement {
                                            highlight_row_end: DisplayRow,
                                            highlight: crate::LineHighlight,
                                            edges| {
+                    let mut origin_x = layout.hitbox.left();
+                    let mut width = layout.hitbox.size.width;
+                    if !highlight.include_gutter {
+                        origin_x += layout.gutter_hitbox.size.width;
+                        width -= layout.gutter_hitbox.size.width;
+                    }
+
                     let origin = point(
-                        layout.hitbox.origin.x,
+                        origin_x,
                         layout.hitbox.origin.y
                             + (highlight_row_start.as_f32() - scroll_top)
                                 * layout.position_map.line_height,
                     );
                     let size = size(
-                        layout.hitbox.size.width,
+                        width,
                         layout.position_map.line_height
                             * highlight_row_end.next_row().minus(highlight_row_start) as f32,
                     );
@@ -6689,10 +6696,14 @@ impl Element for EditorElement {
                             } else {
                                 background_color.opacity(0.36)
                             }),
+                            include_gutter: true,
                         };
 
-                        let filled_highlight =
-                            solid_background(background_color.opacity(hunk_opacity)).into();
+                        let filled_highlight = LineHighlight {
+                            background: solid_background(background_color.opacity(hunk_opacity)),
+                            border: None,
+                            include_gutter: true,
+                        };
 
                         let background = if Self::diff_hunk_hollow(diff_status, cx) {
                             hollow_highlight

@@ -1,9 +1,9 @@
 use collections::HashSet;
 use editor::{
-    Editor,
+    Editor, RowHighlightOptions,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
-use gpui::{App, Context, Entity, InteractiveElement as _, ParentElement as _, WeakEntity};
+use gpui::{App, Context, Entity, Hsla, InteractiveElement as _, ParentElement as _, WeakEntity};
 use language::{Anchor, Buffer, OffsetRangeExt as _};
 use project::{ConflictRegion, ConflictSet, ConflictSetUpdate};
 use std::{ops::Range, sync::Arc};
@@ -122,9 +122,18 @@ fn update_conflict_highlighting<'a>(
 ) {
     let theme = cx.theme().clone();
     let colors = theme.colors();
+    editor.clear_row_highlights::<ConflictsOuter>();
     editor.clear_row_highlights::<ConflictsOurs>();
+    editor.clear_row_highlights::<ConflictsOursMarker>();
     editor.clear_row_highlights::<ConflictsTheirs>();
+    editor.clear_row_highlights::<ConflictsTheirsMarker>();
     for conflict in conflicts {
+        let outer_start = buffer
+            .anchor_in_excerpt(excerpt_id, conflict.range.start)
+            .unwrap();
+        let outer_end = buffer
+            .anchor_in_excerpt(excerpt_id, conflict.range.end)
+            .unwrap();
         let our_start = buffer
             .anchor_in_excerpt(excerpt_id, conflict.ours.start)
             .unwrap();
@@ -137,16 +146,60 @@ fn update_conflict_highlighting<'a>(
         let their_end = buffer
             .anchor_in_excerpt(excerpt_id, conflict.theirs.end)
             .unwrap();
+
+        let mut ours_background = colors.version_control_conflict_ours;
+        let mut ours_marker = colors.version_control_conflict_ours;
+        let mut theirs_marker = colors.version_control_conflict_theirs;
+        let mut theirs_background = colors.version_control_conflict_theirs;
+        ours_marker.fade_out(0.4);
+        theirs_marker.fade_out(0.4);
+        ours_background.fade_out(0.7);
+        theirs_background.fade_out(0.7);
+
+        // Prevent diff hunk highlighting within the entire conflict region.
+        editor.highlight_rows::<ConflictsOuter>(
+            outer_start..outer_end,
+            Hsla::default(),
+            RowHighlightOptions {
+                include_gutter: false,
+                ..Default::default()
+            },
+            cx,
+        );
         editor.highlight_rows::<ConflictsOurs>(
             our_start..our_end,
+            ours_background,
+            RowHighlightOptions {
+                include_gutter: false,
+                ..Default::default()
+            },
+            cx,
+        );
+        editor.highlight_rows::<ConflictsOursMarker>(
+            outer_start..our_start,
             colors.version_control_conflict_ours,
-            false,
+            RowHighlightOptions {
+                include_gutter: false,
+                ..Default::default()
+            },
             cx,
         );
         editor.highlight_rows::<ConflictsTheirs>(
             their_start..their_end,
+            theirs_background,
+            RowHighlightOptions {
+                include_gutter: false,
+                ..Default::default()
+            },
+            cx,
+        );
+        editor.highlight_rows::<ConflictsTheirsMarker>(
+            their_end..outer_end,
             colors.version_control_conflict_theirs,
-            false,
+            RowHighlightOptions {
+                include_gutter: false,
+                ..Default::default()
+            },
             cx,
         );
     }
@@ -246,5 +299,8 @@ fn resolve_conflict(
     })
 }
 
+enum ConflictsOuter {}
 enum ConflictsOurs {}
 enum ConflictsTheirs {}
+enum ConflictsOursMarker {}
+enum ConflictsTheirsMarker {}
