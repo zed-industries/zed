@@ -235,8 +235,12 @@ impl NewSessionModal {
                                     );
                                 }
                                 DebugRequestType::Attach(_) => {
-                                    this.mode =
-                                        NewSessionMode::attach(workspace.clone(), window, cx);
+                                    this.mode = NewSessionMode::attach(
+                                        this.debugger.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    );
                                 }
                             }
                             cx.notify();
@@ -327,21 +331,41 @@ struct AttachMode {
 }
 
 impl AttachMode {
-    fn new(workspace: WeakEntity<Workspace>, cx: &mut App) -> Entity<Self> {
+    fn new(
+        debugger: Option<SharedString>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
         let debug_definition = DebugTaskDefinition {
             label: "Attach New Session Setup".into(),
             request: dap::DebugRequestType::Attach(task::AttachConfig { process_id: None }),
             tcp_connection: None,
-            adapter: "".into(),
+            adapter: debugger.clone().unwrap_or_default().into(),
             locator: None,
             initialize_args: None,
             stop_on_entry: Some(false),
         };
 
+        let attach_picker = if let Some(project) = debugger.and(
+            workspace
+                .read_with(cx, |workspace, _| workspace.project().clone())
+                .ok(),
+        ) {
+            Some(cx.new(|cx| {
+                let modal = AttachModal::new(project, debug_definition.clone(), false, window, cx);
+                window.focus(&modal.focus_handle(cx));
+
+                modal
+            }))
+        } else {
+            None
+        };
+
         cx.new(|cx| Self {
             workspace,
             debug_definition,
-            attach_picker: None,
+            attach_picker,
             focus_handle: cx.focus_handle(),
         })
     }
@@ -408,12 +432,6 @@ impl RenderOnce for AttachMode {
         v_flex()
             .w_full()
             .gap_2()
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .child(Button::new("debugger-launch-spawn", "Attach")),
-            )
             .when_some(self.attach_picker.clone(), |this, picker| {
                 this.child(picker)
             })
@@ -434,8 +452,13 @@ impl RenderOnce for NewSessionMode {
 }
 
 impl NewSessionMode {
-    fn attach(workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut App) -> Self {
-        Self::Attach(AttachMode::new(workspace, cx))
+    fn attach(
+        debugger: Option<SharedString>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        Self::Attach(AttachMode::new(debugger, workspace, window, cx))
     }
     fn launch(past_launch_config: Option<LaunchConfig>, window: &mut Window, cx: &mut App) -> Self {
         Self::Launch(LaunchMode::new(past_launch_config, window, cx))
@@ -520,8 +543,12 @@ impl Render for NewSessionModal {
                                 .toggle_state(matches!(self.mode, NewSessionMode::Attach(_)))
                                 .style(ui::ButtonStyle::Subtle)
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.mode =
-                                        NewSessionMode::attach(this.workspace.clone(), window, cx);
+                                    this.mode = NewSessionMode::attach(
+                                        this.debugger.clone(),
+                                        this.workspace.clone(),
+                                        window,
+                                        cx,
+                                    );
                                     this.mode.focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
