@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::channel::oneshot;
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, KeyContext,
@@ -38,6 +39,7 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
     pub table_overflow_x_scroll: bool,
+    pub compact: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -55,6 +57,7 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             heading: Default::default(),
             table_overflow_x_scroll: false,
+            compact: false,
         }
     }
 }
@@ -74,6 +77,7 @@ pub struct Markdown {
     open_url: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
+    after_parse: Vec<futures::channel::oneshot::Sender<()>>,
 }
 
 #[derive(Debug)]
@@ -110,6 +114,7 @@ impl Markdown {
                 copy_code_block_buttons: true,
             },
             open_url: None,
+            after_parse: Vec::new(),
             copied_code_blocks: HashSet::new(),
         };
         this.parse(cx);
@@ -145,6 +150,7 @@ impl Markdown {
                 copy_code_block_buttons: true,
             },
             open_url: None,
+            after_parse: Vec::new(),
             copied_code_blocks: HashSet::new(),
         };
         this.parse(cx);
@@ -175,6 +181,14 @@ impl Markdown {
 
     pub fn parsed_markdown(&self) -> &ParsedMarkdown {
         &self.parsed_markdown
+    }
+
+    pub fn when_parsing_complete(&mut self) -> oneshot::Receiver<()> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        if self.pending_parse.is_some() {
+            self.after_parse.push(tx)
+        }
+        rx
     }
 
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
@@ -239,6 +253,8 @@ impl Markdown {
                     this.pending_parse.take();
                     if this.should_reparse {
                         this.parse(cx);
+                    } else {
+                        this.after_parse.clear();
                     }
                     cx.notify();
                 })
@@ -558,10 +574,8 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let mut builder = MarkdownElementBuilder::new(
-            self.style.base_text_style.clone(),
-            self.style.syntax.clone(),
-        );
+        let mut builder =
+            MarkdownElementBuilder::new(window.text_style(), self.style.syntax.clone());
         let parsed_markdown = &self.markdown.read(cx).parsed_markdown;
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
@@ -574,7 +588,9 @@ impl Element for MarkdownElement {
                     match tag {
                         MarkdownTag::Paragraph => {
                             builder.push_div(
-                                div().mb_2().line_height(rems(1.3)),
+                                div().when(!self.style.compact, |el| {
+                                    el.mb_2().line_height(rems(1.3))
+                                }),
                                 range,
                                 markdown_end,
                             );
@@ -647,11 +663,12 @@ impl Element for MarkdownElement {
                             };
                             builder.push_div(
                                 div()
-                                    .mb_1()
                                     .h_flex()
                                     .items_start()
                                     .gap_1()
-                                    .line_height(rems(1.3))
+                                    .when(!self.style.compact, |el| {
+                                        el.mb_1().line_height(rems(1.3))
+                                    })
                                     .child(bullet),
                                 range,
                                 markdown_end,

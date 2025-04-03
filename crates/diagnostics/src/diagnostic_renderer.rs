@@ -1,8 +1,10 @@
 use std::{
+    borrow::Cow,
     ops::Range,
     sync::{Arc, OnceLock},
 };
 
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use editor::{
     Anchor, Bias, Direction, DisplayPoint, Editor, EditorElement, EditorSnapshot, EditorStyle,
@@ -14,20 +16,24 @@ use editor::{
     },
 };
 use gpui::{
-    AppContext, AvailableSpace, ClipboardItem, Entity, FontWeight, HighlightStyle, StyledText,
-    Task, TextStyle,
+    AppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Entity, FontWeight,
+    HighlightStyle, Size, StyledText, Task, TextStyle, TextStyleRefinement, size,
 };
+use gpui::{Hsla, Refineable};
 use indoc;
 use language::{Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Point, PointUtf16};
 use lsp::DiagnosticSeverity;
+use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme::{StatusColors, ThemeSettings};
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, ButtonSize, ButtonStyle, Clickable, Color,
-    ComponentPreview, Element, FluentBuilder, IconButton, IconName, InteractiveElement,
-    IntoComponent, IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    Tooltip, VisibleOnHover, Window, div, h_flex, px, relative, v_flex,
+    ComponentPreview, DefiniteLength, Element, FluentBuilder, IconButton, IconName,
+    InteractiveElement, IntoComponent, IntoElement, ParentElement, Pixels, SharedString,
+    StatefulInteractiveElement, Styled, Tooltip, VisibleOnHover, VisualContext, Window, div,
+    h_flex, px, relative, v_flex,
 };
+use util::ResultExt;
 
 pub fn diagnostic_block_renderer(
     diagnostic: Diagnostic,
@@ -193,126 +199,271 @@ pub fn highlight_diagnostic_message(
     (text_without_backticks.into(), code_ranges)
 }
 
+fn escape_markdown<'a>(s: &'a str) -> Cow<'a, str> {
+    if s.chars().any(|c| c.is_ascii_punctuation()) {
+        let mut output = String::new();
+        for c in s.chars() {
+            if c.is_ascii_punctuation() {
+                output.push('\\')
+            }
+            output.push(c)
+        }
+        output.into()
+    } else {
+        s.into()
+    }
+}
+
+impl DiagnosticRenderer {
+    async fn render(
+        diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
+        snapshot: EditorSnapshot,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<Vec<BlockProperties<Anchor>>> {
+        let primary_ix = diagnostic_group
+            .iter()
+            .position(|d| d.diagnostic.is_primary)
+            .ok_or_else(|| anyhow!("no primary diagnostic"))?;
+        let primary = diagnostic_group[primary_ix].clone();
+        let mut same_row = Vec::new();
+        let mut close = Vec::new();
+        let mut distant = Vec::new();
+        for entry in diagnostic_group {
+            if entry.diagnostic.is_primary {
+                continue;
+            }
+            if false && entry.range.start.row() == primary.range.start.row() {
+                same_row.push(entry)
+            } else if entry
+                .range
+                .start
+                .row()
+                .0
+                .abs_diff(primary.range.start.row().0)
+                < 2
+            // todo!(5)
+            {
+                close.push(entry)
+            } else {
+                distant.push(entry)
+            }
+        }
+
+        let mut markdown =
+            escape_markdown(&if let Some(source) = primary.diagnostic.source.as_ref() {
+                format!("{}: {}", source, primary.diagnostic.message)
+            } else {
+                primary.diagnostic.message
+            })
+            .to_string();
+        for entry in same_row {
+            markdown.push_str("\n- hint: ");
+            markdown.push_str(&escape_markdown(&entry.diagnostic.message))
+        }
+
+        for entry in &distant {
+            markdown.push_str("\n- hint: [");
+            markdown.push_str(&escape_markdown(&entry.diagnostic.message));
+            markdown.push_str("](https://google.com)\n")
+        }
+
+        let block = Self::create_block(
+            markdown,
+            primary.diagnostic.severity,
+            snapshot.display_point_to_anchor(primary.range.start, Bias::Right),
+            0,
+            cx,
+        )
+        .await?;
+        let mut results = vec![block];
+
+        for entry in close {
+            let markdown = if let Some(source) = entry.diagnostic.source.as_ref() {
+                format!("{}: {}", source, entry.diagnostic.message)
+            } else {
+                entry.diagnostic.message
+            };
+
+            let block = Self::create_block(
+                markdown,
+                entry.diagnostic.severity,
+                snapshot.display_point_to_anchor(entry.range.start, Bias::Right),
+                results.len(),
+                cx,
+            )
+            .await?;
+            results.push(block)
+        }
+
+        for entry in distant {
+            let mut markdown = if let Some(source) = entry.diagnostic.source.as_ref() {
+                format!("{}: {}", source, entry.diagnostic.message)
+            } else {
+                entry.diagnostic.message
+            };
+            markdown.push_str(" ([back](https://google.com))");
+
+            let block = Self::create_block(
+                markdown,
+                entry.diagnostic.severity,
+                snapshot.display_point_to_anchor(entry.range.start, Bias::Right),
+                results.len(),
+                cx,
+            )
+            .await?;
+            results.push(block)
+        }
+
+        Ok(results)
+    }
+
+    async fn create_block(
+        markdown: String,
+        severity: DiagnosticSeverity,
+        position: Anchor,
+        id: usize,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<BlockProperties<Anchor>> {
+        let mut editor_line_height = px(0.);
+        let mut text_style = None;
+        let markdown = cx.new_window_entity(|window, cx| {
+            let settings = ThemeSettings::get_global(cx);
+            dbg!(settings.line_height());
+            let settings = ThemeSettings::get_global(cx);
+            editor_line_height = (settings.line_height() * settings.buffer_font_size(cx)).round();
+            dbg!(editor_line_height);
+            text_style.replace(TextStyleRefinement {
+                font_family: Some(settings.ui_font.family.clone()),
+                font_fallbacks: settings.ui_font.fallbacks.clone(),
+                font_size: Some(settings.buffer_font_size(cx).into()),
+                line_height: Some((editor_line_height - px(2.)).into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                ..Default::default()
+            });
+            let markdown_style = MarkdownStyle {
+                base_text_style: text_style.as_ref().unwrap().clone().into(),
+                selection_background_color: { cx.theme().players().local().selection },
+                link: TextStyleRefinement {
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: px(1.),
+                        color: Some(cx.theme().colors().editor_foreground),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                compact: true,
+                ..Default::default()
+            };
+            Markdown::new(SharedString::new(markdown), markdown_style, None, None, cx)
+                .open_url(editor::hover_popover::open_markdown_url)
+        })?;
+
+        markdown
+            .update(cx, |parsed, cx| parsed.when_parsing_complete())?
+            .await
+            .ok();
+        let measured = cx.update(|window, cx| {
+            dbg!("MEASURING...");
+            let mut d = div()
+                .max_w(px(600.))
+                .border_l_2()
+                .px_2()
+                .child(markdown.clone().into_any_element());
+            *d.text_style() = Some(text_style.clone().unwrap());
+            window.measure(
+                d.into_any_element(),
+                size(AvailableSpace::MinContent, AvailableSpace::MinContent),
+                cx,
+            )
+        })?;
+        dbg!("MEASURED...", &measured);
+        let block = DiagnosticBlock {
+            severity,
+            id,
+            markdown,
+        };
+
+        dbg!(measured.height, editor_line_height);
+        let lines = ((measured.height - px(1.)) / editor_line_height).ceil();
+        let lines = lines.min(4.);
+
+        let true_size = size(measured.width + px(4.), editor_line_height * lines);
+
+        Ok(BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Below(position),
+            // todo!()
+            height: lines as u32,
+            render: Arc::new(move |bcx| block.render_block(measured.width + px(4.), lines, bcx)),
+            priority: 0,
+        })
+    }
+}
+
+struct DiagnosticBlock {
+    severity: DiagnosticSeverity,
+    id: usize,
+    markdown: Entity<Markdown>,
+}
+
+impl DiagnosticBlock {
+    fn render_block(&self, width: Pixels, height_in_lines: f32, bcx: &BlockContext) -> AnyElement {
+        let cx = &bcx.app;
+        let status_colors = bcx.app.theme().status();
+
+        let (background_color, border_color) = match self.severity {
+            DiagnosticSeverity::ERROR => (status_colors.error_background, status_colors.error),
+            DiagnosticSeverity::WARNING => {
+                (status_colors.warning_background, status_colors.warning)
+            }
+            DiagnosticSeverity::INFORMATION => (status_colors.info_background, status_colors.info),
+            DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.info),
+            _ => (status_colors.ignored_background, status_colors.ignored),
+        };
+        let min_left = bcx.gutter_dimensions.full_width();
+        let max_left = min_left + bcx.max_width - width;
+        let left = bcx.anchor_x.min(max_left).max(min_left);
+        let settings = ThemeSettings::get_global(cx);
+        let editor_line_height = (settings.line_height() * settings.buffer_font_size(cx)).round();
+        let line_height = editor_line_height - px(2.);
+
+        div()
+            .border_l_2()
+            .px_2()
+            .my(px(1.)) // NOTE: we can only borrow space from the line-height...
+            .h(height_in_lines * editor_line_height - px(2.))
+            .line_height(line_height)
+            .bg(background_color)
+            .border_color(border_color)
+            .id(self.id)
+            .ml(left)
+            .max_w(width)
+            .overflow_y_hidden()
+            .overflow_scroll()
+            .child(self.markdown.clone())
+            .into_any_element()
+    }
+}
+
 impl editor::DiagnosticRenderer for DiagnosticRenderer {
     fn render_group(
         &self,
         diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
         snapshot: EditorSnapshot,
+        window: &Window,
         cx: &App,
     ) -> Task<Vec<BlockProperties<Anchor>>> {
+        let mut window = window.to_async(cx);
         cx.spawn(async move |_| {
-            let diagnostics_by_rows =
-                diagnostic_group
-                    .into_iter()
-                    .fold(HashMap::default(), |mut acc, diagnostic| {
-                        acc.entry(diagnostic.range.start.row())
-                            .or_insert_with(Vec::new)
-                            .push(diagnostic);
-                        acc
-                    });
-
-            for (row, mut diagnostics) in diagnostics_by_rows {
-                diagnostics.sort_by_key(|diagnostic| {
-                    (
-                        !diagnostic.diagnostic.is_primary,
-                        diagnostic.diagnostic.severity,
-                    )
-                });
-                let primary = diagnostics.remove(0);
-
-                let mut markdown = if let Some(source) = primary.diagnostic.source {
-                    format!("{}: {}", source, primary.diagnostic.message)
-                } else {
-                    primary.diagnostic.message.clone()
-                };
-                for diagnostic in diagnostics {
-                    markdown.push_str("\n- hint: ");
-                    if let Some(source) = diagnostic.diagnostic.source {
-                        markdown.push(format!("{source}: "));
-                    }
-                    markdown.push(secondary.diagnostic.message)
-                }
-                let parsed_content = cx
-                    .new_window_entity(|window, cx| {
-                        let status_colors = cx.theme().status();
-
-                        match local_diagnostic.diagnostic.severity {
-                            DiagnosticSeverity::ERROR => {
-                                background_color = Some(status_colors.error_background);
-                                border_color = Some(status_colors.error_border);
-                            }
-                            DiagnosticSeverity::WARNING => {
-                                background_color = Some(status_colors.warning_background);
-                                border_color = Some(status_colors.warning_border);
-                            }
-                            DiagnosticSeverity::INFORMATION => {
-                                background_color = Some(status_colors.info_background);
-                                border_color = Some(status_colors.info_border);
-                            }
-                            DiagnosticSeverity::HINT => {
-                                background_color = Some(status_colors.hint_background);
-                                border_color = Some(status_colors.hint_border);
-                            }
-                            _ => {
-                                background_color = Some(status_colors.ignored_background);
-                                border_color = Some(status_colors.ignored_border);
-                            }
-                        };
-                        let settings = ThemeSettings::get_global(cx);
-                        let mut base_text_style = window.text_style();
-                        base_text_style.refine(&TextStyleRefinement {
-                            font_family: Some(settings.ui_font.family.clone()),
-                            font_fallbacks: settings.ui_font.fallbacks.clone(),
-                            font_size: Some(settings.ui_font_size(cx).into()),
-                            color: Some(cx.theme().colors().editor_foreground),
-                            background_color: Some(gpui::transparent_black()),
-
-                            ..Default::default()
-                        });
-                        let markdown_style = MarkdownStyle {
-                            base_text_style,
-                            selection_background_color: { cx.theme().players().local().selection },
-                            link: TextStyleRefinement {
-                                underline: Some(gpui::UnderlineStyle {
-                                    thickness: px(1.),
-                                    color: Some(cx.theme().colors().editor_foreground),
-                                    wavy: false,
-                                }),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        };
-                        Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
-                            .open_url(open_markdown_url)
-                    })
-                    .await;
-            }
-
-            // diagnostic_group
-            //     .into_iter()
-            //     .map(|entry| {
-            //         let diagnostic = entry.diagnostic.clone();
-            //         let message_height = diagnostic.message.matches('\n').count() as u32 + 1;
-            //         BlockProperties {
-            //             style: BlockStyle::Fixed,
-            //             placement: BlockPlacement::Below(
-            //                 snapshot
-            //                     .buffer_snapshot
-            //                     .anchor_after(entry.range.start.to_point(&snapshot)),
-            //             ),
-            //             height: message_height,
-            //             render: diagnostic_block_renderer(diagnostic, None, true),
-            //             priority: 0,
-            //         }
-            //     })
-            //     .collect()
-            //
-            Vec::new()
+            Self::render(diagnostic_group, snapshot, &mut window)
+                .await
+                .log_err()
+                .unwrap_or_default()
         })
     }
 }
 #[derive(IntoComponent)]
-#[component(scope = "Version Control")]
+#[component(scope = "Diagnostics")]
 pub struct DiagnosticRenderer;
 
 fn new_entry(

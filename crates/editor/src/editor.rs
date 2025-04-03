@@ -23,7 +23,7 @@ mod element;
 mod git;
 mod highlight_matching_bracket;
 mod hover_links;
-mod hover_popover;
+pub mod hover_popover;
 mod indent_guides;
 mod inlay_hint_cache;
 pub mod items;
@@ -359,6 +359,7 @@ pub trait DiagnosticRenderer {
         &self,
         diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
         snapshot: EditorSnapshot,
+        window: &Window,
         cx: &App,
     ) -> Task<Vec<BlockProperties<Anchor>>>;
 }
@@ -14226,7 +14227,8 @@ impl Editor {
         let primary_range = primary_range?;
         let primary_message = primary_message?;
 
-        let blocks = diagnostic_renderer.render_group(diagnostic_group.clone(), snapshot, cx);
+        let blocks =
+            diagnostic_renderer.render_group(diagnostic_group.clone(), snapshot, window, cx);
         self.active_diagnostics_update = cx.spawn(async move |editor, cx| {
             let blocks = blocks.await;
             editor
@@ -14246,6 +14248,7 @@ impl Editor {
                         blocks,
                         is_valid: true,
                     });
+                    cx.notify();
                 })
                 .ok();
         });
@@ -14309,9 +14312,6 @@ impl Editor {
         };
         self.inline_diagnostics_update = cx.spawn_in(window, async move |editor, cx| {
             let editor = editor.upgrade().unwrap();
-            let aa = editor.read(cx).render(window, cx);
-            aa.into_any_element()
-                .layout_as_root(available_space, window, cx);
 
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;

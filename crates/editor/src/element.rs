@@ -2754,6 +2754,12 @@ impl EditorElement {
                 let element_height_in_lines =
                     ((final_size.height / line_height).ceil() as u32).max(1);
                 if element_height_in_lines != block.height() {
+                    dbg!(
+                        final_size.height,
+                        line_height,
+                        element_height_in_lines,
+                        block.height()
+                    );
                     resized_blocks.insert(custom_block_id, element_height_in_lines);
                 }
             }
@@ -5899,6 +5905,7 @@ impl LineWithInvisibles {
                             max_width: text_width,
                         });
                         let line_height = text_style.line_height_in_pixels(window.rem_size());
+                        dbg!(line_height);
                         let size = element.layout_as_root(
                             size(available_width, AvailableSpace::Definite(line_height)),
                             window,
@@ -6951,6 +6958,7 @@ impl Element for EditorElement {
                     let mut blocks = match blocks {
                         Ok(blocks) => blocks,
                         Err(resized_blocks) => {
+                            dbg!(&resized_blocks);
                             self.editor.update(cx, |editor, cx| {
                                 editor.resize_blocks(resized_blocks, autoscroll_request, cx)
                             });

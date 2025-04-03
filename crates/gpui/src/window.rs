@@ -48,6 +48,7 @@ use util::post_inc;
 use util::{ResultExt, measure};
 use uuid::Uuid;
 
+mod measure;
 mod prompts;
 
 pub use prompts::*;
@@ -938,6 +939,21 @@ impl Window {
         value: AnyWindowFocusListener,
     ) -> (Subscription, impl FnOnce() + use<>) {
         self.focus_listeners.insert((), value)
+    }
+
+    /// measure provides an estimate of the pixel size of this element.
+    /// In real life, the actual rendered size can depend on the parent element,
+    /// so callers of this API should be sure that they are setting the correct
+    /// text size / line height etc, if it matters.
+    pub fn measure(
+        &self,
+        mut element: AnyElement,
+        constraints: Size<AvailableSpace>,
+        cx: &mut App,
+    ) -> Size<Pixels> {
+        let mut fake_window = measure::fake_window(&self, cx);
+        fake_window.invalidator.set_phase(DrawPhase::Prepaint);
+        element.layout_as_root(constraints, &mut fake_window, cx)
     }
 }
 

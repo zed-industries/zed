@@ -1,10 +1,12 @@
 use assets::Assets;
+use gpui::size;
 use gpui::{Application, Entity, KeyBinding, Length, StyleRefinement, WindowOptions, rgb};
 use language::{LanguageRegistry, language_settings::AllLanguageSettings};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
 use settings::SettingsStore;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use theme::LoadThemes;
 use ui::div;
 use ui::prelude::*;
@@ -35,64 +37,88 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
-        let _ = cx.open_window(WindowOptions::default(), |_, cx| {
-            cx.new(|cx| {
-                let markdown_style = MarkdownStyle {
-                    base_text_style: gpui::TextStyle {
-                        font_family: "Zed Mono".into(),
-                        color: cx.theme().colors().text,
-                        ..Default::default()
-                    },
-                    code_block: StyleRefinement {
-                        text: Some(gpui::TextStyleRefinement {
-                            font_family: Some("Zed Mono".into()),
-                            background_color: Some(cx.theme().colors().editor_background),
-                            ..Default::default()
-                        }),
-                        margin: gpui::EdgesRefinement {
-                            top: Some(Length::Definite(rems(4.).into())),
-                            left: Some(Length::Definite(rems(4.).into())),
-                            right: Some(Length::Definite(rems(4.).into())),
-                            bottom: Some(Length::Definite(rems(4.).into())),
-                        },
-                        ..Default::default()
-                    },
-                    inline_code: gpui::TextStyleRefinement {
-                        font_family: Some("Zed Mono".into()),
-                        background_color: Some(cx.theme().colors().editor_background),
-                        ..Default::default()
-                    },
-                    rule_color: Color::Muted.color(cx),
-                    block_quote_border_color: Color::Muted.color(cx),
-                    block_quote: gpui::TextStyleRefinement {
-                        color: Some(Color::Muted.color(cx)),
-                        ..Default::default()
-                    },
-                    link: gpui::TextStyleRefinement {
-                        color: Some(Color::Accent.color(cx)),
-                        underline: Some(gpui::UnderlineStyle {
-                            thickness: px(1.),
-                            color: Some(Color::Accent.color(cx)),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    },
-                    syntax: cx.theme().syntax().clone(),
-                    selection_background_color: {
-                        let mut selection = cx.theme().players().local().selection;
-                        selection.fade_out(0.7);
-                        selection
-                    },
-                    heading: Default::default(),
+        let markdown_style = MarkdownStyle {
+            base_text_style: gpui::TextStyle {
+                font_family: "Zed Mono".into(),
+                color: cx.theme().colors().text,
+                ..Default::default()
+            },
+            code_block: StyleRefinement {
+                text: Some(gpui::TextStyleRefinement {
+                    font_family: Some("Zed Mono".into()),
+                    background_color: Some(cx.theme().colors().editor_background),
                     ..Default::default()
-                };
-                let markdown = cx.new(|cx| {
-                    Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, cx)
-                });
+                }),
+                margin: gpui::EdgesRefinement {
+                    top: Some(Length::Definite(rems(4.).into())),
+                    left: Some(Length::Definite(rems(4.).into())),
+                    right: Some(Length::Definite(rems(4.).into())),
+                    bottom: Some(Length::Definite(rems(4.).into())),
+                },
+                ..Default::default()
+            },
+            inline_code: gpui::TextStyleRefinement {
+                font_family: Some("Zed Mono".into()),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            rule_color: Color::Muted.color(cx),
+            block_quote_border_color: Color::Muted.color(cx),
+            block_quote: gpui::TextStyleRefinement {
+                color: Some(Color::Muted.color(cx)),
+                ..Default::default()
+            },
+            link: gpui::TextStyleRefinement {
+                color: Some(Color::Accent.color(cx)),
+                underline: Some(gpui::UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(Color::Accent.color(cx)),
+                    wavy: false,
+                }),
+                ..Default::default()
+            },
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: {
+                let mut selection = cx.theme().players().local().selection;
+                selection.fade_out(0.7);
+                selection
+            },
+            heading: Default::default(),
+            ..Default::default()
+        };
+        let window = cx
+            .open_window(WindowOptions::default(), |_, cx| {
+                cx.new(|cx| {
+                    let markdown = cx.new(|cx| {
+                        Markdown::new(
+                            MARKDOWN_EXAMPLE.into(),
+                            markdown_style.clone(),
+                            None,
+                            None,
+                            cx,
+                        )
+                    });
 
-                HelloWorld { markdown }
+                    HelloWorld { markdown }
+                })
             })
-        });
+            .unwrap();
+
+        let markdown =
+            cx.new(|cx| Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, cx));
+        cx.spawn(async move |cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            window
+                .update(cx, |_, window, cx| {
+                    let now = Instant::now();
+                    dbg!(window.measure(markdown, size(px(600.), px(1000.)).into(), cx));
+                    dbg!(now.elapsed());
+                })
+                .unwrap();
+        })
+        .detach();
     });
 }
 struct HelloWorld {

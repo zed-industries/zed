@@ -4,6 +4,7 @@
 
 use std::iter::Iterator;
 use std::sync::Arc;
+use std::time::Duration;
 
 use client::UserStore;
 use component::{ComponentId, ComponentMetadata, components};
@@ -26,37 +27,27 @@ use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     let app_state = app_state.clone();
 
-    cx.observe_new(move |workspace: &mut Workspace, _, cx| {
-        let app_state = app_state.clone();
-        let weak_workspace = cx.entity().downgrade();
-
+    cx.observe_new(move |workspace: &mut Workspace, window, cx| {
         workspace.register_action(
             move |workspace, _: &workspace::OpenComponentPreview, window, cx| {
-                let app_state = app_state.clone();
-
-                let language_registry = app_state.languages.clone();
-                let user_store = app_state.user_store.clone();
-
-                let component_preview = cx.new(|cx| {
-                    ComponentPreview::new(
-                        weak_workspace.clone(),
-                        language_registry,
-                        user_store,
-                        None,
-                        cx,
-                    )
-                });
-
-                workspace.add_item_to_active_pane(
-                    Box::new(component_preview),
-                    None,
-                    true,
-                    window,
-                    cx,
-                )
+                ComponentPreview::open(workspace, None, window, cx)
             },
         );
-        cx.dispatch_action(&workspace::OpenComponentPreview);
+        if let Some(window) = window {
+            if let Ok(component) = std::env::var("ZED_COMPONENT_PREVIEW") {
+                dbg!("WATY");
+                cx.spawn_in(window, async move |workspace, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(50))
+                        .await;
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        dbg!("WATY");
+                        ComponentPreview::open(workspace, Some(component), window, cx)
+                    })
+                })
+                .detach();
+            }
+        }
     })
     .detach();
 }
@@ -102,15 +93,51 @@ struct ComponentPreview {
 }
 
 impl ComponentPreview {
+    fn open(
+        workspace: &mut Workspace,
+        component: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let app_state = workspace.app_state().clone();
+        let weak_workspace = workspace.weak_handle();
+
+        let language_registry = app_state.languages.clone();
+        let user_store = app_state.user_store.clone();
+
+        let component_preview = cx.new(|cx| {
+            ComponentPreview::new(
+                weak_workspace.clone(),
+                language_registry,
+                user_store,
+                component,
+                cx,
+            )
+        });
+
+        workspace.add_item_to_active_pane(Box::new(component_preview), None, true, window, cx)
+    }
+
     pub fn new(
         workspace: WeakEntity<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         user_store: Entity<UserStore>,
-        selected_index: impl Into<Option<usize>>,
+        selected: Option<String>,
         cx: &mut Context<Self>,
     ) -> Self {
         let sorted_components = components().all_sorted();
-        let selected_index = selected_index.into().unwrap_or(0);
+        dbg!(&selected);
+        let active_page = selected
+            .and_then(|selected| {
+                sorted_components.iter().find_map(|component| {
+                    if component.name() == selected {
+                        Some(PreviewPage::Component(component.id()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_default();
 
         let component_list = ListState::new(
             sorted_components.len(),
@@ -136,11 +163,11 @@ impl ComponentPreview {
             language_registry,
             user_store,
             workspace,
-            active_page: PreviewPage::AllComponents,
+            active_page,
             component_map: components().0,
             components: sorted_components,
             component_list,
-            cursor_index: selected_index,
+            cursor_index: 0,
         };
 
         if component_preview.cursor_index > 0 {
@@ -527,14 +554,15 @@ impl Item for ComponentPreview {
         let language_registry = self.language_registry.clone();
         let user_store = self.user_store.clone();
         let weak_workspace = self.workspace.clone();
-        let selected_index = self.cursor_index;
 
         Some(cx.new(|cx| {
             Self::new(
                 weak_workspace,
                 language_registry,
                 user_store,
-                selected_index,
+                self.components
+                    .get(self.cursor_index)
+                    .map(|c| c.id().0.to_string()),
                 cx,
             )
         }))
