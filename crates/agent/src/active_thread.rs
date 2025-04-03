@@ -1099,36 +1099,47 @@ impl ActiveThread {
                 .into_any_element(),
         };
 
-        let message_content = v_flex()
-            .gap_1p5()
-            .child(
-                if let Some(edit_message_editor) = edit_message_editor.clone() {
-                    div()
-                        .key_context("EditMessageEditor")
-                        .on_action(cx.listener(Self::cancel_editing_message))
-                        .on_action(cx.listener(Self::confirm_editing_message))
-                        .min_h_6()
-                        .child(edit_message_editor)
-                } else {
-                    div()
-                        .min_h_6()
-                        .text_ui(cx)
-                        .child(self.render_message_content(
-                            message_id,
-                            rendered_message,
-                            has_tool_uses,
-                            cx,
-                        ))
-                },
-            )
-            .when(!context.is_empty(), |parent| {
-                parent.child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap_1()
-                        .children(context.into_iter().map(|context| {
-                            let context_id = context.id();
-                            ContextPill::added(AddedContext::new(context, cx), false, false, None)
+        let message_is_empty = message.should_display_content();
+        let has_content = !message_is_empty || !context.is_empty();
+
+        let message_content =
+            has_content.then(|| {
+                v_flex()
+                    .gap_1p5()
+                    .when(!message_is_empty, |parent| {
+                        parent.child(
+                            if let Some(edit_message_editor) = edit_message_editor.clone() {
+                                div()
+                                    .key_context("EditMessageEditor")
+                                    .on_action(cx.listener(Self::cancel_editing_message))
+                                    .on_action(cx.listener(Self::confirm_editing_message))
+                                    .min_h_6()
+                                    .child(edit_message_editor)
+                                    .into_any()
+                            } else {
+                                div()
+                                    .min_h_6()
+                                    .text_ui(cx)
+                                    .child(self.render_message_content(
+                                        message_id,
+                                        rendered_message,
+                                        has_tool_uses,
+                                        cx,
+                                    ))
+                                    .into_any()
+                            },
+                        )
+                    })
+                    .when(!context.is_empty(), |parent| {
+                        parent.child(h_flex().flex_wrap().gap_1().children(
+                            context.into_iter().map(|context| {
+                                let context_id = context.id();
+                                ContextPill::added(
+                                    AddedContext::new(context, cx),
+                                    false,
+                                    false,
+                                    None,
+                                )
                                 .on_click(Rc::new(cx.listener({
                                     let workspace = workspace.clone();
                                     let context_store = context_store.clone();
@@ -1145,8 +1156,9 @@ impl ActiveThread {
                                         }
                                     }
                                 })))
-                        })),
-                )
+                            }),
+                        ))
+                    })
             });
 
         let styled_message = match message.role {
@@ -1261,7 +1273,7 @@ impl ActiveThread {
                                         ),
                                 ),
                         )
-                        .child(div().p_2().child(message_content)),
+                        .child(div().p_2().children(message_content)),
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
@@ -1270,7 +1282,9 @@ impl ActiveThread {
                 .pr_4()
                 .border_l_1()
                 .border_color(cx.theme().colors().border_variant)
-                .child(message_content)
+                .children(message_content)
+                .gap_2p5()
+                .pb_2p5()
                 .when(!tool_uses.is_empty(), |parent| {
                     parent.child(
                         v_flex().children(
@@ -1284,7 +1298,7 @@ impl ActiveThread {
                 v_flex()
                     .bg(colors.editor_background)
                     .rounded_sm()
-                    .child(div().p_4().child(message_content)),
+                    .child(div().p_4().children(message_content)),
             ),
         };
 
@@ -1815,7 +1829,7 @@ impl ActiveThread {
 
         div().map(|element| {
             if !tool_use.needs_confirmation {
-                element.py_2p5().child(
+                element.child(
                     v_flex()
                         .child(
                             h_flex()

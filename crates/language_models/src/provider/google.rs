@@ -373,11 +373,7 @@ pub fn into_google(
                     .into_iter()
                     .filter_map(|content| match content {
                         language_model::MessageContent::Text(text) => {
-                            if !text.is_empty() {
-                                Some(Part::TextPart(google_ai::TextPart { text }))
-                            } else {
-                                None
-                            }
+                            Some(Part::TextPart(google_ai::TextPart { text }))
                         }
                         language_model::MessageContent::Image(_) => None,
                         language_model::MessageContent::ToolUse(tool_use) => {
