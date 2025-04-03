@@ -431,7 +431,7 @@ pub fn map_to_language_model_completion_events(
             tool_calls_by_index: HashMap::default(),
         },
         |mut state| async move {
-            while let Some(event) = state.events.next().await {
+            if let Some(event) = state.events.next().await {
                 match event {
                     Ok(event) => {
                         let Some(choice) = event.choices.first() else {
