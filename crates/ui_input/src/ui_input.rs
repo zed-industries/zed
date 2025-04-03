@@ -176,7 +176,7 @@ impl ComponentPreview for SingleLineInput {
         v_flex()
             .gap_6()
             .children(vec![example_group(vec![single_example(
-                "defaulr",
+                "Default",
                 div().child(input_1.clone()).into_any_element(),
             )])])
             .into_any_element()
