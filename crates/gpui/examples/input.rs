@@ -669,20 +669,21 @@ impl Render for InputExample {
 fn main() {
     Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
+        let mapper = cx.get_mapper();
         cx.bind_keys([
-            KeyBinding::new("backspace", Backspace, None),
-            KeyBinding::new("delete", Delete, None),
-            KeyBinding::new("left", Left, None),
-            KeyBinding::new("right", Right, None),
-            KeyBinding::new("shift-left", SelectLeft, None),
-            KeyBinding::new("shift-right", SelectRight, None),
-            KeyBinding::new("cmd-a", SelectAll, None),
-            KeyBinding::new("cmd-v", Paste, None),
-            KeyBinding::new("cmd-c", Copy, None),
-            KeyBinding::new("cmd-x", Cut, None),
-            KeyBinding::new("home", Home, None),
-            KeyBinding::new("end", End, None),
-            KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
+            KeyBinding::new("backspace", Backspace, None, mapper),
+            KeyBinding::new("delete", Delete, None, mapper),
+            KeyBinding::new("left", Left, None, mapper),
+            KeyBinding::new("right", Right, None, mapper),
+            KeyBinding::new("shift-left", SelectLeft, None, mapper),
+            KeyBinding::new("shift-right", SelectRight, None, mapper),
+            KeyBinding::new("cmd-a", SelectAll, None, mapper),
+            KeyBinding::new("cmd-v", Paste, None, mapper),
+            KeyBinding::new("cmd-c", Copy, None, mapper),
+            KeyBinding::new("cmd-x", Cut, None, mapper),
+            KeyBinding::new("home", Home, None, mapper),
+            KeyBinding::new("end", End, None, mapper),
+            KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None, mapper),
         ]);
 
         let window = cx
