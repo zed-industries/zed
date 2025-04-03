@@ -214,6 +214,21 @@ pub enum DetailedSummaryState {
     },
 }
 
+#[derive(Default)]
+pub struct TotalTokenUsage {
+    pub total: usize,
+    pub max: usize,
+    pub ratio: TokenUsageRatio,
+}
+
+#[derive(Default, PartialEq, Eq)]
+pub enum TokenUsageRatio {
+    #[default]
+    Normal,
+    Warning,
+    Exceeded,
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -1723,26 +1738,33 @@ impl Thread {
         self.cumulative_token_usage.clone()
     }
 
-    pub fn is_getting_too_long(&self, cx: &App) -> bool {
+    pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(model) = model_registry.active_model() else {
-            return false;
+            return TotalTokenUsage::default();
         };
 
-        let max_tokens = model.max_token_count();
-
-        let current_usage =
-            self.cumulative_token_usage.input_tokens + self.cumulative_token_usage.output_tokens;
+        let max = model.max_token_count();
 
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
-            .unwrap_or("0.9".to_string())
+            .unwrap_or("0.8".to_string())
             .parse()
             .unwrap();
         #[cfg(not(debug_assertions))]
-        let warning_threshold: f32 = 0.9;
+        let warning_threshold: f32 = 0.8;
 
-        current_usage as f32 >= (max_tokens as f32 * warning_threshold)
+        let total = self.cumulative_token_usage.total_tokens() as usize;
+
+        let ratio = if total >= max {
+            TokenUsageRatio::Exceeded
+        } else if total as f32 / max as f32 >= warning_threshold {
+            TokenUsageRatio::Warning
+        } else {
+            TokenUsageRatio::Normal
+        };
+
+        TotalTokenUsage { total, max, ratio }
     }
 
     pub fn deny_tool_use(
