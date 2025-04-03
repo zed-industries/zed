@@ -294,7 +294,7 @@ impl<'a> PaneLeaderDecorator for PaneRenderContext<'a> {
         });
         LeaderDecoration {
             status_box,
-            border: None,
+            border: Some(leader_color),
         }
     }
 
