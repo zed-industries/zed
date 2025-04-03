@@ -631,7 +631,7 @@ impl FoldSnapshot {
         &self.inlay_snapshot.buffer
     }
 
-    pub fn fold_width(&self, fold_id: &FoldId) -> Option<Pixels> {
+    fn fold_width(&self, fold_id: &FoldId) -> Option<Pixels> {
         self.fold_metadata_by_id.get(fold_id)?.width
     }
 

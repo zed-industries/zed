@@ -6876,8 +6876,9 @@ impl Element for EditorElement {
                     if self.editor.update(cx, |editor, cx| {
                         editor.update_fold_widths(new_fold_widths, cx)
                     }) {
-                        // If the fold widths have changed, we need to repaint the element in
-                        // case wrapping has changed.
+                        // If the fold widths have changed, we need to prepaint
+                        // the element again to account for any changes in
+                        // wrapping.
                         return self.prepaint(None, bounds, &mut (), window, cx);
                     }
 
