@@ -372,6 +372,7 @@ impl ActiveThread {
             _subscriptions: subscriptions,
             notification_subscriptions: HashMap::default(),
             showing_feedback_comments_for: None,
+            feedback_comments_editor: None,
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -923,33 +924,29 @@ impl ActiveThread {
                 MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
             });
 
-        let buffer = cx.new(|cx| {
-            let empty_string = String::new();
-            MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
-        });
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::new(
+                    editor::EditorMode::AutoHeight { max_lines: 4 },
+                    buffer,
+                    None,
+                    window,
+                    cx,
+                );
+                editor.set_placeholder_text(
+                    "What went wrong? Share your feedback so we can improve.",
+                    cx,
+                );
+                editor
+            });
 
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight { max_lines: 4 },
-                buffer,
-                None,
-                window,
-                cx,
-            );
-            editor.set_placeholder_text(
-                "What went wrong? Share your feedback so we can improve.",
-                cx,
-            );
-            editor
-        });
-
-        editor.read(cx).focus_handle(cx).focus(window);
-        self.feedback_message_editor = Some(editor);
-        cx.notify();
+            editor.read(cx).focus_handle(cx).focus(window);
+            self.feedback_comments_editor = Some(editor);
+            cx.notify();
+        }
     }
 
     fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
-        let Some(editor) = self.feedback_message_editor.clone() else {
+        let Some(editor) = self.feedback_comments_editor.clone() else {
             return;
         };
 
@@ -1000,6 +997,15 @@ impl ActiveThread {
         self.showing_feedback_comments_for = None;
         self.feedback_comments_editor = None;
         cx.notify();
+    }
+
+    fn handle_submit_comments(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.submit_feedback_message(cx);
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
