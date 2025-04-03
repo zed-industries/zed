@@ -317,13 +317,6 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             });
     let has_key_char = !control && !command && !function;
     let key = chars_for_modified_key(scan_code, NO_MOD);
-    println!(
-        "characters: {}, {}, code {}, {:?}",
-        characters, key, scan_code, first_char
-    );
-    let all_chars = native_event.characters().to_str().to_string();
-    let all_chars_2 = chars_for_modified_key(scan_code, CMD_MOD | SHIFT_MOD);
-    println!("all_chars: ->{}<-, ->{}<-", all_chars, all_chars_2);
 
     if let Some((code, key, key_char)) = parse_immutable_keys(scan_code, has_key_char) {
         println!(
@@ -345,12 +338,6 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     }
 
     let code = parse_other_keys(scan_code);
-    let flag = if always_use_command_layout() {
-        CMD_MOD
-    } else {
-        NO_MOD
-    };
-    let key = chars_for_modified_key(scan_code, flag);
     let key_char = if has_key_char {
         let mut mods = NO_MOD;
         if shift {
@@ -364,10 +351,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         None
     };
 
-    println!(
-        "parse_immutable_keys: {:#?}, {:?}, {}",
-        modifiers, code, key
-    );
+    println!("parse_other_keys: {:#?}, {:?}, {}", modifiers, code, key);
     let ret = Keystroke {
         modifiers: Modifiers {
             control,
@@ -383,151 +367,6 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     };
     println!("parse_keystroke: {:#?}", ret);
     ret
-
-    // #[allow(non_upper_case_globals)]
-    // let key = match first_char {
-    //     Some(SPACE_KEY) => {
-    //         key_char = Some(" ".to_string());
-    //         "space".to_string()
-    //     }
-    //     Some(TAB_KEY) => {
-    //         key_char = Some("\t".to_string());
-    //         "tab".to_string()
-    //     }
-    //     Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => {
-    //         key_char = Some("\n".to_string());
-    //         "enter".to_string()
-    //     }
-    //     Some(BACKSPACE_KEY) => "backspace".to_string(),
-    //     Some(ESCAPE_KEY) => "escape".to_string(),
-    //     Some(SHIFT_TAB_KEY) => "tab".to_string(),
-    //     Some(NSUpArrowFunctionKey) => "up".to_string(),
-    //     Some(NSDownArrowFunctionKey) => "down".to_string(),
-    //     Some(NSLeftArrowFunctionKey) => "left".to_string(),
-    //     Some(NSRightArrowFunctionKey) => "right".to_string(),
-    //     Some(NSPageUpFunctionKey) => "pageup".to_string(),
-    //     Some(NSPageDownFunctionKey) => "pagedown".to_string(),
-    //     Some(NSHomeFunctionKey) => "home".to_string(),
-    //     Some(NSEndFunctionKey) => "end".to_string(),
-    //     Some(NSDeleteFunctionKey) => "delete".to_string(),
-    //     // Observed Insert==NSHelpFunctionKey not NSInsertFunctionKey.
-    //     Some(NSHelpFunctionKey) => "insert".to_string(),
-    //     Some(NSF1FunctionKey) => "f1".to_string(),
-    //     Some(NSF2FunctionKey) => "f2".to_string(),
-    //     Some(NSF3FunctionKey) => "f3".to_string(),
-    //     Some(NSF4FunctionKey) => "f4".to_string(),
-    //     Some(NSF5FunctionKey) => "f5".to_string(),
-    //     Some(NSF6FunctionKey) => "f6".to_string(),
-    //     Some(NSF7FunctionKey) => "f7".to_string(),
-    //     Some(NSF8FunctionKey) => "f8".to_string(),
-    //     Some(NSF9FunctionKey) => "f9".to_string(),
-    //     Some(NSF10FunctionKey) => "f10".to_string(),
-    //     Some(NSF11FunctionKey) => "f11".to_string(),
-    //     Some(NSF12FunctionKey) => "f12".to_string(),
-    //     Some(NSF13FunctionKey) => "f13".to_string(),
-    //     Some(NSF14FunctionKey) => "f14".to_string(),
-    //     Some(NSF15FunctionKey) => "f15".to_string(),
-    //     Some(NSF16FunctionKey) => "f16".to_string(),
-    //     Some(NSF17FunctionKey) => "f17".to_string(),
-    //     Some(NSF18FunctionKey) => "f18".to_string(),
-    //     Some(NSF19FunctionKey) => "f19".to_string(),
-    //     Some(NSF20FunctionKey) => "f20".to_string(),
-    //     Some(NSF21FunctionKey) => "f21".to_string(),
-    //     Some(NSF22FunctionKey) => "f22".to_string(),
-    //     Some(NSF23FunctionKey) => "f23".to_string(),
-    //     Some(NSF24FunctionKey) => "f24".to_string(),
-    //     Some(NSF25FunctionKey) => "f25".to_string(),
-    //     Some(NSF26FunctionKey) => "f26".to_string(),
-    //     Some(NSF27FunctionKey) => "f27".to_string(),
-    //     Some(NSF28FunctionKey) => "f28".to_string(),
-    //     Some(NSF29FunctionKey) => "f29".to_string(),
-    //     Some(NSF30FunctionKey) => "f30".to_string(),
-    //     Some(NSF31FunctionKey) => "f31".to_string(),
-    //     Some(NSF32FunctionKey) => "f32".to_string(),
-    //     Some(NSF33FunctionKey) => "f33".to_string(),
-    //     Some(NSF34FunctionKey) => "f34".to_string(),
-    //     Some(NSF35FunctionKey) => "f35".to_string(),
-    //     _ => {
-    //         // Cases to test when modifying this:
-    //         //
-    //         //           qwerty key | none | cmd   | cmd-shift
-    //         // * Armenian         s | ս    | cmd-s | cmd-shift-s  (layout is non-ASCII, so we use cmd layout)
-    //         // * Dvorak+QWERTY    s | o    | cmd-s | cmd-shift-s  (layout switches on cmd)
-    //         // * Ukrainian+QWERTY s | с    | cmd-s | cmd-shift-s  (macOS reports cmd-s instead of cmd-S)
-    //         // * Czech            7 | ý    | cmd-ý | cmd-7        (layout has shifted numbers)
-    //         // * Norwegian        7 | 7    | cmd-7 | cmd-/        (macOS reports cmd-shift-7 instead of cmd-/)
-    //         // * Russian          7 | 7    | cmd-7 | cmd-&        (shift-7 is . but when cmd is down, should use cmd layout)
-    //         // * German QWERTZ    ; | ö    | cmd-ö | cmd-Ö        (Zed's shift special case only applies to a-z)
-    //         //
-    //         let mut chars_ignoring_modifiers =
-    //             chars_for_modified_key(native_event.keyCode(), NO_MOD);
-    //         let mut chars_with_shift = chars_for_modified_key(native_event.keyCode(), SHIFT_MOD);
-    //         let always_use_cmd_layout = always_use_command_layout();
-    //         println!("always_use_cmd_layout: {}", always_use_cmd_layout);
-
-    //         // Handle Dvorak+QWERTY / Russian / Armenian
-    //         if command || always_use_cmd_layout {
-    //             let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), CMD_MOD);
-    //             println!("chars_with_cmd: {}", chars_with_cmd);
-    //             let chars_with_both =
-    //                 chars_for_modified_key(native_event.keyCode(), CMD_MOD | SHIFT_MOD);
-
-    //             // We don't do this in the case that the shifted command key generates
-    //             // the same character as the unshifted command key (Norwegian, e.g.)
-    //             if chars_with_both != chars_with_cmd {
-    //                 chars_with_shift = chars_with_both;
-
-    //             // Handle edge-case where cmd-shift-s reports cmd-s instead of
-    //             // cmd-shift-s (Ukrainian, etc.)
-    //             } else if chars_with_cmd.to_ascii_uppercase() != chars_with_cmd {
-    //                 chars_with_shift = chars_with_cmd.to_ascii_uppercase();
-    //             }
-    //             chars_ignoring_modifiers = chars_with_cmd;
-    //         }
-
-    //         if !control && !command && !function {
-    //             let mut mods = NO_MOD;
-    //             if shift {
-    //                 mods |= SHIFT_MOD;
-    //             }
-    //             if alt {
-    //                 mods |= OPTION_MOD;
-    //             }
-
-    //             key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
-    //         }
-
-    //         let mut key = if shift
-    //             && chars_ignoring_modifiers
-    //                 .chars()
-    //                 .all(|c| c.is_ascii_lowercase())
-    //         {
-    //             chars_ignoring_modifiers
-    //         } else if shift {
-    //             shift = false;
-    //             chars_with_shift
-    //         } else {
-    //             chars_ignoring_modifiers
-    //         };
-
-    //         key
-    //     }
-    // };
-
-    // let ret = Keystroke {
-    //     modifiers: Modifiers {
-    //         control,
-    //         alt,
-    //         shift,
-    //         platform: command,
-    //         function,
-    //     },
-    //     code,
-    //     face: key,
-    //     key_char,
-    // };
-    // println!("=> Keystroke: {:#?}", ret);
-    // ret
 }
 
 pub fn always_use_command_layout() -> bool {
