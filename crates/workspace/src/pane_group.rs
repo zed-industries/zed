@@ -4,7 +4,7 @@ use crate::{
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
 use anyhow::{Result, anyhow};
-use call::{ActiveCall, ParticipantLocation, participant::RemoteParticipant};
+use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
@@ -125,7 +125,7 @@ impl PaneGroup {
     pub fn render(
         &self,
         zoomed: Option<&AnyWeakView>,
-        render_cx: &PaneRenderContext,
+        render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
@@ -191,12 +191,12 @@ pub struct PaneRenderContext<'a> {
 }
 
 #[derive(Default)]
-struct LeaderDecoration {
+pub struct LeaderDecoration {
     border: Option<Hsla>,
     status_box: Option<AnyElement>,
 }
 
-trait PaneLeaderDecorator {
+pub trait PaneLeaderDecorator {
     fn decorate(&self, pane: &Entity<Pane>, cx: &App) -> LeaderDecoration;
     fn active_pane(&self) -> &Entity<Pane>;
 }
@@ -214,28 +214,30 @@ impl<'a> PaneLeaderDecorator for PaneRenderContext<'a> {
             let room = self.active_call?.read(cx).room()?.read(cx);
             room.remote_participant_for_peer_id(*leader_id)
         });
+        let Some(leader) = leader else {
+            return LeaderDecoration::default();
+        };
         let is_in_unshared_view = follower_state.as_ref().map_or(false, |(_, state)| {
             state
                 .active_view_id
                 .is_some_and(|view_id| !state.items_by_leader_view_id.contains_key(&view_id))
         });
-        let Some(leader) = leader else {
-            return LeaderDecoration::default();
-        };
-        let leader_join_data;
+        let is_in_panel = follower_state
+            .as_ref()
+            .map_or(false, |(_, state)| state.dock_pane.is_some());
+
+        let mut leader_join_data = None;
         let leader_status_box = match leader.location {
             ParticipantLocation::SharedProject {
                 project_id: leader_project_id,
             } => {
                 if Some(leader_project_id) == self.project.read(cx).remote_id() {
-                    if is_in_unshared_view {
-                        Some(Label::new(format!(
+                    is_in_unshared_view.then(|| {
+                        Label::new(format!(
                             "{} is in an unshared pane",
                             leader.user.github_login
-                        )))
-                    } else {
-                        None
-                    }
+                        ))
+                    })
                 } else {
                     leader_join_data = Some((leader_project_id, leader.user.id));
                     Some(Label::new(format!(
@@ -253,7 +255,47 @@ impl<'a> PaneLeaderDecorator for PaneRenderContext<'a> {
                 leader.user.github_login
             ))),
         };
-        LeaderDecoration::default()
+        let mut leader_color = cx
+            .theme()
+            .players()
+            .color_for_participant(leader.participant_index.0)
+            .cursor;
+        if is_in_panel {
+            leader_color.fade_out(0.75);
+        } else {
+            leader_color.fade_out(0.3);
+        }
+        let status_box = leader_status_box.map(|status| {
+            div()
+                .absolute()
+                .w_96()
+                .bottom_3()
+                .right_3()
+                .elevation_2(cx)
+                .p_1()
+                .child(status)
+                .when_some(
+                    leader_join_data,
+                    |this, (leader_project_id, leader_user_id)| {
+                        let app_state = self.app_state.clone();
+                        this.cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                crate::join_in_room_project(
+                                    leader_project_id,
+                                    leader_user_id,
+                                    app_state.clone(),
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
+                            })
+                    },
+                )
+                .into_any_element()
+        });
+        LeaderDecoration {
+            status_box,
+            border: None,
+        }
     }
 
     fn active_pane(&self) -> &Entity<Pane> {
