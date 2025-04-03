@@ -129,6 +129,39 @@ impl NewSessionModal {
         Ok(())
     }
 
+    fn update_attach_picker(
+        attach: &Entity<AttachMode>,
+        selected_debugger: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        attach.update(cx, |this, cx| {
+            if selected_debugger != this.debug_definition.adapter {
+                this.debug_definition.adapter = selected_debugger.into();
+                if let Some(project) = this
+                    .workspace
+                    .read_with(cx, |workspace, _| workspace.project().clone())
+                    .ok()
+                {
+                    this.attach_picker = Some(cx.new(|cx| {
+                        let modal = AttachModal::new(
+                            project,
+                            this.debug_definition.clone(),
+                            false,
+                            window,
+                            cx,
+                        );
+
+                        window.focus(&modal.focus_handle(cx));
+
+                        modal
+                    }));
+                }
+            }
+
+            cx.notify();
+        })
+    }
     fn adapter_drop_down_menu(
         &self,
         window: &mut Window,
@@ -151,34 +184,7 @@ impl NewSessionModal {
                             this.debugger = Some(name.clone());
                             cx.notify();
                             if let NewSessionMode::Attach(attach) = &this.mode {
-                                attach.update(cx, |this, cx| {
-                                    if name != this.debug_definition.adapter {
-                                        this.debug_definition.adapter = name.clone().into();
-                                        if let Some(project) = this
-                                            .workspace
-                                            .read_with(cx, |workspace, _| {
-                                                workspace.project().clone()
-                                            })
-                                            .ok()
-                                        {
-                                            this.attach_picker = Some(cx.new(|cx| {
-                                                let modal = AttachModal::new(
-                                                    project,
-                                                    this.debug_definition.clone(),
-                                                    false,
-                                                    window,
-                                                    cx,
-                                                );
-
-                                                window.focus(&modal.focus_handle(cx));
-
-                                                modal
-                                            }));
-                                        }
-                                    }
-
-                                    cx.notify();
-                                })
+                                Self::update_attach_picker(&attach, &name, window, cx);
                             }
                         })
                         .ok();
@@ -214,9 +220,8 @@ impl NewSessionModal {
         DropdownMenu::new(
             "debug-config-menu",
             config_name
-                .as_ref()
-                .unwrap_or_else(|| &SELECT_CONFIG_LABEL)
-                .clone(),
+                .clone()
+                .unwrap_or_else(|| SELECT_SCENARIO_LABEL.clone()),
             ContextMenu::build(window, cx, move |mut menu, _, cx| {
                 let setter_for_name = |task: DebugTaskDefinition| {
                     let weak = weak.clone();
@@ -241,6 +246,11 @@ impl NewSessionModal {
                                         window,
                                         cx,
                                     );
+                                    if let Some((debugger, attach)) =
+                                        this.debugger.as_ref().zip(this.mode.as_attach())
+                                    {
+                                        Self::update_attach_picker(&attach, &debugger, window, cx);
+                                    }
                                 }
                             }
                             cx.notify();
@@ -375,7 +385,7 @@ impl AttachMode {
 }
 
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
-static SELECT_CONFIG_LABEL: SharedString = SharedString::new_static("Select Config");
+static SELECT_SCENARIO_LABEL: SharedString = SharedString::new_static("Select Profile");
 
 #[derive(Clone)]
 enum NewSessionMode {
@@ -390,6 +400,13 @@ impl NewSessionMode {
             NewSessionMode::Attach(entity) => entity.read(cx).debug_task().into(),
         }
     }
+    fn as_attach(&self) -> Option<&Entity<AttachMode>> {
+        if let NewSessionMode::Attach(entity) = self {
+            Some(entity)
+        } else {
+            None
+        }
+    }
 }
 
 impl Focusable for NewSessionMode {
@@ -402,20 +419,20 @@ impl Focusable for NewSessionMode {
 }
 
 impl RenderOnce for LaunchMode {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
             .p_2()
             .w_full()
-            .gap_2()
+            .gap_3()
             .track_focus(&self.program.focus_handle(cx))
             .child(
-                div().px_1().child(
+                div().child(
                     Label::new("Program")
                         .size(ui::LabelSize::Small)
                         .color(Color::Muted),
                 ),
             )
-            .child(render_editor(&self.program, cx))
+            .child(render_editor(&self.program, window, cx))
             .child(
                 div().child(
                     Label::new("Working Directory")
@@ -423,7 +440,7 @@ impl RenderOnce for LaunchMode {
                         .color(Color::Muted),
                 ),
             )
-            .child(render_editor(&self.cwd, cx))
+            .child(render_editor(&self.cwd, window, cx))
     }
 }
 
@@ -464,7 +481,7 @@ impl NewSessionMode {
         Self::Launch(LaunchMode::new(past_launch_config, window, cx))
     }
 }
-fn render_editor(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
+fn render_editor(editor: &Entity<Editor>, window: &mut Window, cx: &App) -> impl IntoElement {
     let settings = ThemeSettings::get_global(cx);
     let theme = cx.theme();
 
@@ -491,7 +508,13 @@ fn render_editor(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
 
     div()
         .rounded_md()
+        .p_1()
+        .border_1()
         .border_color(theme.colors().border_variant)
+        .when(
+            editor.focus_handle(cx).contains_focused(window, cx),
+            |this| this.border_color(theme.colors().border_focused),
+        )
         .child(element)
         .bg(theme.colors().editor_background)
 }
@@ -549,6 +572,11 @@ impl Render for NewSessionModal {
                                         window,
                                         cx,
                                     );
+                                    if let Some((debugger, attach)) =
+                                        this.debugger.as_ref().zip(this.mode.as_attach())
+                                    {
+                                        Self::update_attach_picker(&attach, &debugger, window, cx);
+                                    }
                                     this.mode.focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
@@ -563,13 +591,13 @@ impl Render for NewSessionModal {
             .child(v_flex().child(self.mode.clone().render(window, cx)))
             .child(
                 h_flex()
+                    .justify_between()
                     .gap_2()
+                    .p_2()
                     .border_color(cx.theme().colors().border_variant)
                     .border_t_1()
                     .w_full()
                     .child(self.debug_config_drop_down_menu(window, cx))
-                    .justify_between()
-                    .p_2()
                     .child(
                         h_flex()
                             .justify_end()
