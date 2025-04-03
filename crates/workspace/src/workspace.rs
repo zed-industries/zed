@@ -130,24 +130,6 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
 actions!(assistant, [ShowConfiguration]);
 
 actions!(
-    debugger,
-    [
-        Start,
-        Continue,
-        Disconnect,
-        Pause,
-        Restart,
-        StepInto,
-        StepOver,
-        StepOut,
-        StepBack,
-        Stop,
-        ToggleIgnoreBreakpoints,
-        ClearAllBreakpoints
-    ]
-);
-
-actions!(
     workspace,
     [
         ActivateNextPane,

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use debugger_ui::Start;
 use editor::Editor;
 use feature_flags::{Debugger, FeatureFlagViewExt};
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
@@ -8,7 +9,7 @@ use modal::{TaskOverrides, TasksModal};
 use project::{Location, TaskContexts, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskModal, TaskVariables, VariableName};
 use workspace::tasks::schedule_task;
-use workspace::{Start, Workspace, tasks::schedule_resolved_task};
+use workspace::{Workspace, tasks::schedule_resolved_task};
 
 mod modal;
 
