@@ -338,6 +338,7 @@ impl PickerDelegate for TasksModalDelegate {
                                     debugger_ui::attach_modal::AttachModal::new(
                                         project,
                                         config.clone(),
+                                        true,
                                         window,
                                         cx,
                                     )
