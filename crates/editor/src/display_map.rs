@@ -37,7 +37,7 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
+pub use fold_map::{ChunkRenderer, ChunkRendererContext, Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 pub use inlay_map::Inlay;
@@ -45,8 +45,7 @@ use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 use language::{
-    ChunkRenderer, OffsetUtf16, Point, Subscription as BufferSubscription,
-    language_settings::language_settings,
+    OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -513,6 +512,33 @@ impl DisplayMap {
     pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
+    }
+
+    pub fn update_fold_widths(
+        &mut self,
+        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
+
+        let (snapshot, edits) = fold_map.update_fold_widths(widths);
+        let widths_changed = !edits.is_empty();
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
+
+        widths_changed
     }
 
     pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
