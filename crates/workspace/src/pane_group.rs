@@ -201,7 +201,7 @@ pub trait PaneLeaderDecorator {
     fn active_pane(&self) -> &Entity<Pane>;
 }
 
-impl<'a> PaneLeaderDecorator for PaneRenderContext<'a> {
+impl PaneLeaderDecorator for PaneRenderContext<'_> {
     fn decorate(&self, pane: &Entity<Pane>, cx: &App) -> LeaderDecoration {
         let follower_state = self.follower_states.iter().find_map(|(leader_id, state)| {
             if state.center_pane == *pane {
