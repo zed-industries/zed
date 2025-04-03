@@ -162,6 +162,23 @@ impl Model {
             _ => None,
         }
     }
+
+    /// Returns whether the given model supports the `parallel_tool_calls` parameter.
+    ///
+    /// If the model does not support the parameter, do not pass it up, or the API will return an error.
+    pub fn supports_parallel_tool_calls(&self) -> bool {
+        match self {
+            Self::ThreePointFiveTurbo
+            | Self::Four
+            | Self::FourTurbo
+            | Self::FourOmni
+            | Self::FourOmniMini
+            | Self::O1
+            | Self::O1Preview
+            | Self::O1Mini => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -176,6 +193,9 @@ pub struct Request {
     pub temperature: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
+    /// Whether to enable parallel function calling during tool use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
 }
