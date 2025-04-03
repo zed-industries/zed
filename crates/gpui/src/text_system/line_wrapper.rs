@@ -32,7 +32,7 @@ impl LineWrapper {
     /// Wrap a line of text to the given width with this wrapper's font and font size.
     pub fn wrap_line<'a>(
         &'a mut self,
-        line: &'a str,
+        fragments: &'a [LineFragment],
         wrap_width: Pixels,
     ) -> impl Iterator<Item = Boundary> + 'a {
         let mut width = px(0.);
@@ -42,32 +42,60 @@ impl LineWrapper {
         let mut last_candidate_width = px(0.);
         let mut last_wrap_ix = 0;
         let mut prev_c = '\0';
-        let mut char_indices = line.char_indices();
+        let mut index = 0;
+        let mut candidates = fragments
+            .into_iter()
+            .flat_map(move |fragment| fragment.wrap_boundary_candidates())
+            .peekable();
         iter::from_fn(move || {
-            for (ix, c) in char_indices.by_ref() {
-                if c == '\n' {
-                    continue;
-                }
+            for candidate in candidates.by_ref() {
+                let ix = index;
+                index += candidate.len_utf8();
+                let item_width = match candidate {
+                    WrapBoundaryCandidate::Char { character: c } => {
+                        if c == '\n' {
+                            continue;
+                        }
 
-                if Self::is_word_char(c) {
-                    if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
-                        last_candidate_ix = ix;
-                        last_candidate_width = width;
+                        if Self::is_word_char(c) {
+                            if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
+                                last_candidate_ix = ix;
+                                last_candidate_width = width;
+                            }
+                        } else {
+                            // CJK may not be space separated, e.g.: `Hello world你好世界`
+                            if c != ' ' && first_non_whitespace_ix.is_some() {
+                                last_candidate_ix = ix;
+                                last_candidate_width = width;
+                            }
+                        }
+
+                        if c != ' ' && first_non_whitespace_ix.is_none() {
+                            first_non_whitespace_ix = Some(ix);
+                        }
+
+                        prev_c = c;
+
+                        self.width_for_char(c)
                     }
-                } else {
-                    // CJK may not be space separated, e.g.: `Hello world你好世界`
-                    if c != ' ' && first_non_whitespace_ix.is_some() {
-                        last_candidate_ix = ix;
-                        last_candidate_width = width;
+                    WrapBoundaryCandidate::Element {
+                        width: element_width,
+                        ..
+                    } => {
+                        if prev_c == ' ' && first_non_whitespace_ix.is_some() {
+                            last_candidate_ix = ix;
+                            last_candidate_width = width;
+                        }
+
+                        if first_non_whitespace_ix.is_none() {
+                            first_non_whitespace_ix = Some(ix);
+                        }
+
+                        element_width
                     }
-                }
+                };
 
-                if c != ' ' && first_non_whitespace_ix.is_none() {
-                    first_non_whitespace_ix = Some(ix);
-                }
-
-                let char_width = self.width_for_char(c);
-                width += char_width;
+                width += item_width;
                 if width > wrap_width && ix > last_wrap_ix {
                     if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
                     {
@@ -82,7 +110,7 @@ impl LineWrapper {
                         last_candidate_ix = 0;
                     } else {
                         last_wrap_ix = ix;
-                        width = char_width;
+                        width = item_width;
                     }
 
                     if let Some(indent) = indent {
@@ -91,7 +119,6 @@ impl LineWrapper {
 
                     return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
                 }
-                prev_c = c;
             }
 
             None
@@ -213,6 +240,65 @@ fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<Tex
     }
 }
 
+/// A fragment of a line that can be wrapped.
+pub enum LineFragment<'a> {
+    /// A text fragment consisting of characters.
+    Text {
+        /// The text content of the fragment.
+        text: &'a str,
+    },
+    /// A non-text element with a fixed width.
+    Element {
+        /// The width of the element in pixels.
+        width: Pixels,
+        /// The UTF-8 encoded length of the element.
+        len_utf8: usize,
+    },
+}
+
+impl<'a> LineFragment<'a> {
+    /// Creates a new text fragment from the given text.
+    pub fn text(text: &'a str) -> Self {
+        LineFragment::Text { text }
+    }
+
+    /// Creates a new non-text element with the given width and UTF-8 encoded length.
+    pub fn element(width: Pixels, len_utf8: usize) -> Self {
+        LineFragment::Element { width, len_utf8 }
+    }
+
+    fn wrap_boundary_candidates(&self) -> impl Iterator<Item = WrapBoundaryCandidate> {
+        let text = match self {
+            LineFragment::Text { text } => text,
+            LineFragment::Element { .. } => "\0",
+        };
+        text.chars().map(move |character| {
+            if let LineFragment::Element { width, len_utf8 } = self {
+                WrapBoundaryCandidate::Element {
+                    width: *width,
+                    len_utf8: *len_utf8,
+                }
+            } else {
+                WrapBoundaryCandidate::Char { character }
+            }
+        })
+    }
+}
+
+enum WrapBoundaryCandidate {
+    Char { character: char },
+    Element { width: Pixels, len_utf8: usize },
+}
+
+impl WrapBoundaryCandidate {
+    pub fn len_utf8(&self) -> usize {
+        match self {
+            WrapBoundaryCandidate::Char { character } => character.len_utf8(),
+            WrapBoundaryCandidate::Element { len_utf8: len, .. } => *len,
+        }
+    }
+}
+
 /// A boundary between two lines of text.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Boundary {
@@ -278,7 +364,7 @@ mod tests {
 
         assert_eq!(
             wrapper
-                .wrap_line("aa bbb cccc ddddd eeee", px(72.))
+                .wrap_line(&[LineFragment::text("aa bbb cccc ddddd eeee")], px(72.))
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 0),
@@ -288,7 +374,7 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line("aaa aaaaaaaaaaaaaaaaaa", px(72.0))
+                .wrap_line(&[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")], px(72.0))
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(4, 0),
@@ -298,7 +384,7 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line("     aaaaaaa", px(72.))
+                .wrap_line(&[LineFragment::text("     aaaaaaa")], px(72.))
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 5),
@@ -308,7 +394,10 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line("                            ", px(72.))
+                .wrap_line(
+                    &[LineFragment::text("                            ")],
+                    px(72.)
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 0),
@@ -318,7 +407,7 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line("          aaaaaaaaaaaaaa", px(72.))
+                .wrap_line(&[LineFragment::text("          aaaaaaaaaaaaaa")], px(72.))
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 0),

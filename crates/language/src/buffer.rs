@@ -490,10 +490,14 @@ pub struct Chunk<'a> {
 /// A recipe for how the chunk should be presented.
 #[derive(Clone)]
 pub struct ChunkRenderer {
-    /// creates a custom element to represent this chunk.
+    /// Creates a custom element to represent this chunk.
     pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
     /// If true, the element is constrained to the shaped width of the text.
     pub constrain_width: bool,
+    /// The width of the element, as measured during the last layout pass.
+    ///
+    /// This is None if the element has not been laid out yet.
+    pub measured_width: Option<Pixels>,
 }
 
 pub struct ChunkRendererContext<'a, 'b> {

@@ -454,6 +454,7 @@ impl WrapSnapshot {
                 }
 
                 let mut line = String::new();
+                let mut line_fragments = Vec::new();
                 let mut remaining = None;
                 let mut chunks = new_tab_snapshot.chunks(
                     TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
@@ -462,15 +463,24 @@ impl WrapSnapshot {
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
-                    while let Some(chunk) =
-                        remaining.take().or_else(|| chunks.next().map(|c| c.text))
-                    {
-                        if let Some(ix) = chunk.find('\n') {
-                            line.push_str(&chunk[..ix + 1]);
-                            remaining = Some(&chunk[ix + 1..]);
+                    while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
+                        if let Some(ix) = chunk.text.find('\n') {
+                            line.push_str(&chunk.text[..ix + 1]);
+                            remaining = Some(Chunk {
+                                text: &chunk.text[ix + 1..],
+                                ..chunk
+                            });
                             break;
                         } else {
-                            line.push_str(chunk)
+                            if let Some(width) =
+                                chunk.renderer.as_ref().and_then(|r| r.measured_width)
+                            {
+                                line_fragments
+                                    .push(gpui::LineFragment::element(width, chunk.text.len()));
+                            } else {
+                                line_fragments.push(gpui::LineFragment::text(chunk.text));
+                            }
+                            line.push_str(chunk.text);
                         }
                     }
 
@@ -479,7 +489,7 @@ impl WrapSnapshot {
                     }
 
                     let mut prev_boundary_ix = 0;
-                    for boundary in line_wrapper.wrap_line(&line, wrap_width) {
+                    for boundary in line_wrapper.wrap_line(&line_fragments, wrap_width) {
                         let wrapped = &line[prev_boundary_ix..boundary.ix];
                         push_isomorphic(&mut edit_transforms, TextSummary::from(wrapped));
                         edit_transforms.push(Transform::wrap(boundary.next_indent));
@@ -494,6 +504,7 @@ impl WrapSnapshot {
                     }
 
                     line.clear();
+                    line_fragments.clear();
                     yield_now().await;
                 }
 
@@ -1437,12 +1448,13 @@ mod tests {
                 }
 
                 let mut prev_ix = 0;
-                for boundary in line_wrapper.wrap_line(line, wrap_width) {
-                    wrapped_text.push_str(&line[prev_ix..boundary.ix]);
-                    wrapped_text.push('\n');
-                    wrapped_text.push_str(&" ".repeat(boundary.next_indent as usize));
-                    prev_ix = boundary.ix;
-                }
+                // todo!("use fragments instead")
+                // for boundary in line_wrapper.wrap_line(line, wrap_width) {
+                //     wrapped_text.push_str(&line[prev_ix..boundary.ix]);
+                //     wrapped_text.push('\n');
+                //     wrapped_text.push_str(&" ".repeat(boundary.next_indent as usize));
+                //     prev_ix = boundary.ix;
+                // }
                 wrapped_text.push_str(&line[prev_ix..]);
             }
             wrapped_text

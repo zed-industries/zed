@@ -2,7 +2,8 @@ use super::{
     Highlights,
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
 };
-use gpui::{AnyElement, App, ElementId};
+use collections::HashMap;
+use gpui::{AnyElement, App, ElementId, Pixels};
 use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
@@ -14,7 +15,7 @@ use std::{
     ops::{Add, AddAssign, Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
-use sum_tree::{Bias, Cursor, FilterCursor, SumTree, Summary};
+use sum_tree::{Bias, Cursor, FilterCursor, SumTree, Summary, TreeMap};
 use ui::IntoElement as _;
 use util::post_inc;
 
@@ -263,6 +264,41 @@ impl FoldMapWriter<'_> {
         let edits = self.0.sync(snapshot.clone(), edits);
         (self.0.snapshot.clone(), edits)
     }
+
+    pub(crate) fn update_fold_widths(
+        &mut self,
+        new_widths: HashMap<FoldId, Pixels>,
+    ) -> (FoldSnapshot, Vec<FoldEdit>) {
+        let mut edits = Vec::new();
+        let inlay_snapshot = self.0.snapshot.inlay_snapshot.clone();
+        let buffer = &inlay_snapshot.buffer;
+
+        for (id, new_width) in new_widths {
+            let folds = self.0.snapshot.folds.items(buffer);
+            let fold_option = folds.iter().find(|fold| fold.id == id);
+
+            if let Some(fold) = fold_option {
+                let old_width = self.0.snapshot.fold_widths.get(&id).copied();
+
+                // If width has changed meaningfully
+                if Some(new_width) != old_width {
+                    self.0.snapshot.fold_widths.insert(id, new_width);
+                    let buffer_start = fold.range.start.to_offset(buffer);
+                    let buffer_end = fold.range.end.to_offset(buffer);
+                    let inlay_range = inlay_snapshot.to_inlay_offset(buffer_start)
+                        ..inlay_snapshot.to_inlay_offset(buffer_end);
+                    edits.push(InlayEdit {
+                        old: inlay_range.clone(),
+                        new: inlay_range.clone(),
+                    });
+                }
+            }
+        }
+
+        let edits = consolidate_inlay_edits(edits);
+        let edits = self.0.sync(inlay_snapshot, edits);
+        (self.0.snapshot.clone(), edits)
+    }
 }
 
 /// Decides where the fold indicators should be; also tracks parts of a source file that are currently folded.
@@ -290,6 +326,7 @@ impl FoldMap {
                 ),
                 inlay_snapshot: inlay_snapshot.clone(),
                 version: 0,
+                fold_widths: TreeMap::default(),
             },
             next_fold_id: FoldId::default(),
         };
@@ -489,6 +526,7 @@ impl FoldMap {
                                             )
                                         }),
                                         constrain_width: fold.placeholder.constrain_width,
+                                        measured_width: self.snapshot.fold_width(&fold_id),
                                     },
                                 }),
                             },
@@ -575,11 +613,16 @@ pub struct FoldSnapshot {
     folds: SumTree<Fold>,
     pub inlay_snapshot: InlaySnapshot,
     pub version: usize,
+    pub fold_widths: TreeMap<FoldId, Pixels>,
 }
 
 impl FoldSnapshot {
     pub fn buffer(&self) -> &MultiBufferSnapshot {
         &self.inlay_snapshot.buffer
+    }
+
+    pub fn fold_width(&self, fold_id: &FoldId) -> Option<Pixels> {
+        self.fold_widths.get(fold_id).copied()
     }
 
     #[cfg(test)]
@@ -1006,7 +1049,7 @@ impl sum_tree::Summary for TransformSummary {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Ord, PartialOrd)]
 pub struct FoldId(usize);
 
 impl From<FoldId> for ElementId {
