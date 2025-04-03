@@ -14162,8 +14162,9 @@ impl Editor {
                         multi_buffer.all_buffers().into_iter().collect(),
                         cx,
                     );
+                    cx.emit(project::Event::RefreshInlayHints);
                 });
-            })
+            });
         }
     }
 
