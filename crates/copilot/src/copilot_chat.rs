@@ -217,15 +217,15 @@ pub struct ResponseDelta {
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {
-    pub id: String,
     pub index: usize,
-    pub function: FunctionChunk,
+    pub id: Option<String>,
+    pub function: Option<FunctionChunk>,
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
 pub struct FunctionChunk {
-    pub name: String,
-    pub arguments: String,
+    pub name: Option<String>,
+    pub arguments: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -465,18 +465,9 @@ async fn stream_completion(
                             return None;
                         }
 
-                        match serde_json::from_str::<ResponseEvent>(line) {
-                            Ok(response) => {
-                                if response.choices.is_empty()
-                                    || response.choices.first().unwrap().finish_reason.is_some()
-                                {
-                                    None
-                                } else {
-                                    Some(Ok(response))
-                                }
-                            }
-                            Err(error) => Some(Err(anyhow!(error))),
-                        }
+                        Some(
+                            serde_json::from_str::<ResponseEvent>(line).map_err(|err| anyhow!(err)),
+                        )
                     }
                     Err(error) => Some(Err(anyhow!(error))),
                 }

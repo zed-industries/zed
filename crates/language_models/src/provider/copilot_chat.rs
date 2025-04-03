@@ -1,7 +1,9 @@
 use std::pin::Pin;
+use std::str::FromStr as _;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use collections::HashMap;
 use copilot::copilot_chat::{
     ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
     ResponseEvent, Tool,
@@ -24,6 +26,7 @@ use settings::SettingsStore;
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::prelude::*;
+use util::maybe;
 
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
@@ -182,7 +185,7 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        true
     }
 
     fn telemetry_id(&self) -> String {
@@ -266,68 +269,130 @@ pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
     is_streaming: bool,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    const NO_CHOICES_ERROR_MESSAGE: &str = "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again.";
+    const NO_MESSAGE_CONTENT_ERROR_MESSAGE: &str =
+        "The Copilot Chat API returned a response with no message content";
+
+    #[derive(Default)]
+    struct RawFunctionCall {
+        id: String,
+        name: String,
+        arguments: String,
+    }
+
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
-        // tool_uses_by_index: HashMap<usize, RawToolUse>,
+        function_calls_by_index: HashMap<usize, RawFunctionCall>,
         // usage: Usage,
         // stop_reason: StopReason,
     }
 
-    futures::stream::unfold(State { events }, move |mut state| async move {
-        if let Some(event) = state.events.next().await {
-            match event {
-                Ok(result) => {
-                    let choice = result.choices.first();
-                    match choice {
-                        Some(choice) if !is_streaming => match &choice.message {
-                            Some(msg) => {
-                                let mut events = Vec::new();
-                                if let Some(content) = msg.content.clone() {
-                                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+    futures::stream::unfold(
+        State {
+            events,
+            function_calls_by_index: HashMap::default(),
+        },
+        move |mut state| async move {
+            if let Some(event) = state.events.next().await {
+                match event {
+                    Ok(result) => {
+                        let choice = result.choices.first();
+                        match choice {
+                            Some(choice) if !is_streaming => match &choice.message {
+                                Some(msg) => {
+                                    let mut events = Vec::new();
+                                    if let Some(content) = msg.content.clone() {
+                                        events
+                                            .push(Ok(LanguageModelCompletionEvent::Text(content)));
+                                    }
+
+                                    Some((events, state))
                                 }
-                                events.extend(msg.tool_calls.iter().filter_map(|tool_use| {
-                                    Some(Ok(LanguageModelCompletionEvent::ToolUse(
-                                        LanguageModelToolUse {
-                                            id: tool_use.id.as_str().into(),
-                                            name: tool_use.function.name.clone().into(),
-                                            input: tool_use.function.arguments.clone().into(),
-                                        },
-                                    )))
-                                }));
+                                None => Some((
+                                    vec![Err(anyhow::anyhow!(NO_MESSAGE_CONTENT_ERROR_MESSAGE))],
+                                    state,
+                                )),
+                            },
+                            Some(choice) => {
+                                let mut events = Vec::new();
+
+                                if let Some(msg) = choice.delta.as_ref() {
+                                    for tool_call in &msg.tool_calls {
+                                        let tool = state
+                                            .function_calls_by_index
+                                            .entry(tool_call.index)
+                                            .or_default();
+                                        if let Some(tool_id) = tool_call.id.clone() {
+                                            tool.id = tool_id;
+                                        }
+                                        if let Some(tool_name) = tool_call
+                                            .function
+                                            .as_ref()
+                                            .and_then(|function| function.name.as_ref())
+                                        {
+                                            tool.name = tool_name.clone();
+                                        }
+                                        if let Some(arguments) = tool_call
+                                            .function
+                                            .as_ref()
+                                            .and_then(|function| function.arguments.as_ref())
+                                        {
+                                            tool.arguments.push_str(&arguments);
+                                        }
+                                    }
+                                    if let Some(content) = msg.content.clone() {
+                                        events
+                                            .push(Ok(LanguageModelCompletionEvent::Text(content)));
+                                    }
+                                }
+
+                                match choice.finish_reason.as_deref() {
+                                    Some("stop") => {
+                                        events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                            language_model::StopReason::EndTurn,
+                                        )));
+                                    }
+                                    Some("tool_calls") => {
+                                        events.extend(state.function_calls_by_index.drain().map(
+                                            |(_, function_call)| {
+                                                maybe!({
+                                                    Ok(LanguageModelCompletionEvent::ToolUse(
+                                                        LanguageModelToolUse {
+                                                            id: function_call.id.into(),
+                                                            name: function_call
+                                                                .name
+                                                                .as_str()
+                                                                .into(),
+                                                            input: serde_json::Value::from_str(
+                                                                &function_call.arguments,
+                                                            )?,
+                                                        },
+                                                    ))
+                                                })
+                                            },
+                                        ));
+
+                                        events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                            language_model::StopReason::ToolUse,
+                                        )));
+                                    }
+                                    _ => {}
+                                }
 
                                 Some((events, state))
                             }
-                            None => Some((vec![Err(anyhow::anyhow!("The Copilot Chat API returned a response with no message content"))], state)),
-                        },
-                        Some(choice) => match &choice.delta {
-                            Some(msg) => {
-                                let mut events = Vec::new();
-                                if let Some(content) = msg.content.clone() {
-                                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-                                }
-                                events.extend(msg.tool_calls.iter().filter_map(|tool_use| {
-                                    Some(Ok(LanguageModelCompletionEvent::ToolUse(
-                                        LanguageModelToolUse {
-                                            id: tool_use.id.as_str().into(),
-                                            name: tool_use.function.name.clone().into(),
-                                            input: tool_use.function.arguments.clone().into(),
-                                        },
-                                    )))
-                                }));
-
-                                Some((events, state))
+                            None => {
+                                Some((vec![Err(anyhow::anyhow!(NO_CHOICES_ERROR_MESSAGE))], state))
                             }
-                            None => Some((vec![Err(anyhow::anyhow!("The Copilot Chat API returned a response with no message content"))], state)),
-                        },
-                        None => Some((vec![Err(anyhow::anyhow!("The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."))], state)),
+                        }
                     }
+                    Err(err) => Some((vec![Err(err)], state)),
                 }
-                Err(err) => Some((vec![Err(err)], state)),
+            } else {
+                None
             }
-        } else {
-            None
-        }
-    })
+        },
+    )
     .flat_map(futures::stream::iter)
 }
 
