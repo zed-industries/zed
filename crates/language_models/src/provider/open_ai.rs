@@ -11,8 +11,8 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, RateLimiter, Role,
-    StopReason,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
 use open_ai::{ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
@@ -337,24 +337,60 @@ pub fn into_open_ai(
     max_output_tokens: Option<u32>,
 ) -> open_ai::Request {
     let stream = !model.starts_with("o1-");
+
+    let mut messages = Vec::new();
+    for message in request.messages {
+        for content in message.content {
+            match content {
+                MessageContent::Text(text) => messages.push(match message.role {
+                    Role::User => open_ai::RequestMessage::User { content: text },
+                    Role::Assistant => open_ai::RequestMessage::Assistant {
+                        content: Some(text),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => open_ai::RequestMessage::System { content: text },
+                }),
+                MessageContent::Image(_) => {}
+                MessageContent::ToolUse(tool_use) => {
+                    let tool_call = open_ai::ToolCall {
+                        id: tool_use.id.to_string(),
+                        content: open_ai::ToolCallContent::Function {
+                            function: open_ai::FunctionContent {
+                                name: tool_use.name.to_string(),
+                                arguments: serde_json::to_string(&tool_use.input)
+                                    .unwrap_or_default(),
+                            },
+                        },
+                    };
+
+                    if let Some(last_assistant_message) = messages.iter_mut().rfind(|message| {
+                        matches!(message, open_ai::RequestMessage::Assistant { .. })
+                    }) {
+                        if let open_ai::RequestMessage::Assistant { tool_calls, .. } =
+                            last_assistant_message
+                        {
+                            tool_calls.push(tool_call);
+                        }
+                    } else {
+                        messages.push(open_ai::RequestMessage::Assistant {
+                            content: None,
+                            tool_calls: vec![tool_call],
+                        });
+                    }
+                }
+                MessageContent::ToolResult(tool_result) => {
+                    messages.push(open_ai::RequestMessage::Tool {
+                        content: tool_result.content.to_string(),
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
     open_ai::Request {
         model,
-        messages: request
-            .messages
-            .into_iter()
-            .map(|msg| match msg.role {
-                Role::User => open_ai::RequestMessage::User {
-                    content: msg.string_contents(),
-                },
-                Role::Assistant => open_ai::RequestMessage::Assistant {
-                    content: Some(msg.string_contents()),
-                    tool_calls: Vec::new(),
-                },
-                Role::System => open_ai::RequestMessage::System {
-                    content: msg.string_contents(),
-                },
-            })
-            .collect(),
+        messages,
         stream,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
