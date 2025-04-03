@@ -745,10 +745,6 @@ pub fn map_to_language_model_completion_events(
         },
     )
     .flat_map(futures::stream::iter)
-    .inspect(|event_result| match event_result {
-        Ok(event) => log::error!("LanguageModelCompletionEvent: {:?}", event),
-        Err(err) => log::error!("LanguageModelCompletionEvent error: {:?}", err),
-    })
 }
 
 /// Updates usage data by preferring counts from `new`.

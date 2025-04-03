@@ -182,7 +182,12 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        match self.model {
+            CopilotChatModel::Claude3_5Sonnet
+            | CopilotChatModel::Claude3_7Sonnet
+            | CopilotChatModel::Claude3_7SonnetThinking => true,
+            _ => false,
+        }
     }
 
     fn telemetry_id(&self) -> String {
@@ -225,7 +230,6 @@ impl LanguageModel for CopilotChatLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        log::error!("Streaming completion for model: {:?}", self.model);
         if let Some(message) = request.messages.last() {
             if message.contents_empty() {
                 const EMPTY_PROMPT_MSG: &str =
@@ -233,6 +237,9 @@ impl LanguageModel for CopilotChatLanguageModel {
                 return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
             }
 
+            // Copilot Chat has a restriction that the final message must be from the user.
+            // While their API does return an error message for this, we can catch it earlier
+            // and provide a more helpful error message.
             if !matches!(message.role, Role::User) {
                 const USER_ROLE_MSG: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
                 return futures::future::ready(Err(anyhow::anyhow!(USER_ROLE_MSG))).boxed();
@@ -265,14 +272,11 @@ impl LanguageModel for CopilotChatLanguageModel {
                 |mut state| async move {
                 // If there is a pending event, yield it before processing new items.
                 if let Some(event) = state.pending_event.take() {
-                    log::error!("Yielding pending event: {:?}", event);
                     return Some((Ok(event), state));
                 }
                 while let Some(response) = state.stream.next().await {
-                    log::error!("Got response part: {:?}", response);
                     match response {
                     Ok(result) => {
-                        // log::error!("Processing result: {:?}", result);
                         let choice = match result.choices.first() {
                         Some(choice) => choice,
                         None => continue,
@@ -280,7 +284,6 @@ impl LanguageModel for CopilotChatLanguageModel {
                         let delta = &choice.delta;
 
                         if let Some(finish_reason) = &choice.finish_reason {
-                        log::error!("Got finish reason: {}", finish_reason);
                         match finish_reason.as_str() {
                             "stop" => {
                             return Some((
@@ -303,7 +306,6 @@ impl LanguageModel for CopilotChatLanguageModel {
                                         input,
                                     }
                                     );
-                                    log::error!("Tool use: {:?}", tool_use);
                                     // Schedule a Stop event for the next iteration.
                                     state.pending_event = Some(LanguageModelCompletionEvent::Stop(language_model::StopReason::ToolUse));
                                     return Some((Ok(tool_use), state));
@@ -316,7 +318,6 @@ impl LanguageModel for CopilotChatLanguageModel {
                         }
 
                         if let Some(tool_calls) = &delta.tool_calls {
-                        log::error!("Processing tool calls: {:?}", tool_calls);
                         for tool_call in tool_calls {
                             if let Some(id) = &tool_call.id {
                             state.current_tool_id = Some(id.clone());
@@ -334,12 +335,10 @@ impl LanguageModel for CopilotChatLanguageModel {
                         }
 
                         if let Some(content) = &delta.content {
-                        log::error!("Got content: {}", content);
                         return Some((Ok(LanguageModelCompletionEvent::Text(content.clone())), state));
                         }
                     }
                     Err(err) => {
-                        log::error!("Got error: {:?}", err);
                         return Some((Err(err), state));
                     }
                     }

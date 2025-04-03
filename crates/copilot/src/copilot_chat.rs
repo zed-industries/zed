@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -7,11 +6,8 @@ use anyhow::{Result, anyhow};
 use chrono::DateTime;
 use collections::HashSet;
 use fs::Fs;
-use futures::Stream;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use gpui::{prelude::*, App, AsyncApp, Global};
-use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use gpui::{App, AsyncApp, Global, prelude::*};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
