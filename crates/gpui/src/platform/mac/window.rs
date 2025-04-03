@@ -744,6 +744,10 @@ impl MacWindow {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
             let main_window: id = msg_send![app, mainWindow];
+            if main_window.is_null() {
+                return None;
+            }
+
             if msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
                 let handle = get_window_state(&*main_window).lock().handle;
                 Some(handle)
