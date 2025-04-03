@@ -383,12 +383,23 @@ struct LocalRepositoryEntry {
     work_directory: WorkDirectory,
     work_directory_abs_path: Arc<Path>,
     git_dir_scan_id: usize,
-    original_dot_git_abs_path: Arc<Path>,
-    /// Absolute path to the actual .git folder.
-    /// Note: if .git is a file, this points to the folder indicated by the .git file
-    dot_git_dir_abs_path: Arc<Path>,
-    /// Absolute path to the .git file, if we're in a git worktree.
-    dot_git_worktree_abs_path: Option<Arc<Path>>,
+    /// Absolute path to the original .git entry that caused us to create this repository.
+    ///
+    /// This is normally a directory, but may be a "gitfile" that points to a directory elsewhere
+    /// (whose path we then store in `repository_dir_abs_path`).
+    dot_git_abs_path: Arc<Path>,
+    /// Absolute path to the "commondir" for this repository.
+    ///
+    /// This is always a directory. For a normal repository, this is the same as dot_git_abs_path,
+    /// but in the case of a submodule or a worktree it is the path to the "parent" .git directory
+    /// from which the submodule/worktree was derived.
+    common_dir_abs_path: Arc<Path>,
+    /// Absolute path to the directory holding the repository's state.
+    ///
+    /// For a normal repository, this is a directory and coincides with `dot_git_abs_path` and
+    /// `common_dir_abs_path`. For a submodule or worktree, this is some subdirectory of the
+    /// commondir like `/project/.git/modules/foo`.
+    repository_dir_abs_path: Arc<Path>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -1325,7 +1336,7 @@ impl LocalWorktree {
                                 new_work_directory_abs_path: Some(
                                     new_repo.work_directory_abs_path.clone(),
                                 ),
-                                dot_git_abs_path: Some(new_repo.original_dot_git_abs_path.clone()),
+                                dot_git_abs_path: Some(new_repo.dot_git_abs_path.clone()),
                             });
                             new_repos.next();
                         }
@@ -1342,9 +1353,7 @@ impl LocalWorktree {
                                     new_work_directory_abs_path: Some(
                                         new_repo.work_directory_abs_path.clone(),
                                     ),
-                                    dot_git_abs_path: Some(
-                                        new_repo.original_dot_git_abs_path.clone(),
-                                    ),
+                                    dot_git_abs_path: Some(new_repo.dot_git_abs_path.clone()),
                                 });
                             }
                             new_repos.next();
@@ -1368,7 +1377,7 @@ impl LocalWorktree {
                         work_directory_id: entry_id,
                         old_work_directory_abs_path: None,
                         new_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
-                        dot_git_abs_path: Some(repo.original_dot_git_abs_path.clone()),
+                        dot_git_abs_path: Some(repo.dot_git_abs_path.clone()),
                     });
                     new_repos.next();
                 }
@@ -1377,7 +1386,7 @@ impl LocalWorktree {
                         work_directory_id: entry_id,
                         old_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
                         new_work_directory_abs_path: None,
-                        dot_git_abs_path: Some(repo.original_dot_git_abs_path.clone()),
+                        dot_git_abs_path: Some(repo.dot_git_abs_path.clone()),
                     });
                     old_repos.next();
                 }
@@ -3066,58 +3075,50 @@ impl BackgroundScannerState {
             return None;
         }
 
-        let dot_git_abs_path = self.snapshot.abs_path.as_path().join(&dot_git_path);
+        let dot_git_abs_path: Arc<Path> = self
+            .snapshot
+            .abs_path
+            .as_path()
+            .join(&dot_git_path)
+            .as_path()
+            .into();
 
         log::info!("initializing git repo for {dot_git_abs_path:?}");
 
-        let mut dot_git_worktree_abs_path = None;
-        let mut actual_dot_git_dir_abs_path = Arc::from(dot_git_abs_path.as_path());
-        // For git submodules and worktrees, .git may be a regular file in a special format that points
-        // to a subdirectory of an original or parent .git directory, e.g. `../../.git/modules/foo`.
-        // In that case we want to make sure to watch this parent .git directory as well.
-        //
-        // * `dot_git_abs_path` is a file that points to the worktree-subdirectory in the actual
-        // .git directory.
-        //
-        // * `repository_path` is the worktree-subdirectory.
-        //
-        // * `actual_dot_git_dir_abs_path` is the path to the actual .git directory. In git
-        // documentation this is called the "commondir".
+        let mut common_dir_abs_path = dot_git_abs_path.clone();
+        let mut repository_dir_abs_path = dot_git_abs_path.clone();
+        // Parse .git if it's a "gitfile" pointing to a repository directory elsewhere.
         if let Some(dot_git_contents) = smol::block_on(fs.load(&dot_git_abs_path)).ok() {
             if let Some(path) = dot_git_contents.strip_prefix("gitdir:") {
-                let path = path.trim();
-                log::debug!("following .git indirection to {path}");
+                let relative_path = path.trim();
+                log::debug!("following .git indirection to {relative_path:?}");
                 let path = dot_git_abs_path.join(path);
                 if let Some(path) = smol::block_on(fs.canonicalize(&path)).log_err() {
-                    dot_git_worktree_abs_path = Some(path.as_path().into());
+                    repository_dir_abs_path = Path::new(&path).into();
+                    common_dir_abs_path = repository_dir_abs_path.clone();
                     if let Some(ancestor_dot_git) = path
                         .ancestors()
                         .find(|ancestor| smol::block_on(is_git_dir(ancestor, fs)))
                     {
-                        actual_dot_git_dir_abs_path = ancestor_dot_git.into();
-                        log::debug!(
-                            "adding watcher for pointed-to .git directory: {ancestor_dot_git:?}"
-                        );
-                        watcher.add(ancestor_dot_git).log_err();
+                        common_dir_abs_path = ancestor_dot_git.into();
                     }
                 }
             } else {
                 log::error!("failed to parse contents of .git file: {dot_git_contents:?}");
             }
-        } else {
-            watcher.add(&actual_dot_git_dir_abs_path).log_err();
         };
+        watcher.add(&common_dir_abs_path).log_err();
 
         let work_directory_id = work_dir_entry.id;
 
         let local_repository = LocalRepositoryEntry {
             work_directory_id,
             work_directory,
-            git_dir_scan_id: 0,
-            original_dot_git_abs_path: dot_git_abs_path.as_path().into(),
-            dot_git_dir_abs_path: actual_dot_git_dir_abs_path,
             work_directory_abs_path: work_directory_abs_path.as_path().into(),
-            dot_git_worktree_abs_path,
+            git_dir_scan_id: 0,
+            dot_git_abs_path,
+            common_dir_abs_path,
+            repository_dir_abs_path,
         };
 
         self.snapshot
@@ -4064,8 +4065,8 @@ impl BackgroundScanner {
 
                 if abs_path.0.file_name() == Some(*GITIGNORE) {
                     for (_, repo) in snapshot.git_repositories.iter().filter(|(_, repo)| repo.directory_contains(&relative_path)) {
-                        if !dot_git_abs_paths.iter().any(|dot_git_abs_path| dot_git_abs_path == repo.dot_git_dir_abs_path.as_ref()) {
-                            dot_git_abs_paths.push(repo.dot_git_dir_abs_path.to_path_buf());
+                        if !dot_git_abs_paths.iter().any(|dot_git_abs_path| dot_git_abs_path == repo.common_dir_abs_path.as_ref()) {
+                            dot_git_abs_paths.push(repo.common_dir_abs_path.to_path_buf());
                         }
                     }
                 }
@@ -4739,8 +4740,8 @@ impl BackgroundScanner {
                     .git_repositories
                     .iter()
                     .find_map(|(_, repo)| {
-                        if repo.dot_git_dir_abs_path.as_ref() == &dot_git_dir
-                            || repo.dot_git_worktree_abs_path.as_deref() == Some(&dot_git_dir)
+                        if repo.common_dir_abs_path.as_ref() == &dot_git_dir
+                            || repo.repository_dir_abs_path.as_ref() == &dot_git_dir
                         {
                             Some(repo.clone())
                         } else {
@@ -4782,7 +4783,7 @@ impl BackgroundScanner {
 
             if exists_in_snapshot
                 || matches!(
-                    smol::block_on(self.fs.metadata(&entry.dot_git_dir_abs_path)),
+                    smol::block_on(self.fs.metadata(&entry.common_dir_abs_path)),
                     Ok(Some(_))
                 )
             {
@@ -5049,7 +5050,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .unwrap();
             (
                 tree.fs.clone(),
-                local_repo_entry.dot_git_dir_abs_path.clone(),
+                local_repo_entry.common_dir_abs_path.clone(),
                 local_repo_entry.git_dir_scan_id,
             )
         });

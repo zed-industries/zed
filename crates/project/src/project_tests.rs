@@ -7986,6 +7986,31 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
+    // make a fake fs w/ a big git repo that has a worktree and a submodule
+    // fake up some events (may need to extend the fakefs)
+    // test that things make sense.
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "src": {
+                "a.txt": "A",
+            },
+            "worktree": {
+                ".git": "",
+                "src": {
+                    "b.txt": "B",
+                }
+            }
+        }),
+    )
+    .await;
+}
+
 async fn search(
     project: &Entity<Project>,
     query: SearchQuery,

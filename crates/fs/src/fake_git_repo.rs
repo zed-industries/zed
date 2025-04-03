@@ -175,10 +175,6 @@ impl GitRepository for FakeGitRepository {
         self.with_state(|state| state.path.clone())
     }
 
-    fn main_repository_path(&self) -> PathBuf {
-        self.path()
-    }
-
     fn merge_message(&self) -> BoxFuture<Option<String>> {
         async move { None }.boxed()
     }
