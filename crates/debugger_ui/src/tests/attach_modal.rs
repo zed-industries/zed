@@ -90,7 +90,7 @@ async fn test_show_attach_modal_and_select_process(
                         initialize_args: None,
                         tcp_connection: Some(TCPHost::default()),
                         locator: None,
-                        args: Default::default(),
+                        stop_on_entry: None,
                     },
                     vec![
                         Candidate {

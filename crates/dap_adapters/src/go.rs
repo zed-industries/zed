@@ -86,12 +86,15 @@ impl DebugAdapter for GoDebugAdapter {
         match &config.request {
             dap::DebugRequestType::Attach(attach_config) => {
                 json!({
-                    "processId": attach_config.process_id
+                    "processId": attach_config.process_id,
+                    "stopOnEntry": config.stop_on_entry,
                 })
             }
             dap::DebugRequestType::Launch(launch_config) => json!({
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
+                "stopOnEntry": config.stop_on_entry,
+                "args": launch_config.args
             }),
         }
     }

@@ -4,11 +4,14 @@ mod tool_picker;
 
 use std::sync::Arc;
 
+use assistant_settings::AssistantSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
+use fs::Fs;
 use gpui::{Action, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
+use settings::{Settings, update_settings_file};
 use ui::{Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, prelude::*};
 use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
@@ -19,6 +22,7 @@ pub(crate) use manage_profiles_modal::ManageProfilesModal;
 use crate::AddContextServer;
 
 pub struct AssistantConfiguration {
+    fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_manager: Entity<ContextServerManager>,
@@ -29,6 +33,7 @@ pub struct AssistantConfiguration {
 
 impl AssistantConfiguration {
     pub fn new(
+        fs: Arc<dyn Fs>,
         context_server_manager: Entity<ContextServerManager>,
         tools: Arc<ToolWorkingSet>,
         window: &mut Window,
@@ -54,6 +59,7 @@ impl AssistantConfiguration {
         );
 
         let mut this = Self {
+            fs,
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
             context_server_manager,
@@ -164,6 +170,55 @@ impl AssistantConfiguration {
                             "No configuration view for {provider_name}",
                         )))),
                     }),
+            )
+    }
+
+    fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let always_allow_tool_actions = AssistantSettings::get_global(cx).always_allow_tool_actions;
+
+        const HEADING: &str = "Allow running tools without asking for confirmation";
+
+        v_flex()
+            .p(DynamicSpacing::Base16.rems(cx))
+            .gap_2()
+            .flex_1()
+            .child(Headline::new("General Settings").size(HeadlineSize::Small))
+            .child(
+                h_flex()
+                    .p_2p5()
+                    .rounded_sm()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .gap_4()
+                    .justify_between()
+                    .flex_wrap()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .max_w_5_6()
+                            .child(Label::new(HEADING))
+                            .child(Label::new("When enabled, the agent can perform potentially destructive actions without asking for your confirmation.").color(Color::Muted)),
+                    )
+                    .child(
+                        Switch::new(
+                            "always-allow-tool-actions-switch",
+                            always_allow_tool_actions.into(),
+                        )
+                        .on_click({
+                            let fs = self.fs.clone();
+                            move |state, _window, cx| {
+                                let allow = state == &ToggleState::Selected;
+                                update_settings_file::<AssistantSettings>(
+                                    fs.clone(),
+                                    cx,
+                                    move |settings, _| {
+                                        settings.set_always_allow_tool_actions(allow);
+                                    },
+                                );
+                            }
+                        }),
+                    ),
             )
     }
 
@@ -358,6 +413,8 @@ impl Render for AssistantConfiguration {
             .bg(cx.theme().colors().panel_background)
             .size_full()
             .overflow_y_scroll()
+            .child(self.render_command_permission(cx))
+            .child(Divider::horizontal().color(DividerColor::Border))
             .child(self.render_context_servers_section(cx))
             .child(Divider::horizontal().color(DividerColor::Border))
             .child(

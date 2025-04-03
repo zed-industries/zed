@@ -408,8 +408,12 @@ impl GitPanel {
                     this.active_repository = git_store.read(cx).active_repository();
                     this.schedule_update(true, window, cx);
                 }
-                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated, true) => {
-                    this.schedule_update(true, window, cx);
+                GitStoreEvent::RepositoryUpdated(
+                    _,
+                    RepositoryEvent::Updated { full_scan },
+                    true,
+                ) => {
+                    this.schedule_update(*full_scan, window, cx);
                 }
                 GitStoreEvent::RepositoryUpdated(_, _, _) => {}
                 GitStoreEvent::RepositoryAdded(_) | GitStoreEvent::RepositoryRemoved(_) => {
