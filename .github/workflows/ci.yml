@@ -708,7 +708,7 @@ jobs:
 
   nix-build:
     timeout-minutes: 60
-    name: (${{ matrix.system.os }}) Nix Build
+    name: Nix Build
     continue-on-error: true
     if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
     strategy:
@@ -749,7 +749,7 @@ jobs:
           skipPush: true
       - run: nix build .#debug
       - name: Limit /nix/store to 50GB
-        run: '[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d'
+        run: "[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d"
 
   auto-release-preview:
     name: Auto release preview
