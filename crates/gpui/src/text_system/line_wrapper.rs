@@ -51,6 +51,7 @@ impl LineWrapper {
             for candidate in candidates.by_ref() {
                 let ix = index;
                 index += candidate.len_utf8();
+                let mut new_prev_c = prev_c;
                 let item_width = match candidate {
                     WrapBoundaryCandidate::Char { character: c } => {
                         if c == '\n' {
@@ -74,7 +75,7 @@ impl LineWrapper {
                             first_non_whitespace_ix = Some(ix);
                         }
 
-                        prev_c = c;
+                        new_prev_c = c;
 
                         self.width_for_char(c)
                     }
@@ -119,6 +120,8 @@ impl LineWrapper {
 
                     return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
                 }
+
+                prev_c = new_prev_c;
             }
 
             None
