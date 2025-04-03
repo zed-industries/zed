@@ -1,4 +1,4 @@
-use crate::git_commands::{checkout_repo, query_git, run_git, run_git_command, setup_temp_repo};
+use crate::git_commands::{run_git, setup_temp_repo};
 use crate::headless_assistant::{HeadlessAppState, HeadlessAssistant};
 use crate::{get_exercise_language, get_exercise_name, templates_eval::Template};
 use agent::RequestKind;
@@ -85,7 +85,7 @@ impl Eval {
         cx: &mut App,
     ) -> Task<Result<EvalOutput>> {
         cx.spawn(async move |cx| {
-            checkout_repo(&self.repo_path, &self.eval_setup.base_sha).await?;
+            run_git(&self.repo_path, &["checkout", &self.eval_setup.base_sha]).await?;
 
             let (assistant, done_rx) =
                 cx.update(|cx| HeadlessAssistant::new(app_state.clone(), cx))??;
@@ -127,7 +127,7 @@ impl Eval {
 
             // Add this section to check untracked files
             println!("Checking for untracked files:");
-            let untracked = query_git(
+            let untracked = run_git(
                 &self.repo_path,
                 &["ls-files", "--others", "--exclude-standard"],
             )
@@ -141,15 +141,15 @@ impl Eval {
             }
 
             // get git status
-            let _status = query_git(&self.repo_path, &["status", "--short"]).await?;
+            let _status = run_git(&self.repo_path, &["status", "--short"]).await?;
 
             let elapsed_time = start_time.elapsed()?;
 
             // Get diff of staged changes (the files we just added)
-            let staged_diff = query_git(&self.repo_path, &["diff", "--staged"]).await?;
+            let staged_diff = run_git(&self.repo_path, &["diff", "--staged"]).await?;
 
             // Get diff of unstaged changes
-            let unstaged_diff = query_git(&self.repo_path, &["diff"]).await?;
+            let unstaged_diff = run_git(&self.repo_path, &["diff"]).await?;
 
             // Combine both diffs
             let diff = if unstaged_diff.is_empty() {
@@ -394,15 +394,15 @@ pub async fn run_exercise_eval(
         }
 
         // Commit the deletion so it shows up in the diff
-        run_git_command(&temp_path, vec!["add", "."]).await?;
-        run_git_command(
+        run_git(&temp_path, &["add", "."]).await?;
+        run_git(
             &temp_path,
-            vec!["commit", "-m", "Remove root files for clean slate"],
+            &["commit", "-m", "Remove root files for clean slate"],
         )
         .await?;
     }
 
-    let local_commit_sha = run_git_command(&temp_path, vec!["rev-parse", "HEAD"]).await?;
+    let local_commit_sha = run_git(&temp_path, &["rev-parse", "HEAD"]).await?;
 
     // Prepare prompt based on template
     let prompt = match template.name {

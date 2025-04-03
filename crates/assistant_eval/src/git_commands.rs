@@ -17,10 +17,10 @@ pub struct RepoInfo {
     pub head_sha: String,
 }
 
-pub async fn run_git_command(repo_path: &Path, args: Vec<&str>) -> Result<String> {
+pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
     let output = new_smol_command("git")
         .current_dir(repo_path)
-        .args(args.clone())
+        .args(args)
         .output()
         .await?;
 
@@ -58,41 +58,6 @@ pub async fn read_repo_info(exercise_path: &Path) -> Result<RepoInfo> {
     })
 }
 
-pub async fn clone_repo(url: &str, path: &Path) -> Result<()> {
-    println!("Cloning repository from {} to {}", url, path.display());
-    let output = new_smol_command("git")
-        .arg("clone")
-        .arg(url)
-        .arg(path)
-        .output()
-        .await?;
-
-    if output.status.success() {
-        println!("Repository cloned successfully");
-        Ok(())
-    } else {
-        let error = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow!(
-            "Git clone failed with status: {}, error: {}",
-            output.status,
-            error
-        ))
-    }
-}
-
-pub async fn checkout_repo(repo_path: &Path, commit_sha: &str) -> Result<()> {
-    run_git_command(repo_path, vec!["checkout", commit_sha]).await?;
-    Ok(())
-}
-
-pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    run_git_command(repo_path, args.to_vec()).await
-}
-
-pub async fn query_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    run_git_command(repo_path, args.to_vec()).await
-}
-
 pub async fn setup_temp_repo(exercise_path: &Path, _base_sha: &str) -> Result<TempDir> {
     let temp_dir = TempDir::new()?;
 
@@ -103,11 +68,22 @@ pub async fn setup_temp_repo(exercise_path: &Path, _base_sha: &str) -> Result<Te
         let repo_info = read_repo_info(exercise_path).await?;
 
         // Clone the repository to the temp directory
-        clone_repo(&repo_info.remote_url, temp_dir.path()).await?;
+        let url = repo_info.remote_url;
+        let clone_path = temp_dir.path();
+        println!(
+            "Cloning repository from {} to {}",
+            url,
+            clone_path.display()
+        );
+        run_git(
+            &std::env::current_dir()?,
+            &["clone", &url, &clone_path.to_string_lossy()],
+        )
+        .await?;
 
         // Checkout the specified commit
         println!("Checking out commit: {}", repo_info.head_sha);
-        checkout_repo(temp_dir.path(), &repo_info.head_sha).await?;
+        run_git(temp_dir.path(), &["checkout", &repo_info.head_sha]).await?;
 
         println!("Successfully set up internal repository");
     } else {
@@ -138,9 +114,9 @@ pub async fn setup_temp_repo(exercise_path: &Path, _base_sha: &str) -> Result<Te
         }
 
         // Initialize git repo in the temp directory
-        run_git_command(temp_dir.path(), vec!["init"]).await?;
-        run_git_command(temp_dir.path(), vec!["add", "."]).await?;
-        run_git_command(temp_dir.path(), vec!["commit", "-m", "Initial commit"]).await?;
+        run_git(temp_dir.path(), &["init"]).await?;
+        run_git(temp_dir.path(), &["add", "."]).await?;
+        run_git(temp_dir.path(), &["commit", "-m", "Initial commit"]).await?;
 
         println!("Created temp repo without .docs and .meta directories");
     }
