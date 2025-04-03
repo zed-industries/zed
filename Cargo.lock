@@ -116,6 +116,7 @@ dependencies = [
  "time",
  "time_format",
  "ui",
+ "ui_input",
  "util",
  "uuid",
  "vim_mode_setting",
@@ -15310,8 +15311,10 @@ dependencies = [
 name = "ui_input"
 version = "0.1.0"
 dependencies = [
+ "component",
  "editor",
  "gpui",
+ "linkme",
  "settings",
  "theme",
  "ui",
