@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
@@ -11,18 +11,20 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, RateLimiter, Role,
+    StopReason,
 };
 use open_ai::{ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
+use std::str::FromStr as _;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, maybe};
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
@@ -375,35 +377,108 @@ pub fn into_open_ai(
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
-    struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-        // tool_uses_by_index: HashMap<usize, RawToolUse>,
-        // usage: Usage,
-        // stop_reason: StopReason,
+    #[derive(Default)]
+    struct RawToolCall {
+        id: String,
+        name: String,
+        arguments: String,
     }
 
-    futures::stream::unfold(State { events }, |mut state| async move {
-        while let Some(event) = state.events.next().await {
-            dbg!(&event);
-            match event {
-                Ok(event) => {
-                    let Some(choice) = event.choices.first() else {
-                        return Some((vec![Err(anyhow!("Response contained no choices"))], state));
-                    };
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+        tool_calls_by_index: HashMap<usize, RawToolCall>,
+    }
 
-                    let mut events = Vec::new();
-                    if let Some(content) = choice.delta.content.clone() {
-                        events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+    futures::stream::unfold(
+        State {
+            events,
+            tool_calls_by_index: HashMap::default(),
+        },
+        |mut state| async move {
+            while let Some(event) = state.events.next().await {
+                dbg!(&event);
+                match event {
+                    Ok(event) => {
+                        let Some(choice) = event.choices.first() else {
+                            return Some((
+                                vec![Err(anyhow!("Response contained no choices"))],
+                                state,
+                            ));
+                        };
+
+                        let mut events = Vec::new();
+                        if let Some(content) = choice.delta.content.clone() {
+                            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                        }
+
+                        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
+                            for tool_call in tool_calls {
+                                let entry = state
+                                    .tool_calls_by_index
+                                    .entry(tool_call.index)
+                                    .or_default();
+
+                                if let Some(tool_id) = tool_call.id.clone() {
+                                    entry.id = tool_id;
+                                }
+
+                                if let Some(function) = tool_call.function.as_ref() {
+                                    if let Some(name) = function.name.clone() {
+                                        entry.name = name;
+                                    }
+
+                                    if let Some(arguments) = function.arguments.clone() {
+                                        entry.arguments.push_str(&arguments);
+                                    }
+                                }
+                            }
+                        }
+
+                        match choice.finish_reason.as_deref() {
+                            Some("stop") => {
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::EndTurn,
+                                )));
+                            }
+                            Some("tool_calls") => {
+                                events.extend(state.tool_calls_by_index.drain().map(
+                                    |(_, tool_call)| {
+                                        maybe!({
+                                            Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_call.id.into(),
+                                                    name: tool_call.name.as_str().into(),
+                                                    input: serde_json::Value::from_str(
+                                                        &tool_call.arguments,
+                                                    )?,
+                                                },
+                                            ))
+                                        })
+                                    },
+                                ));
+
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::ToolUse,
+                                )));
+                            }
+                            Some(stop_reason) => {
+                                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::EndTurn,
+                                )));
+                            }
+                            None => {}
+                        }
+
+                        return Some((events, state));
                     }
-
-                    return Some((events, state));
+                    Err(err) => return Some((vec![Err(err)], state)),
                 }
-                Err(err) => return Some((vec![Err(err)], state)),
             }
-        }
 
-        None
-    })
+            None
+        },
+    )
     .flat_map(futures::stream::iter)
 }
 
