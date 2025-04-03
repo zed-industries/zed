@@ -432,7 +432,6 @@ pub fn map_to_language_model_completion_events(
         },
         |mut state| async move {
             while let Some(event) = state.events.next().await {
-                dbg!(&event);
                 match event {
                     Ok(event) => {
                         let Some(choice) = event.choices.first() else {
