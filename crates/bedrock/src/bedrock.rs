@@ -38,7 +38,7 @@ pub async fn stream_completion(
             let mut response = bedrock::Client::converse_stream(&client)
                 .model_id(request.model.clone())
                 .set_messages(request.messages.into())
-                .set_tool_config(request.tool_choice);
+                .set_tool_config(request.tools);
 
             if let Some(Thinking::Enabled {
                 budget_tokens: Some(budget_tokens),
@@ -150,7 +150,6 @@ pub struct Request {
     pub messages: Vec<BedrockMessage>,
     pub tools: Option<BedrockToolConfig>,
     pub thinking: Option<Thinking>,
-    pub tool_choice: Option<BedrockToolConfig>,
     pub system: Option<String>,
     pub metadata: Option<Metadata>,
     pub stop_sequences: Vec<String>,

@@ -483,6 +483,7 @@ pub fn into_bedrock(
                         MessageContent::ToolUse(tool_use) => Some(BedrockInnerContent::ToolUse(
                             BedrockToolUseBlock::builder()
                                 .name(tool_use.name.to_string())
+                                .tool_use_id(tool_use.id.to_string())
                                 .input(value_to_aws_document(&tool_use.input))
                                 .build()
                                 .expect("failed to build Bedrock tool use block"),
@@ -572,7 +573,6 @@ pub fn into_bedrock(
         } else {
             None
         },
-        tool_choice: None,
         metadata: None,
         stop_sequences: Vec::new(),
         temperature: request.temperature.or(Some(default_temperature)),
@@ -756,6 +756,7 @@ pub fn map_to_language_model_completion_events(
                                                             .input_json
                                                             .push_str(text_out.input());
                                                     }
+
                                                     return Some((None, state));
                                                 }
 
@@ -861,7 +862,9 @@ pub fn map_to_language_model_completion_events(
                                                 return Some((Some(Ok(completion_event)), state));
                                             }
                                         }
-                                        _ => {}
+                                        _ => {
+                                            return Some((None, state));
+                                        }
                                     }
                                 }
 
