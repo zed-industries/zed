@@ -1438,6 +1438,21 @@ impl GitPanel {
         }
     }
 
+    fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.commit_editor.read(cx).is_empty(cx) {
+            return;
+        }
+        if self
+            .commit_editor
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            telemetry::event!("Git Amended", source = "Git Panel");
+        } else {
+            cx.propagate();
+        }
+    }
+
     fn custom_or_suggested_commit_message(&self, cx: &mut Context<Self>) -> Option<String> {
         let message = self.commit_editor.read(cx).text(cx);
 
@@ -2738,6 +2753,23 @@ impl GitPanel {
         }
     }
 
+    pub(crate) fn render_amend_button(&self, cx: &Context<Self>) -> AnyElement {
+        IconButton::new("co-authors", IconName::Person)
+            .shape(ui::IconButtonShape::Square)
+            .icon_color(Color::Disabled)
+            .selected_icon_color(Color::Selected)
+            .toggle_state(self.add_coauthors)
+            .tooltip(move |_, cx| {
+                let title = format!("Toggle Amend");
+                Tooltip::simple(title, cx)
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.add_coauthors = !this.add_coauthors;
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
     pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
         if self.has_unstaged_conflicts() {
             (false, "You must resolve conflicts before committing")
@@ -3846,6 +3878,7 @@ impl Render for GitPanel {
             .when(has_write_access && !project.is_read_only(cx), |this| {
                 this.on_action(cx.listener(Self::toggle_staged_for_selected))
                     .on_action(cx.listener(GitPanel::commit))
+                    .on_action(cx.listener(GitPanel::amend))
                     .on_action(cx.listener(Self::stage_all))
                     .on_action(cx.listener(Self::unstage_all))
                     .on_action(cx.listener(Self::stage_selected))
