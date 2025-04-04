@@ -47,7 +47,7 @@ pub struct ActiveThread {
     list_state: ListState,
     scrollbar_state: ScrollbarState,
     rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
-    rendered_tool_use_labels: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
+    rendered_tool_uses: HashMap<LanguageModelToolUseId, RenderedToolUse>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
@@ -61,6 +61,13 @@ pub struct ActiveThread {
 struct RenderedMessage {
     language_registry: Arc<LanguageRegistry>,
     segments: Vec<RenderedMessageSegment>,
+}
+
+#[derive(Clone)]
+struct RenderedToolUse {
+    label: Entity<Markdown>,
+    input: Entity<Markdown>,
+    output: Entity<Markdown>,
 }
 
 impl RenderedMessage {
@@ -233,7 +240,7 @@ fn render_markdown(
             font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
             font_features: Some(theme_settings.buffer_font.features.clone()),
             font_size: Some(buffer_font_size.into()),
-            background_color: Some(colors.editor_foreground.opacity(0.1)),
+            background_color: Some(colors.editor_foreground.opacity(0.08)),
             ..Default::default()
         },
         link: TextStyleRefinement {
@@ -256,6 +263,74 @@ fn render_markdown(
                 None
             }
         })),
+        ..Default::default()
+    };
+
+    cx.new(|cx| {
+        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
+            move |text, window, cx| {
+                open_markdown_link(text, workspace.clone(), window, cx);
+            },
+        )
+    })
+}
+
+fn render_tool_use_markdown(
+    text: SharedString,
+    language_registry: Arc<LanguageRegistry>,
+    workspace: WeakEntity<Workspace>,
+    window: &Window,
+    cx: &mut App,
+) -> Entity<Markdown> {
+    let theme_settings = ThemeSettings::get_global(cx);
+    let colors = cx.theme().colors();
+    let ui_font_size = TextSize::Default.rems(cx);
+    let buffer_font_size = TextSize::Small.rems(cx);
+    let mut text_style = window.text_style();
+
+    text_style.refine(&TextStyleRefinement {
+        font_family: Some(theme_settings.ui_font.family.clone()),
+        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+        font_features: Some(theme_settings.ui_font.features.clone()),
+        font_size: Some(ui_font_size.into()),
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    });
+
+    let markdown_style = MarkdownStyle {
+        base_text_style: text_style,
+        syntax: cx.theme().syntax().clone(),
+        selection_background_color: cx.theme().players().local().selection,
+        code_block_overflow_x_scroll: true,
+        code_block: StyleRefinement {
+            margin: EdgesRefinement::default(),
+            padding: EdgesRefinement::default(),
+            background: Some(colors.editor_background.into()),
+            border_color: None,
+            border_widths: EdgesRefinement::default(),
+            text: Some(TextStyleRefinement {
+                font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                font_features: Some(theme_settings.buffer_font.features.clone()),
+                font_size: Some(buffer_font_size.into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        inline_code: TextStyleRefinement {
+            font_family: Some(theme_settings.buffer_font.family.clone()),
+            font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+            font_features: Some(theme_settings.buffer_font.features.clone()),
+            font_size: Some(TextSize::XSmall.rems(cx).into()),
+            ..Default::default()
+        },
+        heading: StyleRefinement {
+            text: Some(TextStyleRefinement {
+                font_size: Some(ui_font_size.into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -372,7 +447,7 @@ impl ActiveThread {
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
-            rendered_tool_use_labels: HashMap::default(),
+            rendered_tool_uses: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
             expanded_thinking_segments: HashMap::default(),
             list_state: list_state.clone(),
@@ -389,9 +464,11 @@ impl ActiveThread {
             this.push_message(&message.id, &message.segments, window, cx);
 
             for tool_use in thread.read(cx).tool_uses_for_message(message.id, cx) {
-                this.render_tool_use_label_markdown(
+                this.render_tool_use_markdown(
                     tool_use.id.clone(),
                     tool_use.ui_text.clone(),
+                    &tool_use.input,
+                    tool_use.status.text(),
                     window,
                     cx,
                 );
@@ -482,23 +559,44 @@ impl ActiveThread {
         self.rendered_messages_by_id.remove(id);
     }
 
-    fn render_tool_use_label_markdown(
+    fn render_tool_use_markdown(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         tool_label: impl Into<SharedString>,
+        tool_input: &serde_json::Value,
+        tool_output: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.rendered_tool_use_labels.insert(
-            tool_use_id,
-            render_markdown(
+        let rendered = RenderedToolUse {
+            label: render_tool_use_markdown(
                 tool_label.into(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
                 window,
                 cx,
             ),
-        );
+            input: render_tool_use_markdown(
+                format!(
+                    "```json\n{}\n```",
+                    serde_json::to_string_pretty(tool_input).unwrap_or_default()
+                )
+                .into(),
+                self.language_registry.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            ),
+            output: render_tool_use_markdown(
+                tool_output,
+                self.language_registry.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            ),
+        };
+        self.rendered_tool_uses
+            .insert(tool_use_id.clone(), rendered);
     }
 
     fn handle_thread_event(
@@ -583,9 +681,11 @@ impl ActiveThread {
                     .update(cx, |thread, cx| thread.use_pending_tools(cx));
 
                 for tool_use in tool_uses {
-                    self.render_tool_use_label_markdown(
+                    self.render_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
+                        &tool_use.input,
+                        "".into(),
                         window,
                         cx,
                     );
@@ -598,9 +698,11 @@ impl ActiveThread {
             } => {
                 let canceled = *canceled;
                 if let Some(tool_use) = pending_tool_use {
-                    self.render_tool_use_label_markdown(
+                    self.render_tool_use_markdown(
                         tool_use.id.clone(),
-                        SharedString::from(tool_use.ui_text.clone()),
+                        tool_use.ui_text.clone(),
+                        &tool_use.input,
+                        "".into(),
                         window,
                         cx,
                     );
@@ -1257,7 +1359,7 @@ impl ActiveThread {
                 .pb_2p5()
                 .when(!tool_uses.is_empty(), |parent| {
                     parent.child(
-                        v_flex().children(
+                        div().children(
                             tool_uses
                                 .into_iter()
                                 .map(|tool_use| self.render_tool_use(tool_use, cx)),
@@ -1691,11 +1793,13 @@ impl ActiveThread {
             }
         });
 
-        let content_container = || v_flex().py_1().gap_0p5().px_2p5();
+        let rendered_tool_use = self.rendered_tool_uses.get(&tool_use.id).cloned();
+        let results_content_container = || v_flex().p_2().gap_0p5();
+
         let results_content = v_flex()
             .gap_1()
             .child(
-                content_container()
+                results_content_container()
                     .child(
                         Label::new("Input")
                             .size(LabelSize::XSmall)
@@ -1703,16 +1807,16 @@ impl ActiveThread {
                             .buffer_font(cx),
                     )
                     .child(
-                        Label::new(
-                            serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
-                        )
-                        .size(LabelSize::Small)
-                        .buffer_font(cx),
+                        div().w_full().text_ui_sm(cx).children(
+                            rendered_tool_use
+                                .as_ref()
+                                .map(|rendered| rendered.input.clone()),
+                        ),
                     ),
             )
             .map(|container| match tool_use.status {
-                ToolUseStatus::Finished(output) => container.child(
-                    content_container()
+                ToolUseStatus::Finished(_) => container.child(
+                    results_content_container()
                         .border_t_1()
                         .border_color(self.tool_card_border_color(cx))
                         .child(
@@ -1721,10 +1825,16 @@ impl ActiveThread {
                                 .color(Color::Muted)
                                 .buffer_font(cx),
                         )
-                        .child(Label::new(output).size(LabelSize::Small).buffer_font(cx)),
+                        .child(
+                            div().w_full().text_ui_sm(cx).children(
+                                rendered_tool_use
+                                    .as_ref()
+                                    .map(|rendered| rendered.output.clone()),
+                            ),
+                        ),
                 ),
                 ToolUseStatus::Running => container.child(
-                    content_container().child(
+                    results_content_container().child(
                         h_flex()
                             .gap_1()
                             .pb_1()
@@ -1752,8 +1862,8 @@ impl ActiveThread {
                             ),
                     ),
                 ),
-                ToolUseStatus::Error(err) => container.child(
-                    content_container()
+                ToolUseStatus::Error(_) => container.child(
+                    results_content_container()
                         .border_t_1()
                         .border_color(self.tool_card_border_color(cx))
                         .child(
@@ -1762,11 +1872,17 @@ impl ActiveThread {
                                 .color(Color::Muted)
                                 .buffer_font(cx),
                         )
-                        .child(Label::new(err).size(LabelSize::Small).buffer_font(cx)),
+                        .child(
+                            div().text_ui_sm(cx).children(
+                                rendered_tool_use
+                                    .as_ref()
+                                    .map(|rendered| rendered.output.clone()),
+                            ),
+                        ),
                 ),
                 ToolUseStatus::Pending => container,
                 ToolUseStatus::NeedsConfirmation => container.child(
-                    content_container()
+                    results_content_container()
                         .border_t_1()
                         .border_color(self.tool_card_border_color(cx))
                         .child(
@@ -1782,13 +1898,13 @@ impl ActiveThread {
             div()
                 .h_full()
                 .absolute()
-                .w_8()
+                .w_12()
                 .bottom_0()
                 .map(|element| {
                     if is_status_finished {
-                        element.right_7()
+                        element.right_6()
                     } else {
-                        element.right(px(46.))
+                        element.right(px(44.))
                     }
                 })
                 .bg(linear_gradient(
@@ -1824,9 +1940,7 @@ impl ActiveThread {
                                         )
                                         .child(
                                             h_flex().pr_8().text_ui_sm(cx).children(
-                                                self.rendered_tool_use_labels
-                                                    .get(&tool_use.id)
-                                                    .cloned(),
+                                                rendered_tool_use.map(|rendered| rendered.label)
                                             ),
                                         ),
                                 )
@@ -1914,9 +2028,7 @@ impl ActiveThread {
                                     )
                                     .child(
                                         h_flex().pr_8().text_ui_sm(cx).children(
-                                            self.rendered_tool_use_labels
-                                                .get(&tool_use.id)
-                                                .cloned(),
+                                            rendered_tool_use.map(|rendered| rendered.label)
                                         ),
                                     ),
                             )
