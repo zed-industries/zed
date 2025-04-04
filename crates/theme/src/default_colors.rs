@@ -142,7 +142,7 @@ impl ThemeColors {
             version_control_modified: MODIFIED_COLOR,
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().light().step_12(),
-            version_control_conflict_ours: green().light().step_10(),
+            version_control_conflict_ours: purple().light().step_10(),
             version_control_conflict_theirs: blue().light().step_10(),
             version_control_ignored: gray().light().step_12(),
         }
@@ -259,8 +259,8 @@ impl ThemeColors {
             version_control_modified: MODIFIED_COLOR,
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().dark().step_12(),
-            version_control_conflict_ours: purple().dark().step_12(),
-            version_control_conflict_theirs: pink().dark().step_12(),
+            version_control_conflict_ours: purple().dark().step_10(),
+            version_control_conflict_theirs: blue().dark().step_10(),
             version_control_ignored: gray().dark().step_12(),
         }
     }
