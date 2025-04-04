@@ -2295,11 +2295,11 @@ message Notification {
 
 message LspExtRunnables {
     uint64 project_id = 1;
-    //
+    uint64 buffer_id = 2;
 }
 
 message LspExtRunnablesResponse {
-    //
+    bytes task_templates = 1;
 }
 
 
