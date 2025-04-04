@@ -220,16 +220,23 @@ impl Model {
             .map(|header| header.to_string())
             .collect::<Vec<_>>();
 
-        if let Self::Custom {
-            extra_beta_headers, ..
-        } = self
-        {
-            headers.extend(
-                extra_beta_headers
-                    .iter()
-                    .filter(|header| !header.trim().is_empty())
-                    .cloned(),
-            );
+        match self {
+            Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => {
+                // Try beta token-efficient tool use (supported in Claude 3.7 Sonnet only)
+                // https://docs.anthropic.com/en/docs/build-with-claude/tool-use/token-efficient-tool-use
+                headers.push("token-efficient-tools-2025-02-19".to_string());
+            }
+            Self::Custom {
+                extra_beta_headers, ..
+            } => {
+                headers.extend(
+                    extra_beta_headers
+                        .iter()
+                        .filter(|header| !header.trim().is_empty())
+                        .cloned(),
+                );
+            }
+            _ => {}
         }
 
         headers.join(",")
