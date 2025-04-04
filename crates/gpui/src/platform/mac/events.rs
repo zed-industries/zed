@@ -598,16 +598,3 @@ fn parse_other_keys(scan_code: u16) -> KeyCode {
         _ => KeyCode::Unknown,
     }
 }
-
-pub(crate) fn keyboard_layout() -> String {
-    unsafe {
-        let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
-
-        let input_source_id: *mut Object =
-            TISGetInputSourceProperty(current_keyboard, kTISPropertyInputSourceID as *const c_void);
-        let input_source_id: *const std::os::raw::c_char = msg_send![input_source_id, UTF8String];
-        let input_source_id = CStr::from_ptr(input_source_id).to_str().unwrap();
-
-        input_source_id.to_string()
-    }
-}
