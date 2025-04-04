@@ -393,6 +393,27 @@ impl Project {
             })
             .detach();
 
+
+            terminal_handle.update(cx, |terminal, _| {
+                if terminal.pending_initialization {
+                    let shell_name = terminal
+                        .pty_info
+                        .current
+                        .as_ref()
+                        .map(|process| process.name.to_lowercase())
+                        .unwrap_or_default();
+                    let restore_command = if shell_name.contains("fish") {
+                        "if set -q ZED_ORIGINAL_PATH; set -gx PATH $ZED_ORIGINAL_PATH; set -e ZED_ORIGINAL_PATH; end"
+                    } else {
+                        "if [ ! -z \"$ZED_ORIGINAL_PATH\" ]; then export PATH=\"$ZED_ORIGINAL_PATH\"; unset ZED_ORIGINAL_PATH; fi"
+                    };
+                    terminal.input(restore_command.to_string());
+                    terminal.clear();
+                    terminal.initialized();
+                }
+            });
+
+
             if let Some(activate_command) = python_venv_activate_command {
                 this.activate_python_virtual_environment(activate_command, &terminal_handle, cx);
             }
