@@ -514,23 +514,47 @@ async fn check_usage_limit(
         .get_usage(user_id, provider, model_name, Utc::now())
         .await?;
 
-    let checks = [
-        (
-            usage.requests_this_minute,
-            per_user_max_requests_per_minute,
-            UsageMeasure::RequestsPerMinute,
-        ),
-        (
-            usage.tokens_this_minute,
-            per_user_max_tokens_per_minute,
-            UsageMeasure::TokensPerMinute,
-        ),
-        (
-            usage.tokens_this_day,
-            per_user_max_tokens_per_day,
-            UsageMeasure::TokensPerDay,
-        ),
-    ];
+    let checks = match (provider, model_name) {
+        (LanguageModelProvider::Anthropic, "claude-3-7-sonnet") => vec![
+            (
+                usage.requests_this_minute,
+                per_user_max_requests_per_minute,
+                UsageMeasure::RequestsPerMinute,
+            ),
+            (
+                usage.input_tokens_this_minute,
+                per_user_max_tokens_per_minute,
+                UsageMeasure::InputTokensPerMinute,
+            ),
+            (
+                usage.output_tokens_this_minute,
+                per_user_max_tokens_per_minute,
+                UsageMeasure::OutputTokensPerMinute,
+            ),
+            (
+                usage.tokens_this_day,
+                per_user_max_tokens_per_day,
+                UsageMeasure::TokensPerDay,
+            ),
+        ],
+        _ => vec![
+            (
+                usage.requests_this_minute,
+                per_user_max_requests_per_minute,
+                UsageMeasure::RequestsPerMinute,
+            ),
+            (
+                usage.tokens_this_minute,
+                per_user_max_tokens_per_minute,
+                UsageMeasure::TokensPerMinute,
+            ),
+            (
+                usage.tokens_this_day,
+                per_user_max_tokens_per_day,
+                UsageMeasure::TokensPerDay,
+            ),
+        ],
+    };
 
     for (used, limit, usage_measure) in checks {
         if used > limit {
