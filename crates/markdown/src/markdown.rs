@@ -621,6 +621,24 @@ impl Element for MarkdownElement {
 
                             // This is a parent container that we can position the copy button inside.
                             builder.push_div(div().relative().w_full(), range, markdown_end);
+                            
+                            // If this code block is inside a link, show the URL
+                            if let Some(dest_url) = builder.inside_link.clone() {
+                                builder.flush_text(); // Flush any pending text before adding the link display
+                                
+                                // Add a UI element to display the link URL
+                                builder.modify_current_div(|el| {
+                                    el.child(
+                                        div()
+                                            .mb_1()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .child(Icon::new(IconName::Link).size(IconSize::Small).color(Color::Muted))
+                                            .child(Label::new(format!("Link: {}", dest_url)).color(Color::Muted))
+                                    )
+                                });
+                            }
 
                             let mut code_block = div()
                                 .id(("code-block", range.start))
@@ -685,6 +703,8 @@ impl Element for MarkdownElement {
                         MarkdownTag::Link { dest_url, .. } => {
                             if builder.code_block_stack.is_empty() {
                                 builder.push_link(dest_url.clone(), range.clone());
+                                // Track that we're now inside a link
+                                builder.inside_link = Some(dest_url.clone());
                                 let style = self
                                     .style
                                     .link_callback
@@ -848,7 +868,9 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
                     MarkdownTagEnd::Link => {
                         if builder.code_block_stack.is_empty() {
-                            builder.pop_text_style()
+                            builder.pop_text_style();
+                            // Clear the inside_link flag
+                            builder.inside_link = None;
                         }
                     }
                     MarkdownTagEnd::Table => {
@@ -872,6 +894,22 @@ impl Element for MarkdownElement {
                     builder.push_text(parsed, range.start);
                 }
                 MarkdownEvent::Code => {
+                    // If this inline code is inside a link, show the URL
+                    if let Some(dest_url) = builder.inside_link.clone() {
+                        builder.flush_text(); // Flush any pending text before adding the link display
+                        
+                        // Add a span to display the link URL
+                        let link_display = div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .mb_1()
+                            .child(Icon::new(IconName::Link).size(IconSize::Small).color(Color::Muted))
+                            .child(Label::new(format!("Link: {}", dest_url)).color(Color::Muted));
+                            
+                        builder.div_stack.last_mut().unwrap().extend([link_display.into_any()]);
+                    }
+                    
                     builder.push_text_style(self.style.inline_code.clone());
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                     builder.pop_text_style();
@@ -1014,6 +1052,7 @@ struct MarkdownElementBuilder {
     list_stack: Vec<ListStackEntry>,
     table_alignments: Vec<Alignment>,
     syntax_theme: Arc<SyntaxTheme>,
+    inside_link: Option<SharedString>, // Track if we're inside a link and store its URL
 }
 
 #[derive(Default)]
@@ -1041,6 +1080,7 @@ impl MarkdownElementBuilder {
             list_stack: Vec::new(),
             table_alignments: Vec::new(),
             syntax_theme,
+            inside_link: None,
         }
     }
 
