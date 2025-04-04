@@ -48,6 +48,7 @@ actions!(
         JoinLinesNoWhitespace,
         DeleteLeft,
         DeleteRight,
+        HelixDelete,
         ChangeToEndOfLine,
         DeleteToEndOfLine,
         Yank,
@@ -92,6 +93,21 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let times = Vim::take_count(cx);
         vim.delete_motion(Motion::Right, times, window, cx);
     });
+
+    Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
+        vim.record_current_action(cx);
+        vim.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(None, window, cx, |s| {
+                s.move_with(|map, selection| {
+                    if selection.is_empty() {
+                        selection.end = movement::right(map, selection.end)
+                    }
+                })
+            })
+        });
+        vim.visual_delete(false, window, cx);
+    });
+
     Vim::action(editor, cx, |vim, _: &ChangeToEndOfLine, window, cx| {
         vim.start_recording(cx);
         let times = Vim::take_count(cx);
