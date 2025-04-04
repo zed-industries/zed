@@ -774,6 +774,8 @@ mod tests {
     #[test]
     #[cfg(target_os = "windows")]
     fn test_proto() {
+        use std::path::PathBuf;
+
         fn generate_proto_path(path: PathBuf) -> PathBuf {
             let proto = path.to_proto();
             PathBuf::from_proto(proto)
