@@ -2,11 +2,11 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
+    "crates/agent",
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
     "crates/assistant",
-    "crates/assistant2",
     "crates/assistant_context_editor",
     "crates/assistant_eval",
     "crates/assistant_settings",
@@ -192,6 +192,7 @@ members = [
     # Tooling
     #
 
+    "tooling/workspace-hack",
     "tooling/xtask",
 ]
 default-members = ["crates/zed"]
@@ -207,12 +208,12 @@ edition = "2024"
 #
 
 activity_indicator = { path = "crates/activity_indicator" }
+agent = { path = "crates/agent" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
-assistant2 = { path = "crates/assistant2" }
 assistant_context_editor = { path = "crates/assistant_context_editor" }
 assistant_eval = { path = "crates/assistant_eval" }
 assistant_settings = { path = "crates/assistant_settings" }
@@ -568,7 +569,7 @@ tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-ma
 tree-sitter-python = "0.23"
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
-tree-sitter-rust = "0.23"
+tree-sitter-rust = "0.24"
 tree-sitter-typescript = "0.23"
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 unicase = "2.6"
@@ -578,6 +579,7 @@ unicode-script = "0.5.7"
 url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+walkdir = "2.3"
 wasmparser = "0.221"
 wasm-encoder = "0.221"
 wasmtime = { version = "29", default-features = false, features = [
@@ -590,6 +592,7 @@ wasmtime = { version = "29", default-features = false, features = [
 wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
+workspace-hack = "0.1.0"
 zed_llm_client = "0.4"
 zstd = "0.11"
 metal = "0.29"
@@ -657,10 +660,14 @@ features = [
 [patch.crates-io]
 cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
 real-async-tls = { git = "https://github.com/zed-industries/async-tls", rev = "1e759a4b5e370f87dc15e40756ac4f8815b61d9d", package = "async-tls" }
+notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+
+# Makes the workspace hack crate refer to the local one, but only when you're building locally
+workspace-hack = { path = "tooling/workspace-hack" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
-debug = "limited"
 codegen-units = 16
 
 [profile.dev.package]
@@ -770,4 +777,4 @@ let_underscore_future = "allow"
 too_many_arguments = "allow"
 
 [workspace.metadata.cargo-machete]
-ignored = ["bindgen", "cbindgen", "prost_build", "serde", "component", "linkme"]
+ignored = ["bindgen", "cbindgen", "prost_build", "serde", "component", "linkme", "workspace-hack"]

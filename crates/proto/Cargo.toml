@@ -20,6 +20,7 @@ doctest = false
 anyhow.workspace = true
 prost.workspace = true
 serde.workspace = true
+workspace-hack.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true

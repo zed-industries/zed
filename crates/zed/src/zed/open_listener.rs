@@ -103,7 +103,7 @@ impl OpenRequest {
         let mut parts = request_path.split('/');
         if parts.next() == Some("channel") {
             if let Some(slug) = parts.next() {
-                if let Some(id_str) = slug.split('-').last() {
+                if let Some(id_str) = slug.split('-').next_back() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
                         let Some(next) = parts.next() else {
                             self.join_channel = Some(channel_id);

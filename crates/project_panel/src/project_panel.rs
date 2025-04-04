@@ -29,7 +29,8 @@ use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
-    ProjectPath, Worktree, WorktreeId, git_store::git_traversal::ChildEntriesGitIter,
+    ProjectPath, Worktree, WorktreeId,
+    git_store::{GitStoreEvent, git_traversal::ChildEntriesGitIter},
     relativize_path,
 };
 use project_panel_settings::{
@@ -298,6 +299,7 @@ impl ProjectPanel {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let project = workspace.project().clone();
+        let git_store = project.read(cx).git_store().clone();
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
@@ -306,6 +308,18 @@ impl ProjectPanel {
                 this.hide_scrollbar(window, cx);
             })
             .detach();
+
+            cx.subscribe(&git_store, |this, _, event, cx| match event {
+                GitStoreEvent::RepositoryUpdated(_, _, _)
+                | GitStoreEvent::RepositoryAdded(_)
+                | GitStoreEvent::RepositoryRemoved(_) => {
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+                _ => {}
+            })
+            .detach();
+
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
@@ -335,9 +349,7 @@ impl ProjectPanel {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
-                project::Event::GitStateUpdated
-                | project::Event::ActiveRepositoryChanged
-                | project::Event::WorktreeUpdatedEntries(_, _)
+                project::Event::WorktreeUpdatedEntries(_, _)
                 | project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeOrderChanged => {
                     this.update_visible_entries(None, cx);
@@ -3247,7 +3259,7 @@ impl ProjectPanel {
                                         .take(prefix_components)
                                         .collect::<PathBuf>();
                                     if let Some(last_component) =
-                                        Path::new(processing_filename).components().last()
+                                        Path::new(processing_filename).components().next_back()
                                     {
                                         new_path.push(last_component);
                                         previous_components.next();

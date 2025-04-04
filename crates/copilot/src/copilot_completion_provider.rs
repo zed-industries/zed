@@ -273,7 +273,7 @@ mod tests {
     use language::{
         Point,
         language_settings::{
-            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, LspInsertMode,
             WordsCompletionMode,
         },
     };
@@ -294,6 +294,7 @@ mod tests {
                 words: WordsCompletionMode::Disabled,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
+                lsp_insert_mode: LspInsertMode::Insert,
             });
         });
 
@@ -525,6 +526,7 @@ mod tests {
                 words: WordsCompletionMode::Disabled,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
+                lsp_insert_mode: LspInsertMode::Insert,
             });
         });
 
@@ -729,18 +731,12 @@ mod tests {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(2, 0),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
                 cx,
             );
             multibuffer.push_excerpts(
                 buffer_2.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(2, 0),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
                 cx,
             );
             multibuffer
@@ -981,18 +977,12 @@ mod tests {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 private_buffer.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(1, 0),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
                 cx,
             );
             multibuffer.push_excerpts(
                 public_buffer.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(6, 0),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(6, 0))],
                 cx,
             );
             multibuffer

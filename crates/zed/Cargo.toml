@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.181.0"
+version = "0.182.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -16,10 +16,10 @@ path = "src/main.rs"
 
 [dependencies]
 activity_indicator.workspace = true
+agent.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
-assistant2.workspace = true
 assistant_context_editor.workspace = true
 assistant_settings.workspace = true
 assistant_tools.workspace = true
@@ -139,6 +139,7 @@ workspace.workspace = true
 zed_actions.workspace = true
 zeta.workspace = true
 zlog_settings.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

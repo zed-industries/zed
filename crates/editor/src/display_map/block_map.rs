@@ -1,11 +1,12 @@
 use super::{
     Highlights,
+    fold_map::Chunk,
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
-use language::{Chunk, Patch, Point};
+use language::{Patch, Point};
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, RowInfo,
     ToOffset, ToPoint as _,
@@ -40,6 +41,7 @@ pub struct BlockMap {
     buffer_header_height: u32,
     excerpt_header_height: u32,
     pub(super) folded_buffers: HashSet<BufferId>,
+    buffers_with_disabled_headers: HashSet<BufferId>,
 }
 
 pub struct BlockMapReader<'a> {
@@ -422,6 +424,7 @@ impl BlockMap {
             custom_blocks: Vec::new(),
             custom_blocks_by_id: TreeMap::default(),
             folded_buffers: HashSet::default(),
+            buffers_with_disabled_headers: HashSet::default(),
             transforms: RefCell::new(transforms),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             buffer_header_height,
@@ -642,11 +645,8 @@ impl BlockMap {
             );
 
             if buffer.show_headers() {
-                blocks_in_edit.extend(BlockMap::header_and_footer_blocks(
-                    self.buffer_header_height,
-                    self.excerpt_header_height,
+                blocks_in_edit.extend(self.header_and_footer_blocks(
                     buffer,
-                    &self.folded_buffers,
                     (start_bound, end_bound),
                     wrap_snapshot,
                 ));
@@ -714,10 +714,8 @@ impl BlockMap {
     }
 
     fn header_and_footer_blocks<'a, R, T>(
-        buffer_header_height: u32,
-        excerpt_header_height: u32,
+        &'a self,
         buffer: &'a multi_buffer::MultiBufferSnapshot,
-        folded_buffers: &'a HashSet<BufferId>,
         range: R,
         wrap_snapshot: &'a WrapSnapshot,
     ) -> impl Iterator<Item = (BlockPlacement<WrapRow>, Block)> + 'a
@@ -728,73 +726,78 @@ impl BlockMap {
         let mut boundaries = buffer.excerpt_boundaries_in_range(range).peekable();
 
         std::iter::from_fn(move || {
-            let excerpt_boundary = boundaries.next()?;
-            let wrap_row = wrap_snapshot
-                .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
-                .row();
+            loop {
+                let excerpt_boundary = boundaries.next()?;
+                let wrap_row = wrap_snapshot
+                    .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
+                    .row();
 
-            let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
-                (None, next) => Some(next.buffer_id),
-                (Some(prev), next) => {
-                    if prev.buffer_id != next.buffer_id {
-                        Some(next.buffer_id)
-                    } else {
-                        None
-                    }
-                }
-            };
-
-            let mut height = 0;
-
-            if let Some(new_buffer_id) = new_buffer_id {
-                let first_excerpt = excerpt_boundary.next.clone();
-                if folded_buffers.contains(&new_buffer_id) {
-                    let mut last_excerpt_end_row = first_excerpt.end_row;
-
-                    while let Some(next_boundary) = boundaries.peek() {
-                        if next_boundary.next.buffer_id == new_buffer_id {
-                            last_excerpt_end_row = next_boundary.next.end_row;
+                let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
+                    (None, next) => Some(next.buffer_id),
+                    (Some(prev), next) => {
+                        if prev.buffer_id != next.buffer_id {
+                            Some(next.buffer_id)
                         } else {
-                            break;
+                            None
+                        }
+                    }
+                };
+
+                let mut height = 0;
+
+                if let Some(new_buffer_id) = new_buffer_id {
+                    let first_excerpt = excerpt_boundary.next.clone();
+                    if self.buffers_with_disabled_headers.contains(&new_buffer_id) {
+                        continue;
+                    }
+                    if self.folded_buffers.contains(&new_buffer_id) {
+                        let mut last_excerpt_end_row = first_excerpt.end_row;
+
+                        while let Some(next_boundary) = boundaries.peek() {
+                            if next_boundary.next.buffer_id == new_buffer_id {
+                                last_excerpt_end_row = next_boundary.next.end_row;
+                            } else {
+                                break;
+                            }
+
+                            boundaries.next();
                         }
 
-                        boundaries.next();
+                        let wrap_end_row = wrap_snapshot
+                            .make_wrap_point(
+                                Point::new(
+                                    last_excerpt_end_row.0,
+                                    buffer.line_len(last_excerpt_end_row),
+                                ),
+                                Bias::Right,
+                            )
+                            .row();
+
+                        return Some((
+                            BlockPlacement::Replace(WrapRow(wrap_row)..=WrapRow(wrap_end_row)),
+                            Block::FoldedBuffer {
+                                height: height + self.buffer_header_height,
+                                first_excerpt,
+                            },
+                        ));
                     }
-
-                    let wrap_end_row = wrap_snapshot
-                        .make_wrap_point(
-                            Point::new(
-                                last_excerpt_end_row.0,
-                                buffer.line_len(last_excerpt_end_row),
-                            ),
-                            Bias::Right,
-                        )
-                        .row();
-
-                    return Some((
-                        BlockPlacement::Replace(WrapRow(wrap_row)..=WrapRow(wrap_end_row)),
-                        Block::FoldedBuffer {
-                            height: height + buffer_header_height,
-                            first_excerpt,
-                        },
-                    ));
                 }
-            }
 
-            if new_buffer_id.is_some() {
-                height += buffer_header_height;
-            } else {
-                height += excerpt_header_height;
-            }
+                if new_buffer_id.is_some() {
+                    height += self.buffer_header_height;
+                } else {
+                    height += self.excerpt_header_height;
+                }
 
-            Some((
-                BlockPlacement::Above(WrapRow(wrap_row)),
-                Block::ExcerptBoundary {
-                    excerpt: excerpt_boundary.next,
-                    height,
-                    starts_new_buffer: new_buffer_id.is_some(),
-                },
-            ))
+                return Some((
+                    BlockPlacement::Above(WrapRow(wrap_row)),
+                    Block::ExcerptBoundary {
+                        excerpt: excerpt_boundary.next,
+                        height,
+                        starts_new_buffer: new_buffer_id.is_some(),
+                    },
+                ));
+            }
         })
     }
 
@@ -1168,6 +1171,10 @@ impl BlockMapWriter<'_> {
         self.remove(blocks_to_remove);
     }
 
+    pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId) {
+        self.0.buffers_with_disabled_headers.insert(buffer_id);
+    }
+
     pub fn fold_buffers(
         &mut self,
         buffer_ids: impl IntoIterator<Item = BufferId>,
@@ -1228,21 +1235,21 @@ impl BlockMapWriter<'_> {
     ) -> &[Arc<CustomBlock>] {
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
-        let start_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
-            probe
-                .end()
-                .to_offset(buffer)
-                .cmp(&range.start)
-                .then(if inclusive {
+
+        let start_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
+            let block_end = block.end().to_offset(buffer);
+            block_end.cmp(&range.start).then_with(|| {
+                if inclusive || (range.is_empty() && block.start().to_offset(buffer) == block_end) {
                     Ordering::Greater
                 } else {
                     Ordering::Less
-                })
+                }
+            })
         }) {
             Ok(ix) | Err(ix) => ix,
         };
-        let end_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
-            probe
+        let end_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
+            block
                 .start()
                 .to_offset(buffer)
                 .cmp(&range.end)
@@ -1254,6 +1261,7 @@ impl BlockMapWriter<'_> {
         }) {
             Ok(ix) | Err(ix) => ix,
         };
+
         &self.0.custom_blocks[start_block_ix..end_block_ix]
     }
 }
@@ -2119,26 +2127,17 @@ mod tests {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer1.clone(),
-                [ExcerptRange {
-                    context: 0..buffer1.read(cx).len(),
-                    primary: None,
-                }],
+                [ExcerptRange::new(0..buffer1.read(cx).len())],
                 cx,
             ));
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer2.clone(),
-                [ExcerptRange {
-                    context: 0..buffer2.read(cx).len(),
-                    primary: None,
-                }],
+                [ExcerptRange::new(0..buffer2.read(cx).len())],
                 cx,
             ));
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer3.clone(),
-                [ExcerptRange {
-                    context: 0..buffer3.read(cx).len(),
-                    primary: None,
-                }],
+                [ExcerptRange::new(0..buffer3.read(cx).len())],
                 cx,
             ));
 
@@ -3159,11 +3158,8 @@ mod tests {
             }));
 
             // Note that this needs to be synced with the related section in BlockMap::sync
-            expected_blocks.extend(BlockMap::header_and_footer_blocks(
-                buffer_start_header_height,
-                excerpt_header_height,
+            expected_blocks.extend(block_map.header_and_footer_blocks(
                 &buffer_snapshot,
-                &block_map.folded_buffers,
                 0..,
                 &wraps_snapshot,
             ));
@@ -3508,6 +3504,42 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[gpui::test]
+    fn test_remove_intersecting_replace_blocks_edge_case(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "abc\ndef\nghi\njkl\nmno";
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let _block_id = writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
+            height: 1,
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+        }])[0];
+
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        writer.remove_intersecting_replace_blocks(
+            [buffer_snapshot.anchor_after(Point::new(1, 0))
+                ..buffer_snapshot.anchor_after(Point::new(1, 0))],
+            false,
+        );
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
     }
 
     fn init_test(cx: &mut gpui::App) {

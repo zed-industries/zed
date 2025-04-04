@@ -365,6 +365,11 @@ message Envelope {
 
         LanguageServerIdForName language_server_id_for_name = 332;
         LanguageServerIdForNameResponse language_server_id_for_name_response = 333; // current max
+
+        LoadCommitDiff load_commit_diff = 334;
+        LoadCommitDiffResponse load_commit_diff_response = 335;
+
+        StopLanguageServers stop_language_servers = 336; // current max
     }
 
     reserved 87 to 88;
@@ -1934,7 +1939,7 @@ message Entry {
 }
 
 message RepositoryEntry {
-    uint64 work_directory_id = 1;
+    uint64 repository_id = 1;
     reserved 2;
     repeated StatusEntry updated_statuses = 3;
     repeated string removed_statuses = 4;
@@ -1952,6 +1957,7 @@ message UpdateRepository {
     repeated string removed_statuses = 7;
     repeated string current_merge_conflicts = 8;
     uint64 scan_id = 9;
+    bool is_last_update = 10;
 }
 
 message RemoveRepository {
@@ -2244,7 +2250,7 @@ message OpenUncommittedDiffResponse {
 message SetIndexText {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     string path = 4;
     optional string text = 5;
 }
@@ -2437,6 +2443,11 @@ message MultiLspQuery {
 message AllLanguageServers {}
 
 message RestartLanguageServers {
+    uint64 project_id = 1;
+    repeated uint64 buffer_ids = 2;
+}
+
+message StopLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
 }
@@ -2673,6 +2684,8 @@ message Breakpoint {
     BreakpointState state = 2;
     reserved 3;
     optional string message = 4;
+    optional string condition = 5;
+    optional string hit_condition = 6;
 }
 
 message BreakpointsForFile {
@@ -3351,7 +3364,7 @@ message GetPanicFiles {
 message GitShow {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     string commit = 4;
 }
 
@@ -3359,14 +3372,31 @@ message GitCommitDetails {
     string sha = 1;
     string message = 2;
     int64 commit_timestamp = 3;
-    string committer_email = 4;
-    string committer_name = 5;
+    string author_email = 4;
+    string author_name = 5;
+}
+
+message LoadCommitDiff {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string commit = 4;
+}
+
+message LoadCommitDiffResponse {
+    repeated CommitFile files = 1;
+}
+
+message CommitFile {
+    string path = 1;
+    optional string old_text = 2;
+    optional string new_text = 3;
 }
 
 message GitReset {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     string commit = 4;
     ResetMode mode = 5;
     enum ResetMode {
@@ -3378,7 +3408,7 @@ message GitReset {
 message GitCheckoutFiles {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     string commit = 4;
     repeated string paths = 5;
 }
@@ -3433,21 +3463,21 @@ message RegisterBufferWithLanguageServers{
 message Stage {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     repeated string paths = 4;
 }
 
 message Unstage {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     repeated string paths = 4;
 }
 
 message Commit {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     optional string name = 4;
     optional string email = 5;
     string message = 6;
@@ -3456,13 +3486,13 @@ message Commit {
 message OpenCommitMessageBuffer {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
 }
 
 message Push {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     string remote_name = 4;
     string branch_name = 5;
     optional PushOptions options = 6;
@@ -3477,14 +3507,14 @@ message Push {
 message Fetch {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     uint64 askpass_id = 4;
 }
 
 message GetRemotes {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     optional string branch_name = 4;
 }
 
@@ -3499,7 +3529,7 @@ message GetRemotesResponse {
 message Pull {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     string remote_name = 4;
     string branch_name = 5;
     uint64 askpass_id = 6;
@@ -3513,7 +3543,7 @@ message RemoteMessageResponse {
 message AskPassRequest {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     uint64 askpass_id = 4;
     string prompt = 5;
 }
@@ -3525,27 +3555,27 @@ message AskPassResponse {
 message GitGetBranches {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
 }
 
 message GitCreateBranch {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     string branch_name = 4;
 }
 
 message GitChangeBranch {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     string branch_name = 4;
 }
 
 message CheckForPushedCommits {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
 }
 
 message CheckForPushedCommitsResponse {
@@ -3555,7 +3585,7 @@ message CheckForPushedCommitsResponse {
 message GitDiff {
     uint64 project_id = 1;
     reserved 2;
-    uint64 work_directory_id = 3;
+    uint64 repository_id = 3;
     DiffType diff_type = 4;
 
     enum DiffType {

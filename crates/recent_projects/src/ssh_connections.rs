@@ -599,7 +599,7 @@ pub async fn open_ssh_project(
 
         let did_open_ssh_project = cx
             .update(|cx| {
-                workspace::open_ssh_project(
+                workspace::open_ssh_project_with_new_connection(
                     window,
                     connection_options.clone(),
                     cancel_rx,

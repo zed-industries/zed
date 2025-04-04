@@ -79,7 +79,7 @@ pub struct CodeSymbolsTool;
 
 impl Tool for CodeSymbolsTool {
     fn name(&self) -> String {
-        "code-symbols".into()
+        "code_symbols".into()
     }
 
     fn needs_confirmation(&self) -> bool {
@@ -91,7 +91,7 @@ impl Tool for CodeSymbolsTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Eye
+        IconName::Code
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
