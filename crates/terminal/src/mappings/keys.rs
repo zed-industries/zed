@@ -44,88 +44,9 @@ impl AlacModifiers {
 }
 
 pub fn generate_esc_str_mapper(
-    keyboard_mapper: &KeyboardMapper,
+    keyboard_mapper: &dyn KeyboardMapper,
 ) -> HashMap<(KeyCode, Modifiers), String> {
     let mut esc_str_mapper = HashMap::new();
-    //Mappings for caret notation keys
-    let (key_a, _) = keyboard_mapper.parse("a", true).unwrap();
-    esc_str_mapper.insert((key_a, Modifiers::control()), "\x01".to_string()); //1
-    esc_str_mapper.insert((key_a, Modifiers::control_shift()), "\x01".to_string()); //1
-    let (key_b, _) = keyboard_mapper.parse("b", true).unwrap();
-    esc_str_mapper.insert((key_b, Modifiers::control()), "\x02".to_string()); //2
-    esc_str_mapper.insert((key_b, Modifiers::control_shift()), "\x02".to_string()); //2
-    let (key_c, _) = keyboard_mapper.parse("c", true).unwrap();
-    esc_str_mapper.insert((key_c, Modifiers::control()), "\x03".to_string()); //3
-    esc_str_mapper.insert((key_c, Modifiers::control_shift()), "\x03".to_string()); //3
-    let (key_d, _) = keyboard_mapper.parse("d", true).unwrap();
-    esc_str_mapper.insert((key_d, Modifiers::control()), "\x04".to_string()); //4
-    esc_str_mapper.insert((key_d, Modifiers::control_shift()), "\x04".to_string()); //4
-    let (key_e, _) = keyboard_mapper.parse("e", true).unwrap();
-    esc_str_mapper.insert((key_e, Modifiers::control()), "\x05".to_string()); //5
-    esc_str_mapper.insert((key_e, Modifiers::control_shift()), "\x05".to_string()); //5
-    let (key_f, _) = keyboard_mapper.parse("f", true).unwrap();
-    esc_str_mapper.insert((key_f, Modifiers::control()), "\x06".to_string()); //6
-    esc_str_mapper.insert((key_f, Modifiers::control_shift()), "\x06".to_string()); //6
-    let (key_g, _) = keyboard_mapper.parse("g", true).unwrap();
-    esc_str_mapper.insert((key_g, Modifiers::control()), "\x07".to_string()); //7
-    esc_str_mapper.insert((key_g, Modifiers::control_shift()), "\x07".to_string()); //7
-    let (key_h, _) = keyboard_mapper.parse("h", true).unwrap();
-    esc_str_mapper.insert((key_h, Modifiers::control()), "\x08".to_string()); //8
-    esc_str_mapper.insert((key_h, Modifiers::control_shift()), "\x08".to_string()); //8
-    let (key_i, _) = keyboard_mapper.parse("i", true).unwrap();
-    esc_str_mapper.insert((key_i, Modifiers::control()), "\x09".to_string()); //9
-    esc_str_mapper.insert((key_i, Modifiers::control_shift()), "\x09".to_string()); //9
-    let (key_j, _) = keyboard_mapper.parse("j", true).unwrap();
-    esc_str_mapper.insert((key_j, Modifiers::control()), "\x0a".to_string()); //10
-    esc_str_mapper.insert((key_j, Modifiers::control_shift()), "\x0a".to_string()); //10
-    let (key_k, _) = keyboard_mapper.parse("k", true).unwrap();
-    esc_str_mapper.insert((key_k, Modifiers::control()), "\x0b".to_string()); //11
-    esc_str_mapper.insert((key_k, Modifiers::control_shift()), "\x0b".to_string()); //11
-    let (key_l, _) = keyboard_mapper.parse("l", true).unwrap();
-    esc_str_mapper.insert((key_l, Modifiers::control()), "\x0c".to_string()); //12
-    esc_str_mapper.insert((key_l, Modifiers::control_shift()), "\x0c".to_string()); //12
-    let (key_m, _) = keyboard_mapper.parse("m", true).unwrap();
-    esc_str_mapper.insert((key_m, Modifiers::control()), "\x0d".to_string()); //13
-    esc_str_mapper.insert((key_m, Modifiers::control_shift()), "\x0d".to_string()); //13
-    let (key_n, _) = keyboard_mapper.parse("n", true).unwrap();
-    esc_str_mapper.insert((key_n, Modifiers::control()), "\x0e".to_string()); //14
-    esc_str_mapper.insert((key_n, Modifiers::control_shift()), "\x0e".to_string()); //14
-    let (key_o, _) = keyboard_mapper.parse("o", true).unwrap();
-    esc_str_mapper.insert((key_o, Modifiers::control()), "\x0f".to_string()); //15
-    esc_str_mapper.insert((key_o, Modifiers::control_shift()), "\x0f".to_string()); //15
-    let (key_p, _) = keyboard_mapper.parse("p", true).unwrap();
-    esc_str_mapper.insert((key_p, Modifiers::control()), "\x10".to_string()); //16
-    esc_str_mapper.insert((key_p, Modifiers::control_shift()), "\x10".to_string()); //16
-    let (key_q, _) = keyboard_mapper.parse("q", true).unwrap();
-    esc_str_mapper.insert((key_q, Modifiers::control()), "\x11".to_string()); //17
-    esc_str_mapper.insert((key_q, Modifiers::control_shift()), "\x11".to_string()); //17
-    let (key_r, _) = keyboard_mapper.parse("r", true).unwrap();
-    esc_str_mapper.insert((key_r, Modifiers::control()), "\x12".to_string()); //18
-    esc_str_mapper.insert((key_r, Modifiers::control_shift()), "\x12".to_string()); //18
-    let (key_s, _) = keyboard_mapper.parse("s", true).unwrap();
-    esc_str_mapper.insert((key_s, Modifiers::control()), "\x13".to_string()); //19
-    esc_str_mapper.insert((key_s, Modifiers::control_shift()), "\x13".to_string()); //19
-    let (key_t, _) = keyboard_mapper.parse("t", true).unwrap();
-    esc_str_mapper.insert((key_t, Modifiers::control()), "\x14".to_string()); //20
-    esc_str_mapper.insert((key_t, Modifiers::control_shift()), "\x14".to_string()); //20
-    let (key_u, _) = keyboard_mapper.parse("u", true).unwrap();
-    esc_str_mapper.insert((key_u, Modifiers::control()), "\x15".to_string()); //21
-    esc_str_mapper.insert((key_u, Modifiers::control_shift()), "\x15".to_string()); //21
-    let (key_v, _) = keyboard_mapper.parse("v", true).unwrap();
-    esc_str_mapper.insert((key_v, Modifiers::control()), "\x16".to_string()); //22
-    esc_str_mapper.insert((key_v, Modifiers::control_shift()), "\x16".to_string()); //22
-    let (key_w, _) = keyboard_mapper.parse("w", true).unwrap();
-    esc_str_mapper.insert((key_w, Modifiers::control()), "\x17".to_string()); //23
-    esc_str_mapper.insert((key_w, Modifiers::control_shift()), "\x17".to_string()); //23
-    let (key_x, _) = keyboard_mapper.parse("x", true).unwrap();
-    esc_str_mapper.insert((key_x, Modifiers::control()), "\x18".to_string()); //24
-    esc_str_mapper.insert((key_x, Modifiers::control_shift()), "\x18".to_string()); //24
-    let (key_y, _) = keyboard_mapper.parse("y", true).unwrap();
-    esc_str_mapper.insert((key_y, Modifiers::control()), "\x19".to_string()); //25
-    esc_str_mapper.insert((key_y, Modifiers::control_shift()), "\x19".to_string()); //25
-    let (key_z, _) = keyboard_mapper.parse("z", true).unwrap();
-    esc_str_mapper.insert((key_z, Modifiers::control()), "\x1a".to_string()); //26
-    esc_str_mapper.insert((key_z, Modifiers::control_shift()), "\x1a".to_string()); //26
     let (key_at, modifiers) = keyboard_mapper.parse("@", true).unwrap();
     esc_str_mapper.insert(
         (key_at, modifiers | Modifiers::control()),
@@ -136,21 +57,23 @@ pub fn generate_esc_str_mapper(
         (key_left_bracket, modifiers | Modifiers::control()),
         "\x1b".to_string(),
     ); //27
-    let (key_backslash, modifiers) = keyboard_mapper.parse("\\", true).unwrap();
-    esc_str_mapper.insert(
-        (key_backslash, modifiers | Modifiers::control()),
-        "\x1c".to_string(),
-    ); //28
+    if let Some((key_backslash, modifiers)) = keyboard_mapper.parse("\\", true) {
+        esc_str_mapper.insert(
+            (key_backslash, modifiers | Modifiers::control()),
+            "\x1c".to_string(),
+        ); //28
+    }
     let (key_right_bracket, modifiers) = keyboard_mapper.parse("]", true).unwrap();
     esc_str_mapper.insert(
         (key_right_bracket, modifiers | Modifiers::control()),
         "\x1d".to_string(),
     ); //29
-    let (key_caret, modifiers) = keyboard_mapper.parse("^", true).unwrap();
-    esc_str_mapper.insert(
-        (key_caret, modifiers | Modifiers::control()),
-        "\x1e".to_string(),
-    ); //30
+    if let Some((key_caret, modifiers)) = keyboard_mapper.parse("^", true) {
+        esc_str_mapper.insert(
+            (key_caret, modifiers | Modifiers::control()),
+            "\x1e".to_string(),
+        ); //30
+    }
     let (key_underscore, modifiers) = keyboard_mapper.parse("_", true).unwrap();
     esc_str_mapper.insert(
         (key_underscore, modifiers | Modifiers::control()),
@@ -165,11 +88,6 @@ pub fn generate_esc_str_mapper(
     esc_str_mapper
 }
 
-const EMPTY_MODIFIERS: Modifiers = Modifiers::none();
-const SHIFT_MODIFIERS: Modifiers = Modifiers::shift();
-const ALT_MODIFIERS: Modifiers = Modifiers::alt();
-const CTRL_MODIFIERS: Modifiers = Modifiers::control();
-
 pub fn to_esc_str(
     keystroke: &Keystroke,
     mode: &TermMode,
@@ -180,94 +98,147 @@ pub fn to_esc_str(
 
     // Manual Bindings including modifiers
     // todo(zjk)
-    let manual_esc_str = match (keystroke.code, keystroke.modifiers) {
+    let manual_esc_str = match (keystroke.code, modifiers) {
         //Basic special keys
-        (KeyCode::Tab, EMPTY_MODIFIERS) => Some("\x09".to_string()),
-        (KeyCode::Escape, EMPTY_MODIFIERS) => Some("\x1b".to_string()),
-        (KeyCode::Enter, EMPTY_MODIFIERS) => Some("\x0d".to_string()),
-        (KeyCode::Enter, SHIFT_MODIFIERS) => Some("\x0d".to_string()),
-        (KeyCode::Enter, ALT_MODIFIERS) => Some("\x1b\x0d".to_string()),
-        (KeyCode::Backspace, EMPTY_MODIFIERS) => Some("\x7f".to_string()),
+        (KeyCode::Tab, AlacModifiers::None) => Some("\x09".to_string()),
+        (KeyCode::Escape, AlacModifiers::None) => Some("\x1b".to_string()),
+        (KeyCode::Enter, AlacModifiers::None) => Some("\x0d".to_string()),
+        (KeyCode::Enter, AlacModifiers::Shift) => Some("\x0d".to_string()),
+        (KeyCode::Enter, AlacModifiers::Alt) => Some("\x1b\x0d".to_string()),
+        (KeyCode::Backspace, AlacModifiers::None) => Some("\x7f".to_string()),
         //Interesting escape codes
-        (KeyCode::Tab, SHIFT_MODIFIERS) => Some("\x1b[Z".to_string()),
-        (KeyCode::Backspace, CTRL_MODIFIERS) => Some("\x08".to_string()),
-        (KeyCode::Backspace, ALT_MODIFIERS) => Some("\x1b\x7f".to_string()),
-        (KeyCode::Backspace, SHIFT_MODIFIERS) => Some("\x7f".to_string()),
-        (KeyCode::Space, CTRL_MODIFIERS) => Some("\x00".to_string()),
-        (KeyCode::Home, SHIFT_MODIFIERS) if mode.contains(TermMode::ALT_SCREEN) => {
+        (KeyCode::Tab, AlacModifiers::Shift) => Some("\x1b[Z".to_string()),
+        (KeyCode::Backspace, AlacModifiers::Ctrl) => Some("\x08".to_string()),
+        (KeyCode::Backspace, AlacModifiers::Alt) => Some("\x1b\x7f".to_string()),
+        (KeyCode::Backspace, AlacModifiers::Shift) => Some("\x7f".to_string()),
+        (KeyCode::Space, AlacModifiers::Ctrl) => Some("\x00".to_string()),
+        (KeyCode::Home, AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
             Some("\x1b[1;2H".to_string())
         }
-        (KeyCode::End, SHIFT_MODIFIERS) if mode.contains(TermMode::ALT_SCREEN) => {
+        (KeyCode::End, AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
             Some("\x1b[1;2F".to_string())
         }
-        (KeyCode::PageUp, SHIFT_MODIFIERS) if mode.contains(TermMode::ALT_SCREEN) => {
+        (KeyCode::PageUp, AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
             Some("\x1b[5;2~".to_string())
         }
-        (KeyCode::PageDown, SHIFT_MODIFIERS) if mode.contains(TermMode::ALT_SCREEN) => {
+        (KeyCode::PageDown, AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
             Some("\x1b[6;2~".to_string())
         }
-        (KeyCode::Home, EMPTY_MODIFIERS) if mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::Home, AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOH".to_string())
         }
-        (KeyCode::Home, EMPTY_MODIFIERS) if !mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::Home, AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[H".to_string())
         }
-        (KeyCode::End, EMPTY_MODIFIERS) if mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::End, AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOF".to_string())
         }
-        (KeyCode::End, EMPTY_MODIFIERS) if !mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::End, AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[F".to_string())
         }
-        (KeyCode::Up, EMPTY_MODIFIERS) if mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::Up, AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOA".to_string())
         }
-        (KeyCode::Up, EMPTY_MODIFIERS) if !mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::Up, AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[A".to_string())
         }
-        (KeyCode::Down, EMPTY_MODIFIERS) if mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::Down, AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOB".to_string())
         }
-        (KeyCode::Down, EMPTY_MODIFIERS) if !mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::Down, AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[B".to_string())
         }
-        (KeyCode::Right, EMPTY_MODIFIERS) if mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::Right, AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOC".to_string())
         }
-        (KeyCode::Right, EMPTY_MODIFIERS) if !mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::Right, AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[C".to_string())
         }
-        (KeyCode::Left, EMPTY_MODIFIERS) if mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::Left, AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOD".to_string())
         }
-        (KeyCode::Left, EMPTY_MODIFIERS) if !mode.contains(TermMode::APP_CURSOR) => {
+        (KeyCode::Left, AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[D".to_string())
         }
-        (KeyCode::BrowserBack, EMPTY_MODIFIERS) => Some("\x7f".to_string()),
-        (KeyCode::Insert, EMPTY_MODIFIERS) => Some("\x1b[2~".to_string()),
-        (KeyCode::Delete, EMPTY_MODIFIERS) => Some("\x1b[3~".to_string()),
-        (KeyCode::PageUp, EMPTY_MODIFIERS) => Some("\x1b[5~".to_string()),
-        (KeyCode::PageDown, EMPTY_MODIFIERS) => Some("\x1b[6~".to_string()),
-        (KeyCode::F1, EMPTY_MODIFIERS) => Some("\x1bOP".to_string()),
-        (KeyCode::F2, EMPTY_MODIFIERS) => Some("\x1bOQ".to_string()),
-        (KeyCode::F3, EMPTY_MODIFIERS) => Some("\x1bOR".to_string()),
-        (KeyCode::F4, EMPTY_MODIFIERS) => Some("\x1bOS".to_string()),
-        (KeyCode::F5, EMPTY_MODIFIERS) => Some("\x1b[15~".to_string()),
-        (KeyCode::F6, EMPTY_MODIFIERS) => Some("\x1b[17~".to_string()),
-        (KeyCode::F7, EMPTY_MODIFIERS) => Some("\x1b[18~".to_string()),
-        (KeyCode::F8, EMPTY_MODIFIERS) => Some("\x1b[19~".to_string()),
-        (KeyCode::F9, EMPTY_MODIFIERS) => Some("\x1b[20~".to_string()),
-        (KeyCode::F10, EMPTY_MODIFIERS) => Some("\x1b[21~".to_string()),
-        (KeyCode::F11, EMPTY_MODIFIERS) => Some("\x1b[23~".to_string()),
-        (KeyCode::F12, EMPTY_MODIFIERS) => Some("\x1b[24~".to_string()),
-        (KeyCode::F13, EMPTY_MODIFIERS) => Some("\x1b[25~".to_string()),
-        (KeyCode::F14, EMPTY_MODIFIERS) => Some("\x1b[26~".to_string()),
-        (KeyCode::F15, EMPTY_MODIFIERS) => Some("\x1b[28~".to_string()),
-        (KeyCode::F16, EMPTY_MODIFIERS) => Some("\x1b[29~".to_string()),
-        (KeyCode::F17, EMPTY_MODIFIERS) => Some("\x1b[31~".to_string()),
-        (KeyCode::F18, EMPTY_MODIFIERS) => Some("\x1b[32~".to_string()),
-        (KeyCode::F19, EMPTY_MODIFIERS) => Some("\x1b[33~".to_string()),
-        (KeyCode::F20, EMPTY_MODIFIERS) => Some("\x1b[34~".to_string()),
+        (KeyCode::BrowserBack, AlacModifiers::None) => Some("\x7f".to_string()),
+        (KeyCode::Insert, AlacModifiers::None) => Some("\x1b[2~".to_string()),
+        (KeyCode::Delete, AlacModifiers::None) => Some("\x1b[3~".to_string()),
+        (KeyCode::PageUp, AlacModifiers::None) => Some("\x1b[5~".to_string()),
+        (KeyCode::PageDown, AlacModifiers::None) => Some("\x1b[6~".to_string()),
+        (KeyCode::F1, AlacModifiers::None) => Some("\x1bOP".to_string()),
+        (KeyCode::F2, AlacModifiers::None) => Some("\x1bOQ".to_string()),
+        (KeyCode::F3, AlacModifiers::None) => Some("\x1bOR".to_string()),
+        (KeyCode::F4, AlacModifiers::None) => Some("\x1bOS".to_string()),
+        (KeyCode::F5, AlacModifiers::None) => Some("\x1b[15~".to_string()),
+        (KeyCode::F6, AlacModifiers::None) => Some("\x1b[17~".to_string()),
+        (KeyCode::F7, AlacModifiers::None) => Some("\x1b[18~".to_string()),
+        (KeyCode::F8, AlacModifiers::None) => Some("\x1b[19~".to_string()),
+        (KeyCode::F9, AlacModifiers::None) => Some("\x1b[20~".to_string()),
+        (KeyCode::F10, AlacModifiers::None) => Some("\x1b[21~".to_string()),
+        (KeyCode::F11, AlacModifiers::None) => Some("\x1b[23~".to_string()),
+        (KeyCode::F12, AlacModifiers::None) => Some("\x1b[24~".to_string()),
+        (KeyCode::F13, AlacModifiers::None) => Some("\x1b[25~".to_string()),
+        (KeyCode::F14, AlacModifiers::None) => Some("\x1b[26~".to_string()),
+        (KeyCode::F15, AlacModifiers::None) => Some("\x1b[28~".to_string()),
+        (KeyCode::F16, AlacModifiers::None) => Some("\x1b[29~".to_string()),
+        (KeyCode::F17, AlacModifiers::None) => Some("\x1b[31~".to_string()),
+        (KeyCode::F18, AlacModifiers::None) => Some("\x1b[32~".to_string()),
+        (KeyCode::F19, AlacModifiers::None) => Some("\x1b[33~".to_string()),
+        (KeyCode::F20, AlacModifiers::None) => Some("\x1b[34~".to_string()),
         // NumpadEnter, Action::Esc("\n".into());
+        //Mappings for caret notation keys
+        (KeyCode::A, AlacModifiers::Ctrl) => Some("\x01".to_string()), //1
+        (KeyCode::A, AlacModifiers::CtrlShift) => Some("\x01".to_string()), //1
+        (KeyCode::B, AlacModifiers::Ctrl) => Some("\x02".to_string()), //2
+        (KeyCode::B, AlacModifiers::CtrlShift) => Some("\x02".to_string()), //2
+        (KeyCode::C, AlacModifiers::Ctrl) => Some("\x03".to_string()), //3
+        (KeyCode::C, AlacModifiers::CtrlShift) => Some("\x03".to_string()), //3
+        (KeyCode::D, AlacModifiers::Ctrl) => Some("\x04".to_string()), //4
+        (KeyCode::D, AlacModifiers::CtrlShift) => Some("\x04".to_string()), //4
+        (KeyCode::E, AlacModifiers::Ctrl) => Some("\x05".to_string()), //5
+        (KeyCode::E, AlacModifiers::CtrlShift) => Some("\x05".to_string()), //5
+        (KeyCode::F, AlacModifiers::Ctrl) => Some("\x06".to_string()), //6
+        (KeyCode::F, AlacModifiers::CtrlShift) => Some("\x06".to_string()), //6
+        (KeyCode::G, AlacModifiers::Ctrl) => Some("\x07".to_string()), //7
+        (KeyCode::G, AlacModifiers::CtrlShift) => Some("\x07".to_string()), //7
+        (KeyCode::H, AlacModifiers::Ctrl) => Some("\x08".to_string()), //8
+        (KeyCode::H, AlacModifiers::CtrlShift) => Some("\x08".to_string()), //8
+        (KeyCode::I, AlacModifiers::Ctrl) => Some("\x09".to_string()), //9
+        (KeyCode::I, AlacModifiers::CtrlShift) => Some("\x09".to_string()), //9
+        (KeyCode::J, AlacModifiers::Ctrl) => Some("\x0a".to_string()), //10
+        (KeyCode::J, AlacModifiers::CtrlShift) => Some("\x0a".to_string()), //10
+        (KeyCode::K, AlacModifiers::Ctrl) => Some("\x0b".to_string()), //11
+        (KeyCode::K, AlacModifiers::CtrlShift) => Some("\x0b".to_string()), //11
+        (KeyCode::L, AlacModifiers::Ctrl) => Some("\x0c".to_string()), //12
+        (KeyCode::L, AlacModifiers::CtrlShift) => Some("\x0c".to_string()), //12
+        (KeyCode::M, AlacModifiers::Ctrl) => Some("\x0d".to_string()), //13
+        (KeyCode::M, AlacModifiers::CtrlShift) => Some("\x0d".to_string()), //13
+        (KeyCode::N, AlacModifiers::Ctrl) => Some("\x0e".to_string()), //14
+        (KeyCode::N, AlacModifiers::CtrlShift) => Some("\x0e".to_string()), //14
+        (KeyCode::O, AlacModifiers::Ctrl) => Some("\x0f".to_string()), //15
+        (KeyCode::O, AlacModifiers::CtrlShift) => Some("\x0f".to_string()), //15
+        (KeyCode::P, AlacModifiers::Ctrl) => Some("\x10".to_string()), //16
+        (KeyCode::P, AlacModifiers::CtrlShift) => Some("\x10".to_string()), //16
+        (KeyCode::Q, AlacModifiers::Ctrl) => Some("\x11".to_string()), //17
+        (KeyCode::Q, AlacModifiers::CtrlShift) => Some("\x11".to_string()), //17
+        (KeyCode::R, AlacModifiers::Ctrl) => Some("\x12".to_string()), //18
+        (KeyCode::R, AlacModifiers::CtrlShift) => Some("\x12".to_string()), //18
+        (KeyCode::S, AlacModifiers::Ctrl) => Some("\x13".to_string()), //19
+        (KeyCode::S, AlacModifiers::CtrlShift) => Some("\x13".to_string()), //19
+        (KeyCode::T, AlacModifiers::Ctrl) => Some("\x14".to_string()), //20
+        (KeyCode::T, AlacModifiers::CtrlShift) => Some("\x14".to_string()), //20
+        (KeyCode::U, AlacModifiers::Ctrl) => Some("\x15".to_string()), //21
+        (KeyCode::U, AlacModifiers::CtrlShift) => Some("\x15".to_string()), //21
+        (KeyCode::V, AlacModifiers::Ctrl) => Some("\x16".to_string()), //22
+        (KeyCode::V, AlacModifiers::CtrlShift) => Some("\x16".to_string()), //22
+        (KeyCode::W, AlacModifiers::Ctrl) => Some("\x17".to_string()), //23
+        (KeyCode::W, AlacModifiers::CtrlShift) => Some("\x17".to_string()), //23
+        (KeyCode::X, AlacModifiers::Ctrl) => Some("\x18".to_string()), //24
+        (KeyCode::X, AlacModifiers::CtrlShift) => Some("\x18".to_string()), //24
+        (KeyCode::Y, AlacModifiers::Ctrl) => Some("\x19".to_string()), //25
+        (KeyCode::Y, AlacModifiers::CtrlShift) => Some("\x19".to_string()), //25
+        (KeyCode::Z, AlacModifiers::Ctrl) => Some("\x1a".to_string()), //26
+        (KeyCode::Z, AlacModifiers::CtrlShift) => Some("\x1a".to_string()), //26
         _ => esc_str_mapper
             .get(&(keystroke.code, keystroke.modifiers))
             .cloned(),
