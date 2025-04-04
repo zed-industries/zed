@@ -1489,6 +1489,7 @@ impl EditorElement {
             .update(cx, |editor, cx| editor.clone(window, cx));
 
         editor.mode = EditorMode::Minimap;
+        editor.show_gutter = false;
         editor.set_text_style_refinement(TextStyleRefinement {
             font_size: Some(minimap_font_size.into()),
             font_weight: Some(gpui::FontWeight(900.)),
