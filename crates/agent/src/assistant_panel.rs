@@ -228,7 +228,7 @@ impl AssistantPanel {
             )
             .unwrap(),
             history_store: history_store.clone(),
-            history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, cx)),
+            history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
             assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
             width: None,
             height: None,
