@@ -334,7 +334,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     }
 
     let key = chars_for_modified_key(scan_code, NO_MOD);
-    let code = parse_letter_keys(scan_code, &key);
+    let code = parse_letter_and_other_keys(scan_code, &key);
     let key_char = if may_have_char {
         let mods =
             (if shift { SHIFT_MOD } else { NO_MOD }) | (if alt { OPTION_MOD } else { NO_MOD });
@@ -503,7 +503,7 @@ fn parse_immutable_keys(
     Some((code, key, if has_key_char { key_char } else { None }))
 }
 
-fn parse_letter_keys(scan_code: u16, key: &str) -> KeyCode {
+fn parse_letter_and_other_keys(scan_code: u16, key: &str) -> KeyCode {
     if always_use_command_layout() {
         match scan_code {
             0x0000 => KeyCode::A,

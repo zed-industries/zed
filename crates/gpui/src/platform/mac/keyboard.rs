@@ -2,10 +2,7 @@ use std::rc::Rc;
 
 use collections::HashMap;
 
-use crate::{
-    always_use_command_layout, chars_for_modified_key, keyboard_layout, KeyCode, KeyboardMapper,
-    Modifiers,
-};
+use crate::{chars_for_modified_key, keyboard_layout, KeyCode, KeyboardMapper, Modifiers};
 
 /// TODO:
 pub(crate) struct MacKeyboardMapperManager {
@@ -14,8 +11,7 @@ pub(crate) struct MacKeyboardMapperManager {
 
 /// TODO:
 pub(crate) struct MacKeyboardMapper {
-    letter: HashMap<String, KeyCode>,
-    other: HashMap<String, (KeyCode, Modifiers)>,
+    char_to_code: HashMap<String, (KeyCode, Modifiers)>,
     code_to_char: HashMap<KeyCode, String>,
 }
 
@@ -42,61 +38,31 @@ impl MacKeyboardMapperManager {
 
 impl MacKeyboardMapper {
     fn new() -> Self {
-        let mut letter = HashMap::default();
-        let mut other = HashMap::default();
+        let mut char_to_code = HashMap::default();
         let mut code_to_char = HashMap::default();
-
-        if always_use_command_layout() {
-            letter.insert("a".to_string(), KeyCode::A);
-            letter.insert("b".to_string(), KeyCode::B);
-            letter.insert("c".to_string(), KeyCode::C);
-            letter.insert("d".to_string(), KeyCode::D);
-            letter.insert("e".to_string(), KeyCode::E);
-            letter.insert("f".to_string(), KeyCode::F);
-            letter.insert("g".to_string(), KeyCode::G);
-            letter.insert("h".to_string(), KeyCode::H);
-            letter.insert("i".to_string(), KeyCode::I);
-            letter.insert("j".to_string(), KeyCode::J);
-            letter.insert("k".to_string(), KeyCode::K);
-            letter.insert("l".to_string(), KeyCode::L);
-            letter.insert("m".to_string(), KeyCode::M);
-            letter.insert("n".to_string(), KeyCode::N);
-            letter.insert("o".to_string(), KeyCode::O);
-            letter.insert("p".to_string(), KeyCode::P);
-            letter.insert("q".to_string(), KeyCode::Q);
-            letter.insert("r".to_string(), KeyCode::R);
-            letter.insert("s".to_string(), KeyCode::S);
-            letter.insert("t".to_string(), KeyCode::T);
-            letter.insert("u".to_string(), KeyCode::U);
-            letter.insert("v".to_string(), KeyCode::V);
-            letter.insert("w".to_string(), KeyCode::W);
-            letter.insert("x".to_string(), KeyCode::X);
-            letter.insert("y".to_string(), KeyCode::Y);
-            letter.insert("z".to_string(), KeyCode::Z);
-        }
 
         for (scan_code, code) in OTHER_CODES {
             for (key, modifiers) in generate_keymap_info(scan_code) {
                 if modifiers == Modifiers::none() {
                     code_to_char.insert(code, key.clone());
                 }
-                other.insert(key, (code, modifiers));
+                char_to_code.insert(key, (code, modifiers));
             }
         }
 
         Self {
-            letter,
-            other,
+            char_to_code,
             code_to_char,
         }
     }
+}
 
-    /// TODO:
-    pub fn parse(&self, input: &str, char_matching: bool) -> Option<(KeyCode, Modifiers)> {
+impl KeyboardMapper for MacKeyboardMapper {
+    fn parse(&self, input: &str, char_matching: bool) -> Option<(KeyCode, Modifiers)> {
+        if let Some(code) = parse_letters(input) {
+            return Some((code, Modifiers::none()));
+        }
         if !char_matching {
-            if let Some(code) = self.letter.get(input) {
-                return Some((*code, Modifiers::none()));
-            }
             if let Some(code) = match input {
                 "0" => Some(KeyCode::Digital0),
                 "1" => Some(KeyCode::Digital1),
@@ -124,28 +90,15 @@ impl MacKeyboardMapper {
                 return Some((code, Modifiers::none()));
             }
         } else {
-            if let Some((code, modifiers)) = self.other.get(input) {
+            if let Some((code, modifiers)) = self.char_to_code.get(input) {
                 return Some((*code, *modifiers));
-            }
-            if let Some(code) = self.letter.get(input) {
-                return Some((*code, Modifiers::none()));
             }
         }
         None
     }
 
-    pub(crate) fn code_to_char(&self, code: KeyCode) -> Option<String> {
-        self.code_to_char.get(&code).cloned()
-    }
-}
-
-impl KeyboardMapper for MacKeyboardMapper {
-    fn parse(&self, input: &str, char_matching: bool) -> Option<(KeyCode, Modifiers)> {
-        self.parse(input, char_matching)
-    }
-
     fn keycode_to_face(&self, code: KeyCode) -> Option<String> {
-        self.code_to_char(code)
+        self.code_to_char.get(&code).cloned()
     }
 }
 
@@ -175,6 +128,38 @@ fn generate_keymap_info(scan_code: u16) -> Vec<(String, Modifiers)> {
         ));
     }
     keymap
+}
+
+fn parse_letters(input: &str) -> Option<KeyCode> {
+    match input {
+        "a" => Some(KeyCode::A),
+        "b" => Some(KeyCode::B),
+        "c" => Some(KeyCode::C),
+        "d" => Some(KeyCode::D),
+        "e" => Some(KeyCode::E),
+        "f" => Some(KeyCode::F),
+        "g" => Some(KeyCode::G),
+        "h" => Some(KeyCode::H),
+        "i" => Some(KeyCode::I),
+        "j" => Some(KeyCode::J),
+        "k" => Some(KeyCode::K),
+        "l" => Some(KeyCode::L),
+        "m" => Some(KeyCode::M),
+        "n" => Some(KeyCode::N),
+        "o" => Some(KeyCode::O),
+        "p" => Some(KeyCode::P),
+        "q" => Some(KeyCode::Q),
+        "r" => Some(KeyCode::R),
+        "s" => Some(KeyCode::S),
+        "t" => Some(KeyCode::T),
+        "u" => Some(KeyCode::U),
+        "v" => Some(KeyCode::V),
+        "w" => Some(KeyCode::W),
+        "x" => Some(KeyCode::X),
+        "y" => Some(KeyCode::Y),
+        "z" => Some(KeyCode::Z),
+        _ => None,
+    }
 }
 
 const NO_MOD: u32 = 0;
