@@ -19,8 +19,6 @@ pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSe
     let mut languages = HashSet::new();
     let mut within_link = false;
     let mut within_metadata = false;
-    let mut substituted_text_range = 0..0;
-    let mut substituted_text_chunks = vec![];
     for (pulldown_event, mut range) in Parser::new_ext(text, PARSE_OPTIONS).into_offset_iter() {
         if within_metadata {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock { .. }) =
@@ -29,13 +27,6 @@ pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSe
                 within_metadata = false;
             }
             continue;
-        }
-        if !matches!(pulldown_event, pulldown_cmark::Event::Text(_)) {
-            flush_substituted_text(
-                &substituted_text_range,
-                &mut substituted_text_chunks,
-                &mut events,
-            );
         }
         match pulldown_event {
             pulldown_cmark::Event::Start(tag) => {
@@ -75,17 +66,11 @@ pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSe
                             parsed
                         );
                     }
-                    if substituted_text_chunks.is_empty() {
-                        substituted_text_range.start = range.start;
-                    }
-                    substituted_text_range.end = range.end;
-                    substituted_text_chunks.push(parsed);
+                    events.push((
+                        range,
+                        MarkdownEvent::SubstitutedText(parsed.to_string().into()),
+                    ));
                 } else {
-                    flush_substituted_text(
-                        &substituted_text_range,
-                        &mut substituted_text_chunks,
-                        &mut events,
-                    );
                     // Automatically detect links in text if not already within a markdown link.
                     if !within_link {
                         let mut finder = LinkFinder::new();
@@ -143,22 +128,6 @@ pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSe
         }
     }
     (events, languages)
-}
-
-// This is called when done pushing to the contiguous run of substituted text.
-fn flush_substituted_text(
-    substituted_text_range: &Range<usize>,
-    substituted_text_chunks: &mut Vec<pulldown_cmark::CowStr>,
-    events: &mut Vec<(Range<usize>, MarkdownEvent)>,
-) {
-    if !substituted_text_chunks.is_empty() {
-        let substituted_text: String = substituted_text_chunks.concat();
-        events.push((
-            substituted_text_range.clone(),
-            MarkdownEvent::SubstitutedText(substituted_text.into()),
-        ));
-        substituted_text_chunks.clear();
-    }
 }
 
 pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
@@ -449,7 +418,8 @@ mod tests {
             (
                 vec![
                     (0..51, Start(Paragraph)),
-                    (0..12, SubstitutedText("\u{a0}\u{a0}".into())),
+                    (0..6, SubstitutedText("\u{a0}".into())),
+                    (6..12, SubstitutedText("\u{a0}".into())),
                     (12..13, Text),
                     (
                         13..29,
