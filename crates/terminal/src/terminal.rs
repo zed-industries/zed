@@ -1038,6 +1038,8 @@ impl Terminal {
                             // Treat "file://" URLs like file paths to ensure
                             // that line numbers at the end of the path are
                             // handled correctly
+                            // todo(windows)
+                            // Test this on Windows
                             if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
                                 MaybeNavigationTarget::PathLike(PathLikeTarget {
                                     maybe_path: path.to_string(),
@@ -1352,7 +1354,12 @@ impl Terminal {
         }
 
         // Keep default terminal behavior
-        let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
+        let esc = to_esc_str(
+            keystroke,
+            &self.last_content.mode,
+            alt_is_meta,
+            &self.manual_esc_str_mapper,
+        );
         if let Some(esc) = esc {
             self.input(esc);
             true
@@ -1925,6 +1932,10 @@ impl Terminal {
 
     pub fn vi_mode_enabled(&self) -> bool {
         self.vi_mode_enabled
+    }
+
+    pub fn update_esc_str_mapper(&mut self, keyboard_mapper: &KeyboardMapper) {
+        self.manual_esc_str_mapper = generate_esc_str_mapper(keyboard_mapper);
     }
 }
 
