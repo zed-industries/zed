@@ -119,10 +119,12 @@ fn main() {
                 .await
                 .unwrap();
 
-            // Read base SHA from setup.json
+            println!("framework path: {}", framework_path_clone.display());
+
             let base_sha = read_base_sha(&framework_path_clone).await.unwrap();
 
-            // Find all exercises for the specified languages
+            println!("base sha: {}", base_sha);
+
             let all_exercises = find_exercises(
                 &framework_path_clone,
                 &languages_clone
