@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
@@ -14,9 +15,9 @@ use client::zed_urls;
 use editor::{Editor, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle,
-    Focusable, FontWeight, KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
-    action_with_deprecated_aliases, prelude::*,
+    Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, Corner, Entity,
+    EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels, Subscription, Task,
+    UpdateGlobal, WeakEntity, action_with_deprecated_aliases, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -38,7 +39,7 @@ use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore};
 use crate::message_editor::MessageEditor;
-use crate::thread::{Thread, ThreadError, ThreadId};
+use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
@@ -227,7 +228,7 @@ impl AssistantPanel {
             )
             .unwrap(),
             history_store: history_store.clone(),
-            history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, cx)),
+            history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
             assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
             width: None,
             height: None,
@@ -570,10 +571,8 @@ impl AssistantPanel {
         match event {
             AssistantConfigurationEvent::NewThread(provider) => {
                 if LanguageModelRegistry::read_global(cx)
-                    .active_provider()
-                    .map_or(true, |active_provider| {
-                        active_provider.id() != provider.id()
-                    })
+                    .default_model()
+                    .map_or(true, |model| model.provider.id() != provider.id())
                 {
                     if let Some(model) = provider.default_model(cx) {
                         update_settings_file::<AssistantSettings>(
@@ -715,18 +714,21 @@ impl Panel for AssistantPanel {
 
 impl AssistantPanel {
     fn render_toolbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let thread = self.thread.read(cx);
-        let is_empty = thread.is_empty();
+        let active_thread = self.thread.read(cx);
+        let thread = active_thread.thread().read(cx);
+        let token_usage = thread.total_token_usage(cx);
+        let thread_id = thread.id().clone();
 
-        let thread_id = thread.thread().read(cx).id().clone();
+        let is_generating = thread.is_generating();
+        let is_empty = active_thread.is_empty();
         let focus_handle = self.focus_handle(cx);
 
         let title = match self.active_view {
             ActiveView::Thread => {
                 if is_empty {
-                    thread.summary_or_default(cx)
+                    active_thread.summary_or_default(cx)
                 } else {
-                    thread
+                    active_thread
                         .summary(cx)
                         .unwrap_or_else(|| SharedString::from("Loading Summary…"))
                 }
@@ -740,6 +742,12 @@ impl AssistantPanel {
                 .unwrap_or_else(|| SharedString::from("Loading Summary…")),
             ActiveView::History => "History".into(),
             ActiveView::Configuration => "Settings".into(),
+        };
+
+        let show_token_count = match self.active_view {
+            ActiveView::Thread => !is_empty,
+            ActiveView::PromptEditor => self.context_editor.is_some(),
+            _ => false,
         };
 
         h_flex()
@@ -764,12 +772,67 @@ impl AssistantPanel {
                     .pl_2()
                     .gap_2()
                     .bg(cx.theme().colors().tab_bar_background)
-                    .children(if matches!(self.active_view, ActiveView::PromptEditor) {
-                        self.context_editor
-                            .as_ref()
-                            .and_then(|editor| render_remaining_tokens(editor, cx))
-                    } else {
-                        None
+                    .when(show_token_count, |parent| match self.active_view {
+                        ActiveView::Thread => {
+                            if token_usage.total == 0 {
+                                return parent;
+                            }
+
+                            let token_color = match token_usage.ratio {
+                                TokenUsageRatio::Normal => Color::Muted,
+                                TokenUsageRatio::Warning => Color::Warning,
+                                TokenUsageRatio::Exceeded => Color::Error,
+                            };
+
+                            parent.child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        Label::new(assistant_context_editor::humanize_token_count(
+                                            token_usage.total,
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(token_color)
+                                        .map(|label| {
+                                            if is_generating {
+                                                label
+                                                    .with_animation(
+                                                        "used-tokens-label",
+                                                        Animation::new(Duration::from_secs(2))
+                                                            .repeat()
+                                                            .with_easing(pulsating_between(
+                                                                0.6, 1.,
+                                                            )),
+                                                        |label, delta| label.alpha(delta),
+                                                    )
+                                                    .into_any()
+                                            } else {
+                                                label.into_any_element()
+                                            }
+                                        }),
+                                    )
+                                    .child(
+                                        Label::new("/").size(LabelSize::Small).color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new(assistant_context_editor::humanize_token_count(
+                                            token_usage.max,
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    ),
+                            )
+                        }
+                        ActiveView::PromptEditor => {
+                            let Some(editor) = self.context_editor.as_ref() else {
+                                return parent;
+                            };
+                            let Some(element) = render_remaining_tokens(editor, cx) else {
+                                return parent;
+                            };
+                            parent.child(element)
+                        }
+                        _ => parent,
                     })
                     .child(
                         h_flex()
@@ -857,16 +920,18 @@ impl AssistantPanel {
     }
 
     fn configuration_error(&self, cx: &App) -> Option<ConfigurationError> {
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return Some(ConfigurationError::NoProvider);
         };
 
-        if !provider.is_authenticated(cx) {
+        if !model.provider.is_authenticated(cx) {
             return Some(ConfigurationError::ProviderNotAuthenticated);
         }
 
-        if provider.must_accept_terms(cx) {
-            return Some(ConfigurationError::ProviderPendingTermsAcceptance(provider));
+        if model.provider.must_accept_terms(cx) {
+            return Some(ConfigurationError::ProviderPendingTermsAcceptance(
+                model.provider,
+            ));
         }
 
         None
@@ -1069,11 +1134,11 @@ impl AssistantPanel {
                                     // TODO: Add keyboard navigation.
                                     match entry {
                                         HistoryEntry::Thread(thread) => {
-                                            PastThread::new(thread, cx.entity().downgrade(), false)
+                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![])
                                                 .into_any_element()
                                         }
                                         HistoryEntry::Context(context) => {
-                                            PastContext::new(context, cx.entity().downgrade(), false)
+                                            PastContext::new(context, cx.entity().downgrade(), false, vec![])
                                                 .into_any_element()
                                         }
                                     }

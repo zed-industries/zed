@@ -156,10 +156,10 @@ impl HeadlessAssistant {
                 }
                 if thread.read(cx).all_tools_finished() {
                     let model_registry = LanguageModelRegistry::read_global(cx);
-                    if let Some(model) = model_registry.active_model() {
+                    if let Some(model) = model_registry.default_model() {
                         thread.update(cx, |thread, cx| {
-                            thread.attach_tool_results(vec![], cx);
-                            thread.send_to_model(model, RequestKind::Chat, cx);
+                            thread.attach_tool_results(cx);
+                            thread.send_to_model(model.model, RequestKind::Chat, cx);
                         });
                     } else {
                         println!(

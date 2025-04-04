@@ -22,7 +22,8 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    AuthenticateError, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+    AuthenticateError, ConfiguredModel, LanguageModelProviderId, LanguageModelRegistry,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
@@ -298,8 +299,10 @@ impl AssistantPanel {
                 &LanguageModelRegistry::global(cx),
                 window,
                 |this, _, event: &language_model::Event, window, cx| match event {
-                    language_model::Event::ActiveModelChanged
-                    | language_model::Event::EditorModelChanged => {
+                    language_model::Event::DefaultModelChanged
+                    | language_model::Event::InlineAssistantModelChanged
+                    | language_model::Event::CommitMessageModelChanged
+                    | language_model::Event::ThreadSummaryModelChanged => {
                         this.completion_provider_changed(window, cx);
                     }
                     language_model::Event::ProviderStateChanged => {
@@ -468,12 +471,12 @@ impl AssistantPanel {
     }
 
     fn update_zed_ai_notice_visibility(&mut self, client_status: Status, cx: &mut Context<Self>) {
-        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let model = LanguageModelRegistry::read_global(cx).default_model();
 
         // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
         // the provider, we want to show a nudge to sign in.
         let show_zed_ai_notice = client_status.is_signed_out()
-            && active_provider.map_or(true, |provider| provider.id().0 == ZED_CLOUD_PROVIDER_ID);
+            && model.map_or(true, |model| model.provider.id().0 == ZED_CLOUD_PROVIDER_ID);
 
         self.show_zed_ai_notice = show_zed_ai_notice;
         cx.notify();
@@ -541,8 +544,8 @@ impl AssistantPanel {
         }
 
         let Some(new_provider_id) = LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .map(|p| p.id())
+            .default_model()
+            .map(|default| default.provider.id())
         else {
             return;
         };
@@ -568,7 +571,9 @@ impl AssistantPanel {
             return;
         }
 
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+        let Some(ConfiguredModel { provider, .. }) =
+            LanguageModelRegistry::read_global(cx).default_model()
+        else {
             return;
         };
 
@@ -976,8 +981,8 @@ impl AssistantPanel {
                 |this, _, event: &ConfigurationViewEvent, window, cx| match event {
                     ConfigurationViewEvent::NewProviderContextEditor(provider) => {
                         if LanguageModelRegistry::read_global(cx)
-                            .active_provider()
-                            .map_or(true, |p| p.id() != provider.id())
+                            .default_model()
+                            .map_or(true, |default| default.provider.id() != provider.id())
                         {
                             if let Some(model) = provider.default_model(cx) {
                                 update_settings_file::<AssistantSettings>(
@@ -1155,8 +1160,8 @@ impl AssistantPanel {
 
     fn is_authenticated(&mut self, cx: &mut Context<Self>) -> bool {
         LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .map_or(false, |provider| provider.is_authenticated(cx))
+            .default_model()
+            .map_or(false, |default| default.provider.is_authenticated(cx))
     }
 
     fn authenticate(
@@ -1164,8 +1169,8 @@ impl AssistantPanel {
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<(), AuthenticateError>>> {
         LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .map_or(None, |provider| Some(provider.authenticate(cx)))
+            .default_model()
+            .map_or(None, |default| Some(default.provider.authenticate(cx)))
     }
 
     fn restart_context_servers(

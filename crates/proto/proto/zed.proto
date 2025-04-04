@@ -367,7 +367,9 @@ message Envelope {
         LanguageServerIdForNameResponse language_server_id_for_name_response = 333; // current max
 
         LoadCommitDiff load_commit_diff = 334;
-        LoadCommitDiffResponse load_commit_diff_response = 335; // current max
+        LoadCommitDiffResponse load_commit_diff_response = 335;
+
+        StopLanguageServers stop_language_servers = 336; // current max
     }
 
     reserved 87 to 88;
@@ -2441,6 +2443,11 @@ message MultiLspQuery {
 message AllLanguageServers {}
 
 message RestartLanguageServers {
+    uint64 project_id = 1;
+    repeated uint64 buffer_ids = 2;
+}
+
+message StopLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
 }

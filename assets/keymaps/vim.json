@@ -354,8 +354,8 @@
   {
     "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
     "bindings": {
-      "ctrl-p": "editor::ShowCompletions",
-      "ctrl-n": "editor::ShowCompletions"
+      "ctrl-p": "editor::ShowWordCompletions",
+      "ctrl-n": "editor::ShowWordCompletions"
     }
   },
   {

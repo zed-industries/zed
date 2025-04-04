@@ -168,11 +168,11 @@ impl LanguageModelSelector {
     }
 
     fn get_active_model_index(cx: &App) -> usize {
-        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let active_model = LanguageModelRegistry::read_global(cx).default_model();
         Self::all_models(cx)
             .iter()
             .position(|model_info| {
-                Some(model_info.model.id()) == active_model.as_ref().map(|model| model.id())
+                Some(model_info.model.id()) == active_model.as_ref().map(|model| model.model.id())
             })
             .unwrap_or(0)
     }
@@ -406,13 +406,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         let model_info = self.filtered_models.get(ix)?;
         let provider_name: String = model_info.model.provider_name().0.clone().into();
 
-        let active_provider_id = LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .map(|m| m.id());
+        let active_model = LanguageModelRegistry::read_global(cx).default_model();
 
-        let active_model_id = LanguageModelRegistry::read_global(cx)
-            .active_model()
-            .map(|m| m.id());
+        let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
+        let active_model_id = active_model.map(|m| m.model.id());
 
         let is_selected = Some(model_info.model.provider_id()) == active_provider_id
             && Some(model_info.model.id()) == active_model_id;
