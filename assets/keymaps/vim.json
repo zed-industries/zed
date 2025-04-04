@@ -343,6 +343,10 @@
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
       "b": "vim::PreviousWordStart",
+      "x": "vim::CurrentLine",
+      "X": "vim::CurrentLine",
+      "y": "vim::HelixYank",
+      "p": "vim::HelixPaste",
 
       "h": "vim::Left",
       "j": "vim::Down",
