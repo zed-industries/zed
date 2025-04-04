@@ -185,7 +185,12 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        match self.model {
+            CopilotChatModel::Claude3_5Sonnet
+            | CopilotChatModel::Claude3_7Sonnet
+            | CopilotChatModel::Claude3_7SonnetThinking => true,
+            _ => false,
+        }
     }
 
     fn telemetry_id(&self) -> String {

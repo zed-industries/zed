@@ -472,9 +472,16 @@ async fn stream_completion(
                             return None;
                         }
 
-                        Some(
-                            serde_json::from_str::<ResponseEvent>(line).map_err(|err| anyhow!(err)),
-                        )
+                        match serde_json::from_str::<ResponseEvent>(line) {
+                            Ok(response) => {
+                                if response.choices.is_empty() {
+                                    None
+                                } else {
+                                    Some(Ok(response))
+                                }
+                            }
+                            Err(error) => Some(Err(anyhow!(error))),
+                        }
                     }
                     Err(error) => Some(Err(anyhow!(error))),
                 }
