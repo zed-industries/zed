@@ -6917,8 +6917,8 @@ impl Element for EditorElement {
 
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
-                    let start_row = DisplayRow(scroll_position.y as u32);
                     let max_row = snapshot.max_point().row();
+                    let start_row = DisplayRow((scroll_position.y as u32).min(max_row.0));
                     let end_row = cmp::min(
                         (scroll_position.y + height_in_lines).ceil() as u32,
                         max_row.next_row().0,
