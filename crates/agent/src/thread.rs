@@ -290,7 +290,7 @@ impl Thread {
             last_restore_checkpoint: None,
             pending_checkpoint: None,
             tool_use: ToolUseState::new(tools.clone()),
-            action_log: cx.new(|_| ActionLog::new()),
+            action_log: cx.new(|_| ActionLog::new(project.clone())),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project, cx);
                 cx.foreground_executor()
@@ -354,11 +354,11 @@ impl Thread {
             pending_completions: Vec::new(),
             last_restore_checkpoint: None,
             pending_checkpoint: None,
-            project,
+            project: project.clone(),
             prompt_builder,
             tools,
             tool_use,
-            action_log: cx.new(|_| ActionLog::new()),
+            action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
@@ -1755,6 +1755,17 @@ impl Thread {
     pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
         self.action_log
             .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
+    }
+
+    pub fn reject_edits_in_range(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        buffer_range: Range<language::Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.action_log.update(cx, |action_log, cx| {
+            action_log.reject_edits_in_range(buffer, buffer_range, cx)
+        })
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {
