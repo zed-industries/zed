@@ -245,6 +245,17 @@ fn render_markdown(
             }),
             ..Default::default()
         },
+        link_callback: Some(Rc::new(move |url, cx| {
+            if MentionLink::is_valid(url) {
+                let colors = cx.theme().colors();
+                Some(TextStyleRefinement {
+                    background_color: Some(colors.element_background),
+                    ..Default::default()
+                })
+            } else {
+                None
+            }
+        })),
         ..Default::default()
     };
 
@@ -320,6 +331,7 @@ fn open_markdown_link(
                 });
             }
         }),
+        Some(MentionLink::Fetch(url)) => cx.open_url(&url),
         None => cx.open_url(&text),
     }
 }
