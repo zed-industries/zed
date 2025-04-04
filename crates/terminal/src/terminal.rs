@@ -1260,16 +1260,28 @@ impl Terminal {
         }
 
         let motion = match keystroke.code {
-            KeyCode::H | KeyCode::Left => Some(ViMotion::Left),
+            KeyCode::H => {
+                if keystroke.modifiers.shift {
+                    Some(ViMotion::High)
+                } else {
+                    Some(ViMotion::Left)
+                }
+            }
+            KeyCode::Left => Some(ViMotion::Left),
             KeyCode::J | KeyCode::Down => Some(ViMotion::Down),
             KeyCode::K | KeyCode::Up => Some(ViMotion::Up),
-            KeyCode::L | KeyCode::Right => Some(ViMotion::Right),
+            KeyCode::L => {
+                if keystroke.modifiers.shift {
+                    Some(ViMotion::Low)
+                } else {
+                    Some(ViMotion::Right)
+                }
+            }
+            KeyCode::Right => Some(ViMotion::Right),
             KeyCode::W => Some(ViMotion::WordRight),
             KeyCode::B if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
             KeyCode::E => Some(ViMotion::WordRightEnd),
-            KeyCode::H if keystroke.modifiers.shift => Some(ViMotion::High),
             KeyCode::M if keystroke.modifiers.shift => Some(ViMotion::Middle),
-            KeyCode::L if keystroke.modifiers.shift => Some(ViMotion::Low),
             _ => {
                 if let Some(ref key_char) = keystroke.key_char {
                     match key_char.as_str() {

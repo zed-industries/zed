@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use collections::HashMap;
 
-use crate::{chars_for_modified_key, keyboard_layout, KeyCode, KeyboardMapper, Modifiers};
+use crate::{chars_for_modified_key, KeyCode, KeyboardMapper, Modifiers};
 
 /// TODO:
 pub(crate) struct MacKeyboardMapperManager {
@@ -159,6 +159,28 @@ fn parse_letters(input: &str) -> Option<KeyCode> {
         "y" => Some(KeyCode::Y),
         "z" => Some(KeyCode::Z),
         _ => None,
+    }
+}
+
+pub(crate) fn keyboard_layout() -> String {
+    use std::ffi::{c_void, CStr};
+
+    use objc::{msg_send, runtime::Object, sel, sel_impl};
+
+    use crate::platform::mac::{
+        kTISPropertyInputSourceID, TISCopyCurrentKeyboardLayoutInputSource,
+        TISGetInputSourceProperty,
+    };
+
+    unsafe {
+        let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
+
+        let input_source_id: *mut Object =
+            TISGetInputSourceProperty(current_keyboard, kTISPropertyInputSourceID as *const c_void);
+        let input_source_id: *const std::os::raw::c_char = msg_send![input_source_id, UTF8String];
+        let input_source_id = CStr::from_ptr(input_source_id).to_str().unwrap();
+
+        input_source_id.to_string()
     }
 }
 
