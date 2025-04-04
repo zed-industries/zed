@@ -236,7 +236,7 @@ impl AgentDiff {
 
     fn handle_thread_event(&mut self, event: &ThreadEvent, cx: &mut Context<Self>) {
         match event {
-            ThreadEvent::SummaryChanged => self.update_title(cx),
+            ThreadEvent::SummaryGenerated => self.update_title(cx),
             _ => {}
         }
     }
