@@ -1,8 +1,13 @@
 use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
-use pulldown_cmark::{Alignment, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser};
-use std::{collections::HashSet, ops::Range};
+use pulldown_cmark::{
+    Alignment, HeadingLevel, InlineStr, LinkType, MetadataBlockKind, Options, Parser,
+};
+use std::{
+    collections::HashSet,
+    ops::{Deref, Range},
+};
 
 const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
@@ -66,10 +71,7 @@ pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSe
                             parsed
                         );
                     }
-                    events.push((
-                        range,
-                        MarkdownEvent::SubstitutedText(parsed.to_string().into()),
-                    ));
+                    events.push((range, MarkdownEvent::SubstitutedText(parsed.into())));
                 } else {
                     // Automatically detect links in text if not already within a markdown link.
                     if !within_link {
@@ -181,7 +183,7 @@ pub enum MarkdownEvent {
     Text,
     /// Text that differs from the markdown source - typically due to substitution of HTML entities
     /// and smart punctuation.
-    SubstitutedText(SharedString),
+    SubstitutedText(CompactStr),
     /// An inline code node.
     Code,
     /// An HTML node.
@@ -369,6 +371,53 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
             pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
             pulldown_cmark::Tag::DefinitionListDefinition => MarkdownTag::DefinitionListDefinition,
         }
+    }
+}
+
+/// Represents either an owned or inline string. Motivation for this is to make `SubstitutedText`
+/// more efficient - it fits within a `pulldown_cmark::InlineStr` in all known cases.
+///
+/// Same as `pulldown_cmark::CowStr` but without the `Borrow` case.
+#[derive(Clone, Debug)]
+pub enum CompactStr {
+    Boxed(Box<str>),
+    Inlined(InlineStr),
+}
+
+impl Deref for CompactStr {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        match self {
+            CompactStr::Boxed(b) => b,
+            CompactStr::Inlined(i) => i,
+        }
+    }
+}
+
+impl From<&str> for CompactStr {
+    fn from(s: &str) -> Self {
+        if let Ok(inlined) = s.try_into() {
+            CompactStr::Inlined(inlined)
+        } else {
+            CompactStr::Boxed(s.into())
+        }
+    }
+}
+
+impl From<pulldown_cmark::CowStr<'_>> for CompactStr {
+    fn from(cow_str: pulldown_cmark::CowStr) -> Self {
+        match cow_str {
+            pulldown_cmark::CowStr::Boxed(b) => CompactStr::Boxed(b),
+            pulldown_cmark::CowStr::Borrowed(b) => b.into(),
+            pulldown_cmark::CowStr::Inlined(i) => CompactStr::Inlined(i),
+        }
+    }
+}
+
+impl PartialEq for CompactStr {
+    fn eq(&self, other: &Self) -> bool {
+        self.deref() == other.deref()
     }
 }
 
