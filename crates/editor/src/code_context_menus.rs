@@ -230,7 +230,8 @@ impl CompletionsMenu {
         let completions = choices
             .iter()
             .map(|choice| Completion {
-                old_range: selection.start.text_anchor..selection.end.text_anchor,
+                replace_range: selection.start.text_anchor..selection.end.text_anchor,
+                insert_range: None,
                 new_text: choice.to_string(),
                 label: CodeLabel {
                     text: choice.to_string(),

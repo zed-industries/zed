@@ -4433,7 +4433,8 @@ impl Editor {
                     words.remove(&lsp_completion.new_text);
                 }
                 completions.extend(words.into_iter().map(|(word, word_range)| Completion {
-                    old_range: old_range.clone(),
+                    replace_range: old_range.clone(),
+                    insert_range: None,
                     new_text: word.clone(),
                     label: CodeLabel::plain(word, None),
                     icon_path: None,
@@ -4539,6 +4540,26 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Complete, window, cx)
     }
 
+    pub fn confirm_completion_insert(
+        &mut self,
+        _: &ConfirmCompletionInsert,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
+        self.do_completion(None, CompletionIntent::CompleteWithInsert, window, cx)
+    }
+
+    pub fn confirm_completion_replace(
+        &mut self,
+        _: &ConfirmCompletionReplace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
+        self.do_completion(None, CompletionIntent::CompleteWithReplace, window, cx)
+    }
+
     pub fn compose_completion(
         &mut self,
         action: &ComposeCompletion,
@@ -4558,12 +4579,10 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         use language::ToOffset as _;
 
-        let completions_menu =
-            if let CodeContextMenu::Completions(menu) = self.hide_context_menu(window, cx)? {
-                menu
-            } else {
-                return None;
-            };
+        let CodeContextMenu::Completions(completions_menu) = self.hide_context_menu(window, cx)?
+        else {
+            return None;
+        };
 
         let candidate_id = {
             let entries = completions_menu.entries.borrow();
@@ -18594,7 +18613,8 @@ fn snippet_completions(
                     end: lsp_end,
                 };
                 Some(Completion {
-                    old_range: range,
+                    replace_range: range,
+                    insert_range: None,
                     new_text: snippet.body.clone(),
                     source: CompletionSource::Lsp {
                         server_id: LanguageServerId(usize::MAX),

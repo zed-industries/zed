@@ -532,6 +532,7 @@
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
+      "shift-enter": "editor::ConfirmCompletionReplace",
       "tab": "editor::ComposeCompletion"
     }
   },

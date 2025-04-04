@@ -9395,6 +9395,74 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
     }
 }
 
+#[test]
+async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let initial_state = "SubˇError".into();
+    let buffer_marked_text = "<Sub|Error>".into();
+    let completion_text = "SubscriptionError";
+    let expected_with_insertion_mode = "SubscriptionErrorˇError".into();
+    let expected_with_replace_mode = "SubscriptionErrorˇ".into();
+
+    update_test_language_settings(&mut cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            // set the opposite here to ensure that the action is overriding the default behavior
+            lsp_insert_mode: LspInsertMode::Insert,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    cx.set_state(&run.initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        &run.buffer_marked_text,
+        vec![run.completion_text],
+        counter.clone(),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_replace(&ConfirmCompletionReplace::default(), window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(&expected_with_replace_mode);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
+
+    update_test_language_settings(&mut cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            // set the opposite here to ensure that the action is overriding the default behavior
+            lsp_insert_mode: LspInsertMode::Replace,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+}
+
 #[gpui::test]
 async fn test_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
