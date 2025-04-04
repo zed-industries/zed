@@ -10,8 +10,7 @@ use crate::{
     SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
-        Block, BlockContext, BlockPlacement, BlockStyle, DisplaySnapshot, FoldId, HighlightedChunk,
-        ToDisplayPoint,
+        Block, BlockContext, BlockStyle, DisplaySnapshot, FoldId, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,

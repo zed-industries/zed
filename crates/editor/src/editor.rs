@@ -12801,29 +12801,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let selection = self.selections.newest_anchor();
-
-        self.display_map.update(cx, |display_map, cx| {
-            display_map.insert_blocks(
-                [BlockProperties {
-                    placement: BlockPlacement::Near(selection.start),
-                    height: Some(1),
-                    style: BlockStyle::Flex,
-                    render: Arc::new(|_| {
-                        div()
-                            .w(px(100.))
-                            .h(px(16.))
-                            .bg(gpui::hsla(0.5, 0.5, 0.5, 0.5))
-                            .into_any_element()
-                    }),
-                    priority: 0,
-                }],
-                cx,
-            )
-        });
-        return;
-
-        let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.selections.newest::<usize>(cx);
         // If there is an active Diagnostic Popover jump to its diagnostic instead.
         if direction == Direction::Next {
