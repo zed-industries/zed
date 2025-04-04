@@ -2613,7 +2613,6 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         editor_width: Pixels,
         scroll_width: &mut Pixels,
-        resized_blocks: &mut HashMap<CustomBlockId, u32>,
         selections: &[Selection<Point>],
         selected_buffer_ids: &Vec<BufferId>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
@@ -2745,16 +2744,6 @@ impl EditorElement {
         } else {
             element.layout_as_root(size(available_width, quantized_height.into()), window, cx)
         };
-
-        if let BlockId::Custom(custom_block_id) = block_id {
-            if block.has_height() {
-                let element_height_in_lines =
-                    ((final_size.height / line_height).ceil() as u32).max(1);
-                if element_height_in_lines != block.height() {
-                    resized_blocks.insert(custom_block_id, element_height_in_lines);
-                }
-            }
-        }
 
         (element, final_size)
     }
@@ -2970,9 +2959,11 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
+        dbg!("render blocks...");
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
             .partition::<Vec<_>, _>(|(_, block)| block.style() == BlockStyle::Fixed);
+        dbg!(&fixed_blocks);
 
         let mut focused_block = self
             .editor
@@ -2983,6 +2974,7 @@ impl EditorElement {
 
         for (row, block) in fixed_blocks {
             let block_id = block.id();
+            dbg!(&block_id);
 
             if focused_block.as_ref().map_or(false, |b| b.id == block_id) {
                 focused_block = None;
@@ -3003,7 +2995,6 @@ impl EditorElement {
                 text_hitbox,
                 editor_width,
                 scroll_width,
-                &mut resized_blocks,
                 selections,
                 selected_buffer_ids,
                 is_row_soft_wrapped,
@@ -3011,6 +3002,22 @@ impl EditorElement {
                 window,
                 cx,
             );
+
+            if let BlockId::Custom(custom_block_id) = block_id {
+                if block.has_height() {
+                    let element_height_in_lines =
+                        ((element_size.height / line_height).ceil() as u32).max(1);
+                    dbg!(
+                        element_size.height,
+                        line_height,
+                        element_height_in_lines,
+                        block.height()
+                    );
+                    if element_height_in_lines != block.height() {
+                        resized_blocks.insert(custom_block_id, element_height_in_lines);
+                    }
+                }
+            }
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
             blocks.push(BlockLayout {
                 id: block_id,
@@ -3054,7 +3061,6 @@ impl EditorElement {
                 text_hitbox,
                 editor_width,
                 scroll_width,
-                &mut resized_blocks,
                 selections,
                 selected_buffer_ids,
                 is_row_soft_wrapped,
@@ -3062,6 +3068,16 @@ impl EditorElement {
                 window,
                 cx,
             );
+
+            if let BlockId::Custom(custom_block_id) = block_id {
+                if block.has_height() {
+                    let element_height_in_lines =
+                        ((element_size.height / line_height).ceil() as u32).max(1);
+                    if element_height_in_lines != block.height() {
+                        resized_blocks.insert(custom_block_id, element_height_in_lines);
+                    }
+                }
+            }
 
             blocks.push(BlockLayout {
                 id: block_id,
@@ -3105,7 +3121,6 @@ impl EditorElement {
                             text_hitbox,
                             editor_width,
                             scroll_width,
-                            &mut resized_blocks,
                             selections,
                             selected_buffer_ids,
                             is_row_soft_wrapped,
@@ -3131,6 +3146,7 @@ impl EditorElement {
             *scroll_width = (*scroll_width).max(fixed_block_max_width - gutter_dimensions.width);
             Ok(blocks)
         } else {
+            dbg!(&resized_blocks);
             Err(resized_blocks)
         }
     }

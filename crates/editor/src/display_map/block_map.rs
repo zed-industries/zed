@@ -1103,6 +1103,7 @@ impl BlockMapWriter<'_> {
                 if let BlockPlacement::Replace(_) = &block.placement {
                     debug_assert!(new_height > 0);
                 }
+                dbg!(block.height, new_height);
 
                 if block.height != Some(new_height) {
                     let new_block = CustomBlock {
@@ -1116,6 +1117,7 @@ impl BlockMapWriter<'_> {
                     let new_block = Arc::new(new_block);
                     *block = new_block.clone();
                     self.0.custom_blocks_by_id.insert(block.id, new_block);
+                    dbg!(self.0.custom_blocks_by_id.values().collect::<Vec<_>>());
 
                     let start_row = block.placement.start().to_point(buffer).row;
                     let end_row = block.placement.end().to_point(buffer).row;
