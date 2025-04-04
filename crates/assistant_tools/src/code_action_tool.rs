@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::{ops::Range, sync::Arc};
 use ui::IconName;
 
+use crate::replace::{replace_exact, replace_with_flexible_indent};
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CodeActionToolInput {
     /// The relative path to the file containing the text range.
@@ -38,13 +40,23 @@ pub struct CodeActionToolInput {
     /// - "source.generateAccessors" - creates getter/setter methods
     /// - "source.convertToAsyncFunction" - converts callback-style code to async/await
     ///
-    /// Also, there is a special case: if you specify exactly "textDocument/rename" as the action,
-    /// then this will rename the symbol to whatever string you specified for the `arguments` field.
+    /// Special cases:
+    /// - If you specify exactly "textDocument/rename" as the action,
+    ///   then this will rename the symbol to whatever string you specified for the `arguments` field.
+    ///   When a rename is desired, you should always choose this over the "textDocument/findReplace" action.
+    /// - If you specify exactly "textDocument/findReplace" as the action,
+    ///   then this will find and replace text within the file. For this action, you must provide
+    ///   the `text_range` as the text to find, and `arguments` should be a string containing
+    ///   the text to replace it with. The text must appear exactly once in the file when combined
+    ///   with the before and after context. IMPORTANT: you must never, EVER use this for a rename
+    ///   operation unless you have already tried the action "textDocument/rename" and have seen it fail too
+    ///   many times.
     pub action: Option<String>,
 
     /// Optional arguments to pass to the code action.
     ///
     /// For rename operations (when action="textDocument/rename"), this should contain the new name.
+    /// For findReplace operations (when action="textDocument/findReplace"), this should contain the replacement text.
     /// For other code actions, these arguments may be passed to the language server.
     pub arguments: Option<serde_json::Value>,
 
@@ -70,6 +82,8 @@ pub struct CodeActionToolInput {
     /// Do not alter the context lines of code in any way, and make sure to preserve all
     /// whitespace and indentation for all lines of code. The combined string must be exactly
     /// as it appears in the file, or else this tool call will fail.
+    ///
+    /// For findReplace operations, this represents the text to find and replace.
     pub text_range: String,
 
     /// The text that comes immediately after the text range in the file.
@@ -122,6 +136,21 @@ impl Tool for CodeActionTool {
                             None => "missing name".to_string(),
                         };
                         format!("Rename '{}' to '{}'", input.text_range, new_name)
+                    } else if action == "textDocument/findReplace" {
+                        let replacement = match &input.arguments {
+                            Some(serde_json::Value::String(replacement)) => replacement.clone(),
+                            Some(value) => {
+                                if let Ok(replacement) =
+                                    serde_json::from_value::<String>(value.clone())
+                                {
+                                    replacement
+                                } else {
+                                    "invalid replacement".to_string()
+                                }
+                            }
+                            None => "missing replacement".to_string(),
+                        };
+                        format!("Replace '{}' with '{}'", input.text_range, replacement)
                     } else {
                         format!(
                             "Execute code action '{}' for '{}'",
@@ -212,6 +241,77 @@ impl Tool for CodeActionTool {
                     })?;
 
                     Ok(format!("Renamed '{}' to '{}'", input.text_range, new_name))
+                } else if action_type == "textDocument/findReplace" {
+                    // Handle find and replace operation
+                    let replacement = match &input.arguments {
+                        Some(serde_json::Value::String(replacement)) => replacement.clone(),
+                        Some(value) => {
+                            if let Ok(replacement) = serde_json::from_value::<String>(value.clone()) {
+                                replacement
+                            } else {
+                                return Err(anyhow!("For findReplace operations, 'arguments' must be a string containing the replacement text"));
+                            }
+                        },
+                        None => return Err(anyhow!("For findReplace operations, 'arguments' must contain the replacement text")),
+                    };
+
+                    if input.text_range.is_empty() {
+                        return Err(anyhow!("`text_range` string cannot be empty. Use a different tool if you want to create a file."));
+                    }
+
+                    if input.text_range == replacement {
+                        return Err(anyhow!("The text to find and the replacement are identical, so no changes would be made."));
+                    }
+
+                    // Construct the find string by combining context and text_range
+                    let find_string = format!("{}{}{}", input.context_before_range, input.text_range, input.context_after_range);
+                    let replace_string = format!("{}{}{}", input.context_before_range, replacement, input.context_after_range);
+
+                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+                    // Try exact match first
+                    let result_exact = replace_exact(&find_string, &replace_string, &snapshot).await;
+
+                    // If exact match fails, try flexible indent
+                    let result = result_exact.or_else(|| replace_with_flexible_indent(&find_string, &replace_string, &snapshot));
+
+                    if let Some(diff) = result {
+                        let edit_ids = buffer.update(cx, |buffer, cx| {
+                            buffer.finalize_last_transaction();
+                            buffer.apply_diff(diff, false, cx);
+                            let transaction = buffer.finalize_last_transaction();
+                            transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
+                        })?;
+
+                        action_log.update(cx, |log, cx| {
+                            log.buffer_edited(buffer.clone(), edit_ids, cx)
+                        })?;
+
+                        project.update(cx, |project, cx| {
+                            project.save_buffer(buffer, cx)
+                        })?.await?;
+
+                        Ok(format!("Replaced '{}' with '{}'", input.text_range, replacement))
+                    } else {
+                        let err = buffer.read_with(cx, |buffer, _cx| {
+                            let file_exists = buffer
+                                .file()
+                                .map_or(false, |file| file.disk_state().exists());
+
+                            if !file_exists {
+                                anyhow!("{} does not exist", input.path)
+                            } else if buffer.is_empty() {
+                                anyhow!(
+                                    "{} is empty, so the provided text wasn't found.",
+                                    input.path
+                                )
+                            } else {
+                                anyhow!("Failed to match the provided text with its context")
+                            }
+                        })?;
+
+                        Err(err)
+                    }
                 } else {
                     // Handle execute specific code action
                     // Get code actions for the range
