@@ -9,7 +9,8 @@ use util::{ResultExt, truncate_and_remove_front};
 
 use crate::{
     AttachConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TCPHost, TaskContext, TaskId,
-    VariableName, ZED_VARIABLE_NAME_PREFIX, non_empty_string_vec, non_empty_string_vec_json_schema,
+    VariableName, ZED_VARIABLE_NAME_PREFIX,
+    serde_helpers::{non_empty_string_vec, non_empty_string_vec_json_schema},
 };
 
 /// A template definition of a Zed task to run.

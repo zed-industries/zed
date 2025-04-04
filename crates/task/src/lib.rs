@@ -19,7 +19,6 @@ pub use debug_format::{
     AttachConfig, DebugAdapterConfig, DebugConnectionType, DebugRequestDisposition,
     DebugRequestType, DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
 };
-pub use serde_helpers::{non_empty_string_vec, non_empty_string_vec_json_schema};
 pub use task_template::{
     DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,
     TaskTemplates, TaskType,
