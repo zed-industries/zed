@@ -78,6 +78,9 @@ pub struct AssistantSettings {
     pub default_height: Pixels,
     pub default_model: LanguageModelSelection,
     pub editor_model: LanguageModelSelection,
+    pub inline_assistant_model: Option<LanguageModelSelection>,
+    pub commit_message_model: Option<LanguageModelSelection>,
+    pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
@@ -94,6 +97,34 @@ impl AssistantSettings {
         }
 
         cx.is_staff() || self.enable_experimental_live_diffs
+    }
+    
+    pub fn set_editor_model(&mut self, provider: String, model: String) {
+        self.editor_model = LanguageModelSelection {
+            provider,
+            model,
+        };
+    }
+    
+    pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
+        self.inline_assistant_model = Some(LanguageModelSelection {
+            provider,
+            model,
+        });
+    }
+    
+    pub fn set_commit_message_model(&mut self, provider: String, model: String) {
+        self.commit_message_model = Some(LanguageModelSelection {
+            provider,
+            model,
+        });
+    }
+    
+    pub fn set_thread_summary_model(&mut self, provider: String, model: String) {
+        self.thread_summary_model = Some(LanguageModelSelection {
+            provider,
+            model,
+        });
     }
 }
 
@@ -187,6 +218,9 @@ impl AssistantSettingsContent {
                             }
                         }),
                     editor_model: None,
+                    inline_assistant_model: None,
+                    commit_message_model: None,
+                    thread_summary_model: None,
                     inline_alternatives: None,
                     enable_experimental_live_diffs: None,
                     default_profile: None,
@@ -212,6 +246,9 @@ impl AssistantSettingsContent {
                         .to_string(),
                 }),
                 editor_model: None,
+                inline_assistant_model: None,
+                commit_message_model: None,
+                thread_summary_model: None,
                 inline_alternatives: None,
                 enable_experimental_live_diffs: None,
                 default_profile: None,
@@ -324,6 +361,30 @@ impl AssistantSettingsContent {
             }
         }
     }
+    
+    pub fn set_editor_model(&mut self, provider: String, model: String) {
+        if let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) = self {
+            settings.editor_model = Some(LanguageModelSelection { provider, model });
+        }
+    }
+    
+    pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
+        if let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) = self {
+            settings.inline_assistant_model = Some(LanguageModelSelection { provider, model });
+        }
+    }
+    
+    pub fn set_commit_message_model(&mut self, provider: String, model: String) {
+        if let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) = self {
+            settings.commit_message_model = Some(LanguageModelSelection { provider, model });
+        }
+    }
+    
+    pub fn set_thread_summary_model(&mut self, provider: String, model: String) {
+        if let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) = self {
+            settings.thread_summary_model = Some(LanguageModelSelection { provider, model });
+        }
+    }
 
     pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
         let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
@@ -404,6 +465,9 @@ impl Default for VersionedAssistantSettingsContent {
             default_height: None,
             default_model: None,
             editor_model: None,
+            inline_assistant_model: None,
+            commit_message_model: None,
+            thread_summary_model: None,
             inline_alternatives: None,
             enable_experimental_live_diffs: None,
             default_profile: None,
@@ -436,10 +500,16 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: 320
     default_height: Option<f32>,
-    /// The default model to use when creating new chats.
+    /// The default model to use when creating new chats and for other features when a specific model is not specified.
     default_model: Option<LanguageModelSelection>,
     /// The model to use when applying edits from the assistant.
     editor_model: Option<LanguageModelSelection>,
+    /// Model to use for the inline assistant. Defaults to default_model when not specified.
+    inline_assistant_model: Option<LanguageModelSelection>,
+    /// Model to use for generating git commit messages. Defaults to default_model when not specified.
+    commit_message_model: Option<LanguageModelSelection>,
+    /// Model to use for generating thread summaries. Defaults to default_model when not specified.
+    thread_summary_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     inline_alternatives: Option<Vec<LanguageModelSelection>>,
     /// Enable experimental live diffs in the assistant panel.
@@ -602,6 +672,9 @@ impl Settings for AssistantSettings {
             );
             merge(&mut settings.default_model, value.default_model);
             merge(&mut settings.editor_model, value.editor_model);
+            settings.inline_assistant_model = value.inline_assistant_model.or(settings.inline_assistant_model.take());
+            settings.commit_message_model = value.commit_message_model.or(settings.commit_message_model.take());
+            settings.thread_summary_model = value.thread_summary_model.or(settings.thread_summary_model.take());
             merge(&mut settings.inline_alternatives, value.inline_alternatives);
             merge(
                 &mut settings.enable_experimental_live_diffs,
@@ -702,6 +775,9 @@ mod tests {
                                 provider: "test-provider".into(),
                                 model: "gpt-99".into(),
                             }),
+                            inline_assistant_model: None,
+                            commit_message_model: None,
+                            thread_summary_model: None,
                             inline_alternatives: None,
                             enabled: None,
                             button: None,

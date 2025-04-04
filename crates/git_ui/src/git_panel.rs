@@ -3765,7 +3765,7 @@ fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn Language
         .enabled
         .then(|| {
             let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-            let model = LanguageModelRegistry::read_global(cx).active_model()?;
+            let model = LanguageModelRegistry::read_global(cx).commit_message_model()?;
             provider.is_authenticated(cx).then(|| model)
         })
         .flatten()

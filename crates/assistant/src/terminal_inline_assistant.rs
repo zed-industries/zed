@@ -318,7 +318,7 @@ impl TerminalInlineAssistant {
                 })
                 .log_err();
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
                 let codegen = assist.codegen.read(cx);
                 let executor = cx.background_executor().clone();
                 report_assistant_event(
@@ -652,7 +652,7 @@ impl Render for PromptEditor {
                                 format!(
                                     "Using {}",
                                     LanguageModelRegistry::read_global(cx)
-                                        .active_model()
+                                        .inline_assistant_model()
                                         .map(|model| model.name().0)
                                         .unwrap_or_else(|| "No model selected".into()),
                                 ),
@@ -822,7 +822,7 @@ impl PromptEditor {
 
     fn count_tokens(&mut self, cx: &mut Context<Self>) {
         let assist_id = self.id;
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() else {
             return;
         };
         self.pending_token_count = cx.spawn(async move |this, cx| {
@@ -980,7 +980,7 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let model = LanguageModelRegistry::read_global(cx).inline_assistant_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -1131,7 +1131,7 @@ impl Codegen {
     }
 
     pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut Context<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() else {
             return;
         };
 

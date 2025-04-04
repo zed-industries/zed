@@ -2863,7 +2863,7 @@ impl CodegenAlternative {
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &App,
     ) -> BoxFuture<'static, Result<TokenCounts>> {
-        if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+        if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
             let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
             match request {
                 Ok(request) => {

@@ -299,7 +299,10 @@ impl AssistantPanel {
                 window,
                 |this, _, event: &language_model::Event, window, cx| match event {
                     language_model::Event::ActiveModelChanged
-                    | language_model::Event::EditorModelChanged => {
+                    | language_model::Event::EditorModelChanged
+                    | language_model::Event::InlineAssistantModelChanged
+                    | language_model::Event::CommitMessageModelChanged
+                    | language_model::Event::ThreadSummaryModelChanged => {
                         this.completion_provider_changed(window, cx);
                     }
                     language_model::Event::ProviderStateChanged => {

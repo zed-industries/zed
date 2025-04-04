@@ -11,6 +11,7 @@ use gpui::{
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
+use crate::assistant_model_selector::ModelType;
 use project::Project;
 use settings::Settings;
 use std::time::Duration;
@@ -137,6 +138,7 @@ impl MessageEditor {
                     fs.clone(),
                     model_selector_menu_handle,
                     editor.focus_handle(cx),
+                    ModelType::Default,
                     window,
                     cx,
                 )

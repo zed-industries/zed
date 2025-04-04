@@ -401,7 +401,7 @@ impl InlineAssistant {
 
             codegen_ranges.push(anchor_range);
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
                 self.telemetry.report_assistant_event(AssistantEvent {
                     conversation_id: None,
                     kind: AssistantKind::Inline,

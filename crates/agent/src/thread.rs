@@ -1253,7 +1253,7 @@ impl Thread {
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return;
         };
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).thread_summary_model() else {
             return;
         };
 
@@ -1321,7 +1321,7 @@ impl Thread {
         }
 
         let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let model = LanguageModelRegistry::read_global(cx).thread_summary_model()?;
 
         if !provider.is_authenticated(cx) {
             return None;
