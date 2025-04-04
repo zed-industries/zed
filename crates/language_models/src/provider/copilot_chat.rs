@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use collections::HashMap;
 use copilot::copilot_chat::{
     ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
@@ -235,17 +235,12 @@ impl LanguageModel for CopilotChatLanguageModel {
                     "Empty prompts aren't allowed. Please provide a non-empty prompt.";
                 return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
             }
-
-            // Copilot Chat has a restriction that the final message must be from the user.
-            // While their API does return an error message for this, we can catch it earlier
-            // and provide a more helpful error message.
-            if !matches!(message.role, Role::User) {
-                const USER_ROLE_MSG: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
-                return futures::future::ready(Err(anyhow::anyhow!(USER_ROLE_MSG))).boxed();
-            }
         }
 
-        let copilot_request = self.to_copilot_chat_request(request);
+        let copilot_request = match self.to_copilot_chat_request(request) {
+            Ok(request) => request,
+            Err(err) => return futures::future::ready(Err(err)).boxed(),
+        };
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(async move |cx| {
@@ -374,7 +369,10 @@ pub fn map_to_language_model_completion_events(
 }
 
 impl CopilotChatLanguageModel {
-    pub fn to_copilot_chat_request(&self, request: LanguageModelRequest) -> CopilotChatRequest {
+    pub fn to_copilot_chat_request(
+        &self,
+        request: LanguageModelRequest,
+    ) -> Result<CopilotChatRequest> {
         let model = self.model.clone();
 
         // TODO: Remove before merging.
@@ -456,6 +454,16 @@ impl CopilotChatLanguageModel {
             }
         }
 
+        // Copilot Chat has a restriction that the final message must be from the user.
+        // While their API does return an error message for this, we can catch it earlier
+        // and provide a more helpful error message.
+        if let Some(message) = messages.last() {
+            if !matches!(message, ChatMessage::User { .. }) {
+                const NO_TRAILING_USER_MESSAGE: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
+                bail!(NO_TRAILING_USER_MESSAGE);
+            }
+        }
+
         let tools = request
             .tools
             .iter()
@@ -468,7 +476,7 @@ impl CopilotChatLanguageModel {
             })
             .collect();
 
-        CopilotChatRequest {
+        Ok(CopilotChatRequest {
             intent: true,
             n: 1,
             stream: model.uses_streaming(),
@@ -477,7 +485,7 @@ impl CopilotChatLanguageModel {
             messages,
             tools,
             tool_choice: None,
-        }
+        })
     }
 }
 
