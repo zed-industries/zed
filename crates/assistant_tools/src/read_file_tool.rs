@@ -67,7 +67,11 @@ impl Tool for ReadFileTool {
         match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
             Ok(input) => {
                 let path = MarkdownString::inline_code(&input.path.display().to_string());
-                format!("Read file {path}")
+                match (input.start_line, input.end_line) {
+                    (Some(start), None) => format!("Read file {path} (from line {start})"),
+                    (Some(start), Some(end)) => format!("Read file {path} (lines {start}-{end})"),
+                    _ => format!("Read file {path}"),
+                }
             }
             Err(_) => "Read file".to_string(),
         }
