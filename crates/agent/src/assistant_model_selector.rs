@@ -34,7 +34,6 @@ impl AssistantModelSelector {
         Self {
             selector: cx.new(|cx| {
                 let fs = fs.clone();
-                let model_type = model_type;
                 LanguageModelSelector::new(
                     move |model, cx| {
                         let provider = model.provider_id().0.to_string();
@@ -84,13 +83,13 @@ impl Render for AssistantModelSelector {
         let model_registry = LanguageModelRegistry::read_global(cx);
 
         let model = match self.model_type {
-            ModelType::Default => model_registry.active_model(),
+            ModelType::Default => model_registry.default_model(),
             ModelType::InlineAssistant => model_registry.inline_assistant_model(),
         };
 
         let focus_handle = self.focus_handle.clone();
         let model_name = match model {
-            Some(model) => model.name().0,
+            Some(model) => model.model.name().0,
             _ => SharedString::from("No model selected"),
         };
 

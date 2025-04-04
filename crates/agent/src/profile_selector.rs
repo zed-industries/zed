@@ -130,8 +130,8 @@ impl Render for ProfileSelector {
 
         let model_registry = LanguageModelRegistry::read_global(cx);
         let supports_tools = model_registry
-            .active_model()
-            .map_or(false, |model| model.supports_tools());
+            .default_model()
+            .map_or(false, |default| default.model.supports_tools());
 
         let icon = match profile_id.as_str() {
             "write" => IconName::Pencil,

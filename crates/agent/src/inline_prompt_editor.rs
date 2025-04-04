@@ -582,7 +582,7 @@ impl<T: 'static> PromptEditor<T> {
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let default_model = model_registry.active_model();
+        let default_model = model_registry.default_model().map(|default| default.model);
         let alternative_models = model_registry.inline_alternative_models();
 
         let get_model_name = |index: usize| -> String {
