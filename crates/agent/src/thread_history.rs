@@ -295,7 +295,9 @@ impl Render for ThreadHistory {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
-            .child(h_flex().w_full().mb_1().child(self.search_editor.clone()))
+            .when(!self.all_entries.is_empty(), |parent| {
+                parent.child(h_flex().w_full().mb_1().child(self.search_editor.clone()))
+            })
             .child({
                 let view = v_flex().overflow_hidden().flex_grow();
 
