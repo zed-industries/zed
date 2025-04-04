@@ -21,7 +21,7 @@ use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
-use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
+use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use project::ProjectItem as _;
 use settings::{Settings as _, update_settings_file};
@@ -34,7 +34,7 @@ use ui::{Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip,
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
-use crate::context_store::{ContextStore, refresh_context_store_text};
+use crate::context_store::ContextStore;
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
@@ -245,6 +245,17 @@ fn render_markdown(
             }),
             ..Default::default()
         },
+        link_callback: Some(Rc::new(move |url, cx| {
+            if MentionLink::is_valid(url) {
+                let colors = cx.theme().colors();
+                Some(TextStyleRefinement {
+                    background_color: Some(colors.element_background),
+                    ..Default::default()
+                })
+            } else {
+                None
+            }
+        })),
         ..Default::default()
     };
 
@@ -320,6 +331,7 @@ fn open_markdown_link(
                 });
             }
         }),
+        Some(MentionLink::Fetch(url)) => cx.open_url(&url),
         None => cx.open_url(&text),
     }
 }
@@ -500,7 +512,9 @@ impl ActiveThread {
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
             }
-            ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
+            ThreadEvent::StreamedCompletion
+            | ThreadEvent::SummaryGenerated
+            | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
             ThreadEvent::DoneStreaming => {
@@ -593,54 +607,14 @@ impl ActiveThread {
                 }
 
                 if self.thread.read(cx).all_tools_finished() {
-                    let pending_refresh_buffers = self.thread.update(cx, |thread, cx| {
-                        thread.action_log().update(cx, |action_log, _cx| {
-                            action_log.take_stale_buffers_in_context()
-                        })
-                    });
-
-                    let context_update_task = if !pending_refresh_buffers.is_empty() {
-                        let refresh_task = refresh_context_store_text(
-                            self.context_store.clone(),
-                            &pending_refresh_buffers,
-                            cx,
-                        );
-
-                        cx.spawn(async move |this, cx| {
-                            let updated_context_ids = refresh_task.await;
-
-                            this.update(cx, |this, cx| {
-                                this.context_store.read_with(cx, |context_store, _cx| {
-                                    context_store
-                                        .context()
-                                        .iter()
-                                        .filter(|context| {
-                                            updated_context_ids.contains(&context.id())
-                                        })
-                                        .cloned()
-                                        .collect()
-                                })
-                            })
-                        })
-                    } else {
-                        Task::ready(anyhow::Ok(Vec::new()))
-                    };
-
                     let model_registry = LanguageModelRegistry::read_global(cx);
-                    if let Some(model) = model_registry.active_model() {
-                        cx.spawn(async move |this, cx| {
-                            let updated_context = context_update_task.await?;
-
-                            this.update(cx, |this, cx| {
-                                this.thread.update(cx, |thread, cx| {
-                                    thread.attach_tool_results(updated_context, cx);
-                                    if !canceled {
-                                        thread.send_to_model(model, RequestKind::Chat, cx);
-                                    }
-                                });
-                            })
-                        })
-                        .detach();
+                    if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
+                        self.thread.update(cx, |thread, cx| {
+                            thread.attach_tool_results(cx);
+                            if !canceled {
+                                thread.send_to_model(model, RequestKind::Chat, cx);
+                            }
+                        });
                     }
                 }
             }
@@ -842,21 +816,17 @@ impl ActiveThread {
             }
         });
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        if provider
-            .as_ref()
-            .map_or(false, |provider| provider.must_accept_terms(cx))
-        {
-            cx.notify();
-            return;
-        }
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
 
+        if model.provider.must_accept_terms(cx) {
+            cx.notify();
+            return;
+        }
+
         self.thread.update(cx, |thread, cx| {
-            thread.send_to_model(model, RequestKind::Chat, cx)
+            thread.send_to_model(model.model, RequestKind::Chat, cx)
         });
         cx.notify();
     }
@@ -1469,7 +1439,7 @@ impl ActiveThread {
                 .segments
                 .iter()
                 .enumerate()
-                .last()
+                .next_back()
                 .filter(|(_, segment)| matches!(segment, RenderedMessageSegment::Thinking { .. }))
                 .map(|(index, _)| index)
         } else {

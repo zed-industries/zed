@@ -239,8 +239,8 @@ impl InlineAssistant {
 
         let is_authenticated = || {
             LanguageModelRegistry::read_global(cx)
-                .active_provider()
-                .map_or(false, |provider| provider.is_authenticated(cx))
+                .inline_assistant_model()
+                .map_or(false, |model| model.provider.is_authenticated(cx))
         };
 
         let thread_store = workspace
@@ -279,8 +279,8 @@ impl InlineAssistant {
             cx.spawn_in(window, async move |_workspace, cx| {
                 let Some(task) = cx.update(|_, cx| {
                     LanguageModelRegistry::read_global(cx)
-                        .active_provider()
-                        .map_or(None, |provider| Some(provider.authenticate(cx)))
+                        .inline_assistant_model()
+                        .map_or(None, |model| Some(model.provider.authenticate(cx)))
                 })?
                 else {
                     let answer = cx
@@ -401,14 +401,14 @@ impl InlineAssistant {
 
             codegen_ranges.push(anchor_range);
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
                 self.telemetry.report_assistant_event(AssistantEvent {
                     conversation_id: None,
                     kind: AssistantKind::Inline,
                     phase: AssistantPhase::Invoked,
                     message_id: None,
-                    model: model.telemetry_id(),
-                    model_provider: model.provider_id().to_string(),
+                    model: model.model.telemetry_id(),
+                    model_provider: model.provider.id().to_string(),
                     response_latency: None,
                     error_message: None,
                     language_name: buffer.language().map(|language| language.name().to_proto()),
@@ -976,7 +976,7 @@ impl InlineAssistant {
             let active_alternative = assist.codegen.read(cx).active_alternative().clone();
             let message_id = active_alternative.read(cx).message_id.clone();
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
                     let snapshot = multibuffer.snapshot(cx);
@@ -996,15 +996,15 @@ impl InlineAssistant {
                         } else {
                             AssistantPhase::Accepted
                         },
-                        model: model.telemetry_id(),
-                        model_provider: model.provider_id().to_string(),
+                        model: model.model.telemetry_id(),
+                        model_provider: model.model.provider_id().to_string(),
                         response_latency: None,
                         error_message: None,
                         language_name: language_name.map(|name| name.to_proto()),
                     },
                     Some(self.telemetry.clone()),
                     cx.http_client(),
-                    model.api_key(cx),
+                    model.model.api_key(cx),
                     cx.background_executor(),
                 );
             }
