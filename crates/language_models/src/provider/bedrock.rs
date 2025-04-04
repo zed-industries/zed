@@ -9,10 +9,9 @@ use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
 use bedrock::bedrock_client::types::{
-    ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
+    ContentBlockDelta, ContentBlockStart, ConverseStreamOutput,
     ReasoningContentBlockDelta,
 };
-use bedrock::bedrock_client::{self, Config};
 use bedrock::{
     BedrockAutoToolChoice, BedrockError, BedrockInnerContent, BedrockMessage, BedrockModelMode,
     BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolConfig,
@@ -1065,6 +1064,18 @@ impl ConfigurationView {
             None
         } else {
             Some(session_token)
+        };
+        let region = self
+            .region_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
+        let region = if region.is_empty() {
+            "us-east-1".to_string()
+        } else {
+            region
         };
 
         let state = self.state.clone();

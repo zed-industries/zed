@@ -274,7 +274,7 @@ impl Model {
             }
 
             // Models available only in US
-            (Model::Claude3Opus, "us") | (Model::Claude3_7Sonnet, "us") => {
+            (Model::Claude3Opus, "us") | (Model::Claude3_7Sonnet, "us") | (Model::Claude3_7SonnetThinking, "us") => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
