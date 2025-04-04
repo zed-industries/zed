@@ -27,7 +27,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
@@ -324,7 +324,7 @@ impl TerminalInlineAssistant {
                 let codegen = assist.codegen.read(cx);
                 let executor = cx.background_executor().clone();
                 report_assistant_event(
-                    AssistantEvent {
+                    AssistantEventData {
                         conversation_id: None,
                         kind: AssistantKind::InlineTerminal,
                         message_id: codegen.message_id.clone(),
@@ -1183,7 +1183,7 @@ impl Codegen {
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
                         report_assistant_event(
-                            AssistantEvent {
+                            AssistantEventData {
                                 conversation_id: None,
                                 kind: AssistantKind::InlineTerminal,
                                 message_id,
