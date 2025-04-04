@@ -50,6 +50,7 @@ actions!(
         Pull,
         Fetch,
         Commit,
+        AmendPreviousCommit,
         ExpandCommitEditor,
         GenerateCommitMessage,
         Init,

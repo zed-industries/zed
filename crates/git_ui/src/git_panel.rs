@@ -21,8 +21,8 @@ use editor::{
 use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
-    Branch, CommitDetails, CommitSummary, DiffType, PushOptions, Remote, RemoteCommandOutput,
-    ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
+    Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, PushOptions, Remote,
+    RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::status::StageStatus;
 use git::{Commit, ToggleStaged, repository::RepoPath, status::FileStatus};
@@ -340,7 +340,7 @@ pub struct GitPanel {
     new_staged_count: usize,
     pending: Vec<PendingOperation>,
     pending_commit: Option<Task<()>>,
-    commit_being_amended: Option<CommitDetails>,
+    commit_being_amended: bool,
     pending_serialization: Task<Option<()>>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
@@ -493,7 +493,7 @@ impl GitPanel {
             new_staged_count: 0,
             pending: Vec::new(),
             pending_commit: None,
-            commit_being_amended: None,
+            commit_being_amended: false,
             pending_serialization: Task::ready(None),
             single_staged_entry: None,
             single_tracked_entry: None,
@@ -1425,7 +1425,14 @@ impl GitPanel {
             .contains_focused(window, cx)
         {
             telemetry::event!("Git Committed", source = "Git Panel");
-            self.commit_changes(window, cx)
+            self.commit_changes(
+                CommitOptions {
+                    amend: self.commit_being_amended,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
         } else {
             cx.propagate();
         }
@@ -1442,7 +1449,12 @@ impl GitPanel {
             .filter(|message| !message.trim().is_empty())
     }
 
-    pub(crate) fn commit_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn commit_changes(
+        &mut self,
+        options: CommitOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
@@ -1476,8 +1488,9 @@ impl GitPanel {
 
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
-            let commit_task =
-                active_repository.update(cx, |repo, cx| repo.commit(message.into(), None, cx));
+            let commit_task = active_repository.update(cx, |repo, cx| {
+                repo.commit(message.into(), None, options, cx)
+            });
             cx.background_spawn(async move { commit_task.await? })
         } else {
             let changed_files = self
@@ -1497,8 +1510,9 @@ impl GitPanel {
                 active_repository.update(cx, |repo, cx| repo.stage_entries(changed_files, cx));
             cx.spawn(async move |_, cx| {
                 stage_task.await?;
-                let commit_task = active_repository
-                    .update(cx, |repo, cx| repo.commit(message.into(), None, cx))?;
+                let commit_task = active_repository.update(cx, |repo, cx| {
+                    repo.commit(message.into(), None, options, cx)
+                })?;
                 commit_task.await?
             })
         };
@@ -1554,58 +1568,9 @@ impl GitPanel {
                         this.commit_editor.update(cx, |editor, cx| {
                             editor.set_text(prior_commit.message.clone(), window, cx)
                         });
-                        this.commit_being_amended = Some(prior_commit);
                     }
                     Err(e) => this.show_error_toast("reset", e, cx),
                 }
-            })
-            .ok();
-        });
-
-        self.pending_commit = Some(task);
-    }
-
-    fn amend(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(repo) = self.active_repository.clone() else {
-            return;
-        };
-        // TODO telemetry
-        let checkpoint = repo.read(cx).checkpoint();
-        let task = cx.spawn_in(window, async move |this, cx| {
-            let checkpoint = checkpoint.await??;
-            anyhow::Ok(())
-        });
-        // create a checkpoint
-        // store the SHA for that checkpoint in commit_being_amended
-        // check out the HEAD^ state
-    }
-
-    fn escape_amend(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(repo) = self.active_repository.clone() else {
-            return;
-        };
-        // TODO telemetry
-        let Some(commit_being_amended) = self.commit_being_amended.clone() else {
-            return;
-        };
-
-        let task = cx.spawn_in(window, async move |this, mut cx| {
-            let result = maybe!({
-                let cx = &mut cx;
-                async move {
-                    repo.update(*cx, |repo, cx| {
-                        repo.reset(commit_being_amended.sha.to_string(), ResetMode::Soft, cx)
-                    })?
-                    .await??;
-                    anyhow::Ok(())
-                }
-            })
-            .await;
-            this.update_in(cx, |this, _, cx| match result {
-                Ok(()) => {
-                    this.commit_being_amended = None;
-                }
-                Err(e) => this.show_error_toast("escape amend", e, cx),
             })
             .ok();
         });
@@ -2790,10 +2755,18 @@ impl GitPanel {
     }
 
     pub fn commit_button_title(&self) -> &'static str {
-        if self.has_staged_changes() {
-            "Commit"
+        if self.commit_being_amended {
+            if self.has_staged_changes() {
+                "Amend Commit"
+            } else {
+                "Amend Tracked"
+            }
         } else {
-            "Commit Tracked"
+            if self.has_staged_changes() {
+                "Commit"
+            } else {
+                "Commit Tracked"
+            }
         }
     }
 
@@ -2803,11 +2776,12 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let amend = self.commit_being_amended;
         let workspace = self.workspace.clone();
         window.defer(cx, move |window, cx| {
             workspace
                 .update(cx, |workspace, cx| {
-                    CommitModal::toggle(workspace, window, cx)
+                    CommitModal::toggle(workspace, window, amend, cx)
                 })
                 .ok();
         })
@@ -2993,7 +2967,14 @@ impl GitPanel {
                                                     "Git Committed",
                                                     source = "Git Panel"
                                                 );
-                                                this.commit_changes(window, cx)
+                                                this.commit_changes(
+                                                    CommitOptions {
+                                                        amend: this.commit_being_amended,
+                                                        ..Default::default()
+                                                    },
+                                                    window,
+                                                    cx,
+                                                )
                                             })
                                         }),
                                 ),
@@ -3816,6 +3797,14 @@ impl GitPanel {
 
     fn has_write_access(&self, cx: &App) -> bool {
         !self.project.read(cx).is_read_only(cx)
+    }
+
+    pub fn commit_being_amended(&self) -> bool {
+        self.commit_being_amended
+    }
+
+    pub fn set_commit_being_amended(&mut self, commit_being_amended: bool) {
+        self.commit_being_amended = commit_being_amended;
     }
 }
 
