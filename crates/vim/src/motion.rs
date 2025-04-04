@@ -2174,7 +2174,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
 // https://neovim.io/doc/user/motion.html#N%25
 fn go_to_percentage(map: &DisplaySnapshot, point: DisplayPoint, count: usize) -> DisplayPoint {
     let total_lines = map.buffer_snapshot.max_point().row + 1;
-    let target_line = (count * total_lines as usize + 99) / 100;
+    let target_line = (count * total_lines as usize).div_ceil(100);
     let target_point = DisplayPoint::new(
         DisplayRow(target_line.saturating_sub(1) as u32),
         point.column(),

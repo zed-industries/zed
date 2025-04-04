@@ -28,7 +28,7 @@ use crate::context_picker::{ConfirmBehavior, ContextPicker, ContextPickerComplet
 use crate::context_store::{ContextStore, refresh_context_store_text};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
-use crate::thread::{RequestKind, Thread};
+use crate::thread::{RequestKind, Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
     AgentDiff, Chat, ChatMode, NewThread, OpenAgentDiff, RemoveAllContext, ThreadEvent,
@@ -338,7 +338,7 @@ impl Render for MessageEditor {
 
         let thread = self.thread.read(cx);
         let is_generating = thread.is_generating();
-        let is_too_long = thread.is_getting_too_long(cx);
+        let total_token_usage = thread.total_token_usage(cx);
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
         let needs_confirmation =
@@ -788,7 +788,7 @@ impl Render for MessageEditor {
                             ),
                     )
             )
-            .when(is_too_long, |parent| {
+            .when(total_token_usage.ratio != TokenUsageRatio::Normal, |parent| {
                 parent.child(
                     h_flex()
                         .p_2()

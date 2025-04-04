@@ -85,14 +85,9 @@ impl Console {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn editor(&self) -> &Entity<Editor> {
+    #[cfg(test)]
+    pub(crate) fn editor(&self) -> &Entity<Editor> {
         &self.console
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn query_bar(&self) -> &Entity<Editor> {
-        &self.query_bar
     }
 
     fn is_local(&self, cx: &Context<Self>) -> bool {

@@ -109,6 +109,7 @@ async fn test_show_attach_modal_and_select_process(
                             command: vec![],
                         },
                     ],
+                    true,
                     window,
                     cx,
                 )
