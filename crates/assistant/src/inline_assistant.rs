@@ -57,7 +57,7 @@ use std::{
     time::{Duration, Instant},
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
@@ -315,7 +315,7 @@ impl InlineAssistant {
             if let Some(ConfiguredModel { model, .. }) =
                 LanguageModelRegistry::read_global(cx).default_model()
             {
-                self.telemetry.report_assistant_event(AssistantEvent {
+                self.telemetry.report_assistant_event(AssistantEventData {
                     conversation_id: None,
                     kind: AssistantKind::Inline,
                     phase: AssistantPhase::Invoked,
@@ -892,7 +892,7 @@ impl InlineAssistant {
                         .map(|language| language.name())
                 });
                 report_assistant_event(
-                    AssistantEvent {
+                    AssistantEventData {
                         conversation_id: None,
                         kind: AssistantKind::Inline,
                         message_id,
@@ -3148,7 +3148,7 @@ impl CodegenAlternative {
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
                         report_assistant_event(
-                            AssistantEvent {
+                            AssistantEventData {
                                 conversation_id: None,
                                 message_id,
                                 kind: AssistantKind::Inline,
