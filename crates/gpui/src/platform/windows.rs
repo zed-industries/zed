@@ -22,4 +22,4 @@ pub(crate) use wrapper::*;
 
 pub(crate) use windows::Win32::Foundation::HWND;
 
-pub(crate) type PlatformScreenCaptureFrame = ();
+pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;

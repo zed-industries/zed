@@ -26,9 +26,12 @@ mod test;
 #[cfg(target_os = "windows")]
 mod windows;
 
-#[cfg(all(
-    any(target_os = "linux", target_os = "freebsd"),
-    any(feature = "wayland", feature = "x11"),
+#[cfg(any(
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        any(feature = "wayland", feature = "x11"),
+    ),
+    target_os = "windows"
 ))]
 pub(crate) mod scap_screen_capture;
 
