@@ -4,7 +4,7 @@ use gpui::{KeyCode, KeyboardMapper, Keystroke, Modifiers};
 
 use collections::HashMap;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum AlacModifiers {
     None,
     Alt,

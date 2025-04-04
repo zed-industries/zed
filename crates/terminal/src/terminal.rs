@@ -1272,13 +1272,15 @@ impl Terminal {
             KeyCode::L if keystroke.modifiers.shift => Some(ViMotion::Low),
             _ => {
                 if let Some(ref key_char) = keystroke.key_char {
-                    match key_char {
+                    match key_char.as_str() {
                         "%" => Some(ViMotion::Bracket),
                         "$" => Some(ViMotion::Last),
                         "0" => Some(ViMotion::First),
                         "^" => Some(ViMotion::FirstOccupied),
                         _ => None,
                     }
+                } else {
+                    None
                 }
             }
         };
@@ -1302,7 +1304,6 @@ impl Terminal {
                 } else {
                     Some(AlacScroll::Top)
                 }
-                Some(AlacScroll::Top)
             }
             KeyCode::B if keystroke.modifiers.control => Some(AlacScroll::PageUp),
             KeyCode::F if keystroke.modifiers.control => Some(AlacScroll::PageDown),
