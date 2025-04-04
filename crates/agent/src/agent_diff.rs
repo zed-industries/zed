@@ -44,7 +44,7 @@ impl AgentDiff {
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<()> {
+    ) -> Result<Entity<Self>> {
         let existing_diff = workspace.update(cx, |workspace, cx| {
             workspace
                 .items_of_type::<AgentDiff>(cx)
@@ -53,13 +53,15 @@ impl AgentDiff {
         if let Some(existing_diff) = existing_diff {
             workspace.update(cx, |workspace, cx| {
                 workspace.activate_item(&existing_diff, true, true, window, cx);
-            })
+            })?;
+            Ok(existing_diff)
         } else {
             let agent_diff =
                 cx.new(|cx| AgentDiff::new(thread.clone(), workspace.clone(), window, cx));
             workspace.update(cx, |workspace, cx| {
-                workspace.add_item_to_center(Box::new(agent_diff), window, cx);
-            })
+                workspace.add_item_to_center(Box::new(agent_diff.clone()), window, cx);
+            })?;
+            Ok(agent_diff)
         }
     }
 
@@ -134,11 +136,11 @@ impl AgentDiff {
         let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
         for (buffer, diff_handle) in changed_buffers {
-            let Some(file) = buffer.read(cx).file().cloned() else {
+            if buffer.read(cx).file().is_none() {
                 continue;
-            };
+            }
 
-            let path_key = PathKey::namespaced(0, file.full_path(cx).into());
+            let path_key = PathKey::for_buffer(&buffer, cx);
             paths_to_delete.remove(&path_key);
 
             let snapshot = buffer.read(cx).snapshot();
@@ -238,6 +240,26 @@ impl AgentDiff {
         match event {
             ThreadEvent::SummaryChanged => self.update_title(cx),
             _ => {}
+        }
+    }
+
+    pub fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
+            self.editor.update(cx, |editor, cx| {
+                let first_hunk = editor
+                    .diff_hunks_in_ranges(
+                        &[position..editor::Anchor::max()],
+                        &self.multibuffer.read(cx).read(cx),
+                    )
+                    .next();
+
+                if let Some(first_hunk) = first_hunk {
+                    let first_hunk_start = first_hunk.multi_buffer_range().start;
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+                        selections.select_anchor_ranges([first_hunk_start..first_hunk_start]);
+                    })
+                }
+            });
         }
     }
 
