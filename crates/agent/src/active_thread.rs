@@ -343,21 +343,6 @@ struct EditMessageState {
 }
 
 impl ActiveThread {
-    fn hide_scrollbar(&mut self, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        self.hide_scrollbar_task = Some(cx.spawn(async move |thread, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            thread
-                .update(cx, |thread, cx| {
-                    thread.show_scrollbar = false;
-                    cx.notify();
-                })
-                .log_err();
-        }))
-    }
-
     pub fn new(
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
@@ -2251,8 +2236,25 @@ impl ActiveThread {
                 .bottom_0()
                 .w(px(12.))
                 .cursor_default()
-                .children(Scrollbar::vertical(self.scrollbar_state.clone()))
+                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
         )
+    }
+
+    fn hide_scrollbar_later(&mut self, cx: &mut Context<Self>) {
+        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+        self.hide_scrollbar_task = Some(cx.spawn(async move |thread, cx| {
+            cx.background_executor()
+                .timer(SCROLLBAR_SHOW_INTERVAL)
+                .await;
+            thread
+                .update(cx, |thread, cx| {
+                    if !thread.scrollbar_state.is_dragging() {
+                        thread.show_scrollbar = false;
+                        cx.notify();
+                    }
+                })
+                .log_err();
+        }))
     }
 }
 
@@ -2263,15 +2265,20 @@ impl Render for ActiveThread {
             .relative()
             .on_mouse_move(cx.listener(|this, _, _, cx| {
                 this.show_scrollbar = true;
-                this.hide_scrollbar_task.take();
+                this.hide_scrollbar_later(cx);
                 cx.notify();
             }))
-            .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {}))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                if !this.scrollbar_state.is_dragging() {
-                    this.hide_scrollbar(cx);
-                }
+            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                this.show_scrollbar = true;
+                this.hide_scrollbar_later(cx);
+                cx.notify();
             }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.hide_scrollbar_later(cx);
+                }),
+            )
             .child(list(self.list_state.clone()).flex_grow())
             .when_some(self.render_vertical_scrollbar(cx), |this, scrollbar| {
                 this.child(scrollbar)
