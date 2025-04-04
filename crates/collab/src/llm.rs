@@ -316,10 +316,14 @@ async fn perform_completion(
                     is_staff = claims.is_staff,
                     provider = params.provider.to_string(),
                     model = model,
-                    tokens_remaining = rate_limit_info.tokens_remaining,
-                    requests_remaining = rate_limit_info.requests_remaining,
-                    requests_reset = ?rate_limit_info.requests_reset,
-                    tokens_reset = ?rate_limit_info.tokens_reset,
+                    tokens_remaining = rate_limit_info.tokens.remaining,
+                    input_tokens_remaining = rate_limit_info.input_tokens.remaining,
+                    output_tokens_remaining = rate_limit_info.output_tokens.remaining,
+                    requests_remaining = rate_limit_info.requests.remaining,
+                    requests_reset = ?rate_limit_info.requests.reset,
+                    tokens_reset = ?rate_limit_info.tokens.reset,
+                    input_tokens_reset = ?rate_limit_info.input_tokens.reset,
+                    output_tokens_reset = ?rate_limit_info.output_tokens.reset,
                 );
             }
 
