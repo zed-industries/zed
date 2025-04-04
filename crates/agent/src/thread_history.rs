@@ -17,6 +17,7 @@ use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
     assistant_panel: WeakEntity<AssistantPanel>,
+    history_store: Entity<HistoryStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
     search_query: SharedString,
@@ -40,33 +41,26 @@ impl ThreadHistory {
             editor
         });
 
-        let search_editor_subscription = cx.subscribe_in(
-            &search_editor,
-            window,
-            |this, search_editor, event, window, cx| {
+        let search_editor_subscription =
+            cx.subscribe(&search_editor, |this, search_editor, event, cx| {
                 if let EditorEvent::BufferEdited = event {
                     let query = search_editor.read(cx).text(cx);
                     this.search_query = query.into();
-                    this.update_search(window, cx);
+                    this.update_search(cx);
                 }
-            },
-        );
+            });
 
         let entries: Arc<Vec<_>> = history_store
             .update(cx, |store, cx| store.entries(cx))
             .into();
 
-        let history_store_subscription =
-            cx.observe_in(&history_store, window, |this, history_store, window, cx| {
-                this.all_entries = history_store
-                    .update(cx, |store, cx| store.entries(cx))
-                    .into();
-                this.matches.clear();
-                this.update_search(window, cx);
-            });
+        let history_store_subscription = cx.observe(&history_store, |this, _, cx| {
+            this.update_all_entries(cx);
+        });
 
         Self {
             assistant_panel,
+            history_store,
             scroll_handle: UniformListScrollHandle::default(),
             selected_index: 0,
             search_query: SharedString::new_static(""),
@@ -78,7 +72,16 @@ impl ThreadHistory {
         }
     }
 
-    fn update_search(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn update_all_entries(&mut self, cx: &mut Context<Self>) {
+        self.all_entries = self
+            .history_store
+            .update(cx, |store, cx| store.entries(cx))
+            .into();
+        self.matches.clear();
+        self.update_search(cx);
+    }
+
+    fn update_search(&mut self, cx: &mut Context<Self>) {
         self._search_task.take();
 
         if self.has_search_query() {
@@ -222,17 +225,15 @@ impl ThreadHistory {
             let task_result = match entry {
                 HistoryEntry::Thread(thread) => self
                     .assistant_panel
-                    .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
-                    .ok(),
-                HistoryEntry::Context(context) => self
-                    .assistant_panel
-                    .update(cx, move |this, cx| {
+                    .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx)),
+                HistoryEntry::Context(context) => {
+                    self.assistant_panel.update(cx, move |this, cx| {
                         this.open_saved_prompt_editor(context.path.clone(), window, cx)
                     })
-                    .ok(),
+                }
             };
 
-            if let Some(task) = task_result {
+            if let Some(task) = task_result.log_err() {
                 task.detach_and_log_err(cx);
             };
 
@@ -243,28 +244,26 @@ impl ThreadHistory {
     fn remove_selected_thread(
         &mut self,
         _: &RemoveSelectedThread,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(entry) = self.get_match(self.selected_index) {
-            match entry {
-                HistoryEntry::Thread(thread) => {
-                    self.assistant_panel
-                        .update(cx, |this, cx| {
-                            this.delete_thread(&thread.id, cx);
-                        })
-                        .ok();
-                }
-                HistoryEntry::Context(context) => {
-                    self.assistant_panel
-                        .update(cx, |this, cx| {
-                            this.delete_context(context.path.clone(), cx);
-                        })
-                        .ok();
-                }
-            }
+            let task_result = match entry {
+                HistoryEntry::Thread(thread) => self
+                    .assistant_panel
+                    .update(cx, |this, cx| this.delete_thread(&thread.id, cx)),
+                HistoryEntry::Context(context) => self
+                    .assistant_panel
+                    .update(cx, |this, cx| this.delete_context(context.path.clone(), cx)),
+            };
 
-            self.update_search(window, cx);
+            if let Some(task) = task_result.log_err() {
+                cx.spawn(async move |this, cx| {
+                    task.await?;
+                    this.update(cx, |this, cx| this.update_all_entries(cx))
+                })
+                .detach_and_log_err(cx);
+            };
 
             cx.notify();
         }
@@ -456,14 +455,21 @@ impl RenderOnce for PastThread {
                         IconButton::new("delete", IconName::TrashAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
-                            .tooltip(Tooltip::text("Delete Thread"))
+                            .tooltip(move |window, cx| {
+                                Tooltip::for_action(
+                                    "Delete Thread",
+                                    &RemoveSelectedThread,
+                                    window,
+                                    cx,
+                                )
+                            })
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
                                 let id = self.thread.id.clone();
                                 move |_event, _window, cx| {
                                     assistant_panel
                                         .update(cx, |this, cx| {
-                                            this.delete_thread(&id, cx);
+                                            this.delete_thread(&id, cx).detach_and_log_err(cx);
                                         })
                                         .ok();
                                 }
@@ -563,7 +569,8 @@ impl RenderOnce for PastContext {
                             move |_event, _window, cx| {
                                 assistant_panel
                                     .update(cx, |this, cx| {
-                                        this.delete_context(path.clone(), cx);
+                                        this.delete_context(path.clone(), cx)
+                                            .detach_and_log_err(cx);
                                     })
                                     .ok();
                             }
