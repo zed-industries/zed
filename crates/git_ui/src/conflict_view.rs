@@ -7,7 +7,10 @@ use gpui::{App, Context, Entity, Hsla, InteractiveElement as _, ParentElement as
 use language::{Anchor, Buffer, OffsetRangeExt as _};
 use project::{ConflictRegion, ConflictSet, ConflictSetUpdate};
 use std::{ops::Range, sync::Arc};
-use ui::{ActiveTheme, AnyElement, Button, Clickable as _, Element as _, Styled, h_flex};
+use ui::{
+    ActiveTheme, AnyElement, Button, ButtonCommon as _, ButtonSize, Clickable as _, Element as _,
+    LabelSize, StatefulInteractiveElement, Styled, StyledTypography as _, div, h_flex, rems,
+};
 
 struct ConflictAddon {
     conflict_set: Entity<ConflictSet>,
@@ -177,7 +180,7 @@ fn update_conflict_highlighting<'a>(
         );
         editor.highlight_rows::<ConflictsOursMarker>(
             outer_start..our_start,
-            colors.version_control_conflict_ours,
+            ours_marker,
             RowHighlightOptions {
                 include_gutter: false,
                 ..Default::default()
@@ -195,7 +198,7 @@ fn update_conflict_highlighting<'a>(
         );
         editor.highlight_rows::<ConflictsTheirsMarker>(
             their_end..outer_end,
-            colors.version_control_conflict_theirs,
+            theirs_marker,
             RowHighlightOptions {
                 include_gutter: false,
                 ..Default::default()
@@ -211,34 +214,71 @@ fn render_conflict_buttons(
     cx: &mut BlockContext,
 ) -> AnyElement {
     h_flex()
+        .h(cx.line_height)
+        .items_end()
+        .ml(cx.gutter_dimensions.width)
         .id(cx.block_id)
-        .gap_1()
-        .child(Button::new("ours", "Accept Ours").on_click({
-            let editor = editor.clone();
-            let range = conflict.range.clone();
-            let ours = conflict.ours.clone();
-            move |_, _, cx| resolve_conflict(editor.clone(), range.clone(), &[ours.clone()], cx)
-        }))
-        .child(Button::new("theirs", "Accept Theirs").on_click({
-            let editor = editor.clone();
-            let range = conflict.range.clone();
-            let theirs = conflict.theirs.clone();
-            move |_, _, cx| resolve_conflict(editor.clone(), range.clone(), &[theirs.clone()], cx)
-        }))
-        .child(Button::new("both", "Accept Both").on_click({
-            let editor = editor.clone();
-            let range = conflict.range.clone();
-            let ours = conflict.ours.clone();
-            let theirs = conflict.theirs.clone();
-            move |_, _, cx| {
-                resolve_conflict(
-                    editor.clone(),
-                    range.clone(),
-                    &[ours.clone(), theirs.clone()],
-                    cx,
-                )
-            }
-        }))
+        .gap_0p5()
+        .child(
+            div()
+                .id("ours")
+                .px_1()
+                .child("Accept Ours")
+                .rounded_t(rems(0.2))
+                .text_ui_sm(cx)
+                .hover(|this| this.bg(cx.theme().colors().element_background))
+                .cursor_pointer()
+                .on_click({
+                    let editor = editor.clone();
+                    let range = conflict.range.clone();
+                    let ours = conflict.ours.clone();
+                    move |_, _, cx| {
+                        resolve_conflict(editor.clone(), range.clone(), &[ours.clone()], cx)
+                    }
+                }),
+        )
+        .child(
+            div()
+                .id("theirs")
+                .px_1()
+                .child("Accept Theirs")
+                .rounded_t(rems(0.2))
+                .text_ui_sm(cx)
+                .hover(|this| this.bg(cx.theme().colors().element_background))
+                .cursor_pointer()
+                .on_click({
+                    let editor = editor.clone();
+                    let range = conflict.range.clone();
+                    let theirs = conflict.theirs.clone();
+                    move |_, _, cx| {
+                        resolve_conflict(editor.clone(), range.clone(), &[theirs.clone()], cx)
+                    }
+                }),
+        )
+        .child(
+            div()
+                .id("both")
+                .px_1()
+                .child("Accept Both")
+                .rounded_t(rems(0.2))
+                .text_ui_sm(cx)
+                .hover(|this| this.bg(cx.theme().colors().element_background))
+                .cursor_pointer()
+                .on_click({
+                    let editor = editor.clone();
+                    let range = conflict.range.clone();
+                    let ours = conflict.ours.clone();
+                    let theirs = conflict.theirs.clone();
+                    move |_, _, cx| {
+                        resolve_conflict(
+                            editor.clone(),
+                            range.clone(),
+                            &[ours.clone(), theirs.clone()],
+                            cx,
+                        )
+                    }
+                }),
+        )
         .into_any()
 }
 
