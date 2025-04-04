@@ -3,7 +3,7 @@ use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
 use editor::{
-    AnchorRangeExt, Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
+    Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
 };
@@ -350,13 +350,16 @@ impl AgentDiff {
             self.update_selection(&diff_hunks_in_ranges, window, cx);
         }
 
-        let point_ranges = ranges
-            .into_iter()
-            .map(|range| range.to_point(&snapshot))
-            .collect();
-        self.editor.update(cx, |editor, cx| {
-            editor.restore_hunks_in_ranges(point_ranges, window, cx)
-        });
+        for hunk in &diff_hunks_in_ranges {
+            let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
+            if let Some(buffer) = buffer {
+                self.thread
+                    .update(cx, |thread, cx| {
+                        thread.reject_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
+                    })
+                    .detach_and_log_err(cx);
+            }
+        }
     }
 
     fn update_selection(
@@ -986,7 +989,7 @@ mod tests {
             Point::new(3, 0)..Point::new(3, 0)
         );
 
-        // Restoring a hunk also moves the cursor to the next hunk, possibly cycling if it's at the end.
+        // Rejecting a hunk also moves the cursor to the next hunk, possibly cycling if it's at the end.
         editor.update_in(cx, |editor, window, cx| {
             editor.change_selections(None, window, cx, |selections| {
                 selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
