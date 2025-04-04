@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::TaskTemplates;
+use task::{TaskTemplate, TaskTemplates};
 use text::{BufferId, PointUtf16, ToPointUtf16};
 
 pub enum LspExpandMacro {}
@@ -437,9 +437,10 @@ pub struct ShellRunnableArgs {
     pub args: Vec<String>,
 }
 
-#[derive(Default, Deserialize, Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct LspRunnables;
+#[derive(Debug)]
+pub struct LspRunnables {
+    pub buffer_id: BufferId,
+}
 
 #[async_trait(?Send)]
 impl LspCommand for LspRunnables {
@@ -454,61 +455,118 @@ impl LspCommand for LspRunnables {
     fn to_lsp(
         &self,
         path: &Path,
-        buffer: &Buffer,
-        language_server: &Arc<LanguageServer>,
-        cx: &App,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
     ) -> Result<RunnablesParams> {
+        let url = match lsp::Url::from_file_path(path) {
+            Ok(url) => url,
+            Err(()) => anyhow::bail!("Failed to parse path {path:?} as lsp::Url"),
+        };
         Ok(RunnablesParams {
-            text_document: todo!(),
+            text_document: lsp::TextDocumentIdentifier::new(url),
             position: None,
         })
     }
 
     async fn response_from_lsp(
         self,
-        message: Vec<Runnable>,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        server_id: LanguageServerId,
-        cx: AsyncApp,
-    ) -> Result<Self::Response> {
-        todo!("TODO kb")
+        lsp_runnables: Vec<Runnable>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> Result<TaskTemplates> {
+        let templates = lsp_runnables
+            .into_iter()
+            .map(|runnable| {
+                // TODO kb need to return this too
+                let location = runnable.location;
+
+                let mut task_template = TaskTemplate::default();
+                task_template.label = runnable.label;
+                match runnable.args {
+                    RunnableArgs::Cargo(cargo) => {
+                        match cargo.override_cargo {
+                            Some(override_cargo) => {
+                                let mut override_parts =
+                                    override_cargo.split(" ").map(|s| s.to_string());
+                                task_template.command = override_parts
+                                    .next()
+                                    .unwrap_or_else(|| override_cargo.clone());
+                                task_template.args.extend(override_parts);
+                            }
+                            None => task_template.command = "cargo".to_string(),
+                        };
+                        task_template.env = cargo.environment;
+                        task_template.cwd = Some(
+                            cargo
+                                .workspace_root
+                                .unwrap_or(cargo.cwd)
+                                .to_string_lossy()
+                                .to_string(),
+                        );
+                        task_template.args.extend(cargo.cargo_args);
+                        if !cargo.executable_args.is_empty() {
+                            task_template.args.push("--".to_string());
+                            task_template.args.extend(cargo.executable_args);
+                        }
+                    }
+                    RunnableArgs::Shell(shell) => {
+                        task_template.command = shell.program;
+                        task_template.args = shell.args;
+                        task_template.env = shell.environment;
+                        task_template.cwd = Some(shell.cwd.to_string_lossy().to_string());
+                    }
+                }
+
+                task_template
+            })
+            .collect();
+        Ok(TaskTemplates(templates))
     }
 
-    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
-        todo!("TODO kb")
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtRunnables {
+        proto::LspExtRunnables {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+        }
     }
 
     async fn from_proto(
-        message: Self::ProtoRequest,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        cx: AsyncApp,
+        message: proto::LspExtRunnables,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self> {
-        todo!("TODO kb")
+        let buffer_id = Self::buffer_id_from_proto(&message)?;
+        Ok(Self { buffer_id })
     }
 
     fn response_to_proto(
-        response: Self::Response,
-        lsp_store: &mut LspStore,
-        peer_id: PeerId,
-        buffer_version: &clock::Global,
-        cx: &mut App,
+        response: TaskTemplates,
+        _: &mut LspStore,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut App,
     ) -> proto::LspExtRunnablesResponse {
-        todo!("TODO kb")
+        proto::LspExtRunnablesResponse {
+            task_templates: serde_json::to_vec(&response).unwrap(),
+        }
     }
 
     async fn response_from_proto(
         self,
-        message: <Self::ProtoRequest as proto::RequestMessage>::Response,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        cx: AsyncApp,
+        message: proto::LspExtRunnablesResponse,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<TaskTemplates> {
-        todo!("TODO kb")
+        serde_json::from_slice(&message.task_templates)
+            .context("deserializing task templates from proto")
     }
 
-    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
-        todo!("TODO kb")
+    fn buffer_id_from_proto(message: &proto::LspExtRunnables) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
