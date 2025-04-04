@@ -13,8 +13,6 @@ use ui::{ButtonLike, PopoverMenuHandle, Tooltip, prelude::*};
 pub enum ModelType {
     Default,
     InlineAssistant,
-    CommitMessage,
-    ThreadSummary,
 }
 
 pub struct AssistantModelSelector {
@@ -41,7 +39,7 @@ impl AssistantModelSelector {
                     move |model, cx| {
                         let provider = model.provider_id().0.to_string();
                         let model_id = model.id().0.to_string();
-                        
+
                         match model_type {
                             ModelType::Default => {
                                 update_settings_file::<AssistantSettings>(
@@ -51,34 +49,19 @@ impl AssistantModelSelector {
                                         settings.set_model(model.clone());
                                     },
                                 );
-                            },
+                            }
                             ModelType::InlineAssistant => {
                                 update_settings_file::<AssistantSettings>(
                                     fs.clone(),
                                     cx,
                                     move |settings, _cx| {
-                                        settings.set_inline_assistant_model(provider.clone(), model_id.clone());
+                                        settings.set_inline_assistant_model(
+                                            provider.clone(),
+                                            model_id.clone(),
+                                        );
                                     },
                                 );
-                            },
-                            ModelType::CommitMessage => {
-                                update_settings_file::<AssistantSettings>(
-                                    fs.clone(),
-                                    cx,
-                                    move |settings, _cx| {
-                                        settings.set_commit_message_model(provider.clone(), model_id.clone());
-                                    },
-                                );
-                            },
-                            ModelType::ThreadSummary => {
-                                update_settings_file::<AssistantSettings>(
-                                    fs.clone(),
-                                    cx,
-                                    move |settings, _cx| {
-                                        settings.set_thread_summary_model(provider.clone(), model_id.clone());
-                                    },
-                                );
-                            },
+                            }
                         }
                     },
                     window,
@@ -99,14 +82,12 @@ impl AssistantModelSelector {
 impl Render for AssistantModelSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let model_registry = LanguageModelRegistry::read_global(cx);
-        
+
         let model = match self.model_type {
             ModelType::Default => model_registry.active_model(),
             ModelType::InlineAssistant => model_registry.inline_assistant_model(),
-            ModelType::CommitMessage => model_registry.commit_message_model(),
-            ModelType::ThreadSummary => model_registry.thread_summary_model(),
         };
-        
+
         let focus_handle = self.focus_handle.clone();
         let model_name = match model {
             Some(model) => model.name().0,
