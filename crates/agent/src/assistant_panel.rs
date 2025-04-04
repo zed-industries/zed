@@ -819,7 +819,7 @@ impl AssistantPanel {
         h_flex()
             .key_context("TitleEditor")
             .id("TitleEditor")
-            .px_2()
+            .pl_2()
             .flex_grow()
             .w_full()
             .max_w_full()
