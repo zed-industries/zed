@@ -15,10 +15,11 @@ use task::{
 };
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon,
-    IconButton, IconButtonShape, IconName, IconSize, IntoElement, KeyBinding, LabelSize, ListItem,
-    ListItemSpacing, RenderOnce, Toggleable, Tooltip, div, h_flex, v_flex,
+    IconButton, IconButtonShape, IconName, IconSize, IntoElement, KeyBinding, Label, LabelSize,
+    ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div, h_flex, v_flex,
 };
-use util::ResultExt;
+
+use util::{ResultExt, truncate_and_trailoff};
 use workspace::{ModalView, Workspace, tasks::schedule_resolved_task};
 pub use zed_actions::{Rerun, Spawn};
 
@@ -187,6 +188,8 @@ impl Focusable for TasksModal {
 
 impl ModalView for TasksModal {}
 
+const MAX_TAGS_LINE_LEN: usize = 30;
+
 impl PickerDelegate for TasksModalDelegate {
     type ListItem = ListItem;
 
@@ -338,6 +341,7 @@ impl PickerDelegate for TasksModalDelegate {
                                     debugger_ui::attach_modal::AttachModal::new(
                                         project,
                                         config.clone(),
+                                        true,
                                         window,
                                         cx,
                                     )
@@ -397,6 +401,18 @@ impl PickerDelegate for TasksModalDelegate {
                 tooltip_label_text.push_str(&resolved.command_label);
             }
         }
+        if template.tags.len() > 0 {
+            tooltip_label_text.push('\n');
+            tooltip_label_text.push_str(
+                template
+                    .tags
+                    .iter()
+                    .map(|tag| format!("\n#{}", tag))
+                    .collect::<Vec<_>>()
+                    .join("")
+                    .as_str(),
+            );
+        }
         let tooltip_label = if tooltip_label_text.trim().is_empty() {
             None
         } else {
@@ -438,7 +454,22 @@ impl PickerDelegate for TasksModalDelegate {
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .start_slot::<Icon>(icon)
-                .end_slot::<AnyElement>(history_run_icon)
+                .end_slot::<AnyElement>(
+                    h_flex()
+                        .gap_1()
+                        .child(Label::new(truncate_and_trailoff(
+                            &template
+                                .tags
+                                .iter()
+                                .map(|tag| format!("#{}", tag))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                            MAX_TAGS_LINE_LEN,
+                        )))
+                        .flex_none()
+                        .child(history_run_icon.unwrap())
+                        .into_any_element(),
+                )
                 .spacing(ListItemSpacing::Sparse)
                 .when_some(tooltip_label, |list_item, item_label| {
                     list_item.tooltip(move |_, _| item_label.clone())

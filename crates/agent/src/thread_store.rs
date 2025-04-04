@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use assistant_settings::{AgentProfile, AssistantSettings};
+use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -202,7 +202,7 @@ impl ThreadStore {
         self.load_profile_by_id(&assistant_settings.default_profile, cx);
     }
 
-    pub fn load_profile_by_id(&self, profile_id: &Arc<str>, cx: &Context<Self>) {
+    pub fn load_profile_by_id(&self, profile_id: &AgentProfileId, cx: &Context<Self>) {
         let assistant_settings = AssistantSettings::get_global(cx);
 
         if let Some(profile) = assistant_settings.profiles.get(profile_id) {
@@ -374,6 +374,8 @@ pub struct SerializedMessage {
     pub tool_uses: Vec<SerializedToolUse>,
     #[serde(default)]
     pub tool_results: Vec<SerializedToolResult>,
+    #[serde(default)]
+    pub context: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -441,6 +443,7 @@ impl LegacySerializedMessage {
             segments: vec![SerializedMessageSegment::Text { text: self.text }],
             tool_uses: self.tool_uses,
             tool_results: self.tool_results,
+            context: String::new(),
         }
     }
 }

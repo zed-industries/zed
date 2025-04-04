@@ -8,15 +8,9 @@ use aws_config::Region;
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
-use bedrock::bedrock_client::types::{
-    ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
-};
+use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ConverseStreamOutput};
 use bedrock::bedrock_client::{self, Config};
-use bedrock::{
-    BedrockError, BedrockInnerContent, BedrockMessage, BedrockSpecificTool,
-    BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
-    value_to_aws_document,
-};
+use bedrock::{BedrockError, BedrockInnerContent, BedrockMessage, BedrockStreamingResponse, Model};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -414,50 +408,6 @@ impl LanguageModel for BedrockModel {
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        name: String,
-        description: String,
-        schema: Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let mut request = into_bedrock(
-            request,
-            self.model.id().into(),
-            self.model.default_temperature(),
-            self.model.max_output_tokens(),
-        );
-
-        request.tool_choice = BedrockSpecificTool::builder()
-            .name(name.clone())
-            .build()
-            .log_err()
-            .map(BedrockToolChoice::Tool);
-
-        if let Some(tool) = BedrockTool::builder()
-            .name(name.clone())
-            .description(description.clone())
-            .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(&schema)))
-            .build()
-            .log_err()
-        {
-            request.tools.push(tool);
-        }
-
-        let handle = self.handler.clone();
-
-        let request = self.stream_completion(request, _cx);
-        self.request_limiter
-            .run(async move {
-                let response = request.map_err(|err| anyhow!(err))?.await;
-                Ok(extract_tool_args_from_events(name, response, handle)
-                    .await?
-                    .boxed())
-            })
-            .boxed()
-    }
-
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         None
     }
@@ -590,70 +540,6 @@ pub fn get_bedrock_tokens(
                 .map(|tokens| tokens + tokens_from_images)
         })
         .boxed()
-}
-
-pub async fn extract_tool_args_from_events(
-    name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
-    handle: Handle,
-) -> Result<impl Send + Stream<Item = Result<String>>> {
-    handle
-        .spawn(async move {
-            let mut tool_use_index = None;
-            while let Some(event) = events.next().await {
-                if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                    content_block_index,
-                    start,
-                    ..
-                }) = event?
-                {
-                    match start {
-                        None => {
-                            continue;
-                        }
-                        Some(start) => match start.as_tool_use() {
-                            Ok(tool_use) => {
-                                if name == tool_use.name {
-                                    tool_use_index = Some(content_block_index);
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                return Err(anyhow!("Failed to parse tool use event: {:?}", err));
-                            }
-                        },
-                    }
-                }
-            }
-
-            let Some(tool_use_index) = tool_use_index else {
-                return Err(anyhow!("Tool is not used"));
-            };
-
-            Ok(events.filter_map(move |event| {
-                let result = match event {
-                    Err(_err) => None,
-                    Ok(output) => match output.clone() {
-                        BedrockStreamingResponse::ContentBlockDelta(inner) => {
-                            match inner.clone().delta {
-                                Some(ContentBlockDelta::ToolUse(tool_use)) => {
-                                    if inner.content_block_index == tool_use_index {
-                                        Some(Ok(tool_use.input))
-                                    } else {
-                                        None
-                                    }
-                                }
-                                _ => None,
-                            }
-                        }
-                        _ => None,
-                    },
-                };
-
-                async move { result }
-            }))
-        })
-        .await?
 }
 
 pub fn map_to_language_model_completion_events(

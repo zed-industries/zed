@@ -637,6 +637,7 @@ impl ContextProvider for RustContextProvider {
                     locator: Some("cargo".into()),
                     tcp_connection: None,
                     initialize_args: None,
+                    stop_on_entry: None,
                 }),
                 command: "cargo".into(),
                 args: vec![
@@ -728,7 +729,12 @@ impl ContextProvider for RustContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Debug".into(),
+                label: format!(
+                    "Debug {} {} (package: {})",
+                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
+                    RUST_BIN_NAME_TASK_VARIABLE.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
                 cwd: Some("$ZED_DIRNAME".to_owned()),
                 command: "cargo".into(),
                 task_type: TaskType::Debug(task::DebugArgs {
@@ -737,6 +743,7 @@ impl ContextProvider for RustContextProvider {
                     initialize_args: None,
                     locator: Some("cargo".into()),
                     tcp_connection: None,
+                    stop_on_entry: None,
                 }),
                 args: debug_task_args,
                 tags: vec!["rust-main".to_owned()],

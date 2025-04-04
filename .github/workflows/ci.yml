@@ -110,6 +110,37 @@ jobs:
           input: "crates/proto/proto/"
           against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
 
+  workspace_hack:
+    timeout-minutes: 60
+    name: Check workspace-hack crate
+    needs: [job_spec]
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - buildjet-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install cargo-hakari
+        uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
+        with:
+          command: install
+          args: cargo-hakari@0.9.35
+
+      - name: Check workspace-hack Cargo.toml is up-to-date
+        run: |
+          cargo hakari generate --diff || {
+            echo "To fix, run script/update-workspace-hack";
+            false
+          }
+      - name: Check all crates depend on workspace-hack
+        run: |
+          cargo hakari manage-deps --dry-run || {
+            echo "To fix, run script/update-workspace-hack"
+            false
+          }
+
   style:
     timeout-minutes: 60
     name: Check formatting and spelling
@@ -432,6 +463,7 @@ jobs:
       - job_spec
       - style
       - migration_checks
+      - workspace_hack
       - linux_tests
       - build_remote_server
       - macos_tests
@@ -673,6 +705,51 @@ jobs:
             target/release/zed-linux-aarch64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  nix-build:
+    timeout-minutes: 60
+    name: Nix Build
+    continue-on-error: true
+    if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
+    strategy:
+      fail-fast: false
+      matrix:
+        system:
+          - os: x86 Linux
+            runner: buildjet-16vcpu-ubuntu-2204
+            install_nix: true
+          - os: arm Mac
+            runner: [macOS, ARM64, test]
+            install_nix: false
+    runs-on: ${{ matrix.system.runner }}
+    env:
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      GIT_LFS_SKIP_SMUDGE: 1 # breaks the livekit rust sdk examples which we don't actually depend on
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+      - name: Set path
+        if: ${{ ! matrix.system.install_nix }}
+        run: |
+          echo "/nix/var/nix/profiles/default/bin" >> $GITHUB_PATH
+          echo "/Users/administrator/.nix-profile/bin" >> $GITHUB_PATH
+
+      - uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f # v31
+        if: ${{ matrix.system.install_nix }}
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
+        with:
+          name: zed-industries
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          skipPush: true
+      - run: nix build .#debug
+      - name: Limit /nix/store to 50GB
+        run: "[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d"
 
   auto-release-preview:
     name: Auto release preview
