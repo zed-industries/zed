@@ -49,14 +49,7 @@ const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
 const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
-actions!(
-    collab,
-    [
-        ToggleUserMenu,
-        ToggleProjectMenu,
-        SwitchBranch
-    ]
-);
+actions!(collab, [ToggleUserMenu, ToggleProjectMenu, SwitchBranch]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
