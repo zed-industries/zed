@@ -1522,7 +1522,7 @@ impl EditorElement {
         let minimap_thumb_height = visible_editor_lines * minimap_line_height;
         let scroll_percentage =
             (scroll_position / (total_editor_lines - visible_editor_lines)).clamp(0., 1.);
-        let minimap_top_offset = scroll_percentage * (total_editor_lines - minimap_lines);
+        let minimap_scroll_top = (total_editor_lines - minimap_lines).max(0.) * scroll_percentage;
 
         let layout = ScrollbarLayout::new_with_hitbox_and_track_length(
             window.insert_hitbox(minimap_bounds, false),
@@ -1536,7 +1536,7 @@ impl EditorElement {
         );
 
         editor_entity.update(cx, |editor, cx| {
-            editor.set_scroll_position(point(0., minimap_top_offset), window, cx)
+            editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
         });
 
         let mut minimap_elem = editor_entity.update(cx, |editor, cx| {
@@ -1552,7 +1552,7 @@ impl EditorElement {
             thumb_layout: layout,
             show_thumb,
             minimap_line_height,
-            minimap_scroll_top: minimap_top_offset,
+            minimap_scroll_top,
             max_scroll_top: total_editor_lines,
         })
     }
