@@ -1272,7 +1272,6 @@ impl GitStore {
                     )
                 }));
 
-                // Push futures for reparsing conflict markers
                 futures.push(diff_state.update(cx, |diff_state, cx| {
                     diff_state.reparse_conflict_markers(buffer, cx)
                 }));

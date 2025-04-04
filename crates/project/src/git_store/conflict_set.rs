@@ -1,12 +1,13 @@
-use gpui::{Context, EventEmitter};
+use gpui::{App, Context, Entity, EventEmitter};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
-use text::{Anchor, BufferId};
+use text::{Anchor, BufferId, OffsetRangeExt as _};
 
 pub struct ConflictSet {
     pub has_conflict: bool,
     pub snapshot: ConflictSetSnapshot,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConflictSetUpdate {
     pub buffer_range: Option<Range<Anchor>>,
     pub old_range: Range<usize>,
@@ -93,6 +94,35 @@ pub struct ConflictRegion {
     pub ours: Range<Anchor>,
     pub theirs: Range<Anchor>,
     pub base: Option<Range<Anchor>>,
+}
+
+impl ConflictRegion {
+    pub fn resolve(
+        &self,
+        buffer: Entity<language::Buffer>,
+        ranges: &[Range<Anchor>],
+        cx: &mut App,
+    ) {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let mut deletions = Vec::new();
+        let empty = "";
+        let outer_range = self.range.to_offset(&buffer_snapshot);
+        let mut offset = outer_range.start;
+        for kept_range in ranges {
+            let kept_range = kept_range.to_offset(&buffer_snapshot);
+            if kept_range.start > offset {
+                deletions.push((offset..kept_range.start, empty));
+            }
+            offset = kept_range.end;
+        }
+        if outer_range.end > offset {
+            deletions.push((offset..outer_range.end, empty));
+        }
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(deletions, None, cx);
+        });
+    }
 }
 
 impl ConflictSet {
@@ -212,9 +242,21 @@ impl EventEmitter<ConflictSetUpdate> for ConflictSet {}
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+
+    use crate::{Project, project_settings::ProjectSettings};
+
     use super::*;
+    use fs::FakeFs;
+    use git::status::{UnmergedStatus, UnmergedStatusCode};
+    use gpui::{BackgroundExecutor, TestAppContext};
+    use language::language_settings::AllLanguageSettings;
+    use serde_json::json;
+    use settings::Settings as _;
     use text::{Buffer, BufferId, ToOffset as _};
     use unindent::Unindent as _;
+    use util::path;
+    use worktree::WorktreeSettings;
 
     #[test]
     fn test_parse_conflicts_in_buffer() {
@@ -405,5 +447,102 @@ mod tests {
             conflict_snapshot.conflicts_in_range(range, &snapshot),
             &conflict_snapshot.conflicts[3..=3]
         );
+    }
+
+    #[gpui::test]
+    async fn test_conflict_updates(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+        env_logger::try_init().ok();
+        cx.update(|cx| {
+            settings::init(cx);
+            WorktreeSettings::register(cx);
+            ProjectSettings::register(cx);
+            AllLanguageSettings::register(cx);
+        });
+        let initial_text = "
+            one
+            two
+            three
+            four
+            five
+        "
+        .unindent();
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": initial_text,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (git_store, buffer) = project.update(cx, |project, cx| {
+            (
+                project.git_store().clone(),
+                project.open_local_buffer(path!("/project/a.txt"), cx),
+            )
+        });
+        let buffer = buffer.await.unwrap();
+        let conflict_set = git_store.update(cx, |git_store, cx| {
+            git_store.open_conflict_set(buffer.clone(), cx)
+        });
+        let (events_tx, events_rx) = mpsc::channel::<ConflictSetUpdate>();
+        let _conflict_set_subscription = cx.update(|cx| {
+            cx.subscribe(&conflict_set, move |_, event, _| {
+                events_tx.send(event.clone()).ok();
+            })
+        });
+        let conflicts_snapshot = conflict_set.update(cx, |conflict_set, _| conflict_set.snapshot());
+        assert!(conflicts_snapshot.conflicts.is_empty());
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    (4..4, "<<<<<<< HEAD\n"),
+                    (14..14, "=======\nTWO\n>>>>>>> branch\n"),
+                ],
+                None,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+        events_rx.try_recv().expect_err(
+            "no conflicts should be registered as long as the file's status is unchanged",
+        );
+
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.unmerged_paths.insert(
+                "a.txt".into(),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                },
+            );
+            // Cause the repository to emit MergeHeadsChanged.
+            state.merge_head_shas = vec!["abc".into(), "def".into()]
+        })
+        .unwrap();
+
+        cx.run_until_parked();
+        let update = events_rx
+            .try_recv()
+            .expect("status change should trigger conflict parsing");
+        assert_eq!(update.old_range, 0..0);
+        assert_eq!(update.new_range, 0..1);
+
+        let conflict = conflict_set.update(cx, |conflict_set, _| {
+            conflict_set.snapshot().conflicts[0].clone()
+        });
+        cx.update(|cx| {
+            conflict.resolve(buffer.clone(), &[conflict.theirs.clone()], cx);
+        });
+
+        cx.run_until_parked();
+        let update = events_rx
+            .try_recv()
+            .expect("conflicts should be removed after resolution");
+        assert_eq!(update.old_range, 0..1);
+        assert_eq!(update.new_range, 0..0);
     }
 }

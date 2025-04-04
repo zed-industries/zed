@@ -7,7 +7,7 @@ use gpui::{
     App, Context, Entity, Hsla, InteractiveElement as _, ParentElement as _, Subscription,
     WeakEntity,
 };
-use language::{Anchor, Buffer, BufferId, OffsetRangeExt as _};
+use language::{Anchor, Buffer, BufferId};
 use project::{ConflictRegion, ConflictSet, ConflictSetUpdate};
 use std::{collections::hash_map, ops::Range, sync::Arc};
 use ui::{
@@ -387,24 +387,7 @@ fn resolve_conflict(
     };
     let buffer_snapshot = buffer.read(cx).snapshot();
 
-    let mut deletions = Vec::new();
-    let empty = "";
-    let outer_range = resolved_conflict.range.to_offset(&buffer_snapshot);
-    let mut offset = outer_range.start;
-    for kept_range in ranges {
-        let kept_range = kept_range.to_offset(&buffer_snapshot);
-        if kept_range.start > offset {
-            deletions.push((offset..kept_range.start, empty));
-        }
-        offset = kept_range.end;
-    }
-    if outer_range.end > offset {
-        deletions.push((offset..outer_range.end, empty));
-    }
-
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit(deletions, None, cx);
-    });
+    resolved_conflict.resolve(buffer, ranges, cx);
 
     editor.update(cx, |editor, cx| {
         let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
