@@ -825,6 +825,7 @@ impl Motion {
         goal: SelectionGoal,
         maybe_times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
+        inclusive_override: bool,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
         let times = maybe_times.unwrap_or(1);
         use Motion::*;
@@ -1184,7 +1185,7 @@ impl Motion {
             ),
         };
 
-        (new_point != point || infallible).then_some((new_point, goal))
+        (new_point != point || infallible || inclusive_override).then_some((new_point, goal))
     }
 
     // Get the range value after self is applied to the specified selection.
@@ -1194,7 +1195,13 @@ impl Motion {
         selection: Selection<DisplayPoint>,
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
+        inclusive_motion_overide: bool,
     ) -> Option<(Range<DisplayPoint>, MotionKind)> {
+        let m = if inclusive_motion_overide {
+            MotionKind::Inclusive
+        } else {
+            self.default_kind()
+        };
         if let Motion::ZedSearchResult {
             prior_selections,
             new_selections,
@@ -1228,11 +1235,12 @@ impl Motion {
             selection.goal,
             times,
             text_layout_details,
+            inclusive_motion_overide,
         )?;
         let mut selection = selection.clone();
         selection.set_head(new_head, goal);
 
-        let mut kind = self.default_kind();
+        let mut kind = m;
 
         if let Motion::NextWordStart {
             ignore_punctuation: _,
@@ -1304,8 +1312,15 @@ impl Motion {
         selection: &mut Selection<DisplayPoint>,
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
+        inclusive_override: bool,
     ) -> Option<MotionKind> {
-        let (range, kind) = self.range(map, selection.clone(), times, text_layout_details)?;
+        let (range, kind) = self.range(
+            map,
+            selection.clone(),
+            times,
+            text_layout_details,
+            inclusive_override,
+        )?;
         selection.start = range.start;
         selection.end = range.end;
         Some(kind)
@@ -3830,13 +3845,13 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
-            ˇthe quick brown fox
-            jumped over the lazy dog"})
+             ˇthe quick brown fox
+             jumped over the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("d v 0").await;
         cx.shared_state().await.assert_eq(indoc! {"
-            ˇhe quick brown fox
-            jumped over the lazy dog"});
+             ˇhe quick brown fox
+             jumped over the lazy dog"});
         cx.set_shared_state(indoc! {"
             the quick bˇrown fox
             jumped over the lazy dog"})

@@ -28,6 +28,7 @@ impl Vim {
         self.stop_recording(cx);
         let count = Vim::take_count(cx);
         let mode = self.mode;
+        let inclusive_override = self.inclusive_mode_override;
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
@@ -55,7 +56,13 @@ impl Vim {
                         }
                         SurroundsType::Motion(motion) => {
                             motion
-                                .range(&display_map, selection.clone(), count, &text_layout_details)
+                                .range(
+                                    &display_map,
+                                    selection.clone(),
+                                    count,
+                                    &text_layout_details,
+                                    inclusive_override,
+                                )
                                 .map(|(mut range, _)| {
                                     // The Motion::CurrentLine operation will contain the newline of the current line and leading/trailing whitespace
                                     if let Motion::CurrentLine = motion {

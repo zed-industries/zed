@@ -139,13 +139,13 @@ actions!(
         ResizePaneDown,
         PushChange,
         PushDelete,
-        PushDeleteInclusive,
         Exchange,
         PushYank,
         PushReplace,
         PushDeleteSurrounds,
         PushMark,
         ToggleMarksView,
+        PushInclusive,
         PushIndent,
         PushOutdent,
         PushAutoIndent,
@@ -312,6 +312,7 @@ pub(crate) struct Vim {
     pub(crate) mode: Mode,
     pub last_mode: Mode,
     pub temp_mode: bool,
+    pub(crate) inclusive_mode_override: bool,
     pub status_label: Option<SharedString>,
     pub exit_temporary_mode: bool,
 
@@ -362,6 +363,7 @@ impl Vim {
             last_mode: Mode::Normal,
             temp_mode: false,
             exit_temporary_mode: false,
+            inclusive_mode_override: false,
             operator_stack: Vec::new(),
             replacements: Vec::new(),
 
@@ -473,7 +475,9 @@ impl Vim {
                     vim.switch_mode(Mode::HelixNormal, false, window, cx)
                 },
             );
-
+            Vim::action(editor, cx, |vim, _: &PushInclusive, _, _| {
+                vim.inclusive_mode_override = true;
+            });
             Vim::action(editor, cx, |vim, action: &PushObject, window, cx| {
                 vim.push_operator(
                     Operator::Object {
@@ -542,10 +546,6 @@ impl Vim {
                 },
             );
 
-            Vim::action(editor, cx, |vim, _: &PushDeleteInclusive, window, cx| {
-                vim.push_operator(Operator::Delete { inclusive: true }, window, cx);
-            });
-
             Vim::action(editor, cx, |vim, action: &PushJump, window, cx| {
                 vim.push_operator(Operator::Jump { line: action.line }, window, cx)
             });
@@ -575,7 +575,7 @@ impl Vim {
             });
 
             Vim::action(editor, cx, |vim, _: &PushDelete, window, cx| {
-                vim.push_operator(Operator::Delete { inclusive: false }, window, cx)
+                vim.push_operator(Operator::Delete, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &PushYank, window, cx| {

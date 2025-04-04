@@ -182,13 +182,20 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let inclusive_override = self.inclusive_mode_override;
         self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let text_layout_details = editor.text_layout_details(window);
             let mut selection = editor.selections.newest_display(cx);
             let snapshot = editor.snapshot(window, cx);
-            motion.expand_selection(&snapshot, &mut selection, times, &text_layout_details);
+            motion.expand_selection(
+                &snapshot,
+                &mut selection,
+                times,
+                &text_layout_details,
+                inclusive_override,
+            );
             let start = snapshot
                 .buffer_snapshot
                 .anchor_before(selection.start.to_point(&snapshot));

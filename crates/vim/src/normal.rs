@@ -86,12 +86,12 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &DeleteLeft, window, cx| {
         vim.record_current_action(cx);
         let times = Vim::take_count(cx);
-        vim.delete_motion(Motion::Left, times, false, window, cx);
+        vim.delete_motion(Motion::Left, times, window, cx);
     });
     Vim::action(editor, cx, |vim, _: &DeleteRight, window, cx| {
         vim.record_current_action(cx);
         let times = Vim::take_count(cx);
-        vim.delete_motion(Motion::Right, times, false, window, cx);
+        vim.delete_motion(Motion::Right, times, window, cx);
     });
 
     Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
@@ -128,7 +128,6 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 display_lines: false,
             },
             times,
-            false,
             window,
             cx,
         );
@@ -177,9 +176,7 @@ impl Vim {
         match operator {
             None => self.move_cursor(motion, times, window, cx),
             Some(Operator::Change) => self.change_motion(motion, times, window, cx),
-            Some(Operator::Delete { inclusive: i }) => {
-                self.delete_motion(motion, times, i, window, cx)
-            }
+            Some(Operator::Delete) => self.delete_motion(motion, times, window, cx),
             Some(Operator::Yank) => self.yank_motion(motion, times, window, cx),
             Some(Operator::AddSurrounds { target: None }) => {}
             Some(Operator::Indent) => {
@@ -229,9 +226,7 @@ impl Vim {
         match self.maybe_pop_operator() {
             Some(Operator::Object { around }) => match self.maybe_pop_operator() {
                 Some(Operator::Change) => self.change_object(object, around, window, cx),
-                Some(Operator::Delete { inclusive: _ }) => {
-                    self.delete_object(object, around, window, cx)
-                }
+                Some(Operator::Delete) => self.delete_object(object, around, window, cx),
                 Some(Operator::Yank) => self.yank_object(object, around, window, cx),
                 Some(Operator::Indent) => {
                     self.indent_object(object, around, IndentDirection::In, window, cx)
@@ -304,12 +299,20 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let inclusive_override = self.inclusive_mode_override;
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
                     motion
-                        .move_point(map, cursor, goal, times, &text_layout_details)
+                        .move_point(
+                            map,
+                            cursor,
+                            goal,
+                            times,
+                            &text_layout_details,
+                            inclusive_override,
+                        )
                         .unwrap_or((cursor, goal))
                 })
             })
@@ -451,6 +454,7 @@ impl Vim {
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
+        let inclusive_override = self.inclusive_mode_override;
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
@@ -481,6 +485,7 @@ impl Vim {
                             goal,
                             None,
                             &text_layout_details,
+                            inclusive_override,
                         )
                     });
                 });

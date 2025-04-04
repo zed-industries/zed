@@ -34,6 +34,7 @@ impl Vim {
         } else {
             None
         };
+        let inclusive_override = self.inclusive_mode_override;
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
@@ -59,6 +60,7 @@ impl Vim {
                                     selection,
                                     times,
                                     &text_layout_details,
+                                    inclusive_override,
                                 );
                                 if let Motion::CurrentLine = motion {
                                     let mut start_offset =
@@ -181,7 +183,7 @@ fn expand_changed_word_selection(
         } else {
             Motion::NextWordStart { ignore_punctuation }
         };
-        motion.expand_selection(map, selection, times, text_layout_details)
+        motion.expand_selection(map, selection, times, text_layout_details, false)
     }
 }
 

@@ -251,6 +251,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
+        let inclusive_override = self.inclusive_mode_override;
         let selected_register = self.selected_register.take();
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -258,7 +259,13 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
-                        motion.expand_selection(map, selection, times, &text_layout_details);
+                        motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                            inclusive_override,
+                        );
                     });
                 });
 
