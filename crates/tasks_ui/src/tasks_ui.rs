@@ -294,9 +294,12 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
 
-    // TODO kb populate task contexts with some data like `lsp_store`?
-    let editor_context_task = active_editor.as_ref().map(|active_editor| {
-        active_editor.update(cx, |editor, cx| editor.task_context(window, cx))
+    let editor_contexts = active_editor.as_ref().map(|active_editor| {
+        active_editor.update(cx, |editor, cx| {
+            let task_context = editor.task_context(window, cx);
+            let lsp_task_context = editor.lsp_task_context();
+            (task_context, lsp_task_context)
+        })
     });
 
     let location = active_editor.as_ref().and_then(|editor| {
@@ -327,11 +330,12 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
     cx.background_spawn(async move {
         let mut task_contexts = TaskContexts::default();
 
-        if let Some(editor_context_task) = editor_context_task {
+        if let Some((editor_context_task, editor_lsp_context)) = editor_contexts {
             if let Some(editor_context) = editor_context_task.await {
                 task_contexts.active_item_context =
                     Some((active_worktree, location, editor_context));
             }
+            task_contexts.lsp_context = editor_lsp_context;
         }
 
         if let Some(active_worktree) = active_worktree {

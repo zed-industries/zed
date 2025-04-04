@@ -463,6 +463,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
                     active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
                     active_worktree_context: None,
                     other_worktree_contexts: Vec::new(),
+                    lsp_context: None,
                 },
                 cx,
             )
@@ -487,6 +488,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
                         worktree_context
                     })),
                     other_worktree_contexts: Vec::new(),
+                    lsp_context: None,
                 },
                 cx,
             )

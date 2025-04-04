@@ -8,6 +8,7 @@ use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServer, LanguageServerBinary};
+use project::lsp_store::lsp_ext_command::LspRunnables;
 use regex::Regex;
 use serde_json::json;
 use smol::fs::{self};
@@ -798,15 +799,16 @@ impl ContextProvider for RustContextProvider {
         Some(TaskTemplates(task_templates))
     }
 
-    fn lsp_tasks(
-        &self,
-        file: &dyn crate::File,
-        // TODO kb
-        // lsp_store: &LspStore,
-        // buffer_store: &BufferStore,
-        server: &LanguageServer,
-        cx: &App,
-    ) -> Task<Result<Vec<()>>> {
+    fn lsp_context(&self) -> Option<LspContext> {
+        let lsp_context = LspContext {
+            server_name: SERVER_NAME,
+            lsp_task_provider: Box::new(|server, buffer| {
+                Box::new(async move {
+                    todo!("TODO kb");
+                })
+            }),
+        };
+
         // if server.name() != SERVER_NAME {
         //     return Task::ready(Ok(Vec::new()));
         // }

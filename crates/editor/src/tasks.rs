@@ -1,6 +1,7 @@
 use crate::Editor;
 
 use gpui::{App, Task, Window};
+use language::LspContext;
 use project::Location;
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{ToOffset, ToPoint};
@@ -69,5 +70,9 @@ impl Editor {
                 task_store.task_context_for_location(captured_variables, location, cx)
             })
         })
+    }
+
+    pub fn lsp_task_context(&self) -> Option<LspContext> {
+        todo!("TODO kb")
     }
 }

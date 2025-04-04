@@ -5,7 +5,7 @@ use crate::{LanguageToolchainStore, Location, Runnable};
 use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, Task};
-use lsp::LanguageServer;
+use lsp::{LanguageServer, LanguageServerName};
 use task::{TaskTemplates, TaskVariables};
 use text::BufferId;
 
@@ -16,6 +16,26 @@ pub struct RunnableRange {
     pub runnable: Runnable,
     pub extra_captures: HashMap<String, String>,
 }
+
+/// TODO kb docs
+pub struct LspContext {
+    pub server_name: LanguageServerName,
+    pub lsp_task_provider: Box<
+        dyn FnOnce(&LanguageServer, BufferId) -> Box<dyn Future<Output = TaskTemplates>>
+            + Send
+            + Sync
+            + 'static,
+    >,
+}
+
+impl std::fmt::Debug for LspContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LspContext")
+            .field("server_name", &self.server_name)
+            .finish()
+    }
+}
+
 /// Language Contexts are used by Zed tasks to extract information about the source file where the tasks are supposed to be scheduled from.
 /// Multiple context providers may be used together: by default, Zed provides a base [`BasicContextProvider`] context that fills all non-custom [`VariableName`] variants.
 ///
@@ -43,12 +63,7 @@ pub trait ContextProvider: Send + Sync {
     }
 
     /// TODO kb docs
-    fn lsp_tasks(
-        &self,
-        _file: &dyn crate::File,
-        _server: &LanguageServer,
-        _cx: &App,
-    ) -> Task<Result<Vec<()>>> {
-        Task::ready(Ok(Vec::new()))
+    fn lsp_context(&self) -> Option<LspContext> {
+        None
     }
 }

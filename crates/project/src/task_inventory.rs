@@ -12,7 +12,7 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
-use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
+use language::{ContextProvider, File, Language, LanguageToolchainStore, Location, LspContext};
 use settings::{InvalidSettingsError, TaskKind, parse_json_with_comments};
 use task::{
     DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
@@ -68,6 +68,8 @@ pub struct TaskContexts {
     pub active_worktree_context: Option<(WorktreeId, TaskContext)>,
     /// If there are multiple worktrees in the workspace, all non-active ones are included here.
     pub other_worktree_contexts: Vec<(WorktreeId, TaskContext)>,
+    /// TODO kb docs
+    pub lsp_context: Option<LspContext>,
 }
 
 impl TaskContexts {
@@ -173,7 +175,7 @@ impl Inventory {
     /// Deduplicates the tasks by their labels and context and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
     pub fn used_and_current_resolved_tasks<'a>(
         &'a self,
-        task_contexts: &'a TaskContexts, // <-- can have editor.foo props inside
+        task_contexts: &'a TaskContexts,
         cx: &'a App,
     ) -> Task<(
         Vec<(TaskSourceKind, ResolvedTask)>,

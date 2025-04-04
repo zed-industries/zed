@@ -64,7 +64,7 @@ use std::{
 use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{ContextProvider, RunnableRange};
+pub use task_context::{ContextProvider, LspContext, RunnableRange};
 pub use text_diff::{DiffOptions, line_diff, text_diff, text_diff_with_options, unified_diff};
 use theme::SyntaxTheme;
 pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
