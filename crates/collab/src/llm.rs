@@ -529,6 +529,8 @@ async fn check_usage_limit(
             let resource = match usage_measure {
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",
                 UsageMeasure::TokensPerMinute => "tokens_per_minute",
+                UsageMeasure::InputTokensPerMinute => "input_tokens_per_minute",
+                UsageMeasure::OutputTokensPerMinute => "output_tokens_per_minute",
                 UsageMeasure::TokensPerDay => "tokens_per_day",
             };
 

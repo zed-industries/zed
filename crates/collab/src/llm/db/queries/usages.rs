@@ -27,6 +27,8 @@ impl TokenUsage {
 pub struct Usage {
     pub requests_this_minute: usize,
     pub tokens_this_minute: usize,
+    pub input_tokens_this_minute: usize,
+    pub output_tokens_this_minute: usize,
     pub tokens_this_day: usize,
     pub tokens_this_month: TokenUsage,
     pub spending_this_month: Cents,
@@ -239,6 +241,10 @@ impl LlmDatabase {
                 self.get_usage_for_measure(&usages, now, UsageMeasure::RequestsPerMinute)?;
             let tokens_this_minute =
                 self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerMinute)?;
+            let input_tokens_this_minute =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::InputTokensPerMinute)?;
+            let output_tokens_this_minute =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::OutputTokensPerMinute)?;
             let tokens_this_day =
                 self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerDay)?;
             let spending_this_month = if let Some(monthly_usage) = &monthly_usage {
@@ -267,6 +273,8 @@ impl LlmDatabase {
             Ok(Usage {
                 requests_this_minute,
                 tokens_this_minute,
+                input_tokens_this_minute,
+                output_tokens_this_minute,
                 tokens_this_day,
                 tokens_this_month: TokenUsage {
                     input: monthly_usage
@@ -334,6 +342,31 @@ impl LlmDatabase {
                     UsageMeasure::TokensPerMinute,
                     now,
                     tokens.total(),
+                    &tx,
+                )
+                .await?;
+            let input_tokens_this_minute = self
+                .update_usage_for_measure(
+                    user_id,
+                    is_staff,
+                    model.id,
+                    &usages,
+                    UsageMeasure::InputTokensPerMinute,
+                    now,
+                    // Cache read input tokens are not counted for the purposes of rate limits (but they are still billed).
+                    tokens.input + tokens.input_cache_creation,
+                    &tx,
+                )
+                .await?;
+            let output_tokens_this_minute = self
+                .update_usage_for_measure(
+                    user_id,
+                    is_staff,
+                    model.id,
+                    &usages,
+                    UsageMeasure::OutputTokensPerMinute,
+                    now,
+                    tokens.output,
                     &tx,
                 )
                 .await?;
@@ -485,6 +518,8 @@ impl LlmDatabase {
             Ok(Usage {
                 requests_this_minute,
                 tokens_this_minute,
+                input_tokens_this_minute,
+                output_tokens_this_minute,
                 tokens_this_day,
                 tokens_this_month: TokenUsage {
                     input: monthly_usage.input_tokens as usize,
@@ -684,7 +719,9 @@ impl UsageMeasure {
     fn bucket_count(&self) -> usize {
         match self {
             UsageMeasure::RequestsPerMinute => MINUTE_BUCKET_COUNT,
-            UsageMeasure::TokensPerMinute => MINUTE_BUCKET_COUNT,
+            UsageMeasure::TokensPerMinute
+            | UsageMeasure::InputTokensPerMinute
+            | UsageMeasure::OutputTokensPerMinute => MINUTE_BUCKET_COUNT,
             UsageMeasure::TokensPerDay => DAY_BUCKET_COUNT,
         }
     }
@@ -692,7 +729,9 @@ impl UsageMeasure {
     fn total_duration(&self) -> Duration {
         match self {
             UsageMeasure::RequestsPerMinute => Duration::minutes(1),
-            UsageMeasure::TokensPerMinute => Duration::minutes(1),
+            UsageMeasure::TokensPerMinute
+            | UsageMeasure::InputTokensPerMinute
+            | UsageMeasure::OutputTokensPerMinute => Duration::minutes(1),
             UsageMeasure::TokensPerDay => Duration::hours(24),
         }
     }
