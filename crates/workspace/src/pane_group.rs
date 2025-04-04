@@ -8,8 +8,8 @@ use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
-    Along, AnyView, AnyWeakView, Axis, Bounds, Context, Entity, Hsla, IntoElement, MouseButton,
-    Pixels, Point, StyleRefinement, WeakEntity, Window, point, size,
+    Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
+    Point, StyleRefinement, WeakEntity, Window, point, size,
 };
 use parking_lot::Mutex;
 use project::Project;

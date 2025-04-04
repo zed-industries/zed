@@ -4,13 +4,21 @@ mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
 
+use std::sync::Arc;
+
 use super::{DebugPanelItemEvent, ThreadItem};
 use console::Console;
 use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
-use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity};
+use gpui::{
+    Action as _, AppContext, Entity, EventEmitter, FocusHandle, Focusable, NoAction, Subscription,
+    WeakEntity,
+};
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
-use project::debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus};
+use project::{
+    Project,
+    debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
+};
 use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
@@ -21,7 +29,7 @@ use ui::{
 };
 use util::ResultExt;
 use variable_list::VariableList;
-use workspace::Workspace;
+use workspace::{ActivePaneDecorator, Pane, PaneGroup, Workspace};
 
 pub struct RunningState {
     session: Entity<Session>,
@@ -38,103 +46,126 @@ pub struct RunningState {
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<stack_frame_list::StackFrameList>,
     loaded_source_list: Entity<loaded_source_list::LoadedSourceList>,
+    panes: PaneGroup,
 }
 
 impl Render for RunningState {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let threads = self.session.update(cx, |this, cx| this.threads(cx));
-        self.select_current_thread(&threads, cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.panes.panes().into_iter().next();
+        let x = if let Some(active) = active {
+            self.panes
+                .render(
+                    None,
+                    &ActivePaneDecorator::new(active, &self.workspace),
+                    window,
+                    cx,
+                )
+                .into_any_element()
+        } else {
+            dbg!(":(");
+            div().into_any_element()
+        };
 
-        let thread_status = self
-            .thread_id
-            .map(|thread_id| self.session.read(cx).thread_status(thread_id))
-            .unwrap_or(ThreadStatus::Exited);
-
-        self.variable_list.update(cx, |this, cx| {
-            this.disabled(thread_status != ThreadStatus::Stopped, cx);
-        });
-
-        let active_thread_item = &self.active_thread_item;
-
-        let capabilities = self.capabilities(cx);
-        h_flex()
-            .key_context("DebugPanelItem")
-            .track_focus(&self.focus_handle(cx))
+        v_flex()
             .size_full()
-            .items_start()
-            .child(
-                v_flex().size_full().items_start().child(
-                    h_flex()
-                        .size_full()
-                        .items_start()
-                        .p_1()
-                        .gap_4()
-                        .child(self.stack_frame_list.clone()),
-                ),
-            )
-            .child(
-                v_flex()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .size_full()
-                    .items_start()
-                    .child(
-                        h_flex()
-                            .border_b_1()
-                            .w_full()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(self.render_entry_button(
-                                &SharedString::from("Variables"),
-                                ThreadItem::Variables,
-                                cx,
-                            ))
-                            .when(
-                                capabilities.supports_modules_request.unwrap_or_default(),
-                                |this| {
-                                    this.child(self.render_entry_button(
-                                        &SharedString::from("Modules"),
-                                        ThreadItem::Modules,
-                                        cx,
-                                    ))
-                                },
-                            )
-                            .when(
-                                capabilities
-                                    .supports_loaded_sources_request
-                                    .unwrap_or_default(),
-                                |this| {
-                                    this.child(self.render_entry_button(
-                                        &SharedString::from("Loaded Sources"),
-                                        ThreadItem::LoadedSource,
-                                        cx,
-                                    ))
-                                },
-                            )
-                            .child(self.render_entry_button(
-                                &SharedString::from("Console"),
-                                ThreadItem::Console,
-                                cx,
-                            )),
-                    )
-                    .when(*active_thread_item == ThreadItem::Variables, |this| {
-                        this.child(self.variable_list.clone())
-                    })
-                    .when(*active_thread_item == ThreadItem::Modules, |this| {
-                        this.size_full().child(self.module_list.clone())
-                    })
-                    .when(*active_thread_item == ThreadItem::LoadedSource, |this| {
-                        this.size_full().child(self.loaded_source_list.clone())
-                    })
-                    .when(*active_thread_item == ThreadItem::Console, |this| {
-                        this.child(self.console.clone())
-                    }),
-            )
+            .key_context("DebugSessionItem")
+            .track_focus(&self.focus_handle(cx))
+            .child(h_flex().flex_1().child(x))
+
+        // let threads = self.session.update(cx, |this, cx| this.threads(cx));
+        // self.select_current_thread(&threads, cx);
+
+        // let thread_status = self
+        //     .thread_id
+        //     .map(|thread_id| self.session.read(cx).thread_status(thread_id))
+        //     .unwrap_or(ThreadStatus::Exited);
+
+        // self.variable_list.update(cx, |this, cx| {
+        //     this.disabled(thread_status != ThreadStatus::Stopped, cx);
+        // });
+
+        // let active_thread_item = &self.active_thread_item;
+
+        // let capabilities = self.capabilities(cx);
+        // h_flex()
+        //     .key_context("DebugPanelItem")
+        //     .track_focus(&self.focus_handle(cx))
+        //     .size_full()
+        //     .items_start()
+        //     .child(
+        //         v_flex().size_full().items_start().child(
+        //             h_flex()
+        //                 .size_full()
+        //                 .items_start()
+        //                 .p_1()
+        //                 .gap_4()
+        //                 .child(self.stack_frame_list.clone()),
+        //         ),
+        //     )
+        //     .child(
+        //         v_flex()
+        //             .border_l_1()
+        //             .border_color(cx.theme().colors().border_variant)
+        //             .size_full()
+        //             .items_start()
+        //             .child(
+        //                 h_flex()
+        //                     .border_b_1()
+        //                     .w_full()
+        //                     .border_color(cx.theme().colors().border_variant)
+        //                     .child(self.render_entry_button(
+        //                         &SharedString::from("Variables"),
+        //                         ThreadItem::Variables,
+        //                         cx,
+        //                     ))
+        //                     .when(
+        //                         capabilities.supports_modules_request.unwrap_or_default(),
+        //                         |this| {
+        //                             this.child(self.render_entry_button(
+        //                                 &SharedString::from("Modules"),
+        //                                 ThreadItem::Modules,
+        //                                 cx,
+        //                             ))
+        //                         },
+        //                     )
+        //                     .when(
+        //                         capabilities
+        //                             .supports_loaded_sources_request
+        //                             .unwrap_or_default(),
+        //                         |this| {
+        //                             this.child(self.render_entry_button(
+        //                                 &SharedString::from("Loaded Sources"),
+        //                                 ThreadItem::LoadedSource,
+        //                                 cx,
+        //                             ))
+        //                         },
+        //                     )
+        //                     .child(self.render_entry_button(
+        //                         &SharedString::from("Console"),
+        //                         ThreadItem::Console,
+        //                         cx,
+        //                     )),
+        //             )
+        //             .when(*active_thread_item == ThreadItem::Variables, |this| {
+        //                 this.child(self.variable_list.clone())
+        //             })
+        //             .when(*active_thread_item == ThreadItem::Modules, |this| {
+        //                 this.size_full().child(self.module_list.clone())
+        //             })
+        //             .when(*active_thread_item == ThreadItem::LoadedSource, |this| {
+        //                 this.size_full().child(self.loaded_source_list.clone())
+        //             })
+        //             .when(*active_thread_item == ThreadItem::Console, |this| {
+        //                 this.child(self.console.clone())
+        //             }),
+        //     )
     }
 }
 
 impl RunningState {
     pub fn new(
         session: Entity<Session>,
+        project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -188,6 +219,39 @@ impl RunningState {
             }),
         ];
 
+        let root = cx.new(|cx| {
+            let mut r = Pane::new(
+                workspace.clone(),
+                project.clone(),
+                Default::default(),
+                None,
+                NoAction.boxed_clone(),
+                window,
+                cx,
+            );
+            r.set_can_split(Some(Arc::new(|_, _, _, _| true)));
+            r
+        });
+
+        let mut panes = PaneGroup::new(root.clone());
+        root.update(cx, |root, cx| {
+            root.add_item(
+                Box::new(cx.new(|cx| It {
+                    focus: cx.focus_handle(),
+                })),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+            root.set_custom_drop_handle(cx, |pane, _, _, _| {
+                dbg!(pane.drag_split_direction());
+                std::ops::ControlFlow::Break(())
+            });
+        });
+        panes.split(&root, &root.clone(), workspace::SplitDirection::Right);
+
         Self {
             session,
             console,
@@ -203,6 +267,7 @@ impl RunningState {
             session_id,
             show_console_indicator: false,
             active_thread_item: ThreadItem::Variables,
+            panes,
         }
     }
 
@@ -494,4 +559,23 @@ impl Focusable for RunningState {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
+}
+
+struct It {
+    focus: FocusHandle,
+}
+
+impl Focusable for It {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+impl Render for It {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child("Lmao")
+    }
+}
+impl EventEmitter<()> for It {}
+impl workspace::Item for It {
+    type Event = ();
 }

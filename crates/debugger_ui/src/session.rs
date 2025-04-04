@@ -60,7 +60,15 @@ impl DebugSession {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let mode = cx.new(|cx| RunningState::new(session.clone(), workspace.clone(), window, cx));
+        let mode = cx.new(|cx| {
+            RunningState::new(
+                session.clone(),
+                project.clone(),
+                workspace.clone(),
+                window,
+                cx,
+            )
+        });
 
         cx.new(|cx| Self {
             _subscriptions: [cx.subscribe(&mode, |_, _, _, cx| {

@@ -13,7 +13,7 @@ use dap::{
 use futures::{SinkExt as _, channel::mpsc};
 use gpui::{
     Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    NoAction, Subscription, Task, WeakEntity, actions,
+    Subscription, Task, WeakEntity, actions,
 };
 use project::{
     Project,
@@ -25,12 +25,10 @@ use project::{
 };
 use rpc::proto::{self};
 use settings::Settings;
-use std::sync::Arc;
 use std::{any::TypeId, path::PathBuf};
 use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
-use workspace::{ActivePaneDecorator, Pane, PaneGroup};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -64,27 +62,8 @@ pub struct DebugPanel {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
-    panes: PaneGroup,
 }
 
-struct It {
-    focus: FocusHandle,
-}
-
-impl Focusable for It {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl Render for It {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child("Lmao")
-    }
-}
-impl EventEmitter<()> for It {}
-impl workspace::Item for It {
-    type Event = ();
-}
 impl DebugPanel {
     pub fn new(
         workspace: &Workspace,
@@ -97,38 +76,6 @@ impl DebugPanel {
 
             let _subscriptions =
                 vec![cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event)];
-            let root = cx.new(|cx| {
-                let mut r = Pane::new(
-                    workspace.weak_handle(),
-                    project.clone(),
-                    Default::default(),
-                    None,
-                    NoAction.boxed_clone(),
-                    window,
-                    cx,
-                );
-                r.set_can_split(Some(Arc::new(|_, _, _, _| true)));
-                r
-            });
-
-            let mut panes = PaneGroup::new(root.clone());
-            root.update(cx, |root, cx| {
-                root.add_item(
-                    Box::new(cx.new(|cx| It {
-                        focus: cx.focus_handle(),
-                    })),
-                    true,
-                    false,
-                    None,
-                    window,
-                    cx,
-                );
-                root.set_custom_drop_handle(cx, |pane, _, _, _| {
-                    dbg!(pane.drag_split_direction());
-                    std::ops::ControlFlow::Break(())
-                });
-            });
-            panes.split(&root, &root.clone(), workspace::SplitDirection::Right);
 
             let debug_panel = Self {
                 size: px(300.),
@@ -139,7 +86,6 @@ impl DebugPanel {
                 focus_handle: cx.focus_handle(),
                 project: project.downgrade(),
                 workspace: workspace.weak_handle(),
-                panes,
             };
 
             debug_panel
@@ -739,59 +685,44 @@ impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_sessions = self.sessions.len() > 0;
         debug_assert_eq!(has_sessions, self.active_session.is_some());
-        let active = self.panes.panes().into_iter().next();
-        let x = if let Some(active) = active {
-            self.panes
-                .render(
-                    None,
-                    &ActivePaneDecorator::new(active, &self.workspace),
-                    window,
-                    cx,
-                )
-                .into_any_element()
-        } else {
-            dbg!(":(");
-            div().into_any_element()
-        };
 
         v_flex()
             .size_full()
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))
             .track_focus(&self.focus_handle(cx))
-            .child(h_flex().flex_1().child(x))
-        //     .map(|this| {
-        //         if has_sessions {
-        //             this.children(self.active_session.clone())
-        //         } else {
-        //             this.child(
-        //                 v_flex()
-        //                     .h_full()
-        //                     .gap_1()
-        //                     .items_center()
-        //                     .justify_center()
-        //                     .child(
-        //                         h_flex().child(
-        //                             Label::new("No Debugging Sessions")
-        //                                 .size(LabelSize::Small)
-        //                                 .color(Color::Muted),
-        //                         ),
-        //                     )
-        //                     .child(
-        //                         h_flex().flex_shrink().child(
-        //                             Button::new("spawn-new-session-empty-state", "New Session")
-        //                                 .size(ButtonSize::Large)
-        //                                 .on_click(|_, window, cx| {
-        //                                     window.dispatch_action(
-        //                                         CreateDebuggingSession.boxed_clone(),
-        //                                         cx,
-        //                                     );
-        //                                 }),
-        //                         ),
-        //                     ),
-        //             )
-        //         }
-        //     })
-        //     .into_any()
+            .map(|this| {
+                if has_sessions {
+                    this.children(self.active_session.clone())
+                } else {
+                    this.child(
+                        v_flex()
+                            .h_full()
+                            .gap_1()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                h_flex().child(
+                                    Label::new("No Debugging Sessions")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                            )
+                            .child(
+                                h_flex().flex_shrink().child(
+                                    Button::new("spawn-new-session-empty-state", "New Session")
+                                        .size(ButtonSize::Large)
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                CreateDebuggingSession.boxed_clone(),
+                                                cx,
+                                            );
+                                        }),
+                                ),
+                            ),
+                    )
+                }
+            })
+            .into_any()
     }
 }
