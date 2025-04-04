@@ -377,10 +377,12 @@ impl Project {
             cx.on_keyboard_layout_change({
                 let terminal_handle = terminal_handle.clone();
                 move |cx| {
-                terminal_handle.update(cx, |terminal, _| {
-                    // terminal.set_keyboard_layout(cx.keyboard_layout());
-                });
-            }})
+                    terminal_handle.update(cx, |terminal, cx| {
+                        // terminal.set_keyboard_layout(cx.keyboard_layout());
+                        terminal.update_esc_str_mapper(cx.get_mapper());
+                    });
+                }
+            })
             .detach();
 
             this.terminals
