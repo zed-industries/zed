@@ -56,19 +56,34 @@ impl DiagnosticRenderer {
 
         let mut markdown =
             Markdown::escape(&if let Some(source) = primary.diagnostic.source.as_ref() {
-                format!("{}: {}", source, primary.diagnostic.message)
+                let code_str = if let Some(code) = &primary.diagnostic.code {
+                    format!(" ({})", code)
+                } else {
+                    String::new()
+                };
+                format!("{}: {}{}", source, primary.diagnostic.message, code_str)
             } else {
                 primary.diagnostic.message
             })
             .to_string();
         for entry in same_row {
             markdown.push_str("\n- hint: ");
-            markdown.push_str(&Markdown::escape(&entry.diagnostic.message))
+            let message = if let Some(code) = &entry.diagnostic.code {
+                format!("{} ({})", entry.diagnostic.message, code)
+            } else {
+                entry.diagnostic.message.clone()
+            };
+            markdown.push_str(&Markdown::escape(&message))
         }
 
         for (ix, entry) in &distant {
             markdown.push_str("\n- hint: [");
-            markdown.push_str(&Markdown::escape(&entry.diagnostic.message));
+            let message = if let Some(code) = &entry.diagnostic.code {
+                format!("{} ({})", entry.diagnostic.message, code)
+            } else {
+                entry.diagnostic.message.clone()
+            };
+            markdown.push_str(&Markdown::escape(&message));
             markdown.push_str(&format!("](file://#diagnostic-{group_id}-{ix})\n",))
         }
 
@@ -82,7 +97,12 @@ impl DiagnosticRenderer {
 
         for entry in close {
             let markdown = if let Some(source) = entry.diagnostic.source.as_ref() {
-                format!("{}: {}", source, entry.diagnostic.message)
+                let code_str = if let Some(code) = &entry.diagnostic.code {
+                    format!(" ({})", code)
+                } else {
+                    String::new()
+                };
+                format!("{}: {}{}", source, entry.diagnostic.message, code_str)
             } else {
                 entry.diagnostic.message
             };
@@ -99,7 +119,12 @@ impl DiagnosticRenderer {
 
         for (_, entry) in distant {
             let markdown = if let Some(source) = entry.diagnostic.source.as_ref() {
-                format!("{}: {}", source, entry.diagnostic.message)
+                let code_str = if let Some(code) = &entry.diagnostic.code {
+                    format!(" ({})", code)
+                } else {
+                    String::new()
+                };
+                format!("{}: {}{}", source, entry.diagnostic.message, code_str)
             } else {
                 entry.diagnostic.message
             };
