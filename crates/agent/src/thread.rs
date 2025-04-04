@@ -14,10 +14,10 @@ use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason, TokenUsage,
+    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolResult,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    PaymentRequiredError, Role, StopReason, TokenUsage,
 };
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use project::{Project, Worktree};
@@ -290,7 +290,7 @@ impl Thread {
             last_restore_checkpoint: None,
             pending_checkpoint: None,
             tool_use: ToolUseState::new(tools.clone()),
-            action_log: cx.new(|_| ActionLog::new()),
+            action_log: cx.new(|_| ActionLog::new(project.clone())),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project, cx);
                 cx.foreground_executor()
@@ -354,11 +354,11 @@ impl Thread {
             pending_completions: Vec::new(),
             last_restore_checkpoint: None,
             pending_checkpoint: None,
-            project,
+            project: project.clone(),
             prompt_builder,
             tools,
             tool_use,
-            action_log: cx.new(|_| ActionLog::new()),
+            action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
@@ -909,21 +909,8 @@ impl Thread {
         request_kind: RequestKind,
         cx: &mut Context<Self>,
     ) {
-        let mut request = self.to_completion_request(request_kind, cx);
-        if model.supports_tools() {
-            request.tools = {
-                let mut tools = Vec::new();
-                tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
-                    LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema: tool.input_schema(model.tool_input_format()),
-                    }
-                }));
-
-                tools
-            };
-        }
+        let request = self.to_completion_request(request_kind, cx);
+        log::info!("Request payload: {:?}", request);
 
         self.stream_completion(request, model, cx);
     }
@@ -1250,19 +1237,11 @@ impl Thread {
     }
 
     pub fn summarize(&mut self, cx: &mut Context<Self>) {
-        // // TODO: Remove before merging.
-        // if 1 < 2 {
-        //     return;
-        // }
-
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
-            return;
-        };
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).thread_summary_model() else {
             return;
         };
 
-        if !provider.is_authenticated(cx) {
+        if !model.provider.is_authenticated(cx) {
             return;
         }
 
@@ -1281,7 +1260,7 @@ impl Thread {
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
-                let stream = model.stream_completion_text(request, &cx);
+                let stream = model.model.stream_completion_text(request, &cx);
                 let mut messages = stream.await?;
 
                 let mut new_summary = String::new();
@@ -1325,8 +1304,8 @@ impl Thread {
             _ => {}
         }
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let ConfiguredModel { model, provider } =
+            LanguageModelRegistry::read_global(cx).thread_summary_model()?;
 
         if !provider.is_authenticated(cx) {
             return None;
@@ -1762,6 +1741,17 @@ impl Thread {
             .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
     }
 
+    pub fn reject_edits_in_range(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        buffer_range: Range<language::Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.action_log.update(cx, |action_log, cx| {
+            action_log.reject_edits_in_range(buffer, buffer_range, cx)
+        })
+    }
+
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }
@@ -1776,11 +1766,11 @@ impl Thread {
 
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.active_model() else {
+        let Some(model) = model_registry.default_model() else {
             return TotalTokenUsage::default();
         };
 
-        let max = model.max_token_count();
+        let max = model.model.max_token_count();
 
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")

@@ -228,7 +228,7 @@ impl AssistantPanel {
             )
             .unwrap(),
             history_store: history_store.clone(),
-            history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, cx)),
+            history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
             assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
             width: None,
             height: None,
@@ -571,10 +571,8 @@ impl AssistantPanel {
         match event {
             AssistantConfigurationEvent::NewThread(provider) => {
                 if LanguageModelRegistry::read_global(cx)
-                    .active_provider()
-                    .map_or(true, |active_provider| {
-                        active_provider.id() != provider.id()
-                    })
+                    .default_model()
+                    .map_or(true, |model| model.provider.id() != provider.id())
                 {
                     if let Some(model) = provider.default_model(cx) {
                         update_settings_file::<AssistantSettings>(
@@ -922,16 +920,18 @@ impl AssistantPanel {
     }
 
     fn configuration_error(&self, cx: &App) -> Option<ConfigurationError> {
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return Some(ConfigurationError::NoProvider);
         };
 
-        if !provider.is_authenticated(cx) {
+        if !model.provider.is_authenticated(cx) {
             return Some(ConfigurationError::ProviderNotAuthenticated);
         }
 
-        if provider.must_accept_terms(cx) {
-            return Some(ConfigurationError::ProviderPendingTermsAcceptance(provider));
+        if model.provider.must_accept_terms(cx) {
+            return Some(ConfigurationError::ProviderPendingTermsAcceptance(
+                model.provider,
+            ));
         }
 
         None
@@ -1134,11 +1134,11 @@ impl AssistantPanel {
                                     // TODO: Add keyboard navigation.
                                     match entry {
                                         HistoryEntry::Thread(thread) => {
-                                            PastThread::new(thread, cx.entity().downgrade(), false)
+                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![])
                                                 .into_any_element()
                                         }
                                         HistoryEntry::Context(context) => {
-                                            PastContext::new(context, cx.entity().downgrade(), false)
+                                            PastContext::new(context, cx.entity().downgrade(), false, vec![])
                                                 .into_any_element()
                                         }
                                     }

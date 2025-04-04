@@ -212,11 +212,12 @@ impl LanguageModel for CopilotChatLanguageModel {
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
                     CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
-                    CopilotChatModel::Claude3_5Sonnet
-                    | CopilotChatModel::Claude3_7Sonnet
-                    | CopilotChatModel::Claude3_7SonnetThinking
-                    | CopilotChatModel::Gemini20Flash => {
-                        unreachable!()
+                    _ => {
+                        return futures::future::ready(Err(anyhow!(
+                            "Unsupported model: {:?}",
+                            self.model
+                        )))
+                        .boxed();
                     }
                 };
                 count_open_ai_tokens(request, model, cx)
@@ -231,21 +232,31 @@ impl LanguageModel for CopilotChatLanguageModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         if let Some(message) = request.messages.last() {
             if message.contents_empty() {
-                const EMPTY_PROMPT_MSG: &str =
-                    "Empty prompts aren't allowed. Please provide a non-empty prompt.";
-                return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
+                log::error!("Bad request: Empty prompt provided.");
+                return futures::future::ready(Err(anyhow!(
+                    "Empty prompts aren't allowed. Please provide a non-empty prompt."
+                )))
+                .boxed();
             }
 
-            // Copilot Chat has a restriction that the final message must be from the user.
-            // While their API does return an error message for this, we can catch it earlier
-            // and provide a more helpful error message.
             if !matches!(message.role, Role::User) {
-                const USER_ROLE_MSG: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
-                return futures::future::ready(Err(anyhow::anyhow!(USER_ROLE_MSG))).boxed();
+                log::error!("Bad request: Final message role is not Role::User.");
+                return futures::future::ready(Err(anyhow!(
+                    "The final message must be from the user. Ensure the last message has Role::User."
+                )))
+                .boxed();
             }
+        } else {
+            log::error!("Bad request: No messages in the request.");
+            return futures::future::ready(Err(anyhow!(
+                "Request must contain at least one message."
+            )))
+            .boxed();
         }
 
         let copilot_request = self.to_copilot_chat_request(request);
+        // Removed debug log for `copilot_request` as it doesn't implement `Debug`.
+        log::info!("Sending request to Copilot.");
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(async move |cx| {
@@ -377,14 +388,10 @@ impl CopilotChatLanguageModel {
     pub fn to_copilot_chat_request(&self, request: LanguageModelRequest) -> CopilotChatRequest {
         let model = self.model.clone();
 
-        // TODO: Remove before merging.
-        println!("\n\n\n====== COPILOT CHAT REQUEST ======");
-
         let mut request_messages: Vec<LanguageModelRequestMessage> = Vec::new();
         for message in request.messages {
             if let Some(last_message) = request_messages.last_mut() {
                 if last_message.role == message.role {
-                    println!("Extending message");
                     last_message.content.extend(message.content);
                 } else {
                     request_messages.push(message);
@@ -396,24 +403,19 @@ impl CopilotChatLanguageModel {
 
         let mut messages: Vec<ChatMessage> = Vec::new();
         for message in request_messages {
-            let text_content = {
-                let mut buffer = String::new();
-                for string in message.content.iter().filter_map(|content| match content {
+            let text_content = message
+                .content
+                .iter()
+                .filter_map(|content| match content {
                     MessageContent::Text(text) => Some(text.as_str()),
-                    MessageContent::ToolUse(_)
-                    | MessageContent::ToolResult(_)
-                    | MessageContent::Image(_) => None,
-                }) {
-                    buffer.push_str(string);
-                }
-
-                buffer
-            };
+                    _ => None,
+                })
+                .collect::<String>();
 
             match message.role {
                 Role::User => {
                     messages.push(ChatMessage::User {
-                        content: text_content,
+                        content: text_content.clone(),
                     });
 
                     for content in &message.content {
@@ -429,6 +431,10 @@ impl CopilotChatLanguageModel {
                     let mut tool_calls = Vec::new();
                     for content in &message.content {
                         if let MessageContent::ToolUse(tool_use) = content {
+                            if tool_use.input.is_null() {
+                                log::warn!("Tool use input is null for tool: {}", tool_use.name);
+                                continue;
+                            }
                             tool_calls.push(ToolCall {
                                 id: tool_use.id.to_string(),
                                 content: copilot::copilot_chat::ToolCallContent::Function {

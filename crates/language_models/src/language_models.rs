@@ -3,7 +3,7 @@ use std::sync::Arc;
 use client::{Client, UserStore};
 use fs::Fs;
 use gpui::{App, Context, Entity};
-use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
+use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
 pub mod provider;
@@ -70,6 +70,10 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
+
+    if !CopilotChatLanguageModelProvider::new(cx).is_authenticated(cx) {
+        log::error!("Copilot Chat is not authenticated. Please sign in.");
+    }
 
     cx.observe_flag::<feature_flags::LanguageModels, _>(move |enabled, cx| {
         let user_store = user_store.clone();

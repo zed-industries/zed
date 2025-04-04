@@ -108,6 +108,20 @@ pub fn init(
     thread_store::init(cx);
     assistant_panel::init(cx);
 
+    init_inline_assistants(fs, client, prompt_builder, cx);
+
+    cx.observe_new(AddContextServerModal::register).detach();
+    cx.observe_new(ManageProfilesModal::register).detach();
+
+    feature_gate_agent_actions(cx);
+}
+
+fn init_inline_assistants(
+    fs: Arc<dyn Fs>,
+    client: Arc<Client>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut App,
+) {
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
@@ -115,15 +129,11 @@ pub fn init(
         cx,
     );
     terminal_inline_assistant::init(
-        fs.clone(),
-        prompt_builder.clone(),
+        fs,
+        prompt_builder,
         client.telemetry().clone(),
         cx,
     );
-    cx.observe_new(AddContextServerModal::register).detach();
-    cx.observe_new(ManageProfilesModal::register).detach();
-
-    feature_gate_agent_actions(cx);
 }
 
 fn feature_gate_agent_actions(cx: &mut App) {

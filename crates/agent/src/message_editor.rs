@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::assistant_model_selector::ModelType;
 use collections::HashSet;
 use editor::actions::MoveUp;
 use editor::{ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorStyle};
@@ -9,8 +10,10 @@ use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
     WeakEntity, linear_color_stop, linear_gradient, point,
 };
-use language_model::LanguageModelRegistry;
+use language::Buffer;
+use language_model::{ConfiguredModel, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
+use multi_buffer;
 use project::Project;
 use settings::Settings;
 use std::time::Duration;
@@ -137,6 +140,7 @@ impl MessageEditor {
                     fs.clone(),
                     model_selector_menu_handle,
                     editor.focus_handle(cx),
+                    ModelType::Default,
                     window,
                     cx,
                 )
@@ -189,7 +193,7 @@ impl MessageEditor {
 
     fn is_model_selected(&self, cx: &App) -> bool {
         LanguageModelRegistry::read_global(cx)
-            .active_model()
+            .default_model()
             .is_some()
     }
 
@@ -199,19 +203,15 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        if provider
-            .as_ref()
-            .map_or(false, |provider| provider.must_accept_terms(cx))
-        {
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let Some(ConfiguredModel { model, provider }) = model_registry.default_model() else {
+            return;
+        };
+
+        if provider.must_accept_terms(cx) {
             cx.notify();
             return;
         }
-
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.active_model() else {
-            return;
-        };
 
         let user_message = self.editor.update(cx, |editor, cx| {
             let text = editor.text(cx);
@@ -319,6 +319,19 @@ impl MessageEditor {
 
     fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
         AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
+    }
+
+    fn handle_file_click(
+        &self,
+        buffer: Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Ok(diff) = AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx)
+        {
+            let path_key = multi_buffer::PathKey::for_buffer(&buffer, cx);
+            diff.update(cx, |diff, cx| diff.move_to_path(path_key, window, cx));
+        }
     }
 }
 
@@ -487,11 +500,16 @@ impl Render for MessageEditor {
                         }])
                         .child(
                             h_flex()
+                                .id("edits-container")
                                 .p_1p5()
                                 .justify_between()
                                 .when(self.edits_expanded, |this| {
                                     this.border_b_1().border_color(border_color)
                                 })
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.handle_review_click(window, cx)
+                                }))
                                 .child(
                                     h_flex()
                                         .gap_1()
@@ -605,11 +623,21 @@ impl Render for MessageEditor {
                                                         .justify_between()
                                                         .child(
                                                             h_flex()
-                                                                .id("file-container")
+                                                                .id(("file-container", index))
                                                                 .pr_8()
                                                                 .gap_1p5()
                                                                 .max_w_full()
                                                                 .overflow_x_scroll()
+                                                                .cursor_pointer()
+                                                                .on_click({
+                                                                    let buffer = buffer.clone();
+                                                                    cx.listener(move |this, _, window, cx| {
+                                                                        this.handle_file_click(buffer.clone(), window, cx);
+                                                                    })
+                                                                })
+                                                                .tooltip(
+                                                                    Tooltip::text(format!("Review {}", path.display()))
+                                                                )
                                                                 .child(file_icon)
                                                                 .child(
                                                                     h_flex()
