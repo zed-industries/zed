@@ -339,9 +339,9 @@
     }
   },
   {
-    "context": "ThreadHistory",
+    "context": "ThreadHistory > Editor",
     "bindings": {
-      "backspace": "agent::RemoveSelectedThread"
+      "shift-backspace": "agent::RemoveSelectedThread"
     }
   },
   {

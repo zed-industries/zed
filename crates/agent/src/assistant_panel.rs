@@ -653,20 +653,26 @@ impl AssistantPanel {
         self.thread.read(cx).thread().clone()
     }
 
-    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut Context<Self>) {
+    pub(crate) fn delete_thread(
+        &mut self,
+        thread_id: &ThreadId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx))
-            .detach_and_log_err(cx);
     }
 
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
         self.context_editor.clone()
     }
 
-    pub(crate) fn delete_context(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    pub(crate) fn delete_context(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         self.context_store
             .update(cx, |this, cx| this.delete_local_context(path, cx))
-            .detach_and_log_err(cx);
     }
 }
 
