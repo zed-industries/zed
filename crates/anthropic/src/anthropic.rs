@@ -329,71 +329,45 @@ pub struct RateLimit {
     pub reset: DateTime<Utc>,
 }
 
-/// <https://docs.anthropic.com/en/api/rate-limits#response-headers>
-#[derive(Debug)]
-pub struct RateLimitInfo {
-    pub requests: RateLimit,
-    pub tokens: RateLimit,
-    pub input_tokens: RateLimit,
-    pub output_tokens: RateLimit,
-}
-
-impl RateLimitInfo {
-    fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        let tokens_limit = get_header("anthropic-ratelimit-tokens-limit", headers)?.parse()?;
-        let input_tokens_limit =
-            get_header("anthropic-ratelimit-input-tokens-limit", headers)?.parse()?;
-        let output_tokens_limit =
-            get_header("anthropic-ratelimit-output-tokens-limit", headers)?.parse()?;
-        let requests_limit = get_header("anthropic-ratelimit-requests-limit", headers)?.parse()?;
-        let tokens_remaining =
-            get_header("anthropic-ratelimit-tokens-remaining", headers)?.parse()?;
-        let input_tokens_remaining =
-            get_header("anthropic-ratelimit-input-tokens-remaining", headers)?.parse()?;
-        let output_tokens_remaining =
-            get_header("anthropic-ratelimit-output-tokens-remaining", headers)?.parse()?;
-        let requests_remaining =
-            get_header("anthropic-ratelimit-requests-remaining", headers)?.parse()?;
-        let tokens_reset =
-            DateTime::parse_from_rfc3339(get_header("anthropic-ratelimit-tokens-reset", headers)?)?
-                .to_utc();
-        let input_tokens_reset = DateTime::parse_from_rfc3339(get_header(
-            "anthropic-ratelimit-input-tokens-reset",
+impl RateLimit {
+    fn from_headers(resource: &str, headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        let limit =
+            get_header(&format!("anthropic-ratelimit-{resource}-limit"), headers)?.parse()?;
+        let remaining = get_header(
+            &format!("anthropic-ratelimit-{resource}-remaining"),
             headers,
-        )?)?
-        .to_utc();
-        let output_tokens_reset = DateTime::parse_from_rfc3339(get_header(
-            "anthropic-ratelimit-output-tokens-reset",
-            headers,
-        )?)?
-        .to_utc();
-        let requests_reset = DateTime::parse_from_rfc3339(get_header(
-            "anthropic-ratelimit-requests-reset",
+        )?
+        .parse()?;
+        let reset = DateTime::parse_from_rfc3339(get_header(
+            &format!("anthropic-ratelimit-{resource}-reset"),
             headers,
         )?)?
         .to_utc();
 
         Ok(Self {
-            requests: RateLimit {
-                limit: requests_limit,
-                remaining: requests_remaining,
-                reset: requests_reset,
-            },
-            tokens: RateLimit {
-                limit: tokens_limit,
-                remaining: tokens_remaining,
-                reset: tokens_reset,
-            },
-            input_tokens: RateLimit {
-                limit: input_tokens_limit,
-                remaining: input_tokens_remaining,
-                reset: input_tokens_reset,
-            },
-            output_tokens: RateLimit {
-                limit: output_tokens_limit,
-                remaining: output_tokens_remaining,
-                reset: output_tokens_reset,
-            },
+            limit,
+            remaining,
+            reset,
+        })
+    }
+}
+
+/// <https://docs.anthropic.com/en/api/rate-limits#response-headers>
+#[derive(Debug)]
+pub struct RateLimitInfo {
+    pub requests: Option<RateLimit>,
+    pub tokens: Option<RateLimit>,
+    pub input_tokens: Option<RateLimit>,
+    pub output_tokens: Option<RateLimit>,
+}
+
+impl RateLimitInfo {
+    fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        Ok(Self {
+            requests: RateLimit::from_headers("requests", headers).ok(),
+            tokens: RateLimit::from_headers("tokens", headers).ok(),
+            input_tokens: RateLimit::from_headers("input-tokens", headers).ok(),
+            output_tokens: RateLimit::from_headers("output-tokens", headers).ok(),
         })
     }
 }
