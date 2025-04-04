@@ -454,9 +454,18 @@ impl CopilotChatLanguageModel {
             }
         }
 
+        let has_trailing_tool_use = messages
+            .last()
+            .map_or(false, |message| matches!(message, ChatMessage::Tool { .. }));
+        if has_trailing_tool_use {
+            messages.push(ChatMessage::User {
+                content: "I have provided the tool results".to_string(),
+            });
+        }
+
         // Copilot Chat has a restriction that the final message must be from the user.
-        // While their API does return an error message for this, we can catch it earlier
-        // and provide a more helpful error message.
+        //
+        // Failing to do this results in an opaque 400 Bad Request response from the API, so we try to catch it sooner.
         if let Some(message) = messages.last() {
             if !matches!(message, ChatMessage::User { .. }) {
                 const NO_TRAILING_USER_MESSAGE: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
