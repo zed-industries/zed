@@ -387,7 +387,6 @@ impl CopilotChatLanguageModel {
         for message in request.messages {
             if let Some(last_message) = request_messages.last_mut() {
                 if last_message.role == message.role {
-                    println!("Extending message");
                     last_message.content.extend(message.content);
                 } else {
                     request_messages.push(message);
@@ -415,18 +414,6 @@ impl CopilotChatLanguageModel {
 
             match message.role {
                 Role::User => {
-                    let has_tool_results = message
-                        .content
-                        .iter()
-                        .any(|content| matches!(content, MessageContent::ToolResult(_)));
-
-                    if has_tool_results {
-                    } else {
-                        // messages.push(ChatMessage::User {
-                        //     content: text_content,
-                        // });
-                    }
-
                     for content in &message.content {
                         if let MessageContent::ToolResult(tool_result) = content {
                             messages.push(ChatMessage::Tool {
