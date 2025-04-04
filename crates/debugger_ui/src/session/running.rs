@@ -4,14 +4,14 @@ mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
 
-use std::sync::Arc;
+use std::{any::Any, ops::ControlFlow, sync::Arc};
 
 use super::{DebugPanelItemEvent, ThreadItem};
 use console::Console;
 use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
 use gpui::{
-    Action as _, AppContext, Entity, EventEmitter, FocusHandle, Focusable, NoAction, Subscription,
-    WeakEntity,
+    Action as _, AnyView, AppContext, Entity, EventEmitter, FocusHandle, Focusable, NoAction,
+    Subscription, WeakEntity,
 };
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
@@ -29,7 +29,7 @@ use ui::{
 };
 use util::ResultExt;
 use variable_list::VariableList;
-use workspace::{ActivePaneDecorator, Pane, PaneGroup, Workspace};
+use workspace::{ActivePaneDecorator, DraggedTab, Item, Pane, PaneGroup, Workspace, move_item};
 
 pub struct RunningState {
     session: Entity<Session>,
@@ -62,7 +62,6 @@ impl Render for RunningState {
                 )
                 .into_any_element()
         } else {
-            dbg!(":(");
             div().into_any_element()
         };
 
@@ -162,6 +161,47 @@ impl Render for RunningState {
     }
 }
 
+struct SubView {
+    inner: AnyView,
+    owning_pane: WeakEntity<Pane>,
+    pane_focus_handle: FocusHandle,
+    tab_name: SharedString,
+}
+
+impl SubView {
+    fn new(
+        owning_pane: WeakEntity<Pane>,
+        pane_focus_handle: FocusHandle,
+        view: AnyView,
+        tab_name: SharedString,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|_| Self {
+            tab_name,
+            inner: view,
+            owning_pane,
+            pane_focus_handle,
+        })
+    }
+}
+impl Focusable for SubView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.pane_focus_handle.clone()
+    }
+}
+impl EventEmitter<()> for SubView {}
+impl Item for SubView {
+    type Event = ();
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
+        Some(self.tab_name.clone())
+    }
+}
+
+impl Render for SubView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        v_flex().size_full().child(self.inner.clone())
+    }
+}
 impl RunningState {
     pub fn new(
         session: Entity<Session>,
@@ -229,28 +269,115 @@ impl RunningState {
                 window,
                 cx,
             );
+            r.display_nav_history_buttons(None);
             r.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             r
         });
 
         let mut panes = PaneGroup::new(root.clone());
-        root.update(cx, |root, cx| {
-            root.add_item(
-                Box::new(cx.new(|cx| It {
-                    focus: cx.focus_handle(),
-                })),
+        root.update(cx, |this, cx| {
+            this.add_item(
+                Box::new(SubView::new(
+                    root.downgrade(),
+                    this.focus_handle(cx),
+                    stack_frame_list.clone().into(),
+                    SharedString::new_static("Frames"),
+                    cx,
+                )),
                 true,
                 false,
                 None,
                 window,
                 cx,
             );
-            root.set_custom_drop_handle(cx, |pane, _, _, _| {
-                dbg!(pane.drag_split_direction());
-                std::ops::ControlFlow::Break(())
-            });
+            this.set_custom_drop_handle(cx, Self::custom_drop_handler);
         });
-        panes.split(&root, &root.clone(), workspace::SplitDirection::Right);
+        let second = cx.new(|cx| {
+            let mut r = Pane::new(
+                workspace.clone(),
+                project.clone(),
+                Default::default(),
+                None,
+                NoAction.boxed_clone(),
+                window,
+                cx,
+            );
+            r.set_can_split(Some(Arc::new(|_, _, _, _| true)));
+            r.display_nav_history_buttons(None);
+            r
+        });
+        second.update(cx, |this, cx| {
+            this.add_item(
+                Box::new(SubView::new(
+                    root.downgrade(),
+                    this.focus_handle(cx),
+                    variable_list.clone().into(),
+                    SharedString::new_static("Variables"),
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+            this.add_item(
+                Box::new(SubView::new(
+                    root.downgrade(),
+                    this.focus_handle(cx),
+                    module_list.clone().into(),
+                    SharedString::new_static("Modules"),
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+            this.set_custom_drop_handle(cx, Self::custom_drop_handler);
+        });
+        panes
+            .split(&root, &second.clone(), workspace::SplitDirection::Right)
+            .log_err();
+        let third_column = cx.new(|cx| {
+            let mut r = Pane::new(
+                workspace.clone(),
+                project.clone(),
+                Default::default(),
+                None,
+                NoAction.boxed_clone(),
+                window,
+                cx,
+            );
+            r.set_can_split(Some(Arc::new(|_, _, _, _| true)));
+            r.display_nav_history_buttons(None);
+            r
+        });
+        third_column.update(cx, |this, cx| {
+            this.add_item(
+                Box::new(SubView::new(
+                    root.downgrade(),
+                    this.focus_handle(cx),
+                    console.clone().into(),
+                    SharedString::new_static("Console"),
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+            this.set_custom_drop_handle(cx, Self::custom_drop_handler);
+        });
+        panes
+            .split(
+                &second,
+                &third_column.clone(),
+                workspace::SplitDirection::Right,
+            )
+            .log_err();
 
         Self {
             session,
@@ -271,6 +398,29 @@ impl RunningState {
         }
     }
 
+    fn custom_drop_handler(
+        pane: &mut Pane,
+        any: &dyn Any,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> ControlFlow<()> {
+        let Some(tab) = any.downcast_ref::<DraggedTab>() else {
+            return ControlFlow::Break(());
+        };
+
+        if cx.entity_id() != tab.pane.entity_id() {
+            let source_pane = tab.pane.clone();
+            let target_pane = cx.entity();
+            let target_ix = pane.items_len();
+
+            let item_id = tab.item.item_id();
+
+            window.defer(cx, move |window, cx| {
+                move_item(&source_pane, &target_pane, item_id, target_ix, window, cx);
+            });
+        }
+        ControlFlow::Break(())
+    }
     pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
@@ -559,23 +709,4 @@ impl Focusable for RunningState {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
-}
-
-struct It {
-    focus: FocusHandle,
-}
-
-impl Focusable for It {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl Render for It {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child("Lmao")
-    }
-}
-impl EventEmitter<()> for It {}
-impl workspace::Item for It {
-    type Event = ();
 }

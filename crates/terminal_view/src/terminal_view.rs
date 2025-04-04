@@ -1402,7 +1402,6 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        dbg!("Clone on split");
         let window_handle = window.window_handle();
         let terminal = self
             .project
