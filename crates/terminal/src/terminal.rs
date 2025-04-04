@@ -1259,12 +1259,6 @@ impl Terminal {
             return;
         }
 
-        // todo(zjk)
-        let mut key = keystroke.face.clone();
-        if keystroke.modifiers.shift {
-            key = key.to_uppercase();
-        }
-
         let motion = match keystroke.code {
             KeyCode::H | KeyCode::Left => Some(ViMotion::Left),
             KeyCode::J | KeyCode::Down => Some(ViMotion::Down),
@@ -1301,16 +1295,22 @@ impl Terminal {
             return;
         }
 
-        let scroll_motion = match key.as_str() {
-            "g" => Some(AlacScroll::Top),
-            "G" => Some(AlacScroll::Bottom),
-            "b" if keystroke.modifiers.control => Some(AlacScroll::PageUp),
-            "f" if keystroke.modifiers.control => Some(AlacScroll::PageDown),
-            "d" if keystroke.modifiers.control => {
+        let scroll_motion = match keystroke.code {
+            KeyCode::G => {
+                if keystroke.modifiers.shift {
+                    Some(AlacScroll::Bottom)
+                } else {
+                    Some(AlacScroll::Top)
+                }
+                Some(AlacScroll::Top)
+            }
+            KeyCode::B if keystroke.modifiers.control => Some(AlacScroll::PageUp),
+            KeyCode::F if keystroke.modifiers.control => Some(AlacScroll::PageDown),
+            KeyCode::D if keystroke.modifiers.control => {
                 let amount = self.last_content.terminal_bounds.line_height().to_f64() as i32 / 2;
                 Some(AlacScroll::Delta(-amount))
             }
-            "u" if keystroke.modifiers.control => {
+            KeyCode::U if keystroke.modifiers.control => {
                 let amount = self.last_content.terminal_bounds.line_height().to_f64() as i32 / 2;
                 Some(AlacScroll::Delta(amount))
             }
@@ -1322,8 +1322,8 @@ impl Terminal {
             return;
         }
 
-        match key.as_str() {
-            "v" => {
+        match keystroke.code {
+            KeyCode::V => {
                 let point = self.last_content.cursor.point;
                 let selection_type = SelectionType::Simple;
                 let side = AlacDirection::Right;
@@ -1333,18 +1333,18 @@ impl Terminal {
                 return;
             }
 
-            "escape" => {
+            KeyCode::Escape => {
                 self.events.push_back(InternalEvent::SetSelection(None));
                 return;
             }
 
-            "y" => {
+            KeyCode::Y => {
                 self.events.push_back(InternalEvent::Copy);
                 self.events.push_back(InternalEvent::SetSelection(None));
                 return;
             }
 
-            "i" => {
+            KeyCode::I => {
                 self.scroll_to_bottom();
                 self.toggle_vi_mode();
                 return;
