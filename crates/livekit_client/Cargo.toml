@@ -25,7 +25,7 @@ async-trait.workspace = true
 collections.workspace = true
 cpal = "0.15"
 futures.workspace = true
-gpui.workspace = true
+gpui = { workspace = true, features = ["x11", "wayland"] }
 gpui_tokio.workspace = true
 http_client_tls.workspace = true
 image.workspace = true
