@@ -219,20 +219,22 @@ impl ThreadHistory {
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry) = self.get_match(self.selected_index) {
-            match entry {
-                HistoryEntry::Thread(thread) => {
-                    self.assistant_panel
-                        .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
-                        .ok();
-                }
-                HistoryEntry::Context(context) => {
-                    self.assistant_panel
-                        .update(cx, move |this, cx| {
-                            this.open_saved_prompt_editor(context.path.clone(), window, cx)
-                        })
-                        .ok();
-                }
-            }
+            let task_result = match entry {
+                HistoryEntry::Thread(thread) => self
+                    .assistant_panel
+                    .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
+                    .ok(),
+                HistoryEntry::Context(context) => self
+                    .assistant_panel
+                    .update(cx, move |this, cx| {
+                        this.open_saved_prompt_editor(context.path.clone(), window, cx)
+                    })
+                    .ok(),
+            };
+
+            if let Some(task) = task_result {
+                task.detach_and_log_err(cx);
+            };
 
             cx.notify();
         }
@@ -280,12 +282,8 @@ impl Render for ThreadHistory {
         let selected_index = self.selected_index;
 
         v_flex()
-            .id("thread-history-container")
             .key_context("ThreadHistory")
-            .track_focus(&self.focus_handle(cx))
             .size_full()
-            .p_1()
-            .gap_1()
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
@@ -295,12 +293,20 @@ impl Render for ThreadHistory {
             .when(!self.all_entries.is_empty(), |parent| {
                 parent.child(
                     h_flex()
+                        .h(px(41.)) // Match the toolbar perfectly
                         .w_full()
-                        .p_1()
-                        .gap_1()
+                        .py_1()
+                        .px_2()
+                        .gap_2()
                         .justify_between()
-                        .child(self.search_editor.clone())
-                        .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted)),
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            Icon::new(IconName::MagnifyingGlass)
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
+                        )
+                        .child(self.search_editor.clone()),
                 )
             })
             .child({
@@ -321,7 +327,7 @@ impl Render for ThreadHistory {
                         ),
                     )
                 } else {
-                    view.child(
+                    view.p_1().child(
                         uniform_list(
                             cx.entity().clone(),
                             "thread-history",
