@@ -1,15 +1,16 @@
-use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
-use gpui::{Context, Window, impl_actions};
+use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
+use gpui::{impl_actions, Context, Window};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::Settings;
 use std::cmp;
 
 use crate::{
-    Vim,
     motion::{Motion, MotionKind},
     object::Object,
     state::{Mode, Register},
+    Vim, VimSettings,
 };
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -19,8 +20,6 @@ pub struct Paste {
     before: bool,
     #[serde(default)]
     preserve_clipboard: bool,
-    #[serde(default)]
-    next_mode: Mode,
 }
 
 impl_actions!(vim, [Paste]);
@@ -205,7 +204,8 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(action.next_mode, true, window, cx);
+        let next_mode = VimSettings::get_global(cx).default_mode;
+        self.switch_mode(next_mode, true, window, cx);
     }
 
     pub fn replace_with_register_object(
@@ -285,15 +285,15 @@ impl Vim {
 #[cfg(test)]
 mod test {
     use crate::{
-        UseSystemClipboard, VimSettings,
         state::{Mode, Register},
         test::{NeovimBackedTestContext, VimTestContext},
+        UseSystemClipboard, VimSettings,
     };
     use gpui::ClipboardItem;
     use indoc::indoc;
     use language::{
-        LanguageName,
         language_settings::{AllLanguageSettings, LanguageSettingsContent},
+        LanguageName,
     };
     use settings::SettingsStore;
 
