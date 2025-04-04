@@ -1706,8 +1706,6 @@ impl Buffer {
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
 
-                            dbg!(&indent_sizes, &suggested_indent);
-
                             if old_suggestions.get(&new_row).map_or(
                                 true,
                                 |(old_indentation, was_within_error)| {
