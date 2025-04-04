@@ -78,9 +78,7 @@ impl Default for Mode {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operator {
     Change,
-    Delete {
-        inclusive: bool,
-    },
+    Delete,
     Yank,
     Replace,
     Object {
@@ -935,8 +933,7 @@ impl Operator {
             Operator::Object { around: false } => "i",
             Operator::Object { around: true } => "a",
             Operator::Change => "c",
-            Operator::Delete { inclusive: false } => "d",
-            Operator::Delete { inclusive: true } => "v",
+            Operator::Delete => "d",
             Operator::Yank => "y",
             Operator::Replace => "r",
             Operator::Digraph { .. } => "^K",
@@ -1004,7 +1001,7 @@ impl Operator {
             | Operator::ChangeSurrounds { target: Some(_) }
             | Operator::DeleteSurrounds => true,
             Operator::Change
-            | Operator::Delete { inclusive: _ }
+            | Operator::Delete
             | Operator::Yank
             | Operator::Rewrap
             | Operator::Indent
@@ -1027,7 +1024,7 @@ impl Operator {
     pub fn starts_dot_recording(&self) -> bool {
         match self {
             Operator::Change
-            | Operator::Delete { inclusive: _ }
+            | Operator::Delete
             | Operator::Replace
             | Operator::Indent
             | Operator::Outdent

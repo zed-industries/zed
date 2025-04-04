@@ -1327,6 +1327,7 @@ impl Vim {
         cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
+        let inclusive_override = self.inclusive_mode_override;
         let Some(workspace) = self.workspace(window) else {
             return;
         };
@@ -1335,7 +1336,13 @@ impl Vim {
             let start = editor.selections.newest_display(cx);
             let text_layout_details = editor.text_layout_details(window);
             let (mut range, _) = motion
-                .range(&snapshot, start.clone(), times, &text_layout_details)
+                .range(
+                    &snapshot,
+                    start.clone(),
+                    times,
+                    &text_layout_details,
+                    inclusive_override,
+                )
                 .unwrap_or((start.range(), MotionKind::Exclusive));
             if range.start != start.start {
                 editor.change_selections(None, window, cx, |s| {

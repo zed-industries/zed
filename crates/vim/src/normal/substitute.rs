@@ -34,6 +34,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let inclusive_override = self.inclusive_mode_override;
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);
@@ -47,6 +48,7 @@ impl Vim {
                                 selection,
                                 count,
                                 &text_layout_details,
+                                inclusive_override,
                             );
                         }
                         if line_mode {
@@ -60,6 +62,7 @@ impl Vim {
                                 selection,
                                 None,
                                 &text_layout_details,
+                                inclusive_override,
                             );
                             if let Some((point, _)) = (Motion::FirstNonWhitespace {
                                 display_lines: false,
@@ -70,6 +73,7 @@ impl Vim {
                                 selection.goal,
                                 None,
                                 &text_layout_details,
+                                inclusive_override,
                             ) {
                                 selection.start = point;
                             }

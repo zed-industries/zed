@@ -18,10 +18,10 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        inclusive: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let inclusive_override = self.inclusive_mode_override;
         self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -34,25 +34,16 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let original_head = selection.head();
                         original_columns.insert(selection.id, original_head.column());
-                        let kind = match motion.expand_selection(
+                        let kind = motion.expand_selection(
                             map,
                             selection,
                             times,
                             &text_layout_details,
-                        ) {
-                            Some(motion_kind) => Some(motion_kind),
-                            None if inclusive => Some(MotionKind::Inclusive),
-                            None => None,
-                        };
-
+                            inclusive_override,
+                        );
                         ranges_to_copy
                             .push(selection.start.to_point(map)..selection.end.to_point(map));
 
-                        if inclusive {
-                            let end = selection.end.to_point(map);
-                            let new_end = Point::new(end.row, end.column + 1).to_display_point(map);
-                            selection.end = map.clip_point(new_end, Bias::Right);
-                        }
                         // When deleting line-wise, we always want to delete a newline.
                         // If there is one after the current line, it goes; otherwise we
                         // pick the one before.
