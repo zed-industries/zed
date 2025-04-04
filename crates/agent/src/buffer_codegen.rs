@@ -156,8 +156,9 @@ impl BufferCodegen {
         }
 
         let primary_model = LanguageModelRegistry::read_global(cx)
-            .active_model()
-            .context("no active model")?;
+            .default_model()
+            .context("no active model")?
+            .model;
 
         for (model, alternative) in iter::once(primary_model)
             .chain(alternative_models)

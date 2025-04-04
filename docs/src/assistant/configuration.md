@@ -19,7 +19,8 @@ To further customize providers, you can use `settings.json` to do that as follow
 
 - [Configuring endpoints](#custom-endpoint)
 - [Configuring timeouts](#provider-timeout)
-- [Configuring default model](#default-model)
+- [Configuring models](#default-model)
+- [Configuring feature-specific models](#feature-specific-models)
 - [Configuring alternative models for inline assists](#alternative-assists)
 
 ### Zed AI {#zed-ai}
@@ -281,7 +282,23 @@ Example configuration for using X.ai Grok with Zed:
     "enabled": true,
     "default_model": {
       "provider": "zed.dev",
+      "model": "claude-3-7-sonnet"
+    },
+    "editor_model": {
+      "provider": "openai",
+      "model": "gpt-4o"
+    },
+    "inline_assistant_model": {
+      "provider": "anthropic",
       "model": "claude-3-5-sonnet"
+    },
+    "commit_message_model": {
+      "provider": "openai",
+      "model": "gpt-4o-mini"
+    },
+    "thread_summary_model": {
+      "provider": "google",
+      "model": "gemini-1.5-flash"
     },
     "version": "2",
     "button": true,
@@ -328,7 +345,7 @@ To do so, add the following to your Zed `settings.json`:
 
 Where `some-provider` can be any of the following values: `anthropic`, `google`, `ollama`, `openai`.
 
-#### Configuring the default model {#default-model}
+#### Configuring models {#default-model}
 
 The default model can be set via the model dropdown in the assistant panel's top-right corner. Selecting a model saves it as the default.
 You can also manually edit the `default_model` object in your settings:
@@ -340,6 +357,47 @@ You can also manually edit the `default_model` object in your settings:
     "default_model": {
       "provider": "zed.dev",
       "model": "claude-3-5-sonnet"
+    }
+  }
+}
+```
+
+#### Feature-specific models {#feature-specific-models}
+
+> Currently only available in [Preview](https://zed.dev/releases/preview).
+
+Zed allows you to configure different models for specific features.
+This provides flexibility to use more powerful models for certain tasks while using faster or more efficient models for others.
+
+If a feature-specific model is not set, it will fall back to using the default model, which is the one you set on the Agent Panel.
+
+You can configure the following feature-specific models:
+
+- Thread summary model: Used for generating thread summaries
+- Inline assistant model: Used for the inline assistant feature
+- Commit message model: Used for generating Git commit messages
+
+Example configuration:
+
+```json
+{
+  "assistant": {
+    "version": "2",
+    "default_model": {
+      "provider": "zed.dev",
+      "model": "claude-3-7-sonnet"
+    },
+    "inline_assistant_model": {
+      "provider": "anthropic",
+      "model": "claude-3-5-sonnet"
+    },
+    "commit_message_model": {
+      "provider": "openai",
+      "model": "gpt-4o-mini"
+    },
+    "thread_summary_model": {
+      "provider": "google",
+      "model": "gemini-2.0-flash"
     }
   }
 }
