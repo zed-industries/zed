@@ -109,18 +109,9 @@
       "ctrl-l": "editor::ScrollCursorCenter",
       "alt-left": "editor::MoveToPreviousWordStart",
       "alt-right": "editor::MoveToNextWordEnd",
-      "cmd-left": [
-        "editor::MoveToBeginningOfLine",
-        { "stop_at_soft_wraps": true, "stop_at_indent": true }
-      ],
-      "ctrl-a": [
-        "editor::MoveToBeginningOfLine",
-        { "stop_at_soft_wraps": false, "stop_at_indent": true }
-      ],
-      "home": [
-        "editor::MoveToBeginningOfLine",
-        { "stop_at_soft_wraps": true, "stop_at_indent": true }
-      ],
+      "cmd-left": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
+      "ctrl-a": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }],
+      "home": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
       "cmd-right": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-e": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }],
       "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
@@ -146,30 +137,12 @@
       "cmd-l": "editor::SelectLine",
       "cmd-shift-i": "editor::Format",
       "alt-shift-o": "editor::OrganizeImports",
-      "cmd-shift-left": [
-        "editor::SelectToBeginningOfLine",
-        { "stop_at_soft_wraps": true, "stop_at_indent": true }
-      ],
-      "shift-home": [
-        "editor::SelectToBeginningOfLine",
-        { "stop_at_soft_wraps": true, "stop_at_indent": true }
-      ],
-      "ctrl-shift-a": [
-        "editor::SelectToBeginningOfLine",
-        { "stop_at_soft_wraps": true, "stop_at_indent": true }
-      ],
-      "cmd-shift-right": [
-        "editor::SelectToEndOfLine",
-        { "stop_at_soft_wraps": true }
-      ],
-      "shift-end": [
-        "editor::SelectToEndOfLine",
-        { "stop_at_soft_wraps": true }
-      ],
-      "ctrl-shift-e": [
-        "editor::SelectToEndOfLine",
-        { "stop_at_soft_wraps": true }
-      ],
+      "cmd-shift-left": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
+      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
+      "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
+      "cmd-shift-right": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      "ctrl-shift-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-v": ["editor::MovePageDown", { "center_cursor": true }],
       "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
@@ -196,10 +169,7 @@
       "cmd-k z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
       "cmd-alt-f": "buffer_search::DeployReplace",
-      "cmd-alt-l": [
-        "buffer_search::Deploy",
-        { "selection_search_enabled": true }
-      ],
+      "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
       "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "cmd-shift-.": "assistant::QuoteSelection",
       "cmd-shift-,": "assistant::InsertIntoEditor",
@@ -524,10 +494,7 @@
       "cmd-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }],
       "cmd-k cmd-d": ["editor::SelectNext", { "replace_newest": true }],
-      "cmd-k ctrl-cmd-d": [
-        "editor::SelectPrevious",
-        { "replace_newest": true }
-      ],
+      "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }],
       "cmd-k cmd-i": "editor::Hover",
       "cmd-/": ["editor::ToggleComments", { "advance_downwards": false }],
       "cmd-u": "editor::UndoSelection",
