@@ -158,21 +158,6 @@ pub enum ToolChoice {
     Tool { name: String },
 }
 
-impl Request {
-    pub fn new(model: Model, messages: Vec<ChatMessage>) -> Self {
-        Self {
-            intent: true,
-            n: 1,
-            stream: model.uses_streaming(),
-            temperature: 0.1,
-            model,
-            messages,
-            tools: Vec::new(),
-            tool_choice: None,
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
