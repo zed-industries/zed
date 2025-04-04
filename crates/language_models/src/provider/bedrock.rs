@@ -58,6 +58,7 @@ pub struct BedrockCredentials {
     pub access_key_id: String,
     pub secret_access_key: String,
     pub session_token: Option<String>,
+    pub region: String,
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -552,9 +553,29 @@ impl LanguageModel for BedrockModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+        let Ok(region) = cx.read_entity(&self.state, |state, _cx| {
+            // Get region - from credentials or directly from settings
+            let region = state
+                .credentials
+                .as_ref()
+                .map(|s| s.region.clone())
+                .unwrap_or(String::from("us-east-1"));
+
+            region
+        }) else {
+            return async move { Err(anyhow!("App State Dropped")) }.boxed();
+        };
+
+        let model_id = match self.model.cross_region_inference_id(&region) {
+            Ok(s) => s,
+            Err(e) => {
+                return async move { Err(e) }.boxed();
+            }
+        };
+
         let request = into_bedrock(
             request,
-            self.model.id().into(),
+            model_id,
             self.model.default_temperature(),
             self.model.max_output_tokens(),
             self.model.mode(),
@@ -1051,6 +1072,7 @@ impl ConfigurationView {
             state
                 .update(cx, |state, cx| {
                     let credentials: BedrockCredentials = BedrockCredentials {
+                        region: region.clone(),
                         access_key_id: access_key_id.clone(),
                         secret_access_key: secret_access_key.clone(),
                         session_token: session_token.clone(),
