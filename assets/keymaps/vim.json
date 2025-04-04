@@ -340,8 +340,6 @@
       "escape": "editor::Cancel",
       "ctrl-[": "editor::Cancel",
       ":": "command_palette::Toggle",
-      // FIXME: this acts weird with helix mode
-      // ".": "vim::Repeat",
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "y": "editor::Copy",
@@ -416,7 +414,6 @@
       "space s": "outline::Toggle",
       "space shift-s": "project_symbols::Toggle",
       "space d": "editor::GoToDiagnostic",
-      "space shift-d": "diagnostics::Deploy",
       "space r": "editor::Rename",
       "space a": "editor::ToggleCodeActions",
       "space h": "editor::SelectAllMatches",
