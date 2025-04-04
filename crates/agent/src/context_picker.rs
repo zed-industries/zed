@@ -609,24 +609,45 @@ fn fold_toggle(
 pub enum MentionLink {
     File(ProjectPath, Entry),
     Symbol(ProjectPath, String),
+    Fetch(String),
     Thread(ThreadId),
 }
 
 impl MentionLink {
+    const FILE: &str = "@file";
+    const SYMBOL: &str = "@symbol";
+    const THREAD: &str = "@thread";
+    const FETCH: &str = "@fetch";
+
+    const SEPARATOR: &str = ":";
+
+    pub fn is_valid(url: &str) -> bool {
+        url.starts_with(Self::FILE)
+            || url.starts_with(Self::SYMBOL)
+            || url.starts_with(Self::FETCH)
+            || url.starts_with(Self::THREAD)
+    }
+
     pub fn for_file(file_name: &str, full_path: &str) -> String {
-        format!("[@{}](file:{})", file_name, full_path)
+        format!("[@{}]({}:{})", file_name, Self::FILE, full_path)
     }
 
     pub fn for_symbol(symbol_name: &str, full_path: &str) -> String {
-        format!("[@{}](symbol:{}:{})", symbol_name, full_path, symbol_name)
+        format!(
+            "[@{}]({}:{}:{})",
+            symbol_name,
+            Self::SYMBOL,
+            full_path,
+            symbol_name
+        )
     }
 
     pub fn for_fetch(url: &str) -> String {
-        format!("[@{}]({})", url, url)
+        format!("[@{}]({}:{})", url, Self::FETCH, url)
     }
 
     pub fn for_thread(thread: &ThreadContextEntry) -> String {
-        format!("[@{}](thread:{})", thread.summary, thread.id)
+        format!("[@{}]({}:{})", thread.summary, Self::THREAD, thread.id)
     }
 
     pub fn try_parse(link: &str, workspace: &Entity<Workspace>, cx: &App) -> Option<Self> {
@@ -649,17 +670,10 @@ impl MentionLink {
             })
         }
 
-        let (prefix, link, target) = {
-            let mut parts = link.splitn(3, ':');
-            let prefix = parts.next();
-            let link = parts.next();
-            let target = parts.next();
-            (prefix, link, target)
-        };
-
-        match (prefix, link, target) {
-            (Some("file"), Some(path), _) => {
-                let project_path = extract_project_path_from_link(path, workspace, cx)?;
+        let (prefix, argument) = link.split_once(Self::SEPARATOR)?;
+        match prefix {
+            Self::FILE => {
+                let project_path = extract_project_path_from_link(argument, workspace, cx)?;
                 let entry = workspace
                     .read(cx)
                     .project()
@@ -667,14 +681,16 @@ impl MentionLink {
                     .entry_for_path(&project_path, cx)?;
                 Some(MentionLink::File(project_path, entry))
             }
-            (Some("symbol"), Some(path), Some(symbol_name)) => {
+            Self::SYMBOL => {
+                let (path, symbol) = argument.split_once(Self::SEPARATOR)?;
                 let project_path = extract_project_path_from_link(path, workspace, cx)?;
-                Some(MentionLink::Symbol(project_path, symbol_name.to_string()))
+                Some(MentionLink::Symbol(project_path, symbol.to_string()))
             }
-            (Some("thread"), Some(thread_id), _) => {
-                let thread_id = ThreadId::from(thread_id);
+            Self::THREAD => {
+                let thread_id = ThreadId::from(argument);
                 Some(MentionLink::Thread(thread_id))
             }
+            Self::FETCH => Some(MentionLink::Fetch(argument.to_string())),
             _ => None,
         }
     }
