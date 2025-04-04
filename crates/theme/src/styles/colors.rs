@@ -261,6 +261,8 @@ pub struct ThemeColors {
     pub version_control_conflict: Hsla,
     /// Represents an ignored entry in version control systems.
     pub version_control_ignored: Hsla,
+    pub version_control_conflict_ours: Hsla,
+    pub version_control_conflict_theirs: Hsla,
 }
 
 #[derive(EnumIter, Debug, Clone, Copy, AsRefStr)]

@@ -1,3 +1,4 @@
+mod conflict_set;
 pub mod git_traversal;
 
 use crate::{
@@ -10,6 +11,7 @@ use askpass::AskPassDelegate;
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
+pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetUpdate};
 use fs::Fs;
 use futures::{
     FutureExt as _, StreamExt as _,
@@ -71,7 +73,7 @@ pub struct GitStore {
     #[allow(clippy::type_complexity)]
     loading_diffs:
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
-    diffs: HashMap<BufferId, Entity<BufferDiffState>>,
+    diffs: HashMap<BufferId, Entity<BufferGitState>>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -83,13 +85,16 @@ struct SharedDiffs {
 }
 
 #[derive(Default)]
-struct BufferDiffState {
+struct BufferGitState {
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
+    conflict_set: Option<WeakEntity<ConflictSet>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
+    reparse_conflict_markers_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
     language_registry: Option<Arc<LanguageRegistry>>,
     diff_updated_futures: Vec<oneshot::Sender<()>>,
+    conflict_updated_futures: Vec<oneshot::Sender<()>>,
     hunk_staging_operation_count: usize,
 
     head_text: Option<Arc<String>>,
@@ -650,7 +655,7 @@ impl GitStore {
             let diff_state = this
                 .diffs
                 .entry(buffer_id)
-                .or_insert_with(|| cx.new(|_| BufferDiffState::default()));
+                .or_insert_with(|| cx.new(|_| BufferGitState::default()));
 
             let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
 
@@ -698,6 +703,51 @@ impl GitStore {
     ) -> Option<Entity<BufferDiff>> {
         let diff_state = self.diffs.get(&buffer_id)?;
         diff_state.read(cx).uncommitted_diff.as_ref()?.upgrade()
+    }
+
+    pub fn open_conflict_set(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<ConflictSet>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+
+        if let Some(git_state) = self.diffs.get(&buffer_id) {
+            if let Some(conflict_set) = git_state
+                .read(cx)
+                .conflict_set
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                let conflict_set = conflict_set.clone();
+                let buffer_snapshot = buffer.read(cx).text_snapshot();
+
+                git_state.update(cx, |state, cx| {
+                    let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
+                });
+
+                return Task::ready(Ok(conflict_set));
+            }
+        }
+
+        let is_unmerged = self
+            .repository_and_path_for_buffer_id(buffer_id, cx)
+            .map_or(false, |(repo, path)| {
+                repo.read(cx).snapshot.merge_conflicts.contains(&path)
+            });
+        let buffer_git_state = self
+            .diffs
+            .entry(buffer_id)
+            .or_insert_with(|| cx.new(|_| BufferGitState::default()));
+        let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, is_unmerged, cx));
+
+        buffer_git_state.update(cx, |state, cx| {
+            state.conflict_set = Some(conflict_set.downgrade());
+            let buffer_snapshot = buffer.read(cx).text_snapshot();
+            let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
+        });
+
+        Task::ready(Ok(conflict_set))
     }
 
     pub fn project_path_git_status(
@@ -1051,6 +1101,41 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let id = repo.read(cx).id;
+        if let RepositoryEvent::MergeHeadsChanged = event {
+            let merge_conflicts = repo.read(cx).snapshot.merge_conflicts.clone();
+            for (buffer_id, diff) in self.diffs.iter() {
+                if let Some((buffer_repo, repo_path)) =
+                    self.repository_and_path_for_buffer_id(*buffer_id, cx)
+                {
+                    if buffer_repo == repo {
+                        diff.update(cx, |diff, cx| {
+                            if let Some(conflict_set) = &diff.conflict_set {
+                                let conflict_status_changed = conflict_set
+                                    .update(cx, |conflict_set, _| {
+                                        let has_conflict = merge_conflicts.contains(&repo_path);
+                                        if has_conflict != conflict_set.has_conflict {
+                                            conflict_set.has_conflict = has_conflict;
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    })
+                                    .unwrap_or(false);
+                                if conflict_status_changed {
+                                    let buffer_store = self.buffer_store.read(cx);
+                                    if let Some(buffer) = buffer_store.get(*buffer_id) {
+                                        let _ = diff.reparse_conflict_markers(
+                                            buffer.read(cx).text_snapshot(),
+                                            cx,
+                                        );
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+        }
         cx.emit(GitStoreEvent::RepositoryUpdated(
             id,
             event.clone(),
@@ -1178,12 +1263,18 @@ impl GitStore {
         for buffer in buffers {
             if let Some(diff_state) = self.diffs.get_mut(&buffer.read(cx).remote_id()) {
                 let buffer = buffer.read(cx).text_snapshot();
+                // Push futures for recalculating diffs
                 futures.push(diff_state.update(cx, |diff_state, cx| {
                     diff_state.recalculate_diffs(
-                        buffer,
+                        buffer.clone(),
                         diff_state.hunk_staging_operation_count,
                         cx,
                     )
+                }));
+
+                // Push futures for reparsing conflict markers
+                futures.push(diff_state.update(cx, |diff_state, cx| {
+                    diff_state.reparse_conflict_markers(buffer, cx)
                 }));
             }
         }
@@ -2206,7 +2297,7 @@ impl GitStore {
     }
 }
 
-impl BufferDiffState {
+impl BufferGitState {
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.language = buffer.read(cx).language().cloned();
         self.language_changed = true;
@@ -2215,6 +2306,49 @@ impl BufferDiffState {
             self.hunk_staging_operation_count,
             cx,
         );
+    }
+
+    fn reparse_conflict_markers(
+        &mut self,
+        buffer: text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+
+        let conflict_set = self.conflict_set.as_ref().and_then(|weak| weak.upgrade());
+        if let Some(conflict_set_handle) = conflict_set {
+            let conflict_set = conflict_set_handle.read(cx);
+            if conflict_set.has_conflict {
+                self.conflict_updated_futures.push(tx);
+                let old_snapshot = conflict_set.snapshot.clone();
+                self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
+                    let (snapshot, changed_range) = cx
+                        .background_spawn(async move {
+                            let new_snapshot = ConflictSet::parse(&buffer);
+                            let changed_range = old_snapshot.compare(&new_snapshot, &buffer);
+                            (new_snapshot, changed_range)
+                        })
+                        .await;
+                    this.update(cx, |this, cx| {
+                        if let Some(conflict_set) = &this.conflict_set {
+                            conflict_set
+                                .update(cx, |conflict_set, cx| {
+                                    conflict_set.set_snapshot(snapshot, changed_range, cx);
+                                })
+                                .ok();
+                        }
+                        let futures = std::mem::take(&mut this.conflict_updated_futures);
+                        for tx in futures {
+                            tx.send(()).ok();
+                        }
+                    })
+                }));
+            } else {
+                conflict_set_handle.update(cx, |conflict_set, cx| conflict_set.clear(cx));
+            }
+        }
+
+        rx
     }
 
     fn unstaged_diff(&self) -> Option<Entity<BufferDiff>> {
