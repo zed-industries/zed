@@ -362,13 +362,13 @@ pub struct RateLimitInfo {
 }
 
 impl RateLimitInfo {
-    fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        Ok(Self {
-            requests: RateLimit::from_headers("requests", headers).ok(),
-            tokens: RateLimit::from_headers("tokens", headers).ok(),
-            input_tokens: RateLimit::from_headers("input-tokens", headers).ok(),
-            output_tokens: RateLimit::from_headers("output-tokens", headers).ok(),
-        })
+    fn from_headers(headers: &HeaderMap<HeaderValue>) -> Self {
+        Self {
+            requests: RateLimit::from_headers("requests", headers).log_err(),
+            tokens: RateLimit::from_headers("tokens", headers).log_err(),
+            input_tokens: RateLimit::from_headers("input-tokens", headers).log_err(),
+            output_tokens: RateLimit::from_headers("output-tokens", headers).log_err(),
+        }
     }
 }
 
@@ -434,7 +434,7 @@ pub async fn stream_completion_with_rate_limit_info(
                 }
             })
             .boxed();
-        Ok((stream, rate_limits.log_err()))
+        Ok((stream, Some(rate_limits)))
     } else {
         let mut body = Vec::new();
         response
