@@ -364,14 +364,16 @@ You can also manually edit the `default_model` object in your settings:
 
 #### Feature-specific models {#feature-specific-models}
 
-Zed allows you to configure different models for specific features. This provides flexibility to use more powerful models for certain tasks while using faster or more efficient models for others. If a feature-specific model is not set, it will fall back to using the default model.
+Zed allows you to configure different models for specific features.
+This provides flexibility to use more powerful models for certain tasks while using faster or more efficient models for others.
+If a feature-specific model is not set, it will fall back to using the default model, which is the one you set on the Agent Panel.
 
 You can configure the following feature-specific models:
 
-- **Editor model**: Used when applying edits from the assistant
-- **Inline assistant model**: Used for the inline assistant feature
-- **Commit message model**: Used for generating git commit messages
-- **Thread summary model**: Used for generating thread summaries
+- Editor model: Used when applying edits from the assistant
+- Thread summary model: Used for generating thread summaries
+- Inline assistant model: Used for the inline assistant feature
+- Commit message model: Used for generating Git commit messages
 
 Example configuration:
 
