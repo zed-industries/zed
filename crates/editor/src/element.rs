@@ -1,16 +1,16 @@
 use crate::{
-    BlockId, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, ChunkReplacement,
-    ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
-    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
-    InlineCompletion, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
-    MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
-    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold,
+    BlockId, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, ChunkRendererContext,
+    ChunkReplacement, ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk,
+    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
+    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
+    FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight, LineUp,
+    MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
+    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
-        Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
+        Block, BlockContext, BlockStyle, DisplaySnapshot, FoldId, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
@@ -43,12 +43,8 @@ use gpui::{
     transparent_black,
 };
 use itertools::Itertools;
-use language::{
-    ChunkRendererContext,
-    language_settings::{
-        IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
-        ShowWhitespaceSetting,
-    },
+use language::language_settings::{
+    IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -456,6 +452,7 @@ impl EditorElement {
             }
         });
         register_action(editor, window, Editor::restart_language_server);
+        register_action(editor, window, Editor::stop_language_server);
         register_action(editor, window, Editor::show_character_palette);
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion(action, window, cx) {
@@ -3354,7 +3351,7 @@ impl EditorElement {
                         height - height_above_menu
                     };
                     let mut element = self
-                        .render_context_menu(line_height, menu_height, y_flipped, window, cx)
+                        .render_context_menu(line_height, menu_height, window, cx)
                         .expect("Visible context menu should always render.");
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     Some((CursorPopoverType::CodeContextMenu, element, size))
@@ -3511,9 +3508,9 @@ impl EditorElement {
             viewport_bounds,
             window,
             cx,
-            move |height, _max_width_for_stable_x, y_flipped, window, cx| {
+            move |height, _max_width_for_stable_x, _, window, cx| {
                 let mut element = self
-                    .render_context_menu(line_height, height, y_flipped, window, cx)
+                    .render_context_menu(line_height, height, window, cx)
                     .expect("Visible context menu should always render.");
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                 vec![(CursorPopoverType::CodeContextMenu, element, size)]
@@ -3743,13 +3740,12 @@ impl EditorElement {
         &self,
         line_height: Pixels,
         height: Pixels,
-        y_flipped: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
         let max_height_in_lines = ((height - POPOVER_Y_PADDING) / line_height).floor() as u32;
         self.editor.update(cx, |editor, cx| {
-            editor.render_context_menu(&self.style, max_height_in_lines, y_flipped, window, cx)
+            editor.render_context_menu(&self.style, max_height_in_lines, window, cx)
         })
     }
 
@@ -5807,6 +5803,7 @@ pub(crate) struct LineWithInvisibles {
 enum LineFragment {
     Text(ShapedLine),
     Element {
+        id: FoldId,
         element: Option<AnyElement>,
         size: Size<Pixels>,
         len: usize,
@@ -5908,6 +5905,7 @@ impl LineWithInvisibles {
                         width += size.width;
                         len += highlighted_chunk.text.len();
                         fragments.push(LineFragment::Element {
+                            id: renderer.id,
                             element: Some(element),
                             size,
                             len: highlighted_chunk.text.len(),
@@ -6863,6 +6861,24 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
+                    let new_fold_widths = line_layouts
+                        .iter()
+                        .flat_map(|layout| &layout.fragments)
+                        .filter_map(|fragment| {
+                            if let LineFragment::Element { id, size, .. } = fragment {
+                                Some((*id, size.width))
+                            } else {
+                                None
+                            }
+                        });
+                    if self.editor.update(cx, |editor, cx| {
+                        editor.update_fold_widths(new_fold_widths, cx)
+                    }) {
+                        // If the fold widths have changed, we need to prepaint
+                        // the element again to account for any changes in
+                        // wrapping.
+                        return self.prepaint(None, bounds, &mut (), window, cx);
+                    }
 
                     let longest_line_blame_width = self
                         .editor

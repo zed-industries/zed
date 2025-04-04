@@ -95,6 +95,12 @@ pub struct TokenUsage {
     pub cache_read_input_tokens: u32,
 }
 
+impl TokenUsage {
+    pub fn total_tokens(&self) -> u32 {
+        self.input_tokens + self.output_tokens
+    }
+}
+
 impl Add<TokenUsage> for TokenUsage {
     type Output = Self;
 

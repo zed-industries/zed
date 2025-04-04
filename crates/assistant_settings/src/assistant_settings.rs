@@ -77,7 +77,9 @@ pub struct AssistantSettings {
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: LanguageModelSelection,
-    pub editor_model: LanguageModelSelection,
+    pub inline_assistant_model: Option<LanguageModelSelection>,
+    pub commit_message_model: Option<LanguageModelSelection>,
+    pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
@@ -95,13 +97,25 @@ impl AssistantSettings {
 
         cx.is_staff() || self.enable_experimental_live_diffs
     }
+
+    pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
+        self.inline_assistant_model = Some(LanguageModelSelection { provider, model });
+    }
+
+    pub fn set_commit_message_model(&mut self, provider: String, model: String) {
+        self.commit_message_model = Some(LanguageModelSelection { provider, model });
+    }
+
+    pub fn set_thread_summary_model(&mut self, provider: String, model: String) {
+        self.thread_summary_model = Some(LanguageModelSelection { provider, model });
+    }
 }
 
 /// Assistant panel settings
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum AssistantSettingsContent {
-    Versioned(VersionedAssistantSettingsContent),
+    Versioned(Box<VersionedAssistantSettingsContent>),
     Legacy(LegacyAssistantSettingsContent),
 }
 
@@ -121,14 +135,14 @@ impl JsonSchema for AssistantSettingsContent {
 
 impl Default for AssistantSettingsContent {
     fn default() -> Self {
-        Self::Versioned(VersionedAssistantSettingsContent::default())
+        Self::Versioned(Box::new(VersionedAssistantSettingsContent::default()))
     }
 }
 
 impl AssistantSettingsContent {
     pub fn is_version_outdated(&self) -> bool {
         match self {
-            AssistantSettingsContent::Versioned(settings) => match settings {
+            AssistantSettingsContent::Versioned(settings) => match **settings {
                 VersionedAssistantSettingsContent::V1(_) => true,
                 VersionedAssistantSettingsContent::V2(_) => false,
             },
@@ -138,8 +152,8 @@ impl AssistantSettingsContent {
 
     fn upgrade(&self) -> AssistantSettingsContentV2 {
         match self {
-            AssistantSettingsContent::Versioned(settings) => match settings {
-                VersionedAssistantSettingsContent::V1(settings) => AssistantSettingsContentV2 {
+            AssistantSettingsContent::Versioned(settings) => match **settings {
+                VersionedAssistantSettingsContent::V1(ref settings) => AssistantSettingsContentV2 {
                     enabled: settings.enabled,
                     button: settings.button,
                     dock: settings.dock,
@@ -186,7 +200,9 @@ impl AssistantSettingsContent {
                                 })
                             }
                         }),
-                    editor_model: None,
+                    inline_assistant_model: None,
+                    commit_message_model: None,
+                    thread_summary_model: None,
                     inline_alternatives: None,
                     enable_experimental_live_diffs: None,
                     default_profile: None,
@@ -194,7 +210,7 @@ impl AssistantSettingsContent {
                     always_allow_tool_actions: None,
                     notify_when_agent_waiting: None,
                 },
-                VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
+                VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
             AssistantSettingsContent::Legacy(settings) => AssistantSettingsContentV2 {
                 enabled: None,
@@ -211,7 +227,9 @@ impl AssistantSettingsContent {
                         .id()
                         .to_string(),
                 }),
-                editor_model: None,
+                inline_assistant_model: None,
+                commit_message_model: None,
+                thread_summary_model: None,
                 inline_alternatives: None,
                 enable_experimental_live_diffs: None,
                 default_profile: None,
@@ -224,11 +242,11 @@ impl AssistantSettingsContent {
 
     pub fn set_dock(&mut self, dock: AssistantDockPosition) {
         match self {
-            AssistantSettingsContent::Versioned(settings) => match settings {
-                VersionedAssistantSettingsContent::V1(settings) => {
+            AssistantSettingsContent::Versioned(settings) => match **settings {
+                VersionedAssistantSettingsContent::V1(ref mut settings) => {
                     settings.dock = Some(dock);
                 }
-                VersionedAssistantSettingsContent::V2(settings) => {
+                VersionedAssistantSettingsContent::V2(ref mut settings) => {
                     settings.dock = Some(dock);
                 }
             },
@@ -243,77 +261,79 @@ impl AssistantSettingsContent {
         let provider = language_model.provider_id().0.to_string();
 
         match self {
-            AssistantSettingsContent::Versioned(settings) => match settings {
-                VersionedAssistantSettingsContent::V1(settings) => match provider.as_ref() {
-                    "zed.dev" => {
-                        log::warn!("attempted to set zed.dev model on outdated settings");
-                    }
-                    "anthropic" => {
-                        let api_url = match &settings.provider {
-                            Some(AssistantProviderContentV1::Anthropic { api_url, .. }) => {
-                                api_url.clone()
-                            }
-                            _ => None,
-                        };
-                        settings.provider = Some(AssistantProviderContentV1::Anthropic {
-                            default_model: AnthropicModel::from_id(&model).ok(),
-                            api_url,
-                        });
-                    }
-                    "ollama" => {
-                        let api_url = match &settings.provider {
-                            Some(AssistantProviderContentV1::Ollama { api_url, .. }) => {
-                                api_url.clone()
-                            }
-                            _ => None,
-                        };
-                        settings.provider = Some(AssistantProviderContentV1::Ollama {
-                            default_model: Some(ollama::Model::new(&model, None, None)),
-                            api_url,
-                        });
-                    }
-                    "lmstudio" => {
-                        let api_url = match &settings.provider {
-                            Some(AssistantProviderContentV1::LmStudio { api_url, .. }) => {
-                                api_url.clone()
-                            }
-                            _ => None,
-                        };
-                        settings.provider = Some(AssistantProviderContentV1::LmStudio {
-                            default_model: Some(lmstudio::Model::new(&model, None, None)),
-                            api_url,
-                        });
-                    }
-                    "openai" => {
-                        let (api_url, available_models) = match &settings.provider {
-                            Some(AssistantProviderContentV1::OpenAi {
+            AssistantSettingsContent::Versioned(settings) => match **settings {
+                VersionedAssistantSettingsContent::V1(ref mut settings) => {
+                    match provider.as_ref() {
+                        "zed.dev" => {
+                            log::warn!("attempted to set zed.dev model on outdated settings");
+                        }
+                        "anthropic" => {
+                            let api_url = match &settings.provider {
+                                Some(AssistantProviderContentV1::Anthropic { api_url, .. }) => {
+                                    api_url.clone()
+                                }
+                                _ => None,
+                            };
+                            settings.provider = Some(AssistantProviderContentV1::Anthropic {
+                                default_model: AnthropicModel::from_id(&model).ok(),
+                                api_url,
+                            });
+                        }
+                        "ollama" => {
+                            let api_url = match &settings.provider {
+                                Some(AssistantProviderContentV1::Ollama { api_url, .. }) => {
+                                    api_url.clone()
+                                }
+                                _ => None,
+                            };
+                            settings.provider = Some(AssistantProviderContentV1::Ollama {
+                                default_model: Some(ollama::Model::new(&model, None, None)),
+                                api_url,
+                            });
+                        }
+                        "lmstudio" => {
+                            let api_url = match &settings.provider {
+                                Some(AssistantProviderContentV1::LmStudio { api_url, .. }) => {
+                                    api_url.clone()
+                                }
+                                _ => None,
+                            };
+                            settings.provider = Some(AssistantProviderContentV1::LmStudio {
+                                default_model: Some(lmstudio::Model::new(&model, None, None)),
+                                api_url,
+                            });
+                        }
+                        "openai" => {
+                            let (api_url, available_models) = match &settings.provider {
+                                Some(AssistantProviderContentV1::OpenAi {
+                                    api_url,
+                                    available_models,
+                                    ..
+                                }) => (api_url.clone(), available_models.clone()),
+                                _ => (None, None),
+                            };
+                            settings.provider = Some(AssistantProviderContentV1::OpenAi {
+                                default_model: OpenAiModel::from_id(&model).ok(),
                                 api_url,
                                 available_models,
-                                ..
-                            }) => (api_url.clone(), available_models.clone()),
-                            _ => (None, None),
-                        };
-                        settings.provider = Some(AssistantProviderContentV1::OpenAi {
-                            default_model: OpenAiModel::from_id(&model).ok(),
-                            api_url,
-                            available_models,
-                        });
+                            });
+                        }
+                        "deepseek" => {
+                            let api_url = match &settings.provider {
+                                Some(AssistantProviderContentV1::DeepSeek { api_url, .. }) => {
+                                    api_url.clone()
+                                }
+                                _ => None,
+                            };
+                            settings.provider = Some(AssistantProviderContentV1::DeepSeek {
+                                default_model: DeepseekModel::from_id(&model).ok(),
+                                api_url,
+                            });
+                        }
+                        _ => {}
                     }
-                    "deepseek" => {
-                        let api_url = match &settings.provider {
-                            Some(AssistantProviderContentV1::DeepSeek { api_url, .. }) => {
-                                api_url.clone()
-                            }
-                            _ => None,
-                        };
-                        settings.provider = Some(AssistantProviderContentV1::DeepSeek {
-                            default_model: DeepseekModel::from_id(&model).ok(),
-                            api_url,
-                        });
-                    }
-                    _ => {}
-                },
-                VersionedAssistantSettingsContent::V2(settings) => {
+                }
+                VersionedAssistantSettingsContent::V2(ref mut settings) => {
                     settings.default_model = Some(LanguageModelSelection { provider, model });
                 }
             },
@@ -325,23 +345,48 @@ impl AssistantSettingsContent {
         }
     }
 
+    pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
+        if let AssistantSettingsContent::Versioned(boxed) = self {
+            if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
+                settings.inline_assistant_model = Some(LanguageModelSelection { provider, model });
+            }
+        }
+    }
+
+    pub fn set_commit_message_model(&mut self, provider: String, model: String) {
+        if let AssistantSettingsContent::Versioned(boxed) = self {
+            if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
+                settings.commit_message_model = Some(LanguageModelSelection { provider, model });
+            }
+        }
+    }
+
+    pub fn set_thread_summary_model(&mut self, provider: String, model: String) {
+        if let AssistantSettingsContent::Versioned(boxed) = self {
+            if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
+                settings.thread_summary_model = Some(LanguageModelSelection { provider, model });
+            }
+        }
+    }
+
     pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
-        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
-            self
-        else {
+        let AssistantSettingsContent::Versioned(boxed) = self else {
             return;
         };
-        settings.always_allow_tool_actions = Some(allow);
+
+        if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
+            settings.always_allow_tool_actions = Some(allow);
+        }
     }
 
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
-        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
-            self
-        else {
+        let AssistantSettingsContent::Versioned(boxed) = self else {
             return;
         };
 
-        settings.default_profile = Some(profile_id);
+        if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
+            settings.default_profile = Some(profile_id);
+        }
     }
 
     pub fn create_profile(
@@ -349,37 +394,37 @@ impl AssistantSettingsContent {
         profile_id: AgentProfileId,
         profile: AgentProfile,
     ) -> Result<()> {
-        let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) =
-            self
-        else {
+        let AssistantSettingsContent::Versioned(boxed) = self else {
             return Ok(());
         };
 
-        let profiles = settings.profiles.get_or_insert_default();
-        if profiles.contains_key(&profile_id) {
-            bail!("profile with ID '{profile_id}' already exists");
-        }
+        if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
+            let profiles = settings.profiles.get_or_insert_default();
+            if profiles.contains_key(&profile_id) {
+                bail!("profile with ID '{profile_id}' already exists");
+            }
 
-        profiles.insert(
-            profile_id,
-            AgentProfileContent {
-                name: profile.name.into(),
-                tools: profile.tools,
-                enable_all_context_servers: Some(profile.enable_all_context_servers),
-                context_servers: profile
-                    .context_servers
-                    .into_iter()
-                    .map(|(server_id, preset)| {
-                        (
-                            server_id,
-                            ContextServerPresetContent {
-                                tools: preset.tools,
-                            },
-                        )
-                    })
-                    .collect(),
-            },
-        );
+            profiles.insert(
+                profile_id,
+                AgentProfileContent {
+                    name: profile.name.into(),
+                    tools: profile.tools,
+                    enable_all_context_servers: Some(profile.enable_all_context_servers),
+                    context_servers: profile
+                        .context_servers
+                        .into_iter()
+                        .map(|(server_id, preset)| {
+                            (
+                                server_id,
+                                ContextServerPresetContent {
+                                    tools: preset.tools,
+                                },
+                            )
+                        })
+                        .collect(),
+                },
+            );
+        }
 
         Ok(())
     }
@@ -403,7 +448,9 @@ impl Default for VersionedAssistantSettingsContent {
             default_width: None,
             default_height: None,
             default_model: None,
-            editor_model: None,
+            inline_assistant_model: None,
+            commit_message_model: None,
+            thread_summary_model: None,
             inline_alternatives: None,
             enable_experimental_live_diffs: None,
             default_profile: None,
@@ -436,10 +483,14 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: 320
     default_height: Option<f32>,
-    /// The default model to use when creating new chats.
+    /// The default model to use when creating new chats and for other features when a specific model is not specified.
     default_model: Option<LanguageModelSelection>,
-    /// The model to use when applying edits from the assistant.
-    editor_model: Option<LanguageModelSelection>,
+    /// Model to use for the inline assistant. Defaults to default_model when not specified.
+    inline_assistant_model: Option<LanguageModelSelection>,
+    /// Model to use for generating git commit messages. Defaults to default_model when not specified.
+    commit_message_model: Option<LanguageModelSelection>,
+    /// Model to use for generating thread summaries. Defaults to default_model when not specified.
+    thread_summary_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     inline_alternatives: Option<Vec<LanguageModelSelection>>,
     /// Enable experimental live diffs in the assistant panel.
@@ -601,7 +652,15 @@ impl Settings for AssistantSettings {
                 value.default_height.map(Into::into),
             );
             merge(&mut settings.default_model, value.default_model);
-            merge(&mut settings.editor_model, value.editor_model);
+            settings.inline_assistant_model = value
+                .inline_assistant_model
+                .or(settings.inline_assistant_model.take());
+            settings.commit_message_model = value
+                .commit_message_model
+                .or(settings.commit_message_model.take());
+            settings.thread_summary_model = value
+                .thread_summary_model
+                .or(settings.thread_summary_model.take());
             merge(&mut settings.inline_alternatives, value.inline_alternatives);
             merge(
                 &mut settings.enable_experimental_live_diffs,
@@ -692,16 +751,15 @@ mod tests {
             settings::SettingsStore::global(cx).update_settings_file::<AssistantSettings>(
                 fs.clone(),
                 |settings, _| {
-                    *settings = AssistantSettingsContent::Versioned(
+                    *settings = AssistantSettingsContent::Versioned(Box::new(
                         VersionedAssistantSettingsContent::V2(AssistantSettingsContentV2 {
                             default_model: Some(LanguageModelSelection {
                                 provider: "test-provider".into(),
                                 model: "gpt-99".into(),
                             }),
-                            editor_model: Some(LanguageModelSelection {
-                                provider: "test-provider".into(),
-                                model: "gpt-99".into(),
-                            }),
+                            inline_assistant_model: None,
+                            commit_message_model: None,
+                            thread_summary_model: None,
                             inline_alternatives: None,
                             enabled: None,
                             button: None,
@@ -714,7 +772,7 @@ mod tests {
                             always_allow_tool_actions: None,
                             notify_when_agent_waiting: None,
                         }),
-                    )
+                    ))
                 },
             );
         });

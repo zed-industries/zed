@@ -126,24 +126,31 @@ impl DebugAdapter for PythonDebugAdapter {
     }
 
     fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        let mut args = json!({
+            "request": match config.request {
+                DebugRequestType::Launch(_) => "launch",
+                DebugRequestType::Attach(_) => "attach",
+            },
+            "subProcess": true,
+            "redirectOutput": true,
+        });
+        let map = args.as_object_mut().unwrap();
         match &config.request {
-            DebugRequestType::Launch(launch_config) => {
-                json!({
-                    "program": launch_config.program,
-                    "args": launch_config.args,
-                    "subProcess": true,
-                    "cwd": launch_config.cwd,
-                    "redirectOutput": true,
-                    "StopOnEntry": config.stop_on_entry,
-                })
+            DebugRequestType::Attach(attach) => {
+                map.insert("processId".into(), attach.process_id.into());
             }
-            dap::DebugRequestType::Attach(attach_config) => {
-                json!({
-                    "subProcess": true,
-                    "redirectOutput": true,
-                    "processId": attach_config.process_id
-                })
+            DebugRequestType::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+                map.insert("args".into(), launch.args.clone().into());
+
+                if let Some(stop_on_entry) = config.stop_on_entry {
+                    map.insert("stopOnEntry".into(), stop_on_entry.into());
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
             }
         }
+        args
     }
 }
