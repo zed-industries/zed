@@ -571,6 +571,8 @@ async fn check_usage_limit(
                     "users_in_recent_days": users_in_recent_days,
                     "max_requests_per_minute": per_user_max_requests_per_minute,
                     "max_tokens_per_minute": per_user_max_tokens_per_minute,
+                    "max_input_tokens_per_minute": per_user_max_input_tokens_per_minute,
+                    "max_output_tokens_per_minute": per_user_max_output_tokens_per_minute,
                     "max_tokens_per_day": per_user_max_tokens_per_day,
                     "plan": match claims.plan {
                         Plan::Free => "free".to_string(),
