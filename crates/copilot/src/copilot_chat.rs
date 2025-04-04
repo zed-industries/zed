@@ -458,9 +458,12 @@ async fn stream_completion(
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat");
 
+    // let request = test_request();
+
     let is_streaming = request.stream;
 
     let json = serde_json::to_string(&request)?;
+    let json = include_str!("request.json");
     // TODO: Remove before merging.
     println!("----------------\n{json}");
     let request = request_builder.body(AsyncBody::from(json))?;
@@ -504,5 +507,54 @@ async fn stream_completion(
         let response: ResponseEvent = serde_json::from_str(body_str)?;
 
         Ok(futures::stream::once(async move { Ok(response) }).boxed())
+    }
+}
+
+fn test_request() -> Request {
+    Request {
+        intent: true,
+        n: 1,
+        stream: true,
+        temperature: 0.1,
+        model: Model::Claude3_5Sonnet,
+        messages: vec![
+            ChatMessage::System {
+                content: "You are a coding assistant".into(),
+            },
+            ChatMessage::User {
+                content: "Repeat this message back to me".into(),
+            },
+            ChatMessage::Assistant {
+                content: Some("Okay, I will repeat the message back to you".into()),
+                tool_calls: vec![ToolCall {
+                    id: "tooluse_HyUd7NQnSEenWuNbYXzvFQ".into(),
+                    content: ToolCallContent::Function {
+                        function: FunctionContent {
+                            name: "echo".into(),
+                            arguments: serde_json::json!({
+                                "text": "Repeat this message back to me"
+                            }),
+                        },
+                    },
+                }],
+            },
+        ],
+        tools: vec![Tool::Function {
+            function: Function {
+                name: "echo".into(),
+                description: "Echo the given text".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "The text to echo"
+                        }
+                    },
+                    "required": ["text"]
+                }),
+            },
+        }],
+        tool_choice: None,
     }
 }

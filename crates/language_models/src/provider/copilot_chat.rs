@@ -278,6 +278,7 @@ pub fn map_to_language_model_completion_events(
         },
         |mut state| async move {
             if let Some(event) = state.events.next().await {
+                // dbg!(&event);
                 match event {
                     Ok(event) => {
                         let Some(choice) = event.choices.first() else {
@@ -410,9 +411,17 @@ impl CopilotChatLanguageModel {
 
             match message.role {
                 Role::User => {
-                    messages.push(ChatMessage::User {
-                        content: text_content,
-                    });
+                    let has_tool_results = message
+                        .content
+                        .iter()
+                        .any(|content| matches!(content, MessageContent::ToolResult(_)));
+
+                    if has_tool_results {
+                    } else {
+                        // messages.push(ChatMessage::User {
+                        //     content: text_content,
+                        // });
+                    }
 
                     for content in &message.content {
                         if let MessageContent::ToolResult(tool_result) = content {
@@ -422,6 +431,10 @@ impl CopilotChatLanguageModel {
                             });
                         }
                     }
+
+                    messages.push(ChatMessage::User {
+                        content: text_content,
+                    });
                 }
                 Role::Assistant => {
                     let mut tool_calls = Vec::new();
@@ -457,21 +470,21 @@ impl CopilotChatLanguageModel {
         let has_trailing_tool_use = messages
             .last()
             .map_or(false, |message| matches!(message, ChatMessage::Tool { .. }));
-        if has_trailing_tool_use {
-            messages.push(ChatMessage::User {
-                content: "I have provided the tool results".to_string(),
-            });
-        }
+        // if has_trailing_tool_use {
+        //     messages.push(ChatMessage::User {
+        //         content: "I have provided the tool results".to_string(),
+        //     });
+        // }
 
         // Copilot Chat has a restriction that the final message must be from the user.
         //
         // Failing to do this results in an opaque 400 Bad Request response from the API, so we try to catch it sooner.
-        if let Some(message) = messages.last() {
-            if !matches!(message, ChatMessage::User { .. }) {
-                const NO_TRAILING_USER_MESSAGE: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
-                bail!(NO_TRAILING_USER_MESSAGE);
-            }
-        }
+        // if let Some(message) = messages.last() {
+        //     if !matches!(message, ChatMessage::User { .. }) {
+        //         const NO_TRAILING_USER_MESSAGE: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
+        //         bail!(NO_TRAILING_USER_MESSAGE);
+        //     }
+        // }
 
         let tools = request
             .tools
