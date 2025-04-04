@@ -403,17 +403,24 @@ pub enum AutoindentMode {
     /// Apply the same indentation adjustment to all of the lines
     /// in a given insertion.
     Block {
-        /// The original indentation column of the first line of each
+        /// The original indentation column of the first and second line of each
         /// insertion, if it has been copied.
         ///
         /// Knowing this makes it possible to preserve the relative indentation
         /// of every line in the insertion from when it was copied.
-        ///
-        /// If the original indent column is `a`, and the first line of insertion
-        /// is then auto-indented to column `b`, then every other line of
-        /// the insertion will be auto-indented to column `b - a`
-        original_indent_columns: Vec<Option<u32>>,
+        original_indent_columns: Vec<Option<OriginalIndentColumn>>,
     },
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct OriginalIndentColumn {
+    /// If the original indent column first line is `a`, and the first line of insertion
+    /// is then auto-indented to column `b`, then every other line of
+    /// the insertion will be auto-indented to column `b - a`
+    pub first_line: u32,
+    /// In certain cases like '\n' where we don't want to edit the indentation of first line,
+    /// we use the second line as a reference to find auto-indentation.
+    pub second_line: u32,
 }
 
 #[derive(Clone)]
@@ -434,7 +441,7 @@ struct AutoindentRequestEntry {
     /// since the edit was made.
     first_line_is_new: bool,
     indent_size: IndentSize,
-    original_indent_column: Option<u32>,
+    original_indent: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -1616,7 +1623,7 @@ impl Buffer {
                         let old_row = position.to_point(&request.before_edit).row;
                         old_to_new_rows.insert(old_row, new_row);
                     }
-                    row_ranges.push((new_row..new_end_row, entry.original_indent_column));
+                    row_ranges.push((new_row..new_end_row, entry.original_indent));
                 }
 
                 // Build a map containing the suggested indentation for each of the edited lines
@@ -1668,7 +1675,7 @@ impl Buffer {
                 // if they differ from the old suggestion for that line.
                 let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
                 let mut language_indent_size = IndentSize::default();
-                for (row_range, original_indent_column) in row_ranges {
+                for (row_range, original_indent) in row_ranges {
                     let new_edited_row_range = if request.is_block_mode {
                         row_range.start..row_range.start + 1
                     } else {
@@ -1699,6 +1706,8 @@ impl Buffer {
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
 
+                            dbg!(&indent_sizes, &suggested_indent);
+
                             if old_suggestions.get(&new_row).map_or(
                                 true,
                                 |(old_indentation, was_within_error)| {
@@ -1714,8 +1723,7 @@ impl Buffer {
                         }
                     }
 
-                    if let (true, Some(original_indent_column)) =
-                        (request.is_block_mode, original_indent_column)
+                    if let (true, Some(original_indent)) = (request.is_block_mode, original_indent)
                     {
                         let new_indent =
                             if let Some((indent, _)) = indent_sizes.get(&row_range.start) {
@@ -1723,7 +1731,8 @@ impl Buffer {
                             } else {
                                 snapshot.indent_size_for_line(row_range.start)
                             };
-                        let delta = new_indent.len as i64 - original_indent_column as i64;
+
+                        let delta = new_indent.len as i64 - original_indent as i64;
                         if delta != 0 {
                             for row in row_range.skip(1) {
                                 indent_sizes.entry(row).or_insert_with(|| {
@@ -2245,16 +2254,23 @@ impl Buffer {
                         first_line_is_new = true;
                     }
 
-                    let mut original_indent_column = None;
+                    let mut original_indent = None;
                     if let AutoindentMode::Block {
                         original_indent_columns,
                     } = &mode
                     {
-                        original_indent_column = Some(
+                        original_indent = Some(
                             original_indent_columns
                                 .get(ix)
                                 .copied()
                                 .flatten()
+                                .map(|original_indent_column| {
+                                    if new_text.starts_with('\n') {
+                                        original_indent_column.second_line
+                                    } else {
+                                        original_indent_column.first_line
+                                    }
+                                })
                                 .unwrap_or_else(|| {
                                     indent_size_for_text(
                                         new_text[range_of_insertion_to_indent.clone()].chars(),
@@ -2271,7 +2287,7 @@ impl Buffer {
 
                     AutoindentRequestEntry {
                         first_line_is_new,
-                        original_indent_column,
+                        original_indent,
                         indent_size: before_edit.language_indent_size_at(range.start, cx),
                         range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
                             ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
@@ -2319,7 +2335,7 @@ impl Buffer {
                 range: before_edit.anchor_before(range.start)..before_edit.anchor_after(range.end),
                 first_line_is_new: true,
                 indent_size: before_edit.language_indent_size_at(range.start, cx),
-                original_indent_column: None,
+                original_indent: None,
             })
             .collect();
         self.autoindent_requests.push(Arc::new(AutoindentRequest {

@@ -18,9 +18,9 @@ use itertools::Itertools;
 use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
     CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentSize, Language,
-    LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
-    TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
-    Unclipped,
+    LanguageScope, OffsetRangeExt, OffsetUtf16, OriginalIndentColumn, Outline, OutlineItem, Point,
+    PointUtf16, Selection, TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId,
+    TreeSitterOptions, Unclipped,
     language_settings::{IndentGuideSettings, LanguageSettings, language_settings},
 };
 
@@ -535,7 +535,7 @@ struct BufferEdit {
     range: Range<usize>,
     new_text: Arc<str>,
     is_insertion: bool,
-    original_indent_column: Option<u32>,
+    original_indent_column: Option<OriginalIndentColumn>,
     excerpt_id: ExcerptId,
 }
 
@@ -898,7 +898,7 @@ impl MultiBuffer {
         &self,
         edits: Vec<(Range<usize>, Arc<str>)>,
         snapshot: &MultiBufferSnapshot,
-        original_indent_columns: &[Option<u32>],
+        original_indent_columns: &[Option<OriginalIndentColumn>],
     ) -> (HashMap<BufferId, Vec<BufferEdit>>, Vec<ExcerptId>) {
         let mut buffer_edits: HashMap<BufferId, Vec<BufferEdit>> = Default::default();
         let mut edited_excerpt_ids = Vec::new();

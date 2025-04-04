@@ -1646,7 +1646,10 @@ fn test_autoindent_block_mode(cx: &mut App) {
         // indent level, but the indentation of the first line was not included in
         // the copied text. This information is retained in the
         // 'original_indent_columns' vector.
-        let original_indent_columns = vec![Some(4)];
+        let original_indent_columns = vec![Some(OriginalIndentColumn {
+            first_line: 4,
+            second_line: 8,
+        })];
         let inserted_text = r#"
             "
                   c
@@ -1825,7 +1828,20 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
                 (ranges_to_replace[2].clone(), "fn three() {\n    103\n}\n"),
             ],
             Some(AutoindentMode::Block {
-                original_indent_columns: vec![Some(0), Some(0), Some(0)],
+                original_indent_columns: vec![
+                    Some(OriginalIndentColumn {
+                        first_line: 0,
+                        second_line: 0,
+                    }),
+                    Some(OriginalIndentColumn {
+                        first_line: 0,
+                        second_line: 0,
+                    }),
+                    Some(OriginalIndentColumn {
+                        first_line: 0,
+                        second_line: 0,
+                    }),
+                ],
             }),
             cx,
         );

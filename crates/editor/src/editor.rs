@@ -106,8 +106,8 @@ use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText,
-    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
-    TransactionId, TreeSitterOptions, WordsQuery,
+    IndentKind, IndentSize, Language, OffsetRangeExt, OriginalIndentColumn, Point, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, InlayHintSettings, RewrapBehavior, WordsCompletionMode, all_language_settings,
         language_settings,
@@ -1067,6 +1067,8 @@ pub struct ClipboardSelection {
     pub is_entire_line: bool,
     /// The indentation of the first line when this content was originally copied.
     pub first_line_indent: u32,
+    /// The indentation of the second line when this content was originally copied.
+    pub second_line_indent: u32,
 }
 
 // selections, scroll behavior, was newest selection reversed
@@ -2572,7 +2574,7 @@ impl Editor {
     pub fn edit_with_block_indent<I, S, T>(
         &mut self,
         edits: I,
-        original_indent_columns: Vec<Option<u32>>,
+        original_indent_columns: Vec<Option<OriginalIndentColumn>>,
         cx: &mut Context<Self>,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -9816,6 +9818,9 @@ impl Editor {
                     first_line_indent: buffer
                         .indent_size_for_line(MultiBufferRow(selection.start.row))
                         .len,
+                    second_line_indent: buffer
+                        .indent_size_for_line(MultiBufferRow(selection.start.row + 1))
+                        .len,
                 });
             }
         }
@@ -9939,6 +9944,9 @@ impl Editor {
                         first_line_indent: buffer
                             .indent_size_for_line(MultiBufferRow(trimmed_range.start.row))
                             .len,
+                        second_line_indent: buffer
+                            .indent_size_for_line(MultiBufferRow(trimmed_range.start.row + 1))
+                            .len,
                     });
                 }
             }
@@ -9970,7 +9978,10 @@ impl Editor {
                 let all_selections_were_entire_line =
                     clipboard_selections.iter().all(|s| s.is_entire_line);
                 let first_selection_indent_column =
-                    clipboard_selections.first().map(|s| s.first_line_indent);
+                    clipboard_selections.first().map(|s| OriginalIndentColumn {
+                        first_line: s.first_line_indent,
+                        second_line: s.second_line_indent,
+                    });
                 if clipboard_selections.len() != old_selections.len() {
                     clipboard_selections.drain(..);
                 }
@@ -9995,7 +10006,10 @@ impl Editor {
                             to_insert = &clipboard_text[start_offset..end_offset];
                             entire_line = clipboard_selection.is_entire_line;
                             start_offset = end_offset + 1;
-                            original_indent_column = Some(clipboard_selection.first_line_indent);
+                            original_indent_column = Some(OriginalIndentColumn {
+                                first_line: clipboard_selection.first_line_indent,
+                                second_line: clipboard_selection.second_line_indent,
+                            });
                         } else {
                             to_insert = clipboard_text.as_str();
                             entire_line = all_selections_were_entire_line;

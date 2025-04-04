@@ -1,6 +1,6 @@
 use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
 use gpui::{Context, Window, impl_actions};
-use language::{Bias, SelectionGoal};
+use language::{Bias, OriginalIndentColumn, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::cmp;
@@ -85,7 +85,10 @@ impl Vim {
                     clipboard_selections.as_ref().and_then(|zed_selections| {
                         zed_selections
                             .first()
-                            .map(|selection| selection.first_line_indent)
+                            .map(|selection| OriginalIndentColumn {
+                                first_line: selection.first_line_indent,
+                                second_line: selection.second_line_indent,
+                            })
                     });
                 let before = action.before || vim.mode == Mode::VisualLine;
 
@@ -101,7 +104,13 @@ impl Vim {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 let text = text[start_offset..end_offset].to_string();
                                 start_offset = end_offset + 1;
-                                (text, Some(clipboard_selection.first_line_indent))
+                                (
+                                    text,
+                                    Some(OriginalIndentColumn {
+                                        first_line: clipboard_selection.first_line_indent,
+                                        second_line: clipboard_selection.second_line_indent,
+                                    }),
+                                )
                             } else {
                                 ("".to_string(), first_selection_indent_column)
                             }

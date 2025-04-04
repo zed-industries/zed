@@ -185,6 +185,9 @@ impl Vim {
                     len: text.len() - initial_len,
                     is_entire_line: kind.linewise(),
                     first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
+                    second_line_indent: buffer
+                        .indent_size_for_line(MultiBufferRow(start.row + 1))
+                        .len,
                 });
             }
         }
