@@ -1449,8 +1449,6 @@ impl EditorElement {
     fn layout_minimap(
         &self,
         snapshot: EditorSnapshot,
-        editor_wrap_width: Option<Pixels>,
-        editor_em_advance: Pixels,
         minimap_width: Pixels,
         minimap_settings: &Minimap,
         scroll_position: gpui::Point<f32>,
@@ -1593,6 +1591,18 @@ impl EditorElement {
         let mut text_style = self.style.text.clone();
         text_style.font_size = px(minimap_settings.font_size).into();
         text_style.line_height_in_pixels(rem_size)
+    }
+
+    fn get_minimap_width(minimap_wrap_width: Pixels, minimap_settings: &Minimap) -> Pixels {
+        px(minimap_wrap_width.0.min(minimap_settings.width))
+    }
+
+    fn get_minimap_wrap_width(
+        wrap_width: Pixels,
+        editor_font_size: Pixels,
+        minimap_settings: &Minimap,
+    ) -> Pixels {
+        px(wrap_width.0 * (minimap_settings.font_size / editor_font_size.0))
     }
 
     fn prepaint_crease_toggles(
@@ -7501,7 +7511,13 @@ impl Element for EditorElement {
                     );
 
                     let minimap_settings = EditorSettings::get_global(cx).minimap;
-                    let minimap_width = px(minimap_settings.width);
+                    let minimap_wrap_width = Self::get_minimap_wrap_width(
+                        editor_wrap_width.unwrap_or(Pixels::MAX),
+                        font_size,
+                        &minimap_settings,
+                    );
+                    let minimap_width =
+                        Self::get_minimap_width(minimap_wrap_width, &minimap_settings);
 
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
@@ -7690,8 +7706,6 @@ impl Element for EditorElement {
                     let minimap = window.with_element_namespace("minimap", |window| {
                         self.layout_minimap(
                             minimap_snapshot,
-                            editor_wrap_width,
-                            em_advance,
                             minimap_width,
                             &minimap_settings,
                             scroll_position,
