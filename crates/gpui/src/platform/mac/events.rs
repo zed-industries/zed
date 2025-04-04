@@ -296,77 +296,65 @@ impl PlatformInput {
 
 unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     unsafe {
-        use cocoa::appkit::*;
+        use cocoa::appkit::{NSModeSwitchFunctionKey, NSUpArrowFunctionKey};
 
     let scan_code = native_event.keyCode();
-        let mut characters = native_event
+        let characters = native_event
             .charactersIgnoringModifiers()
             .to_str()
             .to_string();
-        // let mut key_char = None;
-        let first_char = characters.chars().next().map(|ch| ch as u16);
-        let modifiers = native_event.modifierFlags();
-
+            let first_char = characters.chars().next().map(|ch| ch as u16);
+    
+    let modifiers = native_event.modifierFlags();
         let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
         let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-        let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
+        let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
         let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
         let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask)
             && first_char.map_or(true, |ch| {
                 !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
             });
-    let has_key_char = !control && !command && !function;
-    let key = chars_for_modified_key(scan_code, NO_MOD);
 
-    if let Some((code, key, key_char)) = parse_immutable_keys(scan_code, has_key_char) {
-        println!(
-            "parse_immutable_keys: {:#?}, {:?}, {}",
-            modifiers, code, key
-        );
-        return Keystroke {
-            modifiers: Modifiers {
-                control,
-                alt,
-                shift,
-                platform: command,
-                function,
-            },
+    let modifiers = Modifiers {
+        control,
+        alt,
+        shift,
+        platform: command,
+        function,
+    };
+    let may_have_char = !control && !command && !function;
+
+    if let Some((code, face, key_char)) = parse_immutable_keys(scan_code, may_have_char) {
+        return dbg!(Keystroke {
+            modifiers,
             code,
-            face: key,
-            key_char: None,
-        };
+            face,
+            key_char,
+        });
     }
 
+    let key = chars_for_modified_key(scan_code, NO_MOD);
     let code = parse_letter_keys(scan_code, &key);
-    let key_char = if has_key_char {
-        let mut mods = NO_MOD;
-        if shift {
-            mods |= SHIFT_MOD;
+    let key_char = if may_have_char {
+        let mods =
+            (if shift { SHIFT_MOD } else { NO_MOD }) | (if alt { OPTION_MOD } else { NO_MOD });
+        let char_str = chars_for_modified_key(scan_code, mods);
+        if char_str.is_empty() {
+            None
+        } else {
+            Some(char_str)
         }
-        if alt {
-            mods |= OPTION_MOD;
-        }
-        Some(chars_for_modified_key(scan_code, mods))
     } else {
         None
     };
 
-    println!("parse_other_keys: {:#?}, {:?}, {}", modifiers, code, key);
-    let ret = Keystroke {
-        modifiers: Modifiers {
-            control,
-            alt,
-            shift,
-            platform: command,
-            function,
-        },
+    dbg!(Keystroke {
+        modifiers,
         code,
         face: key,
-            key_char: None,
+            key_char,
         }
-    };
-    println!("parse_keystroke: {:#?}", ret);
-    ret
+    })
 }
 
 pub fn always_use_command_layout() -> bool {
