@@ -1,31 +1,19 @@
 [build]
-# v0 mangling scheme provides more detailed backtraces around closures
-rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
-
-[alias]
-xtask = "run --package xtask --"
-
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-
-[target.aarch64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "link-args=-all_load"]
+jobs = 12
+# Let environment variable control incremental compilation
 
 [target.x86_64-apple-darwin]
-rustflags = ["-C", "link-args=-all_load"]
+rustflags = ["-C", "target-cpu=native"]
 
-[target.'cfg(target_os = "windows")']
-rustflags = [
-    "--cfg",
-    "windows_slim_errors",        # This cfg will reduce the size of `windows::core::Error` from 16 bytes to 4 bytes
-    "-C",
-    "target-feature=+crt-static", # This fixes the linking issue when compiling livekit on Windows
-]
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]
 
-[env]
-MACOSX_DEPLOYMENT_TARGET = "10.15.7"
+[profile.release]
+codegen-units = 1
+lto = "thin"
+debug = false
+strip = true  # Strip symbols for smaller binary
+
+[cache]
+# Shared cache for sccache
+dir = "/Users/ahmettok/.cargo/sccache"

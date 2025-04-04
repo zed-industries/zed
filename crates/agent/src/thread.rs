@@ -1250,10 +1250,10 @@ impl Thread {
     }
 
     pub fn summarize(&mut self, cx: &mut Context<Self>) {
-        // TODO: Remove before merging.
-        if 1 < 2 {
-            return;
-        }
+        // // TODO: Remove before merging.
+        // if 1 < 2 {
+        //     return;
+        // }
 
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return;
