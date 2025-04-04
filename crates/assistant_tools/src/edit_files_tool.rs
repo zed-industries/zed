@@ -205,8 +205,8 @@ impl EditToolRequest {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.editor_model() else {
-            return Task::ready(Err(anyhow!("No editor model configured")));
+        let Some(model) = model_registry.active_model() else {
+            return Task::ready(Err(anyhow!("No model configured")));
         };
 
         let mut messages = messages.to_vec();

@@ -77,7 +77,6 @@ pub struct AssistantSettings {
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: LanguageModelSelection,
-    pub editor_model: LanguageModelSelection,
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub commit_message_model: Option<LanguageModelSelection>,
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -97,13 +96,6 @@ impl AssistantSettings {
         }
 
         cx.is_staff() || self.enable_experimental_live_diffs
-    }
-    
-    pub fn set_editor_model(&mut self, provider: String, model: String) {
-        self.editor_model = LanguageModelSelection {
-            provider,
-            model,
-        };
     }
     
     pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
@@ -217,7 +209,6 @@ impl AssistantSettingsContent {
                                 })
                             }
                         }),
-                    editor_model: None,
                     inline_assistant_model: None,
                     commit_message_model: None,
                     thread_summary_model: None,
@@ -245,7 +236,6 @@ impl AssistantSettingsContent {
                         .id()
                         .to_string(),
                 }),
-                editor_model: None,
                 inline_assistant_model: None,
                 commit_message_model: None,
                 thread_summary_model: None,
@@ -362,12 +352,6 @@ impl AssistantSettingsContent {
         }
     }
     
-    pub fn set_editor_model(&mut self, provider: String, model: String) {
-        if let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) = self {
-            settings.editor_model = Some(LanguageModelSelection { provider, model });
-        }
-    }
-    
     pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
         if let AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(settings)) = self {
             settings.inline_assistant_model = Some(LanguageModelSelection { provider, model });
@@ -464,7 +448,6 @@ impl Default for VersionedAssistantSettingsContent {
             default_width: None,
             default_height: None,
             default_model: None,
-            editor_model: None,
             inline_assistant_model: None,
             commit_message_model: None,
             thread_summary_model: None,
@@ -502,8 +485,6 @@ pub struct AssistantSettingsContentV2 {
     default_height: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     default_model: Option<LanguageModelSelection>,
-    /// The model to use when applying edits from the assistant.
-    editor_model: Option<LanguageModelSelection>,
     /// Model to use for the inline assistant. Defaults to default_model when not specified.
     inline_assistant_model: Option<LanguageModelSelection>,
     /// Model to use for generating git commit messages. Defaults to default_model when not specified.
@@ -671,7 +652,6 @@ impl Settings for AssistantSettings {
                 value.default_height.map(Into::into),
             );
             merge(&mut settings.default_model, value.default_model);
-            merge(&mut settings.editor_model, value.editor_model);
             settings.inline_assistant_model = value.inline_assistant_model.or(settings.inline_assistant_model.take());
             settings.commit_message_model = value.commit_message_model.or(settings.commit_message_model.take());
             settings.thread_summary_model = value.thread_summary_model.or(settings.thread_summary_model.take());
@@ -768,10 +748,6 @@ mod tests {
                     *settings = AssistantSettingsContent::Versioned(
                         VersionedAssistantSettingsContent::V2(AssistantSettingsContentV2 {
                             default_model: Some(LanguageModelSelection {
-                                provider: "test-provider".into(),
-                                model: "gpt-99".into(),
-                            }),
-                            editor_model: Some(LanguageModelSelection {
                                 provider: "test-provider".into(),
                                 model: "gpt-99".into(),
                             }),

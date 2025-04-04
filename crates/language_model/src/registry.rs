@@ -15,9 +15,9 @@ struct GlobalLanguageModelRegistry(Entity<LanguageModelRegistry>);
 
 impl Global for GlobalLanguageModelRegistry {}
 
+#[derive(Default)]
 pub struct LanguageModelRegistry {
     active_model: Option<ActiveModel>,
-    editor_model: Option<ActiveModel>,
     inline_assistant_model: Option<ActiveModel>,
     commit_message_model: Option<ActiveModel>,
     thread_summary_model: Option<ActiveModel>,
@@ -32,7 +32,6 @@ pub struct ActiveModel {
 
 pub enum Event {
     ActiveModelChanged,
-    EditorModelChanged,
     InlineAssistantModelChanged,
     CommitMessageModelChanged,
     ThreadSummaryModelChanged,
@@ -42,20 +41,6 @@ pub enum Event {
 }
 
 impl EventEmitter<Event> for LanguageModelRegistry {}
-
-impl Default for LanguageModelRegistry {
-    fn default() -> Self {
-        Self {
-            active_model: None,
-            editor_model: None,
-            inline_assistant_model: None,
-            commit_message_model: None,
-            thread_summary_model: None,
-            providers: BTreeMap::default(),
-            inline_alternatives: Vec::new(),
-        }
-    }
-}
 
 impl LanguageModelRegistry {
     pub fn global(cx: &App) -> Entity<Self> {
@@ -149,22 +134,6 @@ impl LanguageModelRegistry {
         }
     }
 
-    pub fn select_editor_model(
-        &mut self,
-        provider: &LanguageModelProviderId,
-        model_id: &LanguageModelId,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(provider) = self.provider(provider) else {
-            return;
-        };
-
-        let models = provider.provided_models(cx);
-        if let Some(model) = models.iter().find(|model| &model.id() == model_id).cloned() {
-            self.set_editor_model(Some(model), cx);
-        }
-    }
-    
     pub fn select_inline_assistant_model(
         &mut self,
         provider: &LanguageModelProviderId,
@@ -247,28 +216,6 @@ impl LanguageModelRegistry {
         }
     }
 
-    pub fn set_editor_model(
-        &mut self,
-        model: Option<Arc<dyn LanguageModel>>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(model) = model {
-            let provider_id = model.provider_id();
-            if let Some(provider) = self.providers.get(&provider_id).cloned() {
-                self.editor_model = Some(ActiveModel {
-                    provider,
-                    model: Some(model),
-                });
-                cx.emit(Event::EditorModelChanged);
-            } else {
-                log::warn!("Editor model's provider not found in registry");
-            }
-        } else {
-            self.editor_model = None;
-            cx.emit(Event::EditorModelChanged);
-        }
-    }
-    
     pub fn set_inline_assistant_model(
         &mut self,
         model: Option<Arc<dyn LanguageModel>>,
@@ -346,10 +293,6 @@ impl LanguageModelRegistry {
 
     pub fn active_model(&self) -> Option<Arc<dyn LanguageModel>> {
         self.active_model.as_ref()?.model.clone()
-    }
-
-    pub fn editor_model(&self) -> Option<Arc<dyn LanguageModel>> {
-        self.editor_model.as_ref()?.model.clone()
     }
     
     pub fn inline_assistant_model(&self) -> Option<Arc<dyn LanguageModel>> {

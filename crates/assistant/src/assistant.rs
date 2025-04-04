@@ -166,11 +166,6 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         LanguageModelProviderId::from(settings.default_model.provider.clone());
     let active_model_id = LanguageModelId::from(settings.default_model.model.clone());
     
-    // Editor model
-    let editor_provider_name =
-        LanguageModelProviderId::from(settings.editor_model.provider.clone());
-    let editor_model_id = LanguageModelId::from(settings.editor_model.model.clone());
-    
     // Inline assistant model
     let inline_assistant_model = settings.inline_assistant_model.as_ref().unwrap_or(&settings.default_model);
     let inline_assistant_provider_name = 
@@ -204,9 +199,8 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         .collect::<Vec<_>>();
     
     LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-        // Set the default model and editor model
+        // Set the default model
         registry.select_active_model(&active_model_provider_name, &active_model_id, cx);
-        registry.select_editor_model(&editor_provider_name, &editor_model_id, cx);
         
         // Set the specific models
         registry.select_inline_assistant_model(&inline_assistant_provider_name, &inline_assistant_model_id, cx);

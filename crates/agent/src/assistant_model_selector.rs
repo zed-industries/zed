@@ -12,7 +12,6 @@ use ui::{ButtonLike, PopoverMenuHandle, Tooltip, prelude::*};
 #[derive(Clone, Copy)]
 pub enum ModelType {
     Default,
-    Editor,
     InlineAssistant,
     CommitMessage,
     ThreadSummary,
@@ -43,7 +42,6 @@ impl AssistantModelSelector {
                         let provider = model.provider_id().0.to_string();
                         let model_id = model.id().0.to_string();
                         
-                        // Different update for each model type
                         match model_type {
                             ModelType::Default => {
                                 update_settings_file::<AssistantSettings>(
@@ -51,15 +49,6 @@ impl AssistantModelSelector {
                                     cx,
                                     move |settings, _cx| {
                                         settings.set_model(model.clone());
-                                    },
-                                );
-                            },
-                            ModelType::Editor => {
-                                update_settings_file::<AssistantSettings>(
-                                    fs.clone(),
-                                    cx,
-                                    move |settings, _cx| {
-                                        settings.set_editor_model(provider.clone(), model_id.clone());
                                     },
                                 );
                             },
@@ -113,7 +102,6 @@ impl Render for AssistantModelSelector {
         
         let model = match self.model_type {
             ModelType::Default => model_registry.active_model(),
-            ModelType::Editor => model_registry.editor_model(),
             ModelType::InlineAssistant => model_registry.inline_assistant_model(),
             ModelType::CommitMessage => model_registry.commit_message_model(),
             ModelType::ThreadSummary => model_registry.thread_summary_model(),
