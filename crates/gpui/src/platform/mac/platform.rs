@@ -552,6 +552,10 @@ impl Platform for MacPlatform {
             .collect()
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        true
+    }
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
