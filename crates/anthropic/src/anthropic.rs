@@ -324,11 +324,17 @@ pub async fn stream_completion(
 /// <https://docs.anthropic.com/en/api/rate-limits#response-headers>
 #[derive(Debug)]
 pub struct RateLimitInfo {
+    /// The maximum number of requests allowed within any rate limit period.
     pub requests_limit: usize,
+    /// The number of requests remaining before being rate limited.
     pub requests_remaining: usize,
+    /// The time when the request rate limit will be fully replenished, provided in RFC 3339 format.
     pub requests_reset: DateTime<Utc>,
+    /// The maximum number of tokens allowed within any rate limit period.
     pub tokens_limit: usize,
+    /// The number of tokens remaining (rounded to the nearest thousand) before being rate limited.
     pub tokens_remaining: usize,
+    /// The time when the token rate limit will be fully replenished, provided in RFC 3339 format.
     pub tokens_reset: DateTime<Utc>,
 }
 
