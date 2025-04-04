@@ -204,13 +204,6 @@ let
         overrideVendorGitCheckout =
           let
             hasWebRtcSys = builtins.any (crate: crate.name == "webrtc-sys");
-            # we can't set $RUSTFLAGS because that clobbers the cargo config
-            # see https://github.com/rust-lang/cargo/issues/5376#issuecomment-2163350032
-            glesConfig = builtins.toFile "config.toml" ''
-              [target.'cfg(all())']
-              rustflags = ["--cfg", "gles"]
-            '';
-
             # `webrtc-sys` expects a staticlib; nixpkgs' `livekit-webrtc` has been patched to
             # produce a `dylib`... patching `webrtc-sys`'s build script is the easier option
             # TODO: send livekit sdk a PR to make this configurable
@@ -218,9 +211,6 @@ let
               ''
                 substituteInPlace webrtc-sys/build.rs --replace-fail \
                   "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
-              ''
-              + lib.optionalString withGLES ''
-                cat ${glesConfig} >> .cargo/config/config.toml
               '';
           in
           crates: drv:
@@ -246,6 +236,17 @@ craneLib.buildPackage (
     preBuild = ''
       ALLOW_MISSING_LICENSES=yes bash script/generate-licenses
       echo nightly > crates/zed/RELEASE_CHANNEL
+    '';
+
+    # we can't set $RUSTFLAGS because that clobbers the cargo config
+    # see https://github.com/rust-lang/cargo/issues/5376#issuecomment-2163350032
+    postPatch = let
+      glesConfig = builtins.toFile "config.toml" ''
+        [target.'cfg(all())']
+        rustflags = ["--cfg", "gles"]
+      '';
+    in lib.optionalString withGLES ''
+      cat ${glesConfig} >> .cargo/config/config.toml
     '';
 
     installPhase =
