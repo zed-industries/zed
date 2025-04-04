@@ -216,7 +216,6 @@ blade-graphics.workspace = true
 blade-macros.workspace = true
 flume = "0.11"
 rand.workspace = true
-scap.workspace = true
 windows.workspace = true
 windows-core = "0.61"
 windows-numerics = "0.2"
