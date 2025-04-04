@@ -9,7 +9,7 @@ use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
     Along, AnyView, AnyWeakView, Axis, Bounds, Context, Entity, Hsla, IntoElement, MouseButton,
-    Pixels, Point, StyleRefinement, Window, point, size,
+    Pixels, Point, StyleRefinement, WeakEntity, Window, point, size,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -127,7 +127,7 @@ impl PaneGroup {
         zoomed: Option<&AnyWeakView>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut App,
     ) -> impl IntoElement {
         self.root.render(0, zoomed, render_cx, window, cx)
     }
@@ -188,6 +188,7 @@ pub struct PaneRenderContext<'a> {
     pub active_call: Option<&'a Entity<ActiveCall>>,
     pub active_pane: &'a Entity<Pane>,
     pub app_state: &'a Arc<AppState>,
+    pub workspace: &'a WeakEntity<Workspace>,
 }
 
 #[derive(Default)]
@@ -199,6 +200,34 @@ pub struct LeaderDecoration {
 pub trait PaneLeaderDecorator {
     fn decorate(&self, pane: &Entity<Pane>, cx: &App) -> LeaderDecoration;
     fn active_pane(&self) -> &Entity<Pane>;
+    fn workspace(&self) -> &WeakEntity<Workspace>;
+}
+
+pub struct ActivePaneDecorator<'a> {
+    active_pane: &'a Entity<Pane>,
+    workspace: &'a WeakEntity<Workspace>,
+}
+
+impl<'a> ActivePaneDecorator<'a> {
+    pub fn new(active_pane: &'a Entity<Pane>, workspace: &'a WeakEntity<Workspace>) -> Self {
+        Self {
+            active_pane,
+            workspace,
+        }
+    }
+}
+
+impl PaneLeaderDecorator for ActivePaneDecorator<'_> {
+    fn decorate(&self, _: &Entity<Pane>, _: &App) -> LeaderDecoration {
+        LeaderDecoration::default()
+    }
+    fn active_pane(&self) -> &Entity<Pane> {
+        self.active_pane
+    }
+
+    fn workspace(&self) -> &WeakEntity<Workspace> {
+        self.workspace
+    }
 }
 
 impl PaneLeaderDecorator for PaneRenderContext<'_> {
@@ -301,6 +330,10 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
     fn active_pane(&self) -> &Entity<Pane> {
         self.active_pane
     }
+
+    fn workspace(&self) -> &WeakEntity<Workspace> {
+        self.workspace
+    }
 }
 impl Member {
     fn new_axis(old_pane: Entity<Pane>, new_pane: Entity<Pane>, direction: SplitDirection) -> Self {
@@ -333,7 +366,7 @@ impl Member {
         zoomed: Option<&AnyWeakView>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut App,
     ) -> impl IntoElement {
         match self {
             Member::Pane(pane) => {
@@ -671,7 +704,7 @@ impl PaneAxis {
         zoomed: Option<&AnyWeakView>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut App,
     ) -> gpui::AnyElement {
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;
@@ -681,7 +714,7 @@ impl PaneAxis {
             basis,
             self.flexes.clone(),
             self.bounding_boxes.clone(),
-            cx.entity().downgrade(),
+            render_cx.workspace().clone(),
         )
         .children(self.members.iter().enumerate().map(|(ix, member)| {
             if matches!(member, Member::Pane(pane) if pane == render_cx.active_pane()) {

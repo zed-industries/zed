@@ -5583,6 +5583,7 @@ impl Render for Workspace {
                                                                 active_pane: &self.active_pane,
                                                                 app_state: &self.app_state,
                                                                 project: &self.project,
+                                                                workspace: &self.weak_self,
                                                             },
                                                             window,
                                                             cx,

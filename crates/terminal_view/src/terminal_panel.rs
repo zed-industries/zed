@@ -1209,6 +1209,7 @@ impl Render for TerminalPanel {
                         active_pane: &self.active_pane,
                         app_state: &workspace.app_state(),
                         project: workspace.project(),
+                        workspace: &workspace.weak_handle(),
                     },
                     window,
                     cx,
