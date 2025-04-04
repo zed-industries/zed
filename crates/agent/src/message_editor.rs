@@ -9,8 +9,10 @@ use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
     WeakEntity, linear_color_stop, linear_gradient, point,
 };
+use language::Buffer;
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
+use multi_buffer;
 use project::Project;
 use settings::Settings;
 use std::time::Duration;
@@ -320,6 +322,19 @@ impl MessageEditor {
     fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
         AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
     }
+
+    fn handle_file_click(
+        &self,
+        buffer: Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Ok(diff) = AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx)
+        {
+            let path_key = multi_buffer::PathKey::for_buffer(&buffer, cx);
+            diff.update(cx, |diff, cx| diff.move_to_path(path_key, window, cx));
+        }
+    }
 }
 
 impl Focusable for MessageEditor {
@@ -487,11 +502,16 @@ impl Render for MessageEditor {
                         }])
                         .child(
                             h_flex()
+                                .id("edits-container")
                                 .p_1p5()
                                 .justify_between()
                                 .when(self.edits_expanded, |this| {
                                     this.border_b_1().border_color(border_color)
                                 })
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.handle_review_click(window, cx)
+                                }))
                                 .child(
                                     h_flex()
                                         .gap_1()
@@ -605,11 +625,21 @@ impl Render for MessageEditor {
                                                         .justify_between()
                                                         .child(
                                                             h_flex()
-                                                                .id("file-container")
+                                                                .id(("file-container", index))
                                                                 .pr_8()
                                                                 .gap_1p5()
                                                                 .max_w_full()
                                                                 .overflow_x_scroll()
+                                                                .cursor_pointer()
+                                                                .on_click({
+                                                                    let buffer = buffer.clone();
+                                                                    cx.listener(move |this, _, window, cx| {
+                                                                        this.handle_file_click(buffer.clone(), window, cx);
+                                                                    })
+                                                                })
+                                                                .tooltip(
+                                                                    Tooltip::text(format!("Review {}", path.display()))
+                                                                )
                                                                 .child(file_icon)
                                                                 .child(
                                                                     h_flex()
