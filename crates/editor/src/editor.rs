@@ -12801,159 +12801,138 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let selection = self.selections.newest_anchor();
+        let selection = self.selections.newest::<usize>(cx);
+        // If there is an active Diagnostic Popover jump to its diagnostic instead.
+        if direction == Direction::Next {
+            if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
+                let Some(buffer_id) = popover.local_diagnostic.range.start.buffer_id else {
+                    return;
+                };
+                self.activate_diagnostics(
+                    buffer_id,
+                    popover.local_diagnostic.diagnostic.group_id,
+                    window,
+                    cx,
+                );
+                if let Some(active_diagnostics) = self.active_diagnostics.as_ref() {
+                    let primary_range_start = active_diagnostics.primary_range.start;
+                    self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        let mut new_selection = s.newest_anchor().clone();
+                        new_selection.collapse_to(primary_range_start, SelectionGoal::None);
+                        s.select_anchors(vec![new_selection.clone()]);
+                    });
+                    self.refresh_inline_completion(false, true, window, cx);
+                }
+                return;
+            }
+        }
 
-        self.display_map.update(cx, |display_map, cx| {
-            display_map.insert_blocks(
-                [BlockProperties {
-                    placement: BlockPlacement::Near(selection.start),
-                    height: Some(1),
-                    style: BlockStyle::Fixed,
-                    render: Arc::new(|bcx| {
-                        div()
-                            .w(px(200.))
-                            .h(px(30.))
-                            .bg(gpui::blue())
-                            .into_any_element()
-                    }),
-                    priority: 0,
-                }],
-                cx,
-            )
+        let active_group_id = self
+            .active_diagnostics
+            .as_ref()
+            .map(|active_group| active_group.group_id);
+        let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
+            active_diagnostics
+                .primary_range
+                .to_offset(&buffer)
+                .to_inclusive()
         });
-        return;
+        let search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
+            if active_primary_range.contains(&selection.head()) {
+                *active_primary_range.start()
+            } else {
+                selection.head()
+            }
+        } else {
+            selection.head()
+        };
 
-        // // If there is an active Diagnostic Popover jump to its diagnostic instead.
-        // if direction == Direction::Next {
-        //     if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
-        //         let Some(buffer_id) = popover.local_diagnostic.range.start.buffer_id else {
-        //             return;
-        //         };
-        //         self.activate_diagnostics(
-        //             buffer_id,
-        //             popover.local_diagnostic.diagnostic.group_id,
-        //             window,
-        //             cx,
-        //         );
-        //         if let Some(active_diagnostics) = self.active_diagnostics.as_ref() {
-        //             let primary_range_start = active_diagnostics.primary_range.start;
-        //             self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-        //                 let mut new_selection = s.newest_anchor().clone();
-        //                 new_selection.collapse_to(primary_range_start, SelectionGoal::None);
-        //                 s.select_anchors(vec![new_selection.clone()]);
-        //             });
-        //             self.refresh_inline_completion(false, true, window, cx);
-        //         }
-        //         return;
-        //     }
-        // }
+        let snapshot = self.snapshot(window, cx);
+        let primary_diagnostics_before = buffer
+            .diagnostics_in_range::<usize>(0..search_start)
+            .filter(|entry| entry.diagnostic.is_primary)
+            .filter(|entry| entry.range.start != entry.range.end)
+            .filter(|entry| entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
+            .filter(|entry| !snapshot.intersects_fold(entry.range.start))
+            .collect::<Vec<_>>();
+        let last_same_group_diagnostic_before = active_group_id.and_then(|active_group_id| {
+            primary_diagnostics_before
+                .iter()
+                .position(|entry| entry.diagnostic.group_id == active_group_id)
+        });
 
-        // let active_group_id = self
-        //     .active_diagnostics
-        //     .as_ref()
-        //     .map(|active_group| active_group.group_id);
-        // let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
-        //     active_diagnostics
-        //         .primary_range
-        //         .to_offset(&buffer)
-        //         .to_inclusive()
-        // });
-        // let search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
-        //     if active_primary_range.contains(&selection.head()) {
-        //         *active_primary_range.start()
-        //     } else {
-        //         selection.head()
-        //     }
-        // } else {
-        //     selection.head()
-        // };
+        let primary_diagnostics_after = buffer
+            .diagnostics_in_range::<usize>(search_start..buffer.len())
+            .filter(|entry| entry.diagnostic.is_primary)
+            .filter(|entry| entry.range.start != entry.range.end)
+            .filter(|entry| entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
+            .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start))
+            .collect::<Vec<_>>();
+        let last_same_group_diagnostic_after = active_group_id.and_then(|active_group_id| {
+            primary_diagnostics_after
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(i, entry)| {
+                    if entry.diagnostic.group_id == active_group_id {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+        });
 
-        // let snapshot = self.snapshot(window, cx);
-        // let primary_diagnostics_before = buffer
-        //     .diagnostics_in_range::<usize>(0..search_start)
-        //     .filter(|entry| entry.diagnostic.is_primary)
-        //     .filter(|entry| entry.range.start != entry.range.end)
-        //     .filter(|entry| entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
-        //     .filter(|entry| !snapshot.intersects_fold(entry.range.start))
-        //     .collect::<Vec<_>>();
-        // let last_same_group_diagnostic_before = active_group_id.and_then(|active_group_id| {
-        //     primary_diagnostics_before
-        //         .iter()
-        //         .position(|entry| entry.diagnostic.group_id == active_group_id)
-        // });
+        let next_primary_diagnostic = match direction {
+            Direction::Prev => primary_diagnostics_before
+                .iter()
+                .take(last_same_group_diagnostic_before.unwrap_or(usize::MAX))
+                .rev()
+                .next(),
+            Direction::Next => primary_diagnostics_after
+                .iter()
+                .skip(
+                    last_same_group_diagnostic_after
+                        .map(|index| index + 1)
+                        .unwrap_or(0),
+                )
+                .next(),
+        };
 
-        // let primary_diagnostics_after = buffer
-        //     .diagnostics_in_range::<usize>(search_start..buffer.len())
-        //     .filter(|entry| entry.diagnostic.is_primary)
-        //     .filter(|entry| entry.range.start != entry.range.end)
-        //     .filter(|entry| entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
-        //     .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start))
-        //     .collect::<Vec<_>>();
-        // let last_same_group_diagnostic_after = active_group_id.and_then(|active_group_id| {
-        //     primary_diagnostics_after
-        //         .iter()
-        //         .enumerate()
-        //         .rev()
-        //         .find_map(|(i, entry)| {
-        //             if entry.diagnostic.group_id == active_group_id {
-        //                 Some(i)
-        //             } else {
-        //                 None
-        //             }
-        //         })
-        // });
+        // Cycle around to the start of the buffer, potentially moving back to the start of
+        // the currently active diagnostic.
+        let cycle_around = || match direction {
+            Direction::Prev => primary_diagnostics_after
+                .iter()
+                .rev()
+                .chain(primary_diagnostics_before.iter().rev())
+                .next(),
+            Direction::Next => primary_diagnostics_before
+                .iter()
+                .chain(primary_diagnostics_after.iter())
+                .next(),
+        };
 
-        // let next_primary_diagnostic = match direction {
-        //     Direction::Prev => primary_diagnostics_before
-        //         .iter()
-        //         .take(last_same_group_diagnostic_before.unwrap_or(usize::MAX))
-        //         .rev()
-        //         .next(),
-        //     Direction::Next => primary_diagnostics_after
-        //         .iter()
-        //         .skip(
-        //             last_same_group_diagnostic_after
-        //                 .map(|index| index + 1)
-        //                 .unwrap_or(0),
-        //         )
-        //         .next(),
-        // };
-
-        // // Cycle around to the start of the buffer, potentially moving back to the start of
-        // // the currently active diagnostic.
-        // let cycle_around = || match direction {
-        //     Direction::Prev => primary_diagnostics_after
-        //         .iter()
-        //         .rev()
-        //         .chain(primary_diagnostics_before.iter().rev())
-        //         .next(),
-        //     Direction::Next => primary_diagnostics_before
-        //         .iter()
-        //         .chain(primary_diagnostics_after.iter())
-        //         .next(),
-        // };
-
-        // if let Some((primary_range, group_id)) = next_primary_diagnostic
-        //     .or_else(cycle_around)
-        //     .map(|entry| (&entry.range, entry.diagnostic.group_id))
-        // {
-        //     let Some(buffer_id) = buffer.anchor_after(primary_range.start).buffer_id else {
-        //         return;
-        //     };
-        //     self.activate_diagnostics(buffer_id, group_id, window, cx);
-        //     if self.active_diagnostics.is_some() {
-        //         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-        //             s.select(vec![Selection {
-        //                 id: selection.id,
-        //                 start: primary_range.start,
-        //                 end: primary_range.start,
-        //                 reversed: false,
-        //                 goal: SelectionGoal::None,
-        //             }]);
-        //         });
-        //         self.refresh_inline_completion(false, true, window, cx);
-        //     }
-        // }
+        if let Some((primary_range, group_id)) = next_primary_diagnostic
+            .or_else(cycle_around)
+            .map(|entry| (&entry.range, entry.diagnostic.group_id))
+        {
+            let Some(buffer_id) = buffer.anchor_after(primary_range.start).buffer_id else {
+                return;
+            };
+            self.activate_diagnostics(buffer_id, group_id, window, cx);
+            if self.active_diagnostics.is_some() {
+                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select(vec![Selection {
+                        id: selection.id,
+                        start: primary_range.start,
+                        end: primary_range.start,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    }]);
+                });
+                self.refresh_inline_completion(false, true, window, cx);
+            }
+        }
     }
 
     fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {

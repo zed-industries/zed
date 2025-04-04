@@ -329,9 +329,20 @@ impl Block {
         }
     }
 
+    pub fn place_near(&self) -> bool {
+        match self {
+            Block::Custom(block) => matches!(block.placement, BlockPlacement::Near(_)),
+            Block::FoldedBuffer { .. } => false,
+            Block::ExcerptBoundary { .. } => false,
+        }
+    }
+
     fn place_below(&self) -> bool {
         match self {
-            Block::Custom(block) => matches!(block.placement, BlockPlacement::Below(_)),
+            Block::Custom(block) => matches!(
+                block.placement,
+                BlockPlacement::Below(_) | BlockPlacement::Near(_)
+            ),
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
         }
@@ -841,62 +852,6 @@ impl BlockMap {
                         unreachable!()
                     }
                 })
-            // let placement_comparison = match (placement_a, placement_b) {
-            // let placement_comparison = match (placement_a, placement_b) {
-            //     (BlockPlacement::Above(row_a), BlockPlacement::Above(row_b))
-            //     | (BlockPlacement::Below(row_a), BlockPlacement::Below(row_b)) => row_a.cmp(row_b),
-            //     (BlockPlacement::Above(row_a), BlockPlacement::Below(row_b)) => {
-            //         row_a.cmp(row_b).then(Ordering::Less)
-            //     }
-            //     (BlockPlacement::Below(row_a), BlockPlacement::Above(row_b)) => {
-            //         row_a.cmp(row_b).then(Ordering::Greater)
-            //     }
-            //     (BlockPlacement::Above(row), BlockPlacement::Replace(range)) => {
-            //         row.cmp(range.start()).then(Ordering::Greater)
-            //     }
-            //     (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
-            //         range.start().cmp(row).then(Ordering::Less)
-            //     }
-            //     (BlockPlacement::Below(row), BlockPlacement::Replace(range)) => {
-            //         row.cmp(range.start()).then(Ordering::Greater)
-            //     }
-            //     (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
-            //         range.start().cmp(row).then(Ordering::Less)
-            //     }
-            //     (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => range_a
-            //         .start()
-            //         .cmp(range_b.start())
-            //         .then_with(|| range_b.end().cmp(range_a.end()))
-            //         .then_with(|| {
-            //             if block_a.is_header() {
-            //                 Ordering::Less
-            //             } else if block_b.is_header() {
-            //                 Ordering::Greater
-            //             } else {
-            //                 Ordering::Equal
-            //             }
-            //         }),
-            //     _ => unreachable!(),
-            // };
-            // placement_comparison.then_with(|| match (block_a, block_b) {
-            //     (
-            //         Block::ExcerptBoundary {
-            //             excerpt: excerpt_a, ..
-            //         },
-            //         Block::ExcerptBoundary {
-            //             excerpt: excerpt_b, ..
-            //         },
-            //     ) => Some(excerpt_a.id).cmp(&Some(excerpt_b.id)),
-            //     (Block::ExcerptBoundary { .. }, Block::Custom(_)) => Ordering::Less,
-            //     (Block::Custom(_), Block::ExcerptBoundary { .. }) => Ordering::Greater,
-            //     (Block::Custom(block_a), Block::Custom(block_b)) => block_a
-            //         .priority
-            //         .cmp(&block_b.priority)
-            //         .then_with(|| block_a.id.cmp(&block_b.id)),
-            //     _ => {
-            //         unreachable!()
-            //     }
-            // })
         });
         blocks.dedup_by(|right, left| match (left.0.clone(), right.0.clone()) {
             (BlockPlacement::Replace(range), BlockPlacement::Above(row))
@@ -1103,7 +1058,6 @@ impl BlockMapWriter<'_> {
                 if let BlockPlacement::Replace(_) = &block.placement {
                     debug_assert!(new_height > 0);
                 }
-                dbg!(block.height, new_height);
 
                 if block.height != Some(new_height) {
                     let new_block = CustomBlock {
@@ -1117,7 +1071,6 @@ impl BlockMapWriter<'_> {
                     let new_block = Arc::new(new_block);
                     *block = new_block.clone();
                     self.0.custom_blocks_by_id.insert(block.id, new_block);
-                    dbg!(self.0.custom_blocks_by_id.values().collect::<Vec<_>>());
 
                     let start_row = block.placement.start().to_point(buffer).row;
                     let end_row = block.placement.end().to_point(buffer).row;
