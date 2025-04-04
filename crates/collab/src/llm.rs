@@ -499,6 +499,10 @@ async fn check_usage_limit(
         model.max_requests_per_minute as usize / users_in_recent_minutes;
     let per_user_max_tokens_per_minute =
         model.max_tokens_per_minute as usize / users_in_recent_minutes;
+    let per_user_max_input_tokens_per_minute =
+        model.max_input_tokens_per_minute as usize / users_in_recent_minutes;
+    let per_user_max_output_tokens_per_minute =
+        model.max_output_tokens_per_minute as usize / users_in_recent_minutes;
     let per_user_max_tokens_per_day = model.max_tokens_per_day as usize / users_in_recent_days;
 
     let usage = state
@@ -529,6 +533,8 @@ async fn check_usage_limit(
             let resource = match usage_measure {
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",
                 UsageMeasure::TokensPerMinute => "tokens_per_minute",
+                UsageMeasure::InputTokensPerMinute => "input_tokens_per_minute",
+                UsageMeasure::OutputTokensPerMinute => "output_tokens_per_minute",
                 UsageMeasure::TokensPerDay => "tokens_per_day",
             };
 
@@ -542,11 +548,15 @@ async fn check_usage_limit(
                 model = model.name,
                 requests_this_minute = usage.requests_this_minute,
                 tokens_this_minute = usage.tokens_this_minute,
+                input_tokens_this_minute = usage.input_tokens_this_minute,
+                output_tokens_this_minute = usage.output_tokens_this_minute,
                 tokens_this_day = usage.tokens_this_day,
                 users_in_recent_minutes = users_in_recent_minutes,
                 users_in_recent_days = users_in_recent_days,
                 max_requests_per_minute = per_user_max_requests_per_minute,
                 max_tokens_per_minute = per_user_max_tokens_per_minute,
+                max_input_tokens_per_minute = per_user_max_input_tokens_per_minute,
+                max_output_tokens_per_minute = per_user_max_output_tokens_per_minute,
                 max_tokens_per_day = per_user_max_tokens_per_day,
             );
 
@@ -658,6 +668,8 @@ impl<S> Drop for TokenCountingStream<S> {
                     is_staff = claims.is_staff,
                     requests_this_minute = usage.requests_this_minute,
                     tokens_this_minute = usage.tokens_this_minute,
+                    input_tokens_this_minute = usage.input_tokens_this_minute,
+                    output_tokens_this_minute = usage.output_tokens_this_minute,
                 );
 
                 let properties = json!({
@@ -726,6 +738,8 @@ pub fn log_usage_periodically(state: Arc<LlmState>) {
                         model = usage.model,
                         requests_this_minute = usage.requests_this_minute,
                         tokens_this_minute = usage.tokens_this_minute,
+                        input_tokens_this_minute = usage.input_tokens_this_minute,
+                        output_tokens_this_minute = usage.output_tokens_this_minute,
                     );
                 }
             }
