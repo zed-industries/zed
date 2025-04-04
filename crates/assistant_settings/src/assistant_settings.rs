@@ -262,75 +262,77 @@ impl AssistantSettingsContent {
 
         match self {
             AssistantSettingsContent::Versioned(settings) => match **settings {
-                VersionedAssistantSettingsContent::V1(ref mut settings) => match provider.as_ref() {
-                    "zed.dev" => {
-                        log::warn!("attempted to set zed.dev model on outdated settings");
-                    }
-                    "anthropic" => {
-                        let api_url = match &settings.provider {
-                            Some(AssistantProviderContentV1::Anthropic { api_url, .. }) => {
-                                api_url.clone()
-                            }
-                            _ => None,
-                        };
-                        settings.provider = Some(AssistantProviderContentV1::Anthropic {
-                            default_model: AnthropicModel::from_id(&model).ok(),
-                            api_url,
-                        });
-                    }
-                    "ollama" => {
-                        let api_url = match &settings.provider {
-                            Some(AssistantProviderContentV1::Ollama { api_url, .. }) => {
-                                api_url.clone()
-                            }
-                            _ => None,
-                        };
-                        settings.provider = Some(AssistantProviderContentV1::Ollama {
-                            default_model: Some(ollama::Model::new(&model, None, None)),
-                            api_url,
-                        });
-                    }
-                    "lmstudio" => {
-                        let api_url = match &settings.provider {
-                            Some(AssistantProviderContentV1::LmStudio { api_url, .. }) => {
-                                api_url.clone()
-                            }
-                            _ => None,
-                        };
-                        settings.provider = Some(AssistantProviderContentV1::LmStudio {
-                            default_model: Some(lmstudio::Model::new(&model, None, None)),
-                            api_url,
-                        });
-                    }
-                    "openai" => {
-                        let (api_url, available_models) = match &settings.provider {
-                            Some(AssistantProviderContentV1::OpenAi {
+                VersionedAssistantSettingsContent::V1(ref mut settings) => {
+                    match provider.as_ref() {
+                        "zed.dev" => {
+                            log::warn!("attempted to set zed.dev model on outdated settings");
+                        }
+                        "anthropic" => {
+                            let api_url = match &settings.provider {
+                                Some(AssistantProviderContentV1::Anthropic { api_url, .. }) => {
+                                    api_url.clone()
+                                }
+                                _ => None,
+                            };
+                            settings.provider = Some(AssistantProviderContentV1::Anthropic {
+                                default_model: AnthropicModel::from_id(&model).ok(),
+                                api_url,
+                            });
+                        }
+                        "ollama" => {
+                            let api_url = match &settings.provider {
+                                Some(AssistantProviderContentV1::Ollama { api_url, .. }) => {
+                                    api_url.clone()
+                                }
+                                _ => None,
+                            };
+                            settings.provider = Some(AssistantProviderContentV1::Ollama {
+                                default_model: Some(ollama::Model::new(&model, None, None)),
+                                api_url,
+                            });
+                        }
+                        "lmstudio" => {
+                            let api_url = match &settings.provider {
+                                Some(AssistantProviderContentV1::LmStudio { api_url, .. }) => {
+                                    api_url.clone()
+                                }
+                                _ => None,
+                            };
+                            settings.provider = Some(AssistantProviderContentV1::LmStudio {
+                                default_model: Some(lmstudio::Model::new(&model, None, None)),
+                                api_url,
+                            });
+                        }
+                        "openai" => {
+                            let (api_url, available_models) = match &settings.provider {
+                                Some(AssistantProviderContentV1::OpenAi {
+                                    api_url,
+                                    available_models,
+                                    ..
+                                }) => (api_url.clone(), available_models.clone()),
+                                _ => (None, None),
+                            };
+                            settings.provider = Some(AssistantProviderContentV1::OpenAi {
+                                default_model: OpenAiModel::from_id(&model).ok(),
                                 api_url,
                                 available_models,
-                                ..
-                            }) => (api_url.clone(), available_models.clone()),
-                            _ => (None, None),
-                        };
-                        settings.provider = Some(AssistantProviderContentV1::OpenAi {
-                            default_model: OpenAiModel::from_id(&model).ok(),
-                            api_url,
-                            available_models,
-                        });
+                            });
+                        }
+                        "deepseek" => {
+                            let api_url = match &settings.provider {
+                                Some(AssistantProviderContentV1::DeepSeek { api_url, .. }) => {
+                                    api_url.clone()
+                                }
+                                _ => None,
+                            };
+                            settings.provider = Some(AssistantProviderContentV1::DeepSeek {
+                                default_model: DeepseekModel::from_id(&model).ok(),
+                                api_url,
+                            });
+                        }
+                        _ => {}
                     }
-                    "deepseek" => {
-                        let api_url = match &settings.provider {
-                            Some(AssistantProviderContentV1::DeepSeek { api_url, .. }) => {
-                                api_url.clone()
-                            }
-                            _ => None,
-                        };
-                        settings.provider = Some(AssistantProviderContentV1::DeepSeek {
-                            default_model: DeepseekModel::from_id(&model).ok(),
-                            api_url,
-                        });
-                    }
-                    _ => {}
-                },
+                }
                 VersionedAssistantSettingsContent::V2(ref mut settings) => {
                     settings.default_model = Some(LanguageModelSelection { provider, model });
                 }
@@ -371,7 +373,7 @@ impl AssistantSettingsContent {
         let AssistantSettingsContent::Versioned(boxed) = self else {
             return;
         };
-        
+
         if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
             settings.always_allow_tool_actions = Some(allow);
         }
@@ -381,7 +383,7 @@ impl AssistantSettingsContent {
         let AssistantSettingsContent::Versioned(boxed) = self else {
             return;
         };
-        
+
         if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
             settings.default_profile = Some(profile_id);
         }
@@ -395,7 +397,7 @@ impl AssistantSettingsContent {
         let AssistantSettingsContent::Versioned(boxed) = self else {
             return Ok(());
         };
-        
+
         if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
             let profiles = settings.profiles.get_or_insert_default();
             if profiles.contains_key(&profile_id) {
@@ -749,8 +751,8 @@ mod tests {
             settings::SettingsStore::global(cx).update_settings_file::<AssistantSettings>(
                 fs.clone(),
                 |settings, _| {
-                    *settings = AssistantSettingsContent::Versioned(
-                        Box::new(VersionedAssistantSettingsContent::V2(AssistantSettingsContentV2 {
+                    *settings = AssistantSettingsContent::Versioned(Box::new(
+                        VersionedAssistantSettingsContent::V2(AssistantSettingsContentV2 {
                             default_model: Some(LanguageModelSelection {
                                 provider: "test-provider".into(),
                                 model: "gpt-99".into(),
@@ -769,8 +771,8 @@ mod tests {
                             profiles: None,
                             always_allow_tool_actions: None,
                             notify_when_agent_waiting: None,
-                        })),
-                    )
+                        }),
+                    ))
                 },
             );
         });
