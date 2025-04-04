@@ -10,7 +10,8 @@ use crate::{
     SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
-        Block, BlockContext, BlockStyle, DisplaySnapshot, FoldId, HighlightedChunk, ToDisplayPoint,
+        Block, BlockContext, BlockPlacement, BlockStyle, DisplaySnapshot, FoldId, HighlightedChunk,
+        ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
@@ -3057,6 +3058,7 @@ impl EditorElement {
                 element,
                 available_space: size(AvailableSpace::MinContent, element_size.height.into()),
                 style: BlockStyle::Fixed,
+                overlaps_gutter: true,
                 is_buffer_header: block.is_buffer_header(),
             });
         }
@@ -3112,6 +3114,7 @@ impl EditorElement {
                 element,
                 available_space: size(width, element_size.height.into()),
                 style,
+                overlaps_gutter: !block.place_near(),
                 is_buffer_header: block.is_buffer_header(),
             });
         }
@@ -3165,6 +3168,7 @@ impl EditorElement {
                             element,
                             available_space: size(width, element_size.height.into()),
                             style,
+                            overlaps_gutter: true,
                             is_buffer_header: block.is_buffer_header(),
                         });
                     }
@@ -5364,7 +5368,15 @@ impl EditorElement {
 
     fn paint_blocks(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         for mut block in layout.blocks.drain(..) {
-            block.element.paint(window, cx);
+            if block.overlaps_gutter {
+                block.element.paint(window, cx);
+            } else {
+                let mut bounds = layout.hitbox.bounds;
+                bounds.origin.x += layout.gutter_hitbox.bounds.size.width;
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    block.element.paint(window, cx);
+                })
+            }
         }
     }
 
@@ -8075,6 +8087,7 @@ struct BlockLayout {
     element: AnyElement,
     available_space: Size<AvailableSpace>,
     style: BlockStyle,
+    overlaps_gutter: bool,
     is_buffer_header: bool,
 }
 
