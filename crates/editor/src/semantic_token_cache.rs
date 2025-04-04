@@ -793,3 +793,255 @@ fn apply_token_update(
         editor.splice_tokens(&to_remove, to_insert, cx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{atomic::AtomicU32, Arc};
+
+    use fs::FakeFs;
+    use futures::StreamExt as _;
+    use gpui::{SemanticVersion, TestAppContext, WindowHandle};
+    use language::language_settings::{AllLanguageSettingsContent, SemanticTokensSettings};
+    use languages::FakeLspAdapter;
+    use lsp::{
+        FakeLanguageServer, SemanticToken, SemanticTokenModifier, SemanticTokenType,
+        SemanticTokensClientCapabilities, SemanticTokensFullOptions, SemanticTokensLegend,
+        SemanticTokensRangeResult, SemanticTokensServerCapabilities,
+    };
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use ui::Context;
+    use util::path;
+
+    use crate::{
+        editor_tests::update_test_language_settings, test::editor_lsp_test_context::rust_lang,
+        Editor,
+    };
+
+    #[gpui::test]
+    async fn test_cache_update_on_lsp_completion_tasks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.semantic_tokens = Some(SemanticTokensSettings {
+                enabled: true,
+                edit_debounce_ms: 0,
+                fetch_debounce_ms: 0,
+                scroll_debounce_ms: 0,
+            });
+        });
+
+        let (_, editor, fake_server) =
+            prepare_test_objects(cx, |fake_server, file_with_semantic_tokens| {
+                let lsp_request_count = Arc::new(AtomicU32::new(0));
+                fake_server.set_request_handler::<lsp::request::SemanticTokensRangeRequest, _, _>(
+                    move |params, _| {
+                        let task_lsp_request_count = Arc::clone(&lsp_request_count);
+                        async move {
+                            let i = task_lsp_request_count.fetch_add(1, Ordering::Release) + 1;
+                            assert_eq!(
+                                params.text_document.uri,
+                                lsp::Url::from_file_path(file_with_semantic_tokens).unwrap(),
+                            );
+
+                            Ok(SemanticTokensRangeResult::Tokens(lsp::SemanticTokens {
+                                result_id: None,
+                                data: vec![SemanticToken {
+                                    token_type: i,
+                                    ..Default::default()
+                                }],
+                            }))
+                        }
+                    },
+                );
+            })
+            .await;
+
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_tokens = vec!["1"];
+                assert_eq!(
+                    expected_tokens,
+                    cached_semantic_tokens(editor),
+                    "Should get it first tokens when opening the editor"
+                );
+                assert_eq!(expected_tokens, visible_semantic_tokens(editor, cx));
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+                editor.handle_input("some change", window, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_tokens = vec!["2"];
+                assert_eq!(
+                    expected_tokens,
+                    cached_semantic_tokens(editor),
+                    "Should get new tokens when refresh/ request"
+                );
+                assert_eq!(expected_tokens, visible_semantic_tokens(editor, cx));
+            })
+            .unwrap();
+
+        fake_server
+            .request::<lsp::request::SemanticTokensRefresh>(())
+            .await
+            .expect("semantic tokens refresh request failed");
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_tokens = vec!["3"];
+                assert_eq!(
+                    expected_tokens,
+                    cached_semantic_tokens(editor),
+                    "Should get new tokens when refresh/ request"
+                );
+                assert_eq!(expected_tokens, visible_semantic_tokens(editor, cx));
+            })
+            .unwrap();
+    }
+
+    fn init_test(cx: &mut TestAppContext, f: impl Fn(&mut AllLanguageSettingsContent)) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            release_channel::init(SemanticVersion::default(), cx);
+            client::init_settings(cx);
+            language::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
+            crate::init(cx);
+        });
+
+        update_test_language_settings(cx, f);
+    }
+
+    async fn prepare_test_objects(
+        cx: &mut TestAppContext,
+        initialize: impl 'static + Send + Fn(&mut FakeLanguageServer, &'static str) + Send + Sync,
+    ) -> (&'static str, WindowHandle<Editor>, FakeLanguageServer) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
+                "other.rs": "// Test file",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let file_path = path!("/a/main.rs");
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    semantic_tokens_provider: Some(
+                        SemanticTokensServerCapabilities::SemanticTokensOptions(
+                            lsp::SemanticTokensOptions {
+                                work_done_progress_options: lsp::WorkDoneProgressOptions {
+                                    work_done_progress: None,
+                                },
+                                legend: SemanticTokensLegend {
+                                    token_types: vec![
+                                        SemanticTokenType::NAMESPACE,
+                                        SemanticTokenType::TYPE,
+                                        SemanticTokenType::CLASS,
+                                        SemanticTokenType::ENUM,
+                                        SemanticTokenType::INTERFACE,
+                                        SemanticTokenType::STRUCT,
+                                        SemanticTokenType::TYPE_PARAMETER,
+                                        SemanticTokenType::PARAMETER,
+                                        SemanticTokenType::VARIABLE,
+                                        SemanticTokenType::PROPERTY,
+                                        SemanticTokenType::ENUM_MEMBER,
+                                        SemanticTokenType::EVENT,
+                                        SemanticTokenType::FUNCTION,
+                                        SemanticTokenType::METHOD,
+                                        SemanticTokenType::MACRO,
+                                        SemanticTokenType::KEYWORD,
+                                        SemanticTokenType::MODIFIER,
+                                        SemanticTokenType::COMMENT,
+                                        SemanticTokenType::STRING,
+                                        SemanticTokenType::REGEXP,
+                                        SemanticTokenType::NUMBER,
+                                        SemanticTokenType::OPERATOR,
+                                    ],
+                                    token_modifiers: vec![
+                                        SemanticTokenModifier::DECLARATION,
+                                        SemanticTokenModifier::DEFINITION,
+                                        SemanticTokenModifier::READONLY,
+                                        SemanticTokenModifier::STATIC,
+                                        SemanticTokenModifier::DEPRECATED,
+                                        SemanticTokenModifier::ABSTRACT,
+                                        SemanticTokenModifier::ASYNC,
+                                        SemanticTokenModifier::MODIFICATION,
+                                        SemanticTokenModifier::DOCUMENTATION,
+                                        SemanticTokenModifier::DEFAULT_LIBRARY,
+                                    ],
+                                },
+                                range: Some(true),
+                                full: Some(SemanticTokensFullOptions::Bool(true)),
+                            },
+                        ),
+                    ),
+                    ..Default::default()
+                },
+                initializer: Some(Box::new(move |server| initialize(server, file_path))),
+                ..Default::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+
+        editor
+            .update(cx, |editor, _, cx| {
+                assert!(cached_semantic_tokens(editor).is_empty());
+                assert!(visible_semantic_tokens(editor, cx).is_empty());
+            })
+            .unwrap();
+
+        cx.executor().run_until_parked();
+        let fake_server = fake_servers.next().await.unwrap();
+        (file_path, editor, fake_server)
+    }
+
+    pub fn cached_semantic_tokens(editor: &Editor) -> Vec<String> {
+        let mut semantic_tokens = vec![];
+        for excerpt_tokens in editor.semantic_tokens_cache.tokens.values() {
+            let excerpt_tokens = excerpt_tokens.read();
+            for id in &excerpt_tokens.ordered_tokens {
+                let semantic_token = &excerpt_tokens.tokens_by_id[id];
+                semantic_tokens.push(format!("{}", semantic_token.r#type.as_str()))
+            }
+        }
+        semantic_tokens
+    }
+
+    pub fn visible_semantic_tokens(editor: &Editor, cx: &Context<Editor>) -> Vec<String> {
+        editor
+            .visible_semantic_tokens(cx)
+            .into_iter()
+            .map(|hint| hint.text.to_string())
+            .collect()
+    }
+}
