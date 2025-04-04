@@ -364,6 +364,8 @@ You can also manually edit the `default_model` object in your settings:
 
 #### Feature-specific models {#feature-specific-models}
 
+> Currently only available in [Preview](https://zed.dev/releases/preview).
+
 Zed allows you to configure different models for specific features.
 This provides flexibility to use more powerful models for certain tasks while using faster or more efficient models for others.
 
