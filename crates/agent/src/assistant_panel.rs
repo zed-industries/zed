@@ -571,10 +571,8 @@ impl AssistantPanel {
         match event {
             AssistantConfigurationEvent::NewThread(provider) => {
                 if LanguageModelRegistry::read_global(cx)
-                    .active_provider()
-                    .map_or(true, |active_provider| {
-                        active_provider.id() != provider.id()
-                    })
+                    .default_model()
+                    .map_or(true, |model| model.provider.id() != provider.id())
                 {
                     if let Some(model) = provider.default_model(cx) {
                         update_settings_file::<AssistantSettings>(
@@ -922,16 +920,18 @@ impl AssistantPanel {
     }
 
     fn configuration_error(&self, cx: &App) -> Option<ConfigurationError> {
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return Some(ConfigurationError::NoProvider);
         };
 
-        if !provider.is_authenticated(cx) {
+        if !model.provider.is_authenticated(cx) {
             return Some(ConfigurationError::ProviderNotAuthenticated);
         }
 
-        if provider.must_accept_terms(cx) {
-            return Some(ConfigurationError::ProviderPendingTermsAcceptance(provider));
+        if model.provider.must_accept_terms(cx) {
+            return Some(ConfigurationError::ProviderPendingTermsAcceptance(
+                model.provider,
+            ));
         }
 
         None

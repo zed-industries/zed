@@ -14,10 +14,10 @@ use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason, TokenUsage,
+    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    PaymentRequiredError, Role, StopReason, TokenUsage,
 };
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use project::{Project, Worktree};
@@ -1250,14 +1250,11 @@ impl Thread {
     }
 
     pub fn summarize(&mut self, cx: &mut Context<Self>) {
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
-            return;
-        };
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).thread_summary_model() else {
             return;
         };
 
-        if !provider.is_authenticated(cx) {
+        if !model.provider.is_authenticated(cx) {
             return;
         }
 
@@ -1276,7 +1273,7 @@ impl Thread {
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
-                let stream = model.stream_completion_text(request, &cx);
+                let stream = model.model.stream_completion_text(request, &cx);
                 let mut messages = stream.await?;
 
                 let mut new_summary = String::new();
@@ -1320,8 +1317,8 @@ impl Thread {
             _ => {}
         }
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let ConfiguredModel { model, provider } =
+            LanguageModelRegistry::read_global(cx).thread_summary_model()?;
 
         if !provider.is_authenticated(cx) {
             return None;
@@ -1782,11 +1779,11 @@ impl Thread {
 
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.active_model() else {
+        let Some(model) = model_registry.default_model() else {
             return TotalTokenUsage::default();
         };
 
-        let max = model.max_token_count();
+        let max = model.model.max_token_count();
 
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")

@@ -384,7 +384,9 @@ impl ContextEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let provider = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.provider);
         if provider
             .as_ref()
             .map_or(false, |provider| provider.must_accept_terms(cx))
@@ -2395,13 +2397,13 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let model = LanguageModelRegistry::read_global(cx).default_model();
 
         let has_configuration_error = configuration_error(cx).is_some();
         let needs_to_accept_terms = self.show_accept_terms
-            && provider
+            && model
                 .as_ref()
-                .map_or(false, |provider| provider.must_accept_terms(cx));
+                .map_or(false, |model| model.provider.must_accept_terms(cx));
         let disabled = has_configuration_error || needs_to_accept_terms;
 
         ButtonLike::new("send_button")
@@ -2454,7 +2456,9 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let provider = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.provider);
 
         let has_configuration_error = configuration_error(cx).is_some();
         let needs_to_accept_terms = self.show_accept_terms
@@ -2500,7 +2504,9 @@ impl ContextEditor {
     }
 
     fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let active_model = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.model);
         let focus_handle = self.editor().focus_handle(cx).clone();
         let model_name = match active_model {
             Some(model) => model.name().0,
@@ -3020,7 +3026,9 @@ impl EventEmitter<SearchEvent> for ContextEditor {}
 
 impl Render for ContextEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let provider = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.provider);
         let accept_terms = if self.show_accept_terms {
             provider.as_ref().and_then(|provider| {
                 provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
@@ -3616,7 +3624,9 @@ enum TokenState {
 fn token_state(context: &Entity<AssistantContext>, cx: &App) -> Option<TokenState> {
     const WARNING_TOKEN_THRESHOLD: f32 = 0.8;
 
-    let model = LanguageModelRegistry::read_global(cx).active_model()?;
+    let model = LanguageModelRegistry::read_global(cx)
+        .default_model()?
+        .model;
     let token_count = context.read(cx).token_count()?;
     let max_token_count = model.max_token_count();
 
@@ -3669,16 +3679,16 @@ pub enum ConfigurationError {
 }
 
 fn configuration_error(cx: &App) -> Option<ConfigurationError> {
-    let provider = LanguageModelRegistry::read_global(cx).active_provider();
-    let is_authenticated = provider
+    let model = LanguageModelRegistry::read_global(cx).default_model();
+    let is_authenticated = model
         .as_ref()
-        .map_or(false, |provider| provider.is_authenticated(cx));
+        .map_or(false, |model| model.provider.is_authenticated(cx));
 
-    if provider.is_some() && is_authenticated {
+    if model.is_some() && is_authenticated {
         return None;
     }
 
-    if provider.is_none() {
+    if model.is_none() {
         return Some(ConfigurationError::NoProvider);
     }
 

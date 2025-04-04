@@ -21,7 +21,7 @@ use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
-use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
+use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use project::ProjectItem as _;
 use settings::{Settings as _, update_settings_file};
@@ -606,7 +606,7 @@ impl ActiveThread {
 
                 if self.thread.read(cx).all_tools_finished() {
                     let model_registry = LanguageModelRegistry::read_global(cx);
-                    if let Some(model) = model_registry.active_model() {
+                    if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
                         self.thread.update(cx, |thread, cx| {
                             thread.attach_tool_results(cx);
                             if !canceled {
@@ -814,21 +814,17 @@ impl ActiveThread {
             }
         });
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        if provider
-            .as_ref()
-            .map_or(false, |provider| provider.must_accept_terms(cx))
-        {
-            cx.notify();
-            return;
-        }
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
 
+        if model.provider.must_accept_terms(cx) {
+            cx.notify();
+            return;
+        }
+
         self.thread.update(cx, |thread, cx| {
-            thread.send_to_model(model, RequestKind::Chat, cx)
+            thread.send_to_model(model.model, RequestKind::Chat, cx)
         });
         cx.notify();
     }
