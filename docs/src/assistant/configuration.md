@@ -366,11 +366,11 @@ You can also manually edit the `default_model` object in your settings:
 
 Zed allows you to configure different models for specific features.
 This provides flexibility to use more powerful models for certain tasks while using faster or more efficient models for others.
+
 If a feature-specific model is not set, it will fall back to using the default model, which is the one you set on the Agent Panel.
 
 You can configure the following feature-specific models:
 
-- Editor model: Used when applying edits from the assistant
 - Thread summary model: Used for generating thread summaries
 - Inline assistant model: Used for the inline assistant feature
 - Commit message model: Used for generating Git commit messages
@@ -385,10 +385,6 @@ Example configuration:
       "provider": "zed.dev",
       "model": "claude-3-7-sonnet"
     },
-    "editor_model": {
-      "provider": "openai",
-      "model": "gpt-4o"
-    },
     "inline_assistant_model": {
       "provider": "anthropic",
       "model": "claude-3-5-sonnet"
@@ -399,7 +395,7 @@ Example configuration:
     },
     "thread_summary_model": {
       "provider": "google",
-      "model": "gemini-1.5-flash"
+      "model": "gemini-2.0-flash"
     }
   }
 }
