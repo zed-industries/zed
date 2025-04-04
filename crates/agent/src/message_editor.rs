@@ -6,8 +6,8 @@ use editor::{ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, Ed
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
-    Animation, AnimationExt, App, CursorStyle, DismissEvent, Entity, Focusable, Subscription,
-    TextStyle, WeakEntity, linear_color_stop, linear_gradient, point,
+    Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
+    WeakEntity, linear_color_stop, linear_gradient, point,
 };
 use language::Buffer;
 use language_model::LanguageModelRegistry;
@@ -502,11 +502,16 @@ impl Render for MessageEditor {
                         }])
                         .child(
                             h_flex()
+                                .id("edits-container")
                                 .p_1p5()
                                 .justify_between()
                                 .when(self.edits_expanded, |this| {
                                     this.border_b_1().border_color(border_color)
                                 })
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.handle_review_click(window, cx)
+                                }))
                                 .child(
                                     h_flex()
                                         .gap_1()
@@ -625,7 +630,7 @@ impl Render for MessageEditor {
                                                                 .gap_1p5()
                                                                 .max_w_full()
                                                                 .overflow_x_scroll()
-                                                                .cursor(CursorStyle::PointingHand)
+                                                                .cursor_pointer()
                                                                 .on_click({
                                                                     let buffer = buffer.clone();
                                                                     cx.listener(move |this, _, window, cx| {
