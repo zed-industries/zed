@@ -379,7 +379,7 @@ impl Project {
                 move |cx| {
                     terminal_handle.update(cx, |terminal, cx| {
                         // terminal.set_keyboard_layout(cx.keyboard_layout());
-                        terminal.update_esc_str_mapper(cx.get_mapper());
+                        terminal.update_esc_str_mapper(cx.keyboard_mapper());
                     });
                 }
             })

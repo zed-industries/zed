@@ -169,6 +169,7 @@ pub(crate) struct MacPlatformState {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
+    keyboard_manager: MacKeyboardMapperManager,
 }
 
 impl Default for MacPlatform {
@@ -206,6 +207,7 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
+            keyboard_manager: MacKeyboardMapperManager::new(),
         }))
     }
 
@@ -1178,6 +1180,13 @@ impl Platform for MacPlatform {
             Ok(())
         })
     }
+
+    fn keyboard_mapper(&self) -> Rc<dyn KeyboardMapper> {
+        self.0
+            .lock()
+            .keyboard_manager
+            .get_mapper(&keyboard_layout())
+    }
 }
 
 impl MacPlatform {
@@ -1352,6 +1361,8 @@ extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
 extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_mac_platform(this) };
     let mut lock = platform.0.lock();
+    lock.keyboard_manager.update(&keyboard_layout());
+    println!("==> Keyboard layout changed");
     if let Some(mut callback) = lock.on_keyboard_layout_change.take() {
         drop(lock);
         callback();

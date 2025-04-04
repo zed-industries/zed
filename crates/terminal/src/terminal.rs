@@ -508,7 +508,7 @@ impl TerminalBuilder {
             debug_terminal,
             is_ssh_terminal,
             python_venv_directory,
-            manual_esc_str_mapper: generate_esc_str_mapper(cx.get_mapper()),
+            manual_esc_str_mapper: generate_esc_str_mapper(cx.keyboard_mapper()),
         };
 
         Ok(TerminalBuilder {
@@ -1265,22 +1265,28 @@ impl Terminal {
             key = key.to_uppercase();
         }
 
-        let motion: Option<ViMotion> = match key.as_str() {
-            "h" | "left" => Some(ViMotion::Left),
-            "j" | "down" => Some(ViMotion::Down),
-            "k" | "up" => Some(ViMotion::Up),
-            "l" | "right" => Some(ViMotion::Right),
-            "w" => Some(ViMotion::WordRight),
-            "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
-            "e" => Some(ViMotion::WordRightEnd),
-            "%" => Some(ViMotion::Bracket),
-            "$" => Some(ViMotion::Last),
-            "0" => Some(ViMotion::First),
-            "^" => Some(ViMotion::FirstOccupied),
-            "H" => Some(ViMotion::High),
-            "M" => Some(ViMotion::Middle),
-            "L" => Some(ViMotion::Low),
-            _ => None,
+        let motion = match keystroke.code {
+            KeyCode::H | KeyCode::Left => Some(ViMotion::Left),
+            KeyCode::J | KeyCode::Down => Some(ViMotion::Down),
+            KeyCode::K | KeyCode::Up => Some(ViMotion::Up),
+            KeyCode::L | KeyCode::Right => Some(ViMotion::Right),
+            KeyCode::W => Some(ViMotion::WordRight),
+            KeyCode::B if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
+            KeyCode::E => Some(ViMotion::WordRightEnd),
+            KeyCode::H if keystroke.modifiers.shift => Some(ViMotion::High),
+            KeyCode::M if keystroke.modifiers.shift => Some(ViMotion::Middle),
+            KeyCode::L if keystroke.modifiers.shift => Some(ViMotion::Low),
+            _ => {
+                if let Some(ref key_char) = keystroke.key_char {
+                    match key_char {
+                        "%" => Some(ViMotion::Bracket),
+                        "$" => Some(ViMotion::Last),
+                        "0" => Some(ViMotion::First),
+                        "^" => Some(ViMotion::FirstOccupied),
+                        _ => None,
+                    }
+                }
+            }
         };
 
         if let Some(motion) = motion {
@@ -1934,7 +1940,7 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
-    pub fn update_esc_str_mapper(&mut self, keyboard_mapper: &KeyboardMapper) {
+    pub fn update_esc_str_mapper(&mut self, keyboard_mapper: &dyn KeyboardMapper) {
         self.manual_esc_str_mapper = generate_esc_str_mapper(keyboard_mapper);
     }
 }

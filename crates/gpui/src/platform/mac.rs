@@ -4,6 +4,7 @@ mod dispatcher;
 mod display;
 mod display_link;
 mod events;
+mod keyboard;
 mod screen_capture;
 
 #[cfg(not(feature = "macos-blade"))]
@@ -46,6 +47,7 @@ pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
 pub(crate) use events::*;
+pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;
 

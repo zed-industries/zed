@@ -197,7 +197,7 @@ impl KeymapFile {
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
         let layout = cx.keyboard_layout();
         let key_equivalents = crate::key_equivalents::get_key_equivalents(&layout);
-        let keyboard_mapper = cx.get_mapper();
+        let keyboard_mapper = cx.keyboard_mapper();
 
         if content.is_empty() {
             return KeymapFileLoadResult::Success {
@@ -326,7 +326,7 @@ impl KeymapFile {
         context: Option<Rc<KeyBindingContextPredicate>>,
         char_matching: bool,
         key_equivalents: Option<&HashMap<char, char>>,
-        keyboard_mapper: &KeyboardMapper,
+        keyboard_mapper: &dyn KeyboardMapper,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (build_result, action_input_string) = match &action.0 {

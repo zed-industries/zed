@@ -101,7 +101,7 @@ impl Keystroke {
         source: &str,
         char_matching: bool,
         key_equivalents: Option<&HashMap<char, char>>,
-        keyboard_mapper: &KeyboardMapper,
+        keyboard_mapper: &dyn KeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut control = false;
         let mut alt = false;
@@ -220,7 +220,9 @@ impl Keystroke {
                         face: key,
                         key_char: None,
                     });
-                    println!("parse key stroke key-based: {}, {:#?}", source, ret);
+                    if code == KeyCode::Unknown {
+                        println!("parse key stroke key-based: {}, {:#?}", source, ret);
+                    }
                     return ret;
                 }
             }

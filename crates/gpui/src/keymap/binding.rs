@@ -28,7 +28,7 @@ impl KeyBinding {
         keystrokes: &str,
         action: A,
         context: Option<&str>,
-        keyboard_mapper: &KeyboardMapper,
+        keyboard_mapper: &dyn KeyboardMapper,
     ) -> Self {
         let context_predicate = if let Some(context) = context {
             Some(KeyBindingContextPredicate::parse(context).unwrap().into())
@@ -53,7 +53,7 @@ impl KeyBinding {
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         char_matching: bool,
         key_equivalents: Option<&HashMap<char, char>>,
-        keyboard_mapper: &KeyboardMapper,
+        keyboard_mapper: &dyn KeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()

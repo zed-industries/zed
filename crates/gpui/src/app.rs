@@ -270,7 +270,7 @@ pub struct App {
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
-    pub(crate) keyboard_mapper: KeyboardMapperManager,
+    pub(crate) keyboard_mapper: Rc<dyn KeyboardMapper>,
 }
 
 impl App {
@@ -332,7 +332,7 @@ impl App {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
-                keyboard_mapper: KeyboardMapperManager::new(),
+                keyboard_mapper: platform.keyboard_mapper(),
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -347,8 +347,8 @@ impl App {
                 if let Some(app) = app.upgrade() {
                     let cx = &mut app.borrow_mut();
                     let layout = cx.platform.keyboard_layout();
-                    cx.keyboard_mapper.update(&layout);
                     cx.keyboard_layout = SharedString::from(layout);
+                    cx.keyboard_mapper = cx.platform.keyboard_mapper();
                     cx.keyboard_layout_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
@@ -1611,8 +1611,8 @@ impl App {
     }
 
     /// TODO:
-    pub fn get_mapper(&self) -> &KeyboardMapper {
-        self.keyboard_mapper.get_mapper(&self.keyboard_layout)
+    pub fn keyboard_mapper(&self) -> &dyn KeyboardMapper {
+        self.keyboard_mapper.as_ref()
     }
 }
 
