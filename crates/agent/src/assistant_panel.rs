@@ -1134,11 +1134,11 @@ impl AssistantPanel {
                                     // TODO: Add keyboard navigation.
                                     match entry {
                                         HistoryEntry::Thread(thread) => {
-                                            PastThread::new(thread, cx.entity().downgrade(), false)
+                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![])
                                                 .into_any_element()
                                         }
                                         HistoryEntry::Context(context) => {
-                                            PastContext::new(context, cx.entity().downgrade(), false)
+                                            PastContext::new(context, cx.entity().downgrade(), false, vec![])
                                                 .into_any_element()
                                         }
                                     }

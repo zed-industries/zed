@@ -8,7 +8,7 @@ use gpui::{
     Window, uniform_list,
 };
 use time::{OffsetDateTime, UtcOffset};
-use ui::{IconButtonShape, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 
 use crate::history_store::{HistoryEntry, HistoryStore};
@@ -16,7 +16,6 @@ use crate::thread_store::SerializedThreadMetadata;
 use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
-    focus_handle: FocusHandle,
     assistant_panel: WeakEntity<AssistantPanel>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
@@ -62,13 +61,11 @@ impl ThreadHistory {
                 this.all_entries = history_store
                     .update(cx, |store, cx| store.entries(cx))
                     .into();
-                dbg!(&this.all_entries);
                 this.matches.clear();
                 this.update_search(window, cx);
             });
 
         Self {
-            focus_handle: cx.focus_handle(),
             assistant_panel,
             scroll_handle: UniformListScrollHandle::default(),
             selected_index: 0,
@@ -273,8 +270,8 @@ impl ThreadHistory {
 }
 
 impl Focusable for ThreadHistory {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.search_editor.focus_handle(cx)
     }
 }
 
@@ -285,7 +282,7 @@ impl Render for ThreadHistory {
         v_flex()
             .id("thread-history-container")
             .key_context("ThreadHistory")
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .size_full()
             .p_1()
             .gap_1()
@@ -296,7 +293,15 @@ impl Render for ThreadHistory {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
             .when(!self.all_entries.is_empty(), |parent| {
-                parent.child(h_flex().w_full().mb_1().child(self.search_editor.clone()))
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .p_1()
+                        .gap_1()
+                        .justify_between()
+                        .child(self.search_editor.clone())
+                        .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted)),
+                )
             })
             .child({
                 let view = v_flex().overflow_hidden().flex_grow();
@@ -325,18 +330,23 @@ impl Render for ThreadHistory {
                                 let range_start = range.start;
                                 let assistant_panel = history.assistant_panel.clone();
 
-                                let render_item = |(index, entry): (usize, &HistoryEntry)| -> Div {
+                                let render_item = |index: usize,
+                                                   entry: &HistoryEntry,
+                                                   highlight_positions: Vec<usize>|
+                                 -> Div {
                                     h_flex().w_full().pb_1().child(match entry {
                                         HistoryEntry::Thread(thread) => PastThread::new(
                                             thread.clone(),
                                             assistant_panel.clone(),
                                             selected_index == index + range_start,
+                                            highlight_positions,
                                         )
                                         .into_any_element(),
                                         HistoryEntry::Context(context) => PastContext::new(
                                             context.clone(),
                                             assistant_panel.clone(),
                                             selected_index == index + range_start,
+                                            highlight_positions,
                                         )
                                         .into_any_element(),
                                     })
@@ -345,15 +355,18 @@ impl Render for ThreadHistory {
                                 if history.has_search_query() {
                                     history.matches[range]
                                         .iter()
-                                        .filter_map(|m| history.all_entries.get(m.candidate_id))
                                         .enumerate()
-                                        .map(render_item)
+                                        .filter_map(|(index, m)| {
+                                            history.all_entries.get(m.candidate_id).map(|entry| {
+                                                render_item(index, entry, m.positions.clone())
+                                            })
+                                        })
                                         .collect()
                                 } else {
                                     history.all_entries[range]
                                         .iter()
                                         .enumerate()
-                                        .map(render_item)
+                                        .map(|(index, entry)| render_item(index, entry, vec![]))
                                         .collect()
                                 }
                             },
@@ -371,6 +384,7 @@ pub struct PastThread {
     thread: SerializedThreadMetadata,
     assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
+    highlight_positions: Vec<usize>,
 }
 
 impl PastThread {
@@ -378,11 +392,13 @@ impl PastThread {
         thread: SerializedThreadMetadata,
         assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
+        highlight_positions: Vec<usize>,
     ) -> Self {
         Self {
             thread,
             assistant_panel,
             selected,
+            highlight_positions,
         }
     }
 }
@@ -405,9 +421,11 @@ impl RenderOnce for PastThread {
             .toggle_state(self.selected)
             .spacing(ListItemSpacing::Sparse)
             .start_slot(
-                div()
-                    .max_w_4_5()
-                    .child(Label::new(summary).size(LabelSize::Small).truncate()),
+                div().max_w_4_5().child(
+                    HighlightedLabel::new(summary, self.highlight_positions)
+                        .size(LabelSize::Small)
+                        .truncate(),
+                ),
             )
             .end_slot(
                 h_flex()
@@ -465,6 +483,7 @@ pub struct PastContext {
     context: SavedContextMetadata,
     assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
+    highlight_positions: Vec<usize>,
 }
 
 impl PastContext {
@@ -472,11 +491,13 @@ impl PastContext {
         context: SavedContextMetadata,
         assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
+        highlight_positions: Vec<usize>,
     ) -> Self {
         Self {
             context,
             assistant_panel,
             selected,
+            highlight_positions,
         }
     }
 }
@@ -484,7 +505,6 @@ impl PastContext {
 impl RenderOnce for PastContext {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let summary = self.context.title;
-
         let context_timestamp = time_format::format_localized_timestamp(
             OffsetDateTime::from_unix_timestamp(self.context.mtime.timestamp()).unwrap(),
             OffsetDateTime::now_utc(),
@@ -501,9 +521,11 @@ impl RenderOnce for PastContext {
         .toggle_state(self.selected)
         .spacing(ListItemSpacing::Sparse)
         .start_slot(
-            div()
-                .max_w_4_5()
-                .child(Label::new(summary).size(LabelSize::Small).truncate()),
+            div().max_w_4_5().child(
+                HighlightedLabel::new(summary, self.highlight_positions)
+                    .size(LabelSize::Small)
+                    .truncate(),
+            ),
         )
         .end_slot(
             h_flex()
