@@ -228,7 +228,7 @@ impl AssistantPanel {
             )
             .unwrap(),
             history_store: history_store.clone(),
-            history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, cx)),
+            history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
             assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
             width: None,
             height: None,
@@ -1134,11 +1134,11 @@ impl AssistantPanel {
                                     // TODO: Add keyboard navigation.
                                     match entry {
                                         HistoryEntry::Thread(thread) => {
-                                            PastThread::new(thread, cx.entity().downgrade(), false)
+                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![])
                                                 .into_any_element()
                                         }
                                         HistoryEntry::Context(context) => {
-                                            PastContext::new(context, cx.entity().downgrade(), false)
+                                            PastContext::new(context, cx.entity().downgrade(), false, vec![])
                                                 .into_any_element()
                                         }
                                     }

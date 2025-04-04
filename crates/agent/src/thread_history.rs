@@ -1,52 +1,176 @@
+use std::sync::Arc;
+
 use assistant_context_editor::SavedContextMetadata;
+use editor::{Editor, EditorEvent};
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Entity, FocusHandle, Focusable, ScrollStrategy, UniformListScrollHandle, WeakEntity,
-    uniform_list,
+    App, Entity, FocusHandle, Focusable, ScrollStrategy, Task, UniformListScrollHandle, WeakEntity,
+    Window, uniform_list,
 };
 use time::{OffsetDateTime, UtcOffset};
-use ui::{IconButtonShape, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use util::ResultExt;
 
 use crate::history_store::{HistoryEntry, HistoryStore};
 use crate::thread_store::SerializedThreadMetadata;
 use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
-    focus_handle: FocusHandle,
     assistant_panel: WeakEntity<AssistantPanel>,
-    history_store: Entity<HistoryStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
+    search_query: SharedString,
+    search_editor: Entity<Editor>,
+    all_entries: Arc<Vec<HistoryEntry>>,
+    matches: Vec<StringMatch>,
+    _subscriptions: Vec<gpui::Subscription>,
+    _search_task: Option<Task<()>>,
 }
 
 impl ThreadHistory {
     pub(crate) fn new(
         assistant_panel: WeakEntity<AssistantPanel>,
         history_store: Entity<HistoryStore>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let search_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Search threads...", cx);
+            editor
+        });
+
+        let search_editor_subscription = cx.subscribe_in(
+            &search_editor,
+            window,
+            |this, search_editor, event, window, cx| {
+                if let EditorEvent::BufferEdited = event {
+                    let query = search_editor.read(cx).text(cx);
+                    this.search_query = query.into();
+                    this.update_search(window, cx);
+                }
+            },
+        );
+
+        let entries: Arc<Vec<_>> = history_store
+            .update(cx, |store, cx| store.entries(cx))
+            .into();
+
+        let history_store_subscription =
+            cx.observe_in(&history_store, window, |this, history_store, window, cx| {
+                this.all_entries = history_store
+                    .update(cx, |store, cx| store.entries(cx))
+                    .into();
+                this.matches.clear();
+                this.update_search(window, cx);
+            });
+
         Self {
-            focus_handle: cx.focus_handle(),
             assistant_panel,
-            history_store,
             scroll_handle: UniformListScrollHandle::default(),
             selected_index: 0,
+            search_query: SharedString::new_static(""),
+            all_entries: entries,
+            matches: Vec::new(),
+            search_editor,
+            _subscriptions: vec![search_editor_subscription, history_store_subscription],
+            _search_task: None,
+        }
+    }
+
+    fn update_search(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self._search_task.take();
+
+        if self.has_search_query() {
+            self.perform_search(cx);
+        } else {
+            self.matches.clear();
+            self.set_selected_index(0, cx);
+            cx.notify();
+        }
+    }
+
+    fn perform_search(&mut self, cx: &mut Context<Self>) {
+        let query = self.search_query.clone();
+        let all_entries = self.all_entries.clone();
+
+        let task = cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+
+            let matches = cx
+                .background_spawn(async move {
+                    let mut candidates = Vec::with_capacity(all_entries.len());
+
+                    for (idx, entry) in all_entries.iter().enumerate() {
+                        match entry {
+                            HistoryEntry::Thread(thread) => {
+                                candidates.push(StringMatchCandidate::new(idx, &thread.summary));
+                            }
+                            HistoryEntry::Context(context) => {
+                                candidates.push(StringMatchCandidate::new(idx, &context.title));
+                            }
+                        }
+                    }
+
+                    const MAX_MATCHES: usize = 100;
+
+                    fuzzy::match_strings(
+                        &candidates,
+                        &query,
+                        false,
+                        MAX_MATCHES,
+                        &Default::default(),
+                        executor,
+                    )
+                    .await
+                })
+                .await;
+
+            this.update(cx, |this, cx| {
+                this.matches = matches;
+                this.set_selected_index(0, cx);
+                cx.notify();
+            })
+            .log_err();
+        });
+
+        self._search_task = Some(task);
+    }
+
+    fn has_search_query(&self) -> bool {
+        !self.search_query.is_empty()
+    }
+
+    fn matched_count(&self) -> usize {
+        if self.has_search_query() {
+            self.matches.len()
+        } else {
+            self.all_entries.len()
+        }
+    }
+
+    fn get_match(&self, ix: usize) -> Option<&HistoryEntry> {
+        if self.has_search_query() {
+            self.matches
+                .get(ix)
+                .and_then(|m| self.all_entries.get(m.candidate_id))
+        } else {
+            self.all_entries.get(ix)
         }
     }
 
     pub fn select_previous(
         &mut self,
         _: &menu::SelectPrevious,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self
-            .history_store
-            .update(cx, |this, cx| this.entry_count(cx));
+        let count = self.matched_count();
         if count > 0 {
             if self.selected_index == 0 {
-                self.set_selected_index(count - 1, window, cx);
+                self.set_selected_index(count - 1, cx);
             } else {
-                self.set_selected_index(self.selected_index - 1, window, cx);
+                self.set_selected_index(self.selected_index - 1, cx);
             }
         }
     }
@@ -54,40 +178,39 @@ impl ThreadHistory {
     pub fn select_next(
         &mut self,
         _: &menu::SelectNext,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self
-            .history_store
-            .update(cx, |this, cx| this.entry_count(cx));
+        let count = self.matched_count();
         if count > 0 {
             if self.selected_index == count - 1 {
-                self.set_selected_index(0, window, cx);
+                self.set_selected_index(0, cx);
             } else {
-                self.set_selected_index(self.selected_index + 1, window, cx);
+                self.set_selected_index(self.selected_index + 1, cx);
             }
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self
-            .history_store
-            .update(cx, |this, cx| this.entry_count(cx));
+    fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.matched_count();
         if count > 0 {
-            self.set_selected_index(0, window, cx);
+            self.set_selected_index(0, cx);
         }
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self
-            .history_store
-            .update(cx, |this, cx| this.entry_count(cx));
+    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.matched_count();
         if count > 0 {
-            self.set_selected_index(count - 1, window, cx);
+            self.set_selected_index(count - 1, cx);
         }
     }
 
-    fn set_selected_index(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
+    fn set_selected_index(&mut self, index: usize, cx: &mut Context<Self>) {
         self.selected_index = index;
         self.scroll_handle
             .scroll_to_item(index, ScrollStrategy::Top);
@@ -95,23 +218,23 @@ impl ThreadHistory {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let entries = self.history_store.update(cx, |this, cx| this.entries(cx));
+        if let Some(entry) = self.get_match(self.selected_index) {
+            let task_result = match entry {
+                HistoryEntry::Thread(thread) => self
+                    .assistant_panel
+                    .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
+                    .ok(),
+                HistoryEntry::Context(context) => self
+                    .assistant_panel
+                    .update(cx, move |this, cx| {
+                        this.open_saved_prompt_editor(context.path.clone(), window, cx)
+                    })
+                    .ok(),
+            };
 
-        if let Some(entry) = entries.get(self.selected_index) {
-            match entry {
-                HistoryEntry::Thread(thread) => {
-                    self.assistant_panel
-                        .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
-                        .ok();
-                }
-                HistoryEntry::Context(context) => {
-                    self.assistant_panel
-                        .update(cx, move |this, cx| {
-                            this.open_saved_prompt_editor(context.path.clone(), window, cx)
-                        })
-                        .ok();
-                }
-            }
+            if let Some(task) = task_result {
+                task.detach_and_log_err(cx);
+            };
 
             cx.notify();
         }
@@ -120,12 +243,10 @@ impl ThreadHistory {
     fn remove_selected_thread(
         &mut self,
         _: &RemoveSelectedThread,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entries = self.history_store.update(cx, |this, cx| this.entries(cx));
-
-        if let Some(entry) = entries.get(self.selected_index) {
+        if let Some(entry) = self.get_match(self.selected_index) {
             match entry {
                 HistoryEntry::Thread(thread) => {
                     self.assistant_panel
@@ -143,72 +264,117 @@ impl ThreadHistory {
                 }
             }
 
+            self.update_search(window, cx);
+
             cx.notify();
         }
     }
 }
 
 impl Focusable for ThreadHistory {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.search_editor.focus_handle(cx)
     }
 }
 
 impl Render for ThreadHistory {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let history_entries = self.history_store.update(cx, |this, cx| this.entries(cx));
         let selected_index = self.selected_index;
 
         v_flex()
-            .id("thread-history-container")
             .key_context("ThreadHistory")
-            .track_focus(&self.focus_handle)
-            .overflow_y_scroll()
             .size_full()
-            .p_1()
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
-            .map(|history| {
-                if history_entries.is_empty() {
-                    history
-                        .justify_center()
+            .when(!self.all_entries.is_empty(), |parent| {
+                parent.child(
+                    h_flex()
+                        .h(px(41.)) // Match the toolbar perfectly
+                        .w_full()
+                        .py_1()
+                        .px_2()
+                        .gap_2()
+                        .justify_between()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            Icon::new(IconName::MagnifyingGlass)
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
+                        )
+                        .child(self.search_editor.clone()),
+                )
+            })
+            .child({
+                let view = v_flex().overflow_hidden().flex_grow();
+
+                if self.all_entries.is_empty() {
+                    view.justify_center()
                         .child(
                             h_flex().w_full().justify_center().child(
                                 Label::new("You don't have any past threads yet.")
                                     .size(LabelSize::Small),
                             ),
                         )
+                } else if self.has_search_query() && self.matches.is_empty() {
+                    view.justify_center().child(
+                        h_flex().w_full().justify_center().child(
+                            Label::new("No threads match your search.").size(LabelSize::Small),
+                        ),
+                    )
                 } else {
-                    history.child(
+                    view.p_1().child(
                         uniform_list(
                             cx.entity().clone(),
                             "thread-history",
-                            history_entries.len(),
+                            self.matched_count(),
                             move |history, range, _window, _cx| {
-                                history_entries[range]
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(index, entry)| {
-                                        h_flex().w_full().pb_1().child(match entry {
-                                            HistoryEntry::Thread(thread) => PastThread::new(
-                                                thread.clone(),
-                                                history.assistant_panel.clone(),
-                                                selected_index == index,
-                                            )
-                                            .into_any_element(),
-                                            HistoryEntry::Context(context) => PastContext::new(
-                                                context.clone(),
-                                                history.assistant_panel.clone(),
-                                                selected_index == index,
-                                            )
-                                            .into_any_element(),
-                                        })
+                                let range_start = range.start;
+                                let assistant_panel = history.assistant_panel.clone();
+
+                                let render_item = |index: usize,
+                                                   entry: &HistoryEntry,
+                                                   highlight_positions: Vec<usize>|
+                                 -> Div {
+                                    h_flex().w_full().pb_1().child(match entry {
+                                        HistoryEntry::Thread(thread) => PastThread::new(
+                                            thread.clone(),
+                                            assistant_panel.clone(),
+                                            selected_index == index + range_start,
+                                            highlight_positions,
+                                        )
+                                        .into_any_element(),
+                                        HistoryEntry::Context(context) => PastContext::new(
+                                            context.clone(),
+                                            assistant_panel.clone(),
+                                            selected_index == index + range_start,
+                                            highlight_positions,
+                                        )
+                                        .into_any_element(),
                                     })
-                                    .collect()
+                                };
+
+                                if history.has_search_query() {
+                                    history.matches[range]
+                                        .iter()
+                                        .enumerate()
+                                        .filter_map(|(index, m)| {
+                                            history.all_entries.get(m.candidate_id).map(|entry| {
+                                                render_item(index, entry, m.positions.clone())
+                                            })
+                                        })
+                                        .collect()
+                                } else {
+                                    history.all_entries[range]
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(index, entry)| render_item(index, entry, vec![]))
+                                        .collect()
+                                }
                             },
                         )
                         .track_scroll(self.scroll_handle.clone())
@@ -224,6 +390,7 @@ pub struct PastThread {
     thread: SerializedThreadMetadata,
     assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
+    highlight_positions: Vec<usize>,
 }
 
 impl PastThread {
@@ -231,11 +398,13 @@ impl PastThread {
         thread: SerializedThreadMetadata,
         assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
+        highlight_positions: Vec<usize>,
     ) -> Self {
         Self {
             thread,
             assistant_panel,
             selected,
+            highlight_positions,
         }
     }
 }
@@ -258,9 +427,11 @@ impl RenderOnce for PastThread {
             .toggle_state(self.selected)
             .spacing(ListItemSpacing::Sparse)
             .start_slot(
-                div()
-                    .max_w_4_5()
-                    .child(Label::new(summary).size(LabelSize::Small).truncate()),
+                div().max_w_4_5().child(
+                    HighlightedLabel::new(summary, self.highlight_positions)
+                        .size(LabelSize::Small)
+                        .truncate(),
+                ),
             )
             .end_slot(
                 h_flex()
@@ -318,6 +489,7 @@ pub struct PastContext {
     context: SavedContextMetadata,
     assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
+    highlight_positions: Vec<usize>,
 }
 
 impl PastContext {
@@ -325,11 +497,13 @@ impl PastContext {
         context: SavedContextMetadata,
         assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
+        highlight_positions: Vec<usize>,
     ) -> Self {
         Self {
             context,
             assistant_panel,
             selected,
+            highlight_positions,
         }
     }
 }
@@ -337,7 +511,6 @@ impl PastContext {
 impl RenderOnce for PastContext {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let summary = self.context.title;
-
         let context_timestamp = time_format::format_localized_timestamp(
             OffsetDateTime::from_unix_timestamp(self.context.mtime.timestamp()).unwrap(),
             OffsetDateTime::now_utc(),
@@ -354,9 +527,11 @@ impl RenderOnce for PastContext {
         .toggle_state(self.selected)
         .spacing(ListItemSpacing::Sparse)
         .start_slot(
-            div()
-                .max_w_4_5()
-                .child(Label::new(summary).size(LabelSize::Small).truncate()),
+            div().max_w_4_5().child(
+                HighlightedLabel::new(summary, self.highlight_positions)
+                    .size(LabelSize::Small)
+                    .truncate(),
+            ),
         )
         .end_slot(
             h_flex()

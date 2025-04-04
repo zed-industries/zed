@@ -4,6 +4,7 @@ use gpui::{Entity, prelude::*};
 
 use crate::thread_store::{SerializedThreadMetadata, ThreadStore};
 
+#[derive(Debug)]
 pub enum HistoryEntry {
     Thread(SerializedThreadMetadata),
     Context(SavedContextMetadata),
@@ -21,23 +22,25 @@ impl HistoryEntry {
 pub struct HistoryStore {
     thread_store: Entity<ThreadStore>,
     context_store: Entity<assistant_context_editor::ContextStore>,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
 impl HistoryStore {
     pub fn new(
         thread_store: Entity<ThreadStore>,
         context_store: Entity<assistant_context_editor::ContextStore>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let subscriptions = vec![
+            cx.observe(&thread_store, |_, _, cx| cx.notify()),
+            cx.observe(&context_store, |_, _, cx| cx.notify()),
+        ];
+
         Self {
             thread_store,
             context_store,
+            _subscriptions: subscriptions,
         }
-    }
-
-    /// Returns the number of history entries.
-    pub fn entry_count(&self, cx: &mut Context<Self>) -> usize {
-        self.entries(cx).len()
     }
 
     pub fn entries(&self, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
