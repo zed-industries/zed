@@ -274,7 +274,7 @@ impl FollowableItem for Editor {
                     }
                     true
                 }
-                EditorEvent::ExcerptsRemoved { ids } => {
+                EditorEvent::ExcerptsRemoved { ids, .. } => {
                     update
                         .deleted_excerpts
                         .extend(ids.iter().map(ExcerptId::to_proto));

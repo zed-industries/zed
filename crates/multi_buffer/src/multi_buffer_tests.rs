@@ -635,7 +635,7 @@ fn test_excerpt_events(cx: &mut App) {
                     predecessor,
                     excerpts,
                 } => follower.insert_excerpts_with_ids_after(predecessor, buffer, excerpts, cx),
-                Event::ExcerptsRemoved { ids } => follower.remove_excerpts(ids, cx),
+                Event::ExcerptsRemoved { ids, .. } => follower.remove_excerpts(ids, cx),
                 Event::Edited { .. } => {
                     *follower_edit_event_count.write() += 1;
                 }

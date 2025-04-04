@@ -16993,13 +16993,20 @@ impl Editor {
                 });
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             }
-            multi_buffer::Event::ExcerptsRemoved { ids } => {
+            multi_buffer::Event::ExcerptsRemoved {
+                ids,
+                removed_buffer_ids,
+            } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 let buffer = self.buffer.read(cx);
+                // FIXME conflicts here
                 self.registered_buffers
                     .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
-                cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
+                cx.emit(EditorEvent::ExcerptsRemoved {
+                    ids: ids.clone(),
+                    removed_buffer_ids: removed_buffer_ids.clone(),
+                })
             }
             multi_buffer::Event::ExcerptsEdited {
                 excerpt_ids,
@@ -19236,6 +19243,7 @@ pub enum EditorEvent {
     },
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
+        removed_buffer_ids: Vec<BufferId>,
     },
     BufferFoldToggled {
         ids: Vec<ExcerptId>,

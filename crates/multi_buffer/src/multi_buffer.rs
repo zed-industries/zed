@@ -96,6 +96,7 @@ pub enum Event {
     },
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
+        removed_buffer_ids: Vec<BufferId>,
     },
     ExcerptsExpanded {
         ids: Vec<ExcerptId>,
@@ -1937,6 +1938,7 @@ impl MultiBuffer {
 
         let mut buffers = self.buffers.borrow_mut();
         let buffer_state = buffers.entry(buffer_id).or_insert_with(|| {
+            // FIXME emit added buffers here
             self.buffer_changed_since_sync.replace(true);
             buffer.update(cx, |buffer, _| {
                 buffer.record_changes(Rc::downgrade(&self.buffer_changed_since_sync));
@@ -2040,7 +2042,12 @@ impl MultiBuffer {
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.sync(cx);
         let ids = self.excerpt_ids();
-        self.buffers.borrow_mut().clear();
+        let removed_buffer_ids = self
+            .buffers
+            .borrow_mut()
+            .drain()
+            .map(|(id, _)| id)
+            .collect();
         let mut snapshot = self.snapshot.borrow_mut();
         let start = ExcerptOffset::new(0);
         let prev_len = ExcerptOffset::new(snapshot.excerpts.summary().text.len);
@@ -2062,7 +2069,10 @@ impl MultiBuffer {
             singleton_buffer_edited: false,
             edited_buffer: None,
         });
-        cx.emit(Event::ExcerptsRemoved { ids });
+        cx.emit(Event::ExcerptsRemoved {
+            ids,
+            removed_buffer_ids,
+        });
         cx.notify();
     }
 
@@ -2326,9 +2336,9 @@ impl MultiBuffer {
         new_excerpts.append(suffix, &());
         drop(cursor);
         snapshot.excerpts = new_excerpts;
-        for buffer_id in removed_buffer_ids {
-            self.diffs.remove(&buffer_id);
-            snapshot.diffs.remove(&buffer_id);
+        for buffer_id in &removed_buffer_ids {
+            self.diffs.remove(buffer_id);
+            snapshot.diffs.remove(buffer_id);
         }
 
         if changed_trailing_excerpt {
@@ -2341,7 +2351,10 @@ impl MultiBuffer {
             singleton_buffer_edited: false,
             edited_buffer: None,
         });
-        cx.emit(Event::ExcerptsRemoved { ids });
+        cx.emit(Event::ExcerptsRemoved {
+            ids,
+            removed_buffer_ids,
+        });
         cx.notify();
     }
 

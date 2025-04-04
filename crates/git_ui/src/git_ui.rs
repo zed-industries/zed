@@ -38,9 +38,7 @@ pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
-        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-            conflict_view::register_editor(editor, buffer, cx);
-        }
+        conflict_view::register_editor(editor, editor.buffer().clone(), cx);
     })
     .detach();
 

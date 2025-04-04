@@ -709,7 +709,7 @@ impl GitStore {
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<ConflictSet>>> {
+    ) -> Entity<ConflictSet> {
         let buffer_id = buffer.read(cx).remote_id();
 
         if let Some(git_state) = self.diffs.get(&buffer_id) {
@@ -726,7 +726,7 @@ impl GitStore {
                     let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
                 });
 
-                return Task::ready(Ok(conflict_set));
+                return conflict_set;
             }
         }
 
@@ -747,7 +747,7 @@ impl GitStore {
             let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
         });
 
-        Task::ready(Ok(conflict_set))
+        conflict_set
     }
 
     pub fn project_path_git_status(
