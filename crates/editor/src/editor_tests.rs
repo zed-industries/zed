@@ -4234,7 +4234,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
             [BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(snapshot.anchor_after(Point::new(2, 0))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
             }],
@@ -4275,7 +4275,7 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
         editor.insert_blocks(
             [BlockProperties {
                 placement,
-                height: 4,
+                height: Some(4),
                 style: BlockStyle::Sticky,
                 render: Arc::new(|_| gpui::div().into_any_element()),
                 priority: 0,
