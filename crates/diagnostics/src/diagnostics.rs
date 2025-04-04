@@ -535,7 +535,7 @@ impl ProjectDiagnosticsEditor {
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
                                     placement: BlockPlacement::Above(header_position),
-                                    height: 2,
+                                    height: Some(2),
                                     style: BlockStyle::Sticky,
                                     render: diagnostic_header_renderer(primary),
                                     priority: 0,
@@ -557,7 +557,9 @@ impl ProjectDiagnosticsEditor {
                                             excerpt_id,
                                             entry.range.start,
                                         )),
-                                        height: diagnostic.message.matches('\n').count() as u32 + 1,
+                                        height: Some(
+                                            diagnostic.message.matches('\n').count() as u32 + 1,
+                                        ),
                                         style: BlockStyle::Fixed,
                                         render: diagnostic_block_renderer(diagnostic, None, true),
                                         priority: 0,
@@ -613,9 +615,9 @@ impl ProjectDiagnosticsEditor {
                                     excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
                                 )
                             }
-                            BlockPlacement::Replace(_) => {
+                            BlockPlacement::Replace(_) | BlockPlacement::Near(_) => {
                                 unreachable!(
-                                    "no Replace block should have been pushed to blocks_to_add"
+                                    "no Near/Replace block should have been pushed to blocks_to_add"
                                 )
                             }
                         };

@@ -621,14 +621,14 @@ impl InlineAssistant {
             BlockProperties {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Above(range.start),
-                height: prompt_editor_height,
+                height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Below(range.end),
-                height: 0,
+                height: None,
                 render: Arc::new(|cx| {
                     v_flex()
                         .h_full()
@@ -1392,7 +1392,7 @@ impl InlineAssistant {
                     deleted_lines_editor.update(cx, |editor, cx| editor.max_point(cx).row().0 + 1);
                 new_blocks.push(BlockProperties {
                     placement: BlockPlacement::Above(new_row),
-                    height,
+                    height: Some(height),
                     style: BlockStyle::Flex,
                     render: Arc::new(move |cx| {
                         div()

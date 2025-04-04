@@ -8717,7 +8717,7 @@ impl Editor {
         let blocks = vec![BlockProperties {
             style: BlockStyle::Sticky,
             placement: BlockPlacement::Above(anchor),
-            height,
+            height: Some(height),
             render: Arc::new(move |cx| {
                 *cloned_prompt.read(cx).gutter_dimensions.lock() = *cx.gutter_dimensions;
                 cloned_prompt.clone().into_any_element()
@@ -12801,7 +12801,6 @@ impl Editor {
     ) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.selections.newest::<usize>(cx);
-
         // If there is an active Diagnostic Popover jump to its diagnostic instead.
         if direction == Direction::Next {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
@@ -13806,7 +13805,7 @@ impl Editor {
                         [BlockProperties {
                             style: BlockStyle::Flex,
                             placement: BlockPlacement::Below(range.start),
-                            height: 1,
+                            height: Some(1),
                             render: Arc::new({
                                 let rename_editor = rename_editor.clone();
                                 move |cx: &mut BlockContext| {
@@ -14273,7 +14272,7 @@ impl Editor {
                             placement: BlockPlacement::Below(
                                 buffer.anchor_after(entry.range.start),
                             ),
-                            height: message_height,
+                            height: Some(message_height),
                             render: diagnostic_block_renderer(diagnostic, None, true),
                             priority: 0,
                         }
