@@ -512,7 +512,9 @@ impl ActiveThread {
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
             }
-            ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
+            ThreadEvent::StreamedCompletion
+            | ThreadEvent::SummaryGenerated
+            | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
             ThreadEvent::DoneStreaming => {

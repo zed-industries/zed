@@ -12,7 +12,7 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
 use client::zed_urls;
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, Corner, Entity,
@@ -44,7 +44,7 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
     AgentDiff, InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, OpenConfiguration, OpenHistory, ToggleContextPicker,
+    OpenAgentDiff, OpenConfiguration, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
 action_with_deprecated_aliases!(
@@ -103,10 +103,70 @@ pub fn init(cx: &mut App) {
 }
 
 enum ActiveView {
-    Thread,
+    Thread {
+        change_title_editor: Entity<Editor>,
+        _subscriptions: Vec<gpui::Subscription>,
+    },
     PromptEditor,
     History,
     Configuration,
+}
+
+impl ActiveView {
+    pub fn thread(thread: Entity<Thread>, window: &mut Window, cx: &mut App) -> Self {
+        let summary = thread.read(cx).summary_or_default();
+
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(summary, window, cx);
+            editor
+        });
+
+        let subscriptions = vec![
+            window.subscribe(&editor, cx, {
+                {
+                    let thread = thread.clone();
+                    move |editor, event, window, cx| match event {
+                        EditorEvent::BufferEdited => {
+                            let new_summary = editor.read(cx).text(cx);
+
+                            thread.update(cx, |thread, cx| {
+                                thread.set_summary(new_summary, cx);
+                            })
+                        }
+                        EditorEvent::Blurred => {
+                            if editor.read(cx).text(cx).is_empty() {
+                                let summary = thread.read(cx).summary_or_default();
+
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text(summary, window, cx);
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }),
+            window.subscribe(&thread, cx, {
+                let editor = editor.clone();
+                move |thread, event, window, cx| match event {
+                    ThreadEvent::SummaryGenerated => {
+                        let summary = thread.read(cx).summary_or_default();
+
+                        editor.update(cx, |editor, cx| {
+                            editor.set_text(summary, window, cx);
+                        })
+                    }
+                    _ => {}
+                }
+            }),
+        ];
+
+        Self::Thread {
+            change_title_editor: editor,
+            _subscriptions: subscriptions,
+        }
+    }
 }
 
 pub struct AssistantPanel {
@@ -198,6 +258,7 @@ impl AssistantPanel {
         let history_store =
             cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
 
+        let active_view = ActiveView::thread(thread.clone(), window, cx);
         let thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
@@ -211,7 +272,7 @@ impl AssistantPanel {
         });
 
         Self {
-            active_view: ActiveView::Thread,
+            active_view,
             workspace,
             project: project.clone(),
             fs: fs.clone(),
@@ -272,7 +333,7 @@ impl AssistantPanel {
             .thread_store
             .update(cx, |this, cx| this.create_thread(cx));
 
-        self.active_view = ActiveView::Thread;
+        self.active_view = ActiveView::thread(thread.clone(), window, cx);
 
         let message_editor_context_store = cx.new(|_cx| {
             crate::context_store::ContextStore::new(
@@ -436,7 +497,7 @@ impl AssistantPanel {
         cx.spawn_in(window, async move |this, cx| {
             let thread = open_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
-                this.active_view = ActiveView::Thread;
+                this.active_view = ActiveView::thread(thread.clone(), window, cx);
                 let message_editor_context_store = cx.new(|_cx| {
                     crate::context_store::ContextStore::new(
                         this.workspace.clone(),
@@ -612,7 +673,7 @@ impl AssistantPanel {
 impl Focusable for AssistantPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self.active_view {
-            ActiveView::Thread => self.message_editor.focus_handle(cx),
+            ActiveView::Thread { .. } => self.message_editor.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
             ActiveView::PromptEditor => {
                 if let Some(context_editor) = self.context_editor.as_ref() {
@@ -713,7 +774,59 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_toolbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_title_view(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summary…";
+
+        let content = match &self.active_view {
+            ActiveView::Thread {
+                change_title_editor,
+                ..
+            } => {
+                let active_thread = self.thread.read(cx);
+                let is_empty = active_thread.is_empty();
+
+                let summary = active_thread.summary(cx);
+
+                if is_empty {
+                    Label::new(Thread::DEFAULT_SUMMARY.clone())
+                        .truncate()
+                        .into_any_element()
+                } else if summary.is_none() {
+                    Label::new(LOADING_SUMMARY_PLACEHOLDER)
+                        .truncate()
+                        .into_any_element()
+                } else {
+                    change_title_editor.clone().into_any_element()
+                }
+            }
+            ActiveView::PromptEditor => {
+                let title = self
+                    .context_editor
+                    .as_ref()
+                    .map(|context_editor| {
+                        SharedString::from(context_editor.read(cx).title(cx).to_string())
+                    })
+                    .unwrap_or_else(|| SharedString::from(LOADING_SUMMARY_PLACEHOLDER));
+
+                Label::new(title).truncate().into_any_element()
+            }
+            ActiveView::History => Label::new("History").truncate().into_any_element(),
+            ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
+        };
+
+        h_flex()
+            .key_context("TitleEditor")
+            .id("TitleEditor")
+            .pl_2()
+            .flex_grow()
+            .w_full()
+            .max_w_full()
+            .overflow_x_scroll()
+            .child(content)
+            .into_any()
+    }
+
+    fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_thread = self.thread.read(cx);
         let thread = active_thread.thread().read(cx);
         let token_usage = thread.total_token_usage(cx);
@@ -723,29 +836,8 @@ impl AssistantPanel {
         let is_empty = active_thread.is_empty();
         let focus_handle = self.focus_handle(cx);
 
-        let title = match self.active_view {
-            ActiveView::Thread => {
-                if is_empty {
-                    active_thread.summary_or_default(cx)
-                } else {
-                    active_thread
-                        .summary(cx)
-                        .unwrap_or_else(|| SharedString::from("Loading Summary…"))
-                }
-            }
-            ActiveView::PromptEditor => self
-                .context_editor
-                .as_ref()
-                .map(|context_editor| {
-                    SharedString::from(context_editor.read(cx).title(cx).to_string())
-                })
-                .unwrap_or_else(|| SharedString::from("Loading Summary…")),
-            ActiveView::History => "History".into(),
-            ActiveView::Configuration => "Settings".into(),
-        };
-
-        let show_token_count = match self.active_view {
-            ActiveView::Thread => !is_empty,
+        let show_token_count = match &self.active_view {
+            ActiveView::Thread { .. } => !is_empty,
             ActiveView::PromptEditor => self.context_editor.is_some(),
             _ => false,
         };
@@ -753,27 +845,20 @@ impl AssistantPanel {
         h_flex()
             .id("assistant-toolbar")
             .h(Tab::container_height(cx))
+            .max_w_full()
             .flex_none()
             .justify_between()
-            .gap(DynamicSpacing::Base08.rems(cx))
+            .gap_2()
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .child(
-                div()
-                    .id("title")
-                    .overflow_x_scroll()
-                    .px(DynamicSpacing::Base08.rems(cx))
-                    .child(Label::new(title).truncate()),
-            )
+            .child(self.render_title_view(window, cx))
             .child(
                 h_flex()
                     .h_full()
-                    .pl_2()
                     .gap_2()
-                    .bg(cx.theme().colors().tab_bar_background)
                     .when(show_token_count, |parent| match self.active_view {
-                        ActiveView::Thread => {
+                        ActiveView::Thread { .. } => {
                             if token_usage.total == 0 {
                                 return parent;
                             }
@@ -786,6 +871,7 @@ impl AssistantPanel {
 
                             parent.child(
                                 h_flex()
+                                    .flex_shrink_0()
                                     .gap_0p5()
                                     .child(
                                         Label::new(assistant_context_editor::humanize_token_count(
@@ -837,10 +923,10 @@ impl AssistantPanel {
                     .child(
                         h_flex()
                             .h_full()
+                            .gap(DynamicSpacing::Base02.rems(cx))
                             .px(DynamicSpacing::Base08.rems(cx))
                             .border_l_1()
                             .border_color(cx.theme().colors().border)
-                            .gap(DynamicSpacing::Base02.rems(cx))
                             .child(
                                 IconButton::new("new", IconName::Plus)
                                     .icon_size(IconSize::Small)
@@ -1394,7 +1480,7 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::open_agent_diff))
             .child(self.render_toolbar(window, cx))
             .map(|parent| match self.active_view {
-                ActiveView::Thread => parent
+                ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
