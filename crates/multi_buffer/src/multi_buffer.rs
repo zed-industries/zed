@@ -2041,6 +2041,8 @@ impl MultiBuffer {
         self.sync(cx);
         let ids = self.excerpt_ids();
         self.buffers.borrow_mut().clear();
+        self.excerpts_by_path.clear();
+        self.paths_by_excerpt.clear();
         let mut snapshot = self.snapshot.borrow_mut();
         let start = ExcerptOffset::new(0);
         let prev_len = ExcerptOffset::new(snapshot.excerpts.summary().text.len);
@@ -2049,6 +2051,7 @@ impl MultiBuffer {
         snapshot.is_dirty = false;
         snapshot.has_deleted_file = false;
         snapshot.has_conflict = false;
+        snapshot.replaced_excerpts.clear();
 
         self.sync_diff_transforms(
             &mut snapshot,
