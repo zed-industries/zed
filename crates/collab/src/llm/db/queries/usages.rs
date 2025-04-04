@@ -41,6 +41,8 @@ pub struct ApplicationWideUsage {
     pub model: String,
     pub requests_this_minute: usize,
     pub tokens_this_minute: usize,
+    pub input_tokens_this_minute: usize,
+    pub output_tokens_this_minute: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -96,6 +98,10 @@ impl LlmDatabase {
             let past_minute = now - Duration::minutes(1);
             let requests_per_minute = self.usage_measure_ids[&UsageMeasure::RequestsPerMinute];
             let tokens_per_minute = self.usage_measure_ids[&UsageMeasure::TokensPerMinute];
+            let input_tokens_per_minute =
+                self.usage_measure_ids[&UsageMeasure::InputTokensPerMinute];
+            let output_tokens_per_minute =
+                self.usage_measure_ids[&UsageMeasure::OutputTokensPerMinute];
 
             let mut results = Vec::new();
             for ((provider, model_name), model) in self.models.iter() {
@@ -116,6 +122,8 @@ impl LlmDatabase {
 
                 let mut requests_this_minute = 0;
                 let mut tokens_this_minute = 0;
+                let mut input_tokens_this_minute = 0;
+                let mut output_tokens_this_minute = 0;
                 while let Some(usage) = usages.next().await {
                     let usage = usage?;
                     if usage.measure_id == requests_per_minute {
@@ -138,6 +146,26 @@ impl LlmDatabase {
                         .iter()
                         .copied()
                         .sum::<i64>() as usize;
+                    } else if usage.measure_id == input_tokens_per_minute {
+                        input_tokens_this_minute += Self::get_live_buckets(
+                            &usage,
+                            now.naive_utc(),
+                            UsageMeasure::InputTokensPerMinute,
+                        )
+                        .0
+                        .iter()
+                        .copied()
+                        .sum::<i64>() as usize;
+                    } else if usage.measure_id == output_tokens_per_minute {
+                        output_tokens_this_minute += Self::get_live_buckets(
+                            &usage,
+                            now.naive_utc(),
+                            UsageMeasure::OutputTokensPerMinute,
+                        )
+                        .0
+                        .iter()
+                        .copied()
+                        .sum::<i64>() as usize;
                     }
                 }
 
@@ -146,6 +174,8 @@ impl LlmDatabase {
                     model: model_name.clone(),
                     requests_this_minute,
                     tokens_this_minute,
+                    input_tokens_this_minute,
+                    output_tokens_this_minute,
                 })
             }
 
