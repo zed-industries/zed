@@ -1,4 +1,5 @@
 use crate::{
+    conflict_view::ConflictAddon,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     remote_button::{render_publish_button, render_push_button},
 };
@@ -395,19 +396,80 @@ impl ProjectDiff {
         let buffer = diff_buffer.buffer;
         let diff = diff_buffer.diff;
 
+        let conflict_addon = self
+            .editor
+            .read(cx)
+            .addon::<ConflictAddon>()
+            .expect("project diff editor should have a conflict addon");
+
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
-        let diff_hunk_ranges = diff
+        let mut diff_hunk_ranges = diff
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
-            .collect::<Vec<_>>();
+            .map(|diff_hunk| diff_hunk.buffer_range.clone())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .fuse()
+            .peekable();
+        let conflicts = conflict_addon
+            .conflict_set(snapshot.remote_id())
+            .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts.clone())
+            .unwrap_or_default();
+        let mut conflicts = conflicts
+            .iter()
+            .map(|conflict| conflict.range.clone())
+            .fuse()
+            .peekable();
+
+        let excerpt_ranges = std::iter::from_fn(|| {
+            let Some(diff_hunk_range) = diff_hunk_ranges.peek().cloned() else {
+                return conflicts.next();
+            };
+            let Some(conflict) = conflicts.next().clone() else {
+                return diff_hunk_ranges.next();
+            };
+
+            let mut next_range = if diff_hunk_range
+                .start
+                .cmp(&conflict.start, &snapshot)
+                .is_lt()
+            {
+                diff_hunk_ranges.next().unwrap()
+            } else {
+                conflicts.next().unwrap()
+            };
+
+            // Extend the basic range while there's overlap with a range from either stream.
+            loop {
+                if let Some(diff_hunk_range) = diff_hunk_ranges
+                    .peek()
+                    .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                    .cloned()
+                {
+                    diff_hunk_ranges.next();
+                    next_range.end = diff_hunk_range.end;
+                } else if let Some(conflict_range) = conflicts
+                    .peek()
+                    .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                    .cloned()
+                {
+                    conflicts.next();
+                    next_range.end = conflict_range.end;
+                } else {
+                    break;
+                }
+            }
+
+            Some(next_range)
+        })
+        .map(|range| range.to_point(&snapshot));
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
             let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
-                diff_hunk_ranges,
+                excerpt_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
             );

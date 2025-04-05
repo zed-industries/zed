@@ -15,13 +15,21 @@ use ui::{
     StyledTypography as _, div, h_flex, rems,
 };
 
-struct ConflictAddon {
+pub(crate) struct ConflictAddon {
     buffers: HashMap<BufferId, BufferConflicts>,
+}
+
+impl ConflictAddon {
+    pub(crate) fn conflict_set(&self, buffer_id: BufferId) -> Option<Entity<ConflictSet>> {
+        self.buffers
+            .get(&buffer_id)
+            .map(|entry| entry.conflict_set.clone())
+    }
 }
 
 struct BufferConflicts {
     block_ids: Vec<(Anchor, CustomBlockId)>,
-    _conflict_set: Entity<ConflictSet>,
+    conflict_set: Entity<ConflictSet>,
     _subscription: Subscription,
 }
 
@@ -77,7 +85,7 @@ fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Ed
     let subscription = cx.subscribe(&conflict_set, conflicts_updated);
     entry.insert(BufferConflicts {
         block_ids: Vec::new(),
-        _conflict_set: conflict_set.clone(),
+        conflict_set: conflict_set.clone(),
         _subscription: subscription,
     });
     conflicts_updated(
