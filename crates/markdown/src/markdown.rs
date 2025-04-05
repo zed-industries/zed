@@ -22,7 +22,6 @@ use theme::SyntaxTheme;
 use ui::{Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
 
-
 use crate::parser::CodeBlockKind;
 
 /// A callback function that can be used to customize the style of links based on the destination URL.
@@ -621,28 +620,40 @@ impl Element for MarkdownElement {
                                 // relative to a worktree root).
                                 if language.contains('/') {
                                     let path_range = PathRange::new(language);
+
+                                    // Ensure any pending text is flushed
+                                    builder.flush_text(); 
+
+                                    // Extract just the filename from the path
+                                    let file_name = path_range.path.rsplit('/').next().unwrap_or(path_range.path);
                                     
-                                    // Add a file link UI element instead of debug statement
-                                    builder.flush_text(); // Ensure any pending text is flushed
-                                    
-                                    // Format the file path with line/column info for the link
-                                    let display_path = format!("File: {}", path_range.path);
-                                    
-                                    // Special URL format for file linking
-                                    let mut file_url = format!("file://{}", path_range.path);
-                                    if let Some(range) = &path_range.range {
-                                        // Add line and column information to URL if available
+                                    // Create the display text with filename and line/column if available
+                                    let display_text = if let Some(range) = &path_range.range {
                                         if range.start.col.is_some() {
-                                            file_url = format!("{}#L{}:{}", file_url, range.start.line, range.start.col.unwrap_or(0));
+                                            format!("{}:{}:{}", file_name, range.start.line, range.start.col.unwrap_or(0))
                                         } else {
-                                            file_url = format!("{}#L{}", file_url, range.start.line);
+                                            format!("{}:{}", file_name, range.start.line)
                                         }
-                                    }
+                                    } else {
+                                        file_name.to_string()
+                                    };
+
+                                    // Create a parent div to contain our button
+                                    builder.push_div(
+                                        div().relative().w_full(),
+                                        range,
+                                        markdown_end,
+                                    );
+
+                                    // Create a button with file icon and filename
+                                    // Create a copy of the path information for debugging
+                                    let path_str = path_range.path.to_string();
+                                    let range_str = if let Some(range) = &path_range.range {
+                                        format!("line: {}, col: {:?}", range.start.line, range.start.col)
+                                    } else {
+                                        "no line/col info".to_string()
+                                    };
                                     
-                                    // Create a parent div to contain our link
-                                    builder.push_div(div().relative().w_full(), range, markdown_end);
-                                    
-                                    // Add the file icon and link text to the container
                                     builder.modify_current_div(|el| {
                                         el.child(
                                             div()
@@ -651,24 +662,29 @@ impl Element for MarkdownElement {
                                                 .items_center()
                                                 .gap_1()
                                                 .child(
-                                                    Icon::new(IconName::File)
-                                                        .size(IconSize::Small)
-                                                        .color(Color::Muted),
+                                                    IconButton::new(
+                                                        ElementId::NamedInteger("file-path-button".into(), range.start),
+                                                        IconName::File
+                                                    )
+                                                    .icon_color(Color::Muted)
+                                                    .shape(ui::IconButtonShape::Square)
+                                                    .on_click({
+                                                        let path_str = path_str.clone();
+                                                        let range_str = range_str.clone();
+                                                        move |_, _, _| {
+                                                            dbg!(format!("Path: {}, {}", path_str, range_str));
+                                                        }
+                                                    })
                                                 )
                                                 .child(
-                                                    Label::new(display_path)
-                                                        .color(Color::Accent)
+                                                    Label::new(display_text).color(Color::Accent),
                                                 )
                                         )
                                     });
-                                    
-                                    // Use the existing link mechanism in markdown
-                                    // This gives us the hover styling and click handling for free
-                                    builder.push_link(file_url.into(), 0..0);
-                                    
+
                                     // Pop the parent div we created
                                     builder.pop_div();
-                                    
+
                                     None
                                 } else {
                                     parsed_markdown.languages.get(language).cloned()
@@ -1570,9 +1586,6 @@ impl LineCol {
 
 impl<'a> PathRange<'a> {
     pub fn new(str: &'a str) -> Self {
-        // Debug the raw input string before any processing
-        dbg!(str);
-
         // Sometimes the model will include a language at the start,
         // e.g. "```rust zed/crates/markdown/src/markdown.rs#L1"
         // We just discard that.
