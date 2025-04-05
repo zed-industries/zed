@@ -706,7 +706,11 @@ impl ActiveThread {
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
                         &tool_use.input,
-                        "".into(),
+                        self.thread
+                            .read(cx)
+                            .tool_result(&tool_use.id)
+                            .map(|result| result.content.clone().into())
+                            .unwrap_or("".into()),
                         window,
                         cx,
                     );
