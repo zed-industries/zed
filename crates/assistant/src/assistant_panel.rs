@@ -54,7 +54,15 @@ pub fn init(cx: &mut App) {
                 .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context)
-                .register_action(AssistantPanel::restart_context_servers);
+                .register_action(AssistantPanel::restart_context_servers)
+                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.deploy_prompt_library(&OpenPromptLibrary, window, cx)
+                        });
+                    }
+                });
         },
     )
     .detach();
