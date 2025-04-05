@@ -33,6 +33,7 @@ use ui::{
 use util::ResultExt as _;
 use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
+use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::ToggleFocus;
 
 use crate::active_thread::ActiveThread;
@@ -44,7 +45,7 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
     AgentDiff, InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, OpenConfiguration, OpenHistory, ThreadEvent, ToggleContextPicker,
+    OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
 action_with_deprecated_aliases!(
