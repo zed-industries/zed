@@ -1161,6 +1161,9 @@ impl PlatformWindow for MacWindow {
                 unsafe {
                     let input_context: id =
                         msg_send![class!(NSTextInputContext), currentInputContext];
+                    if input_context.is_null() {
+                        return;
+                    }
                     let _: () = msg_send![input_context, invalidateCharacterCoordinates];
                 }
             })

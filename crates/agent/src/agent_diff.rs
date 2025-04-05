@@ -45,23 +45,28 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<Entity<Self>> {
-        let existing_diff = workspace.update(cx, |workspace, cx| {
-            workspace
-                .items_of_type::<AgentDiff>(cx)
-                .find(|diff| diff.read(cx).thread == thread)
-        })?;
+        workspace.update(cx, |workspace, cx| {
+            Self::deploy_in_workspace(thread, workspace, window, cx)
+        })
+    }
+
+    pub fn deploy_in_workspace(
+        thread: Entity<Thread>,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
+        let existing_diff = workspace
+            .items_of_type::<AgentDiff>(cx)
+            .find(|diff| diff.read(cx).thread == thread);
         if let Some(existing_diff) = existing_diff {
-            workspace.update(cx, |workspace, cx| {
-                workspace.activate_item(&existing_diff, true, true, window, cx);
-            })?;
-            Ok(existing_diff)
+            workspace.activate_item(&existing_diff, true, true, window, cx);
+            existing_diff
         } else {
             let agent_diff =
-                cx.new(|cx| AgentDiff::new(thread.clone(), workspace.clone(), window, cx));
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_item_to_center(Box::new(agent_diff.clone()), window, cx);
-            })?;
-            Ok(agent_diff)
+                cx.new(|cx| AgentDiff::new(thread.clone(), workspace.weak_handle(), window, cx));
+            workspace.add_item_to_center(Box::new(agent_diff.clone()), window, cx);
+            agent_diff
         }
     }
 

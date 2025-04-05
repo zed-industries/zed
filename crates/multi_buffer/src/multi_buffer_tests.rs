@@ -1380,6 +1380,7 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
         "
         one
         four
+        five
         six
         "
     );
@@ -1413,6 +1414,7 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
             + TWO
             + THREE
               four
+            - five
             + FIVE
               six
             "
@@ -1440,6 +1442,58 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
             + TWO
             + THREE
               four
+            - five
+            + FIVE
+              six
+            "
+        ),
+    );
+
+    // Now collapse all diff hunks
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+            one
+            TWO
+            THREE
+            four
+            FIVE
+            six
+            "
+        ),
+    );
+
+    // Expand the hunks again, but this time provide two ranges that are both within the same hunk
+    // Target the first hunk which is between "one" and "four"
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(
+            vec![
+                snapshot.anchor_before(Point::new(4, 0))..snapshot.anchor_before(Point::new(4, 0)),
+                snapshot.anchor_before(Point::new(4, 2))..snapshot.anchor_before(Point::new(4, 2)),
+            ],
+            cx,
+        );
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              one
+              TWO
+              THREE
+              four
+            - five
             + FIVE
               six
             "

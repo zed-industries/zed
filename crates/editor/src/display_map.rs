@@ -255,7 +255,7 @@ impl DisplayMap {
                     BlockProperties {
                         placement: BlockPlacement::Replace(start..=end),
                         render,
-                        height,
+                        height: Some(height),
                         style,
                         priority,
                     }
@@ -1591,7 +1591,7 @@ pub mod tests {
                                     BlockProperties {
                                         placement,
                                         style: BlockStyle::Fixed,
-                                        height,
+                                        height: Some(height),
                                         render: Arc::new(|_| div().into_any()),
                                         priority,
                                     }
@@ -1953,7 +1953,7 @@ pub mod tests {
                     placement: BlockPlacement::Above(
                         buffer_snapshot.anchor_before(Point::new(0, 0)),
                     ),
-                    height: 2,
+                    height: Some(2),
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
@@ -2148,7 +2148,7 @@ pub mod tests {
                         placement: BlockPlacement::Below(
                             buffer_snapshot.anchor_before(Point::new(1, 0)),
                         ),
-                        height: 1,
+                        height: Some(1),
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
@@ -2157,7 +2157,7 @@ pub mod tests {
                         placement: BlockPlacement::Below(
                             buffer_snapshot.anchor_before(Point::new(2, 0)),
                         ),
-                        height: 0,
+                        height: None,
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
@@ -2262,7 +2262,7 @@ pub mod tests {
                     placement: BlockPlacement::Below(
                         buffer_snapshot.anchor_before(Point::new(1, 0)),
                     ),
-                    height: 1,
+                    height: Some(1),
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
@@ -2336,7 +2336,7 @@ pub mod tests {
                         buffer_snapshot.anchor_before(Point::new(1, 2))
                             ..=buffer_snapshot.anchor_after(Point::new(2, 3)),
                     ),
-                    height: 4,
+                    height: Some(4),
                     style: BlockStyle::Fixed,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,

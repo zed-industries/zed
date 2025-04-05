@@ -92,9 +92,8 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &OpenAgentDiff, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
-                        panel.update(cx, |panel, cx| {
-                            panel.open_agent_diff(&OpenAgentDiff, window, cx);
-                        });
+                        let thread = panel.read(cx).thread.read(cx).thread().clone();
+                        AgentDiff::deploy_in_workspace(thread, workspace, window, cx);
                     }
                 });
         },
@@ -538,7 +537,11 @@ impl AssistantPanel {
         cx: &mut Context<Self>,
     ) {
         let thread = self.thread.read(cx).thread().clone();
-        AgentDiff::deploy(thread, self.workspace.clone(), window, cx).log_err();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                AgentDiff::deploy_in_workspace(thread, workspace, window, cx)
+            })
+            .log_err();
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -653,20 +656,26 @@ impl AssistantPanel {
         self.thread.read(cx).thread().clone()
     }
 
-    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut Context<Self>) {
+    pub(crate) fn delete_thread(
+        &mut self,
+        thread_id: &ThreadId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx))
-            .detach_and_log_err(cx);
     }
 
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
         self.context_editor.clone()
     }
 
-    pub(crate) fn delete_context(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    pub(crate) fn delete_context(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         self.context_store
             .update(cx, |this, cx| this.delete_local_context(path, cx))
-            .detach_and_log_err(cx);
     }
 }
 

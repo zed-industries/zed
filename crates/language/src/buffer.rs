@@ -2210,7 +2210,12 @@ impl Buffer {
                         original_indent_columns,
                     } = &mode
                     {
-                        original_indent_column = Some(
+                        original_indent_column = Some(if new_text.starts_with('\n') {
+                            indent_size_for_text(
+                                new_text[range_of_insertion_to_indent.clone()].chars(),
+                            )
+                            .len
+                        } else {
                             original_indent_columns
                                 .get(ix)
                                 .copied()
@@ -2220,8 +2225,8 @@ impl Buffer {
                                         new_text[range_of_insertion_to_indent.clone()].chars(),
                                     )
                                     .len
-                                }),
-                        );
+                                })
+                        });
 
                         // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
