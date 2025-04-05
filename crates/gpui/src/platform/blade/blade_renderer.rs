@@ -7,7 +7,7 @@ use crate::{
     MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
     ScaledPixels, Scene, Shadow, Size, Underline,
 };
-use blade_graphics::{self as gpu, TexelAspects};
+use blade_graphics::{self as gpu};
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
@@ -766,7 +766,7 @@ impl BladeRenderer {
                                                     >,
                                             )
                                             .unwrap(),
-                                            TexelAspects::COLOR,
+                                            gpu::TexelAspects::COLOR,
                                         ),
                                         gpu::TextureView::from_metal_texture(
                                             &objc2::rc::Retained::retain(
@@ -778,7 +778,7 @@ impl BladeRenderer {
                                                     >,
                                             )
                                             .unwrap(),
-                                            TexelAspects::COLOR,
+                                            gpu::TexelAspects::COLOR,
                                         ),
                                     )
                                 };
