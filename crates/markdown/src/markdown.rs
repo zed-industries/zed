@@ -647,9 +647,6 @@ impl Element for MarkdownElement {
                                                 markdown_end,
                                             );
 
-                                            // Clone project_path for the closure to avoid ownership issues
-                                            let click_project_path = project_path.clone();
-
                                             builder.modify_current_div(|el| {
                                                 let file_icon =
                                                     FileIcons::get_icon(&project_path.path, cx)
@@ -686,11 +683,12 @@ impl Element for MarkdownElement {
                                                                         .display()
                                                                         .to_string(),
                                                                 )
-                                                                .color(Color::Accent),
+                                                                .color(Color::Muted)
+                                                                .underline(),
                                                             ),
                                                     )
                                                     .on_click({
-                                                        let click_path = click_project_path.clone();
+                                                        let click_path = project_path.clone();
                                                         move |_, window, cx| {
                                                             if let Some(workspace) =
                                                                 window.root::<Workspace>().flatten()
@@ -702,7 +700,7 @@ impl Element for MarkdownElement {
                                                                             .open_path(
                                                                                 click_path.clone(),
                                                                                 None,
-                                                                                true, // Focus the newly opened file
+                                                                                true,
                                                                                 window,
                                                                                 cx,
                                                                             )
