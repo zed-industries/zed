@@ -19,11 +19,6 @@ use std::{borrow::Cow, ffi::c_void};
 
 const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
-const ENTER_KEY: u16 = 0x0d;
-const NUMPAD_ENTER_KEY: u16 = 0x03;
-const ESCAPE_KEY: u16 = 0x1b;
-const TAB_KEY: u16 = 0x09;
-const SHIFT_TAB_KEY: u16 = 0x19;
 
 pub fn key_to_native(key: &str) -> Cow<str> {
     use cocoa::appkit::*;
@@ -288,17 +283,19 @@ impl PlatformInput {
     }
 }
 
-unsafe fn parse_keystroke(native_event: id) -> Keystroke {
+fn parse_keystroke(native_event: id) -> Keystroke {
     use cocoa::appkit::{NSModeSwitchFunctionKey, NSUpArrowFunctionKey};
 
-    let scan_code = native_event.keyCode();
-    let characters = native_event
-        .charactersIgnoringModifiers()
-        .to_str()
-        .to_string();
+    let scan_code = unsafe { native_event.keyCode() };
+    let characters = unsafe {
+        native_event
+            .charactersIgnoringModifiers()
+            .to_str()
+            .to_string()
+    };
     let first_char = characters.chars().next().map(|ch| ch as u16);
 
-    let modifiers = native_event.modifierFlags();
+    let modifiers = unsafe { native_event.modifierFlags() };
     let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
     let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
     let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
