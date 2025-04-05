@@ -486,31 +486,4 @@ mod tests {
 
         Ok(())
     }
-
-    #[test]
-    fn test_unsupported_model_region_combination() {
-        // Test for a hypothetical case where a specific model-region combination is unsupported
-
-        // For this test, we can simulate an error case by creating a specialized test model
-        // that's designed to fail for certain regions
-
-        // we'd test it if the implementation supported returning errors for
-        // unsupported model-region combinations:
-        /*
-        let test_model = Model::Custom {
-            name: "test.unsupported-model".to_string(),
-            max_tokens: 1000,
-            display_name: None,
-            max_output_tokens: None,
-            default_temperature: None,
-        };
-
-        let result = test_model.cross_region_inference_id("restricted-region");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unsupported model-region combination"));
-        */
-
-        // Since current implementation doesn't return errors for this scenario,
-        // we skip the actual test and leave this as a placeholder for future implementation
-    }
 }
