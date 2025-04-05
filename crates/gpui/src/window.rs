@@ -3,17 +3,17 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
     Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
-    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, size, transparent_black,
+    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyCode,
+    KeyContext, KeyDownEvent, KeyEvent, KeyPosition, Keystroke, KeystrokeEvent, LayoutId,
+    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem, point, prelude::*, px, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -3207,17 +3207,24 @@ impl Window {
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
                 && !self.pending_modifier.saw_keystroke
             {
-                let key = match self.pending_modifier.modifiers {
-                    modifiers if modifiers.shift => Some("shift"),
-                    modifiers if modifiers.control => Some("control"),
-                    modifiers if modifiers.alt => Some("alt"),
-                    modifiers if modifiers.platform => Some("platform"),
-                    modifiers if modifiers.function => Some("function"),
+                let key_info = match self.pending_modifier.modifiers {
+                    modifiers if modifiers.shift => {
+                        Some((KeyCode::Shift(KeyPosition::Any), "shift"))
+                    }
+                    modifiers if modifiers.control => {
+                        Some((KeyCode::Control(KeyPosition::Any), "control"))
+                    }
+                    modifiers if modifiers.alt => Some((KeyCode::Alt(KeyPosition::Any), "alt")),
+                    modifiers if modifiers.platform => {
+                        Some((KeyCode::Platform(KeyPosition::Any), "platform"))
+                    }
+                    modifiers if modifiers.function => Some((KeyCode::Function, "function")),
                     _ => None,
                 };
-                if let Some(key) = key {
+                if let Some((code, key)) = key_info {
                     keystroke = Some(Keystroke {
-                        key: key.to_string(),
+                        code,
+                        face: key.to_string(),
                         key_char: None,
                         modifiers: Modifiers::default(),
                     });

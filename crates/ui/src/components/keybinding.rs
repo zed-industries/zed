@@ -100,7 +100,7 @@ impl KeyBinding {
         match key_icon {
             Some(icon) => KeyIcon::new(icon, color).size(self.size).into_any_element(),
             None => {
-                let key = util::capitalize(&keystroke.key);
+                let key = util::capitalize(&keystroke.face);
                 Key::new(&key, color).size(self.size).into_any_element()
             }
         }
@@ -122,7 +122,7 @@ impl RenderOnce for KeyBinding {
                     self.key_binding
                         .keystrokes()
                         .iter()
-                        .map(|k| k.key.to_string())
+                        .map(|k| k.face.to_string())
                         .collect::<Vec<_>>()
                         .join(" ")
                 )
@@ -159,7 +159,8 @@ impl RenderOnce for KeyBinding {
 }
 
 fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<IconName> {
-    match keystroke.key.as_str() {
+    // todo(zjk)
+    match keystroke.face.as_str() {
         "left" => Some(IconName::ArrowLeft),
         "right" => Some(IconName::ArrowRight),
         "up" => Some(IconName::ArrowUp),
@@ -436,9 +437,9 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
     }
 
     if vim_mode {
-        text.push_str(&keystroke.key)
+        text.push_str(&keystroke.face)
     } else {
-        let key = match keystroke.key.as_str() {
+        let key = match keystroke.face.as_str() {
             "pageup" => "PageUp",
             "pagedown" => "PageDown",
             key => &util::capitalize(key),

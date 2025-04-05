@@ -60,11 +60,15 @@ use thiserror::Error;
 
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
+    KeyCode, KeyboardMapper, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
+    Window, actions, black, px,
 };
 
-use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
+use crate::mappings::{
+    colors::to_alac_rgb,
+    keys::{generate_esc_str_mapper, to_esc_str},
+};
 
 actions!(
     terminal,
@@ -505,6 +509,7 @@ impl TerminalBuilder {
             debug_terminal,
             is_ssh_terminal,
             python_venv_directory,
+            manual_esc_str_mapper: generate_esc_str_mapper(cx.keyboard_mapper()),
         };
 
         Ok(TerminalBuilder {
@@ -662,6 +667,7 @@ pub struct Terminal {
     vi_mode_enabled: bool,
     debug_terminal: bool,
     is_ssh_terminal: bool,
+    manual_esc_str_mapper: HashMap<(KeyCode, Modifiers), String>,
 }
 
 pub struct TaskState {
@@ -1033,6 +1039,8 @@ impl Terminal {
                             // Treat "file://" URLs like file paths to ensure
                             // that line numbers at the end of the path are
                             // handled correctly
+                            // todo(windows)
+                            // Test this on Windows
                             if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
                                 MaybeNavigationTarget::PathLike(PathLikeTarget {
                                     maybe_path: path.to_string(),
@@ -1252,27 +1260,42 @@ impl Terminal {
             return;
         }
 
-        let mut key = keystroke.key.clone();
-        if keystroke.modifiers.shift {
-            key = key.to_uppercase();
-        }
-
-        let motion: Option<ViMotion> = match key.as_str() {
-            "h" | "left" => Some(ViMotion::Left),
-            "j" | "down" => Some(ViMotion::Down),
-            "k" | "up" => Some(ViMotion::Up),
-            "l" | "right" => Some(ViMotion::Right),
-            "w" => Some(ViMotion::WordRight),
-            "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
-            "e" => Some(ViMotion::WordRightEnd),
-            "%" => Some(ViMotion::Bracket),
-            "$" => Some(ViMotion::Last),
-            "0" => Some(ViMotion::First),
-            "^" => Some(ViMotion::FirstOccupied),
-            "H" => Some(ViMotion::High),
-            "M" => Some(ViMotion::Middle),
-            "L" => Some(ViMotion::Low),
-            _ => None,
+        let motion = match keystroke.code {
+            KeyCode::H => {
+                if keystroke.modifiers.shift {
+                    Some(ViMotion::High)
+                } else {
+                    Some(ViMotion::Left)
+                }
+            }
+            KeyCode::Left => Some(ViMotion::Left),
+            KeyCode::J | KeyCode::Down => Some(ViMotion::Down),
+            KeyCode::K | KeyCode::Up => Some(ViMotion::Up),
+            KeyCode::L => {
+                if keystroke.modifiers.shift {
+                    Some(ViMotion::Low)
+                } else {
+                    Some(ViMotion::Right)
+                }
+            }
+            KeyCode::Right => Some(ViMotion::Right),
+            KeyCode::W => Some(ViMotion::WordRight),
+            KeyCode::B if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
+            KeyCode::E => Some(ViMotion::WordRightEnd),
+            KeyCode::M if keystroke.modifiers.shift => Some(ViMotion::Middle),
+            _ => {
+                if let Some(ref key_char) = keystroke.key_char {
+                    match key_char.as_str() {
+                        "%" => Some(ViMotion::Bracket),
+                        "$" => Some(ViMotion::Last),
+                        "0" => Some(ViMotion::First),
+                        "^" => Some(ViMotion::FirstOccupied),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
         };
 
         if let Some(motion) = motion {
@@ -1287,16 +1310,21 @@ impl Terminal {
             return;
         }
 
-        let scroll_motion = match key.as_str() {
-            "g" => Some(AlacScroll::Top),
-            "G" => Some(AlacScroll::Bottom),
-            "b" if keystroke.modifiers.control => Some(AlacScroll::PageUp),
-            "f" if keystroke.modifiers.control => Some(AlacScroll::PageDown),
-            "d" if keystroke.modifiers.control => {
+        let scroll_motion = match keystroke.code {
+            KeyCode::G => {
+                if keystroke.modifiers.shift {
+                    Some(AlacScroll::Bottom)
+                } else {
+                    Some(AlacScroll::Top)
+                }
+            }
+            KeyCode::B if keystroke.modifiers.control => Some(AlacScroll::PageUp),
+            KeyCode::F if keystroke.modifiers.control => Some(AlacScroll::PageDown),
+            KeyCode::D if keystroke.modifiers.control => {
                 let amount = self.last_content.terminal_bounds.line_height().to_f64() as i32 / 2;
                 Some(AlacScroll::Delta(-amount))
             }
-            "u" if keystroke.modifiers.control => {
+            KeyCode::U if keystroke.modifiers.control => {
                 let amount = self.last_content.terminal_bounds.line_height().to_f64() as i32 / 2;
                 Some(AlacScroll::Delta(amount))
             }
@@ -1308,8 +1336,8 @@ impl Terminal {
             return;
         }
 
-        match key.as_str() {
-            "v" => {
+        match keystroke.code {
+            KeyCode::V => {
                 let point = self.last_content.cursor.point;
                 let selection_type = SelectionType::Simple;
                 let side = AlacDirection::Right;
@@ -1319,18 +1347,18 @@ impl Terminal {
                 return;
             }
 
-            "escape" => {
+            KeyCode::Escape => {
                 self.events.push_back(InternalEvent::SetSelection(None));
                 return;
             }
 
-            "y" => {
+            KeyCode::Y => {
                 self.events.push_back(InternalEvent::Copy);
                 self.events.push_back(InternalEvent::SetSelection(None));
                 return;
             }
 
-            "i" => {
+            KeyCode::I => {
                 self.scroll_to_bottom();
                 self.toggle_vi_mode();
                 return;
@@ -1346,7 +1374,12 @@ impl Terminal {
         }
 
         // Keep default terminal behavior
-        let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
+        let esc = to_esc_str(
+            keystroke,
+            &self.last_content.mode,
+            alt_is_meta,
+            &self.manual_esc_str_mapper,
+        );
         if let Some(esc) = esc {
             self.input(esc);
             true
@@ -1919,6 +1952,10 @@ impl Terminal {
 
     pub fn vi_mode_enabled(&self) -> bool {
         self.vi_mode_enabled
+    }
+
+    pub fn update_esc_str_mapper(&mut self, keyboard_mapper: &dyn KeyboardMapper) {
+        self.manual_esc_str_mapper = generate_esc_str_mapper(keyboard_mapper);
     }
 }
 

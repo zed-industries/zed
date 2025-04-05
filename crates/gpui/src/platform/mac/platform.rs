@@ -1,15 +1,15 @@
 use super::{
-    BoolExt,
+    BoolExt, MacKeyboardMapperManager,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    renderer, screen_capture,
+    keyboard_layout, renderer, screen_capture,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
-    CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay,
-    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem,
-    PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task, WindowAppearance,
-    WindowParams, hash,
+    CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyboardMapper, Keymap, MacDispatcher,
+    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task,
+    WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -169,6 +169,7 @@ pub(crate) struct MacPlatformState {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
+    keyboard_manager: MacKeyboardMapperManager,
 }
 
 impl Default for MacPlatform {
@@ -206,6 +207,7 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
+            keyboard_manager: MacKeyboardMapperManager::new(),
         }))
     }
 
@@ -350,7 +352,7 @@ impl MacPlatform {
                                 .initWithTitle_action_keyEquivalent_(
                                     ns_string(&name),
                                     selector,
-                                    ns_string(key_to_native(&keystroke.key).as_ref()),
+                                    ns_string(key_to_native(&keystroke.face).as_ref()),
                                 )
                                 .autorelease();
                             if MacPlatform::os_version().unwrap() >= SemanticVersion::new(12, 0, 0)
@@ -824,19 +826,7 @@ impl Platform for MacPlatform {
     }
 
     fn keyboard_layout(&self) -> String {
-        unsafe {
-            let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
-
-            let input_source_id: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyInputSourceID as *const c_void,
-            );
-            let input_source_id: *const std::os::raw::c_char =
-                msg_send![input_source_id, UTF8String];
-            let input_source_id = CStr::from_ptr(input_source_id).to_str().unwrap();
-
-            input_source_id.to_string()
-        }
+        keyboard_layout()
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -1186,6 +1176,13 @@ impl Platform for MacPlatform {
             Ok(())
         })
     }
+
+    fn keyboard_mapper(&self) -> Rc<dyn KeyboardMapper> {
+        self.0
+            .lock()
+            .keyboard_manager
+            .get_mapper(&keyboard_layout())
+    }
 }
 
 impl MacPlatform {
@@ -1360,6 +1357,8 @@ extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
 extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_mac_platform(this) };
     let mut lock = platform.0.lock();
+    lock.keyboard_manager.update(&keyboard_layout());
+    println!("==> Keyboard layout changed");
     if let Some(mut callback) = lock.on_keyboard_layout_change.take() {
         drop(lock);
         callback();
