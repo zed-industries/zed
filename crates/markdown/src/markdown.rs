@@ -1,6 +1,7 @@
 pub mod parser;
 mod path_range;
 
+use path_range::PathRange;
 use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::mem;
@@ -8,7 +9,6 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
-use path_range::PathRange;
 
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
@@ -21,7 +21,7 @@ use language::{Language, LanguageRegistry, Rope};
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
 use theme::SyntaxTheme;
-use ui::{Tooltip, prelude::*};
+use ui::{ButtonLike, Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
 
 use crate::parser::CodeBlockKind;
@@ -615,81 +615,77 @@ impl Element for MarkdownElement {
                             );
                         }
                         MarkdownTag::CodeBlock(kind) => {
-                            let language = if let CodeBlockKind::Fenced(language) = kind {
-                                // Actual languages should never contain a `/`,
-                                // and paths from a model should always contain them
-                                // (because the prompt says to make all paths be
-                                // relative to a worktree root).
-                                if language.contains('/') {
-                                    let path_range = PathRange::new(language);
-
-                                    // Ensure any pending text is flushed
-                                    builder.flush_text(); 
-
-                                    // Extract just the filename from the path
-                                    let file_name = path_range.path.rsplit('/').next().unwrap_or(path_range.path);
-                                    
-                                    // Create the display text with filename and line/column if available
-                                    let display_text = if let Some(range) = &path_range.range {
-                                        if range.start.col.is_some() {
-                                            format!("{}:{}:{}", file_name, range.start.line, range.start.col.unwrap_or(0))
-                                        } else {
-                                            format!("{}:{}", file_name, range.start.line)
-                                        }
-                                    } else {
-                                        file_name.to_string()
-                                    };
-
-                                    // Create a parent div to contain our button
-                                    builder.push_div(
-                                        div().relative().w_full(),
-                                        range,
-                                        markdown_end,
-                                    );
-
-                                    // Create a button with file icon and filename
-                                    // Create a copy of the path information for debugging
-                                    let path_str = path_range.path.to_string();
-                                    let range_str = if let Some(range) = &path_range.range {
-                                        format!("line: {}, col: {:?}", range.start.line, range.start.col)
-                                    } else {
-                                        "no line/col info".to_string()
-                                    };
-                                    
-                                    builder.modify_current_div(|el| {
-                                        el.child(
-                                            div()
-                                                .mb_1()
-                                                .flex()
-                                                .items_center()
-                                                .gap_1()
-                                                .child(
-                                                    IconButton::new(
-                                                        ElementId::NamedInteger("file-path-button".into(), range.start),
-                                                        IconName::File
+                            let language = if let CodeBlockKind::Fenced(path) = kind {
+                                // First, check to see if the model generated a language (despite having been
+                                // told not to). If so, the best we can do is to use that.
+                                match parsed_markdown.languages.get(path).cloned() {
+                                    None => {
+                                        let path_range = PathRange::new(path);
+                                        
+                                        // Determine if this path is a valid file in the project
+                                        // We check for some basic path sanity rules
+                                        let path_looks_valid = !path_range.path.is_empty() && 
+                                            !path_range.path.contains("../..") && // Avoid suspicious paths
+                                            !path_range.path.contains("://") && // Not a URL
+                                            path_range.path.len() < 1024; // Reasonable length
+                                        
+                                        // Only show file link UI for paths that look like valid file paths
+                                        if path_looks_valid {
+                                            builder.flush_text();
+                                            
+                                            builder.push_div(
+                                                div().relative().w_full(),
+                                                range,
+                                                markdown_end,
+                                            );
+                                            
+                                            builder.modify_current_div(|el| {
+                                            el.child(
+                                                ButtonLike::new("open-file-link")
+                                                    .child(
+                                                        div()
+                                                            .mb_1()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_1()
+                                                            .child(
+                                                                IconButton::new(
+                                                                    ElementId::NamedInteger(
+                                                                        "file-path-button".into(),
+                                                                        range.start,
+                                                                    ),
+                                                                    IconName::File,
+                                                                )
+                                                                .icon_color(Color::Muted)
+                                                                .shape(ui::IconButtonShape::Square),
+                                                            )
+                                                            .child(
+                                                                Label::new(
+                                                                    path_range.path.to_string(),
+                                                                )
+                                                                .color(Color::Accent),
+                                                            ),
                                                     )
-                                                    .icon_color(Color::Muted)
-                                                    .shape(ui::IconButtonShape::Square)
                                                     .on_click({
-                                                        let path_str = path_str.clone();
-                                                        let range_str = range_str.clone();
-                                                        move |_, _, _| {
-                                                            dbg!(format!("Path: {}, {}", path_str, range_str));
+                                                        let path_str = path_range.path.to_string();
+                                                        move |_, _, cx| {
+                                                            // Open the file path or URL
+
+                                                            // Open the path or URL
+                                                            cx.open_url(&path_str);
                                                         }
-                                                    })
-                                                )
-                                                .child(
-                                                    Label::new(display_text).color(Color::Accent),
-                                                )
-                                        )
-                                    });
+                                                    }),
+                                            )
+                                        });
 
-                                    // Pop the parent div we created
-                                    builder.pop_div();
+                                        builder.pop_div();
+                                        } // Close the if path_looks_valid block
 
-                                    None
-                                } else {
-                                    parsed_markdown.languages.get(language).cloned()
+                                        // Could implement language detection by file extension here if needed
+
+                                        None
+                                    }
+                                    Some(language) => Some(language.clone()),
                                 }
                             } else {
                                 None
@@ -1554,8 +1550,6 @@ fn without_fences(mut markdown: &str) -> &str {
 
     markdown
 }
-
-
 
 #[cfg(test)]
 mod tests {

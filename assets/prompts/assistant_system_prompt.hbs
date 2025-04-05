@@ -53,12 +53,56 @@ There are rules that apply to these root directories:
 {{/each}}
 {{/if}}
 
-Whenever you mention a code block that you know is in a file in this project, you MUST use the following format:
+<code_blocks>
+Whenever you mention a code block, you MUST use ONLY use the following format:
 
 ```path/to/Something.blah#L123-456
 (code goes here)
 ```
 
-The `#L123-456` means the line number range 123 through 456. Remember, you must ALWAYS use this format
-whenever you know the code block comes from a file in this project. Don't be lazy! Always format it this way,
-and never omit any part of that. You must always include the path to the file as well as the line numbers.
+The `#L123-456` means the line number range 123 through 456, and the path/to/Something.blah
+is a path in the project. (If there is no valid path in the project, then you can use
+/dev/null/path.extension for its path.) This is the ONLY valid way to format code blocks, because the Markdown parser
+does not understand the more common ```language syntax, or bare ``` blocks. It only
+understands this path-based syntax.
+
+<good_example>
+The explanation can be found in the README:
+
+```path/to/README.md#L8-11
+## Explanation
+
+Here is the explanation
+```
+</bad_example>
+
+<good_example>
+In Markdown, hash marks signify headings. For example:
+
+```/dev/null/example.md#L1-3
+# Level 1 heading
+## Level 2 heading
+### Level 3 heading
+```
+</good_example>
+
+<bad_example>
+The explanation can be found in the README:
+
+```
+## Explanation
+
+Here is the explanation
+```
+</bad_example>
+
+<bad_example>
+In Markdown, hash marks signify headings. For example:
+
+```markdown
+# Level 1 heading
+## Level 2 heading
+### Level 3 heading
+```
+</bad_example>
+</code_blocks>
