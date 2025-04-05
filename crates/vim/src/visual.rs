@@ -160,7 +160,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let inclusive_override = self.inclusive_mode_override;
+        let forced_motion = self.forced_motion;
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             if vim.mode == Mode::VisualBlock
@@ -173,14 +173,7 @@ impl Vim {
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
                 vim.visual_block_motion(is_up_or_down, editor, window, cx, |map, point, goal| {
-                    motion.move_point(
-                        map,
-                        point,
-                        goal,
-                        times,
-                        &text_layout_details,
-                        inclusive_override,
-                    )
+                    motion.move_point(map, point, goal, times, &text_layout_details, forced_motion)
                 })
             } else {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -209,7 +202,7 @@ impl Vim {
                             selection.goal,
                             times,
                             &text_layout_details,
-                            inclusive_override,
+                            forced_motion,
                         ) else {
                             return;
                         };

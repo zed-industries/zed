@@ -182,7 +182,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let inclusive_override = self.inclusive_mode_override;
+        let forced_motion = self.forced_motion;
         self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);
@@ -194,7 +194,7 @@ impl Vim {
                 &mut selection,
                 times,
                 &text_layout_details,
-                inclusive_override,
+                forced_motion,
             );
             let start = snapshot
                 .buffer_snapshot

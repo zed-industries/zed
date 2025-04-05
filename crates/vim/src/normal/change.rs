@@ -34,7 +34,7 @@ impl Vim {
         } else {
             None
         };
-        let inclusive_override = self.inclusive_mode_override;
+        let forced_motion = self.forced_motion;
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
@@ -60,7 +60,7 @@ impl Vim {
                                     selection,
                                     times,
                                     &text_layout_details,
-                                    inclusive_override,
+                                    forced_motion,
                                 );
                                 if let Motion::CurrentLine = motion {
                                     let mut start_offset =

@@ -157,7 +157,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let inclusive_override = self.inclusive_mode_override;
+        let forced_motion = self.forced_motion;
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -176,7 +176,7 @@ impl Vim {
                             selection.goal,
                             times,
                             &text_layout_details,
-                            inclusive_override,
+                            forced_motion,
                         )
                         .unwrap_or((cursor, goal));
 
