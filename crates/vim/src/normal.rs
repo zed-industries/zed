@@ -299,12 +299,20 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let forced_motion = self.forced_motion;
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
                     motion
-                        .move_point(map, cursor, goal, times, &text_layout_details)
+                        .move_point(
+                            map,
+                            cursor,
+                            goal,
+                            times,
+                            &text_layout_details,
+                            forced_motion,
+                        )
                         .unwrap_or((cursor, goal))
                 })
             })
@@ -446,6 +454,7 @@ impl Vim {
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
+        let forced_motion = self.forced_motion;
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
@@ -476,6 +485,7 @@ impl Vim {
                             goal,
                             None,
                             &text_layout_details,
+                            forced_motion,
                         )
                     });
                 });

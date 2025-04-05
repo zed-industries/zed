@@ -145,6 +145,7 @@ actions!(
         PushDeleteSurrounds,
         PushMark,
         ToggleMarksView,
+        PushForcedMotion,
         PushIndent,
         PushOutdent,
         PushAutoIndent,
@@ -311,6 +312,7 @@ pub(crate) struct Vim {
     pub(crate) mode: Mode,
     pub last_mode: Mode,
     pub temp_mode: bool,
+    pub(crate) forced_motion: bool,
     pub status_label: Option<SharedString>,
     pub exit_temporary_mode: bool,
 
@@ -361,6 +363,7 @@ impl Vim {
             last_mode: Mode::Normal,
             temp_mode: false,
             exit_temporary_mode: false,
+            forced_motion: false,
             operator_stack: Vec::new(),
             replacements: Vec::new(),
 
@@ -472,7 +475,10 @@ impl Vim {
                     vim.switch_mode(Mode::HelixNormal, false, window, cx)
                 },
             );
-
+            Vim::action(editor, cx, |vim, _: &PushForcedMotion, _, _| {
+                //TODO: unset this bool after motion is done
+                vim.forced_motion = true;
+            });
             Vim::action(editor, cx, |vim, action: &PushObject, window, cx| {
                 vim.push_operator(
                     Operator::Object {

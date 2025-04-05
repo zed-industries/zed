@@ -1,0 +1,5 @@
+{"Put":{"state":"ˇthe quick brown fox\njumped over the lazy dog"}}
+{"Key":"d"}
+{"Key":"v"}
+{"Key":"e"}
+{"Get":{"state":"ˇe quick brown fox\njumped over the lazy dog","mode":"Normal"}}

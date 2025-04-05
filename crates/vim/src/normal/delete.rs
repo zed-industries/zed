@@ -21,6 +21,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let forced_motion = self.forced_motion;
         self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -33,9 +34,13 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let original_head = selection.head();
                         original_columns.insert(selection.id, original_head.column());
-                        let kind =
-                            motion.expand_selection(map, selection, times, &text_layout_details);
-
+                        let kind = motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                            forced_motion,
+                        );
                         ranges_to_copy
                             .push(selection.start.to_point(map)..selection.end.to_point(map));
 

@@ -24,6 +24,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let forced_motion = self.forced_motion;
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
@@ -34,7 +35,13 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let original_position = (selection.head(), selection.goal);
                         original_positions.insert(selection.id, original_position);
-                        kind = motion.expand_selection(map, selection, times, &text_layout_details);
+                        kind = motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                            forced_motion,
+                        );
                     })
                 });
                 let Some(kind) = kind else { return };
