@@ -677,11 +677,28 @@ impl Element for MarkdownElement {
                                                             ),
                                                     )
                                                     .on_click({
-                                                        move |_, _, _cx| {
-                                                            dbg!(
-                                                                &project_path,
-                                                                path_range.range.clone()
-                                                            );
+                                                        move |_, window, cx| {
+                                                            if let Some(workspace) =
+                                                                window.root::<Workspace>().flatten()
+                                                            {
+                                                                let project_path =
+                                                                    project_path.clone();
+
+                                                                workspace.update(
+                                                                    cx,
+                                                                    |workspace, cx| {
+                                                                        workspace
+                                                                            .open_path(
+                                                                                project_path,
+                                                                                None,
+                                                                                true, // Focus the newly opened file
+                                                                                window,
+                                                                                cx,
+                                                                            )
+                                                                            .detach_and_log_err(cx);
+                                                                    },
+                                                                )
+                                                            }
                                                         }
                                                     }),
                                                 )
