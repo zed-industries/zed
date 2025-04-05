@@ -3,11 +3,10 @@ use gpui::{Context, Window, impl_actions};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::Settings;
 use std::cmp;
 
 use crate::{
-    Vim, VimSettings,
+    Vim,
     motion::{Motion, MotionKind},
     object::Object,
     state::{Mode, Register},
@@ -204,8 +203,7 @@ impl Vim {
                 })
             });
         });
-        let next_mode = VimSettings::get_global(cx).default_mode;
-        self.switch_mode(next_mode, true, window, cx);
+        self.switch_mode(Mode::Normal, true, window, cx);
     }
 
     pub fn replace_with_register_object(
