@@ -183,12 +183,21 @@ pub mod icon_theme_selector {
     impl_actions!(icon_theme_selector, [Toggle]);
 }
 
+pub mod agent {
+    use gpui::actions;
+
+    actions!(agent, [OpenConfiguration]);
+}
+
 pub mod assistant {
     use gpui::{actions, impl_actions};
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    actions!(assistant, [ToggleFocus, OpenPromptLibrary]);
+    actions!(
+        assistant,
+        [ToggleFocus, OpenPromptLibrary, ShowConfiguration]
+    );
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]

@@ -538,6 +538,7 @@ dependencies = [
  "collections",
  "context_server",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -576,6 +577,7 @@ dependencies = [
  "uuid",
  "workspace",
  "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
@@ -7627,7 +7629,6 @@ dependencies = [
  "picker",
  "proto",
  "ui",
- "workspace",
  "workspace-hack",
  "zed_actions",
 ]

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use feature_flags::ZedPro;
+use feature_flags::{Assistant2FeatureFlag, ZedPro};
 use gpui::{
     Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity, action_with_deprecated_aliases,
@@ -11,7 +11,6 @@ use language_model::{
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
-use workspace::ShowConfiguration;
 
 action_with_deprecated_aliases!(
     assistant,
@@ -522,7 +521,13 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::Start)
                         .on_click(|_, window, cx| {
-                            window.dispatch_action(ShowConfiguration.boxed_clone(), cx);
+                            let configure_action = if cx.has_flag::<Assistant2FeatureFlag>() {
+                                zed_actions::agent::OpenConfiguration.boxed_clone()
+                            } else {
+                                zed_actions::assistant::ShowConfiguration.boxed_clone()
+                            };
+
+                            window.dispatch_action(configure_action, cx);
                         }),
                 )
                 .into_any(),
