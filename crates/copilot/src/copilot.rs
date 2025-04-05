@@ -1050,6 +1050,14 @@ async fn clear_copilot_config_dir() {
     remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
+async fn create_copilot_dir() {
+    if paths::copilot_dir().exists() {
+        return;
+    }
+
+    smol::fs::create_dir(paths::copilot_dir()).await.log_err();
+}
+
 async fn get_copilot_lsp(node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
     const PACKAGE_NAME: &str = "@github/copilot-language-server";
     const SERVER_PATH: &str =
@@ -1059,6 +1067,8 @@ async fn get_copilot_lsp(node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
         .npm_package_latest_version(PACKAGE_NAME)
         .await?;
     let server_path = paths::copilot_dir().join(SERVER_PATH);
+
+    create_copilot_dir().await;
 
     let should_install = node_runtime
         .should_install_npm_package(
