@@ -189,10 +189,7 @@ impl Keystroke {
                     if let Some(key_face) = key_face {
                         key = key_face;
                     }
-                    if code == KeyCode::Unknown {
-                        log::error!("Parse key stroke key-based: {}, {:#?}", source, ret);
-                    }
-                    return Ok(Keystroke {
+                    let ret = Ok(Keystroke {
                         modifiers: Modifiers {
                             control,
                             alt,
@@ -204,6 +201,10 @@ impl Keystroke {
                         face: key,
                         key_char,
                     });
+                    if code == KeyCode::Unknown {
+                        log::error!("Parse key stroke key-based: {}, {:#?}", source, ret);
+                    }
+                    return ret;
                 }
             }
         }
@@ -238,10 +239,7 @@ impl Keystroke {
             key = key_face;
         }
 
-        if code == KeyCode::Unknown {
-            log::error!("Parse key stroke char-based: {}, {:#?}", source, ret);
-        }
-        Ok(Keystroke {
+        let ret = Ok(Keystroke {
             modifiers: Modifiers {
                 control,
                 alt,
@@ -252,7 +250,11 @@ impl Keystroke {
             code,
             face: key,
             key_char,
-        })
+        });
+        if code == KeyCode::Unknown {
+            log::error!("Parse key stroke char-based: {}, {:#?}", source, ret);
+        }
+        ret
     }
 
     /// Produces a representation of this key that Parse can understand.
