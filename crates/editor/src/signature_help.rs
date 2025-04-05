@@ -235,16 +235,16 @@ impl Editor {
                             ..Default::default()
                         };
                         let signature_help_popover = SignatureHelpPopover {
-                            style: text_style.clone(),
+                            style: text_style,
                             signature: signature_help
                                 .signatures
                                 .into_iter()
                                 .map(|s| SignatureHelpData {
                                     label: s.label.into(),
-                                    documentation: s.documentation.map(|s| {
+                                    documentation: s.documentation.map(|documentation| {
                                         cx.new(|cx| {
                                             Markdown::new(
-                                                s.into(),
+                                                documentation.into(),
                                                 markdown_style.clone(),
                                                 Some(languages.clone()),
                                                 None,
