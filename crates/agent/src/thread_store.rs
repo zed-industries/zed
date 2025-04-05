@@ -174,8 +174,9 @@ impl ThreadStore {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.delete_thread(id.clone()).await?;
 
-            this.update(cx, |this, _cx| {
-                this.threads.retain(|thread| thread.id != id)
+            this.update(cx, |this, cx| {
+                this.threads.retain(|thread| thread.id != id);
+                cx.notify();
             })
         })
     }
