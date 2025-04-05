@@ -251,7 +251,11 @@ impl<'a> Iterator for TokenChunks<'a> {
             Transform::Highlight(token, _) => Chunk {
                 text: prefix,
                 syntax_highlight_id: None,
-                highlight_style: Some(token.style),
+                highlight_style: Some({
+                    let mut style = chunk.highlight_style.unwrap_or(HighlightStyle::default());
+                    style.highlight(token.style);
+                    style
+                }),
                 ..Default::default()
             },
         };
