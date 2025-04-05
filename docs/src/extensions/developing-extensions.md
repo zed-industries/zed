@@ -111,6 +111,8 @@ submodule = "extensions/my-extension"
 version = "0.0.1"
 ```
 
+> If your extension is in a subdirectory within the submodule you can use the `path` field to point to where the extension resides.
+
 3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted
 
 Once your PR is merged, the extension will be packaged and published to the Zed extension registry.

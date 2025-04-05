@@ -1,5 +1,5 @@
-use crate::{prelude::*, Indicator};
-use gpui::{div, AnyElement, FontWeight, IntoElement, Length};
+use crate::{Indicator, prelude::*};
+use gpui::{AnyElement, FontWeight, IntoElement, Length, div};
 
 /// A table component
 #[derive(IntoElement, IntoComponent)]
@@ -153,7 +153,7 @@ where
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Table {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![

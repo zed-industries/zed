@@ -1,6 +1,6 @@
 mod archive;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -279,10 +279,12 @@ impl ManagedNodeRuntime {
 
     async fn node_environment_path(&self) -> Result<OsString> {
         let node_binary = self.installation_path.join(Self::NODE_PATH);
-        let mut env_path = vec![node_binary
-            .parent()
-            .expect("invalid node binary path")
-            .to_path_buf()];
+        let mut env_path = vec![
+            node_binary
+                .parent()
+                .expect("invalid node binary path")
+                .to_path_buf(),
+        ];
 
         if let Some(existing_path) = std::env::var_os("PATH") {
             let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
@@ -499,12 +501,6 @@ impl SystemNodeRuntime {
         let scratch_dir = paths::support_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
         fs::create_dir(scratch_dir.join("cache")).await.ok();
-        fs::write(scratch_dir.join("blank_user_npmrc"), [])
-            .await
-            .ok();
-        fs::write(scratch_dir.join("blank_global_npmrc"), [])
-            .await
-            .ok();
 
         let mut this = Self {
             node,
@@ -551,14 +547,6 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
             .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)
             .args(["--cache".into(), self.scratch_dir.join("cache")])
-            .args([
-                "--userconfig".into(),
-                self.scratch_dir.join("blank_user_npmrc"),
-            ])
-            .args([
-                "--globalconfig".into(),
-                self.scratch_dir.join("blank_global_npmrc"),
-            ])
             .args(args);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;

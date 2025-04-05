@@ -2,15 +2,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::DateTime;
+use collections::HashSet;
 use fs::Fs;
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use gpui::{prelude::*, App, AsyncApp, Global};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use gpui::{App, AsyncApp, Global, prelude::*};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
-use settings::watch_config_file;
+use settings::watch_config_dir;
 use strum::EnumIter;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
@@ -42,6 +43,11 @@ pub enum Model {
     Claude3_5Sonnet,
     #[serde(alias = "claude-3-7-sonnet", rename = "claude-3.7-sonnet")]
     Claude3_7Sonnet,
+    #[serde(
+        alias = "claude-3.7-sonnet-thought",
+        rename = "claude-3.7-sonnet-thought"
+    )]
+    Claude3_7SonnetThinking,
     #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
     Gemini20Flash,
 }
@@ -53,7 +59,8 @@ impl Model {
             | Self::Gpt4
             | Self::Gpt3_5Turbo
             | Self::Claude3_5Sonnet
-            | Self::Claude3_7Sonnet => true,
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking => true,
             Self::O3Mini | Self::O1 | Self::Gemini20Flash => false,
         }
     }
@@ -67,6 +74,7 @@ impl Model {
             "o3-mini" => Ok(Self::O3Mini),
             "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
             "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
+            "claude-3.7-sonnet-thought" => Ok(Self::Claude3_7SonnetThinking),
             "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
@@ -81,6 +89,7 @@ impl Model {
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet",
             Self::Claude3_7Sonnet => "claude-3-7-sonnet",
+            Self::Claude3_7SonnetThinking => "claude-3.7-sonnet-thought",
             Self::Gemini20Flash => "gemini-2.0-flash-001",
         }
     }
@@ -94,6 +103,7 @@ impl Model {
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
+            Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
             Self::Gemini20Flash => "Gemini 2.0 Flash",
         }
     }
@@ -107,6 +117,7 @@ impl Model {
             Self::O1 => 20_000,
             Self::Claude3_5Sonnet => 200_000,
             Self::Claude3_7Sonnet => 90_000,
+            Self::Claude3_7SonnetThinking => 90_000,
             Model::Gemini20Flash => 128_000,
         }
     }
@@ -120,25 +131,70 @@ pub struct Request {
     pub temperature: f32,
     pub model: Model,
     pub messages: Vec<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
 }
 
-impl Request {
-    pub fn new(model: Model, messages: Vec<ChatMessage>) -> Self {
-        Self {
-            intent: true,
-            n: 1,
-            stream: model.uses_streaming(),
-            temperature: 0.1,
-            model,
-            messages,
-        }
-    }
+#[derive(Serialize, Deserialize)]
+pub struct Function {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Tool {
+    Function { function: Function },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolChoice {
+    Auto,
+    Any,
+    Tool { name: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ChatMessage {
-    pub role: Role,
-    pub content: String,
+#[serde(tag = "role", rename_all = "lowercase")]
+pub enum ChatMessage {
+    Assistant {
+        content: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<ToolCall>,
+    },
+    User {
+        content: String,
+    },
+    System {
+        content: String,
+    },
+    Tool {
+        content: String,
+        tool_call_id: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(flatten)]
+    pub content: ToolCallContent,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolCallContent {
+    Function { function: FunctionContent },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionContent {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -161,6 +217,21 @@ pub struct ResponseChoice {
 pub struct ResponseDelta {
     pub content: Option<String>,
     pub role: Option<Role>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallChunk>,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCallChunk {
+    pub index: usize,
+    pub id: Option<String>,
+    pub function: Option<FunctionChunk>,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionChunk {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -212,7 +283,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut App) {
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
-fn copilot_chat_config_dir() -> &'static PathBuf {
+pub fn copilot_chat_config_dir() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
@@ -237,27 +308,18 @@ impl CopilotChat {
     }
 
     pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &App) -> Self {
-        let config_paths = copilot_chat_config_paths();
+        let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
+        let dir_path = copilot_chat_config_dir();
 
-        let resolve_config_path = {
-            let fs = fs.clone();
-            async move {
-                for config_path in config_paths.iter() {
-                    if fs.metadata(config_path).await.is_ok_and(|v| v.is_some()) {
-                        return config_path.clone();
-                    }
-                }
-                config_paths[0].clone()
-            }
-        };
-
-        cx.spawn(|cx| async move {
-            let config_file = resolve_config_path.await;
-            let mut config_file_rx = watch_config_file(cx.background_executor(), fs, config_file);
-
-            while let Some(contents) = config_file_rx.next().await {
+        cx.spawn(async move |cx| {
+            let mut parent_watch_rx = watch_config_dir(
+                cx.background_executor(),
+                fs.clone(),
+                dir_path.clone(),
+                config_paths,
+            );
+            while let Some(contents) = parent_watch_rx.next().await {
                 let oauth_token = extract_oauth_token(contents);
-
                 cx.update(|cx| {
                     if let Some(this) = Self::global(cx).as_ref() {
                         this.update(cx, |this, cx| {
@@ -383,7 +445,8 @@ async fn stream_completion(
 
     let is_streaming = request.stream;
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let json = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(json))?;
     let mut response = client.send(request).await?;
 
     if !response.status().is_success() {
@@ -411,9 +474,7 @@ async fn stream_completion(
 
                         match serde_json::from_str::<ResponseEvent>(line) {
                             Ok(response) => {
-                                if response.choices.first().is_none()
-                                    || response.choices.first().unwrap().finish_reason.is_some()
-                                {
+                                if response.choices.is_empty() {
                                     None
                                 } else {
                                     Some(Ok(response))

@@ -1,13 +1,33 @@
 use crate::{Toast, Workspace};
 use gpui::{
-    svg, AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
-    Entity, EventEmitter, PromptLevel, Render, ScrollHandle, Task,
+    AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
+    Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task, svg,
 };
 use parking_lot::Mutex;
+use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
-use ui::{prelude::*, Tooltip};
+use ui::{Tooltip, prelude::*};
 use util::ResultExt;
+
+#[derive(Default)]
+pub struct Notifications {
+    notifications: Vec<(NotificationId, AnyView)>,
+}
+
+impl Deref for Notifications {
+    type Target = Vec<(NotificationId, AnyView)>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.notifications
+    }
+}
+
+impl std::ops::DerefMut for Notifications {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.notifications
+    }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum NotificationId {
@@ -34,9 +54,7 @@ impl NotificationId {
     }
 }
 
-pub trait Notification: EventEmitter<DismissEvent> + Render {}
-
-impl<V: EventEmitter<DismissEvent> + Render> Notification for V {}
+pub trait Notification: EventEmitter<DismissEvent> + Focusable + Render {}
 
 impl Workspace {
     #[cfg(any(test, feature = "test-support"))]
@@ -89,7 +107,7 @@ impl Workspace {
         E: std::fmt::Debug + std::fmt::Display,
     {
         self.show_notification(workspace_error_notification_id(), cx, |cx| {
-            cx.new(|_| ErrorMessagePrompt::new(format!("Error: {err}")))
+            cx.new(|cx| ErrorMessagePrompt::new(format!("Error: {err}"), cx))
         });
     }
 
@@ -97,8 +115,8 @@ impl Workspace {
         struct PortalError;
 
         self.show_notification(NotificationId::unique::<PortalError>(), cx, |cx| {
-            cx.new(|_| {
-                ErrorMessagePrompt::new(err.to_string()).with_link_button(
+            cx.new(|cx| {
+                ErrorMessagePrompt::new(err.to_string(), cx).with_link_button(
                     "See docs",
                     "https://zed.dev/docs/linux#i-cant-open-any-files",
                 )
@@ -120,25 +138,25 @@ impl Workspace {
     pub fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
         self.dismiss_notification(&toast.id, cx);
         self.show_notification(toast.id.clone(), cx, |cx| {
-            cx.new(|_| match toast.on_click.as_ref() {
+            cx.new(|cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
                     let on_click = on_click.clone();
-                    simple_message_notification::MessageNotification::new(toast.msg.clone())
+                    simple_message_notification::MessageNotification::new(toast.msg.clone(), cx)
                         .primary_message(click_msg.clone())
                         .primary_on_click(move |window, cx| on_click(window, cx))
                 }
-                None => simple_message_notification::MessageNotification::new(toast.msg.clone()),
+                None => {
+                    simple_message_notification::MessageNotification::new(toast.msg.clone(), cx)
+                }
             })
         });
         if toast.autohide {
-            cx.spawn(|workspace, mut cx| async move {
+            cx.spawn(async move |workspace, cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(5000))
                     .await;
                 workspace
-                    .update(&mut cx, |workspace, cx| {
-                        workspace.dismiss_toast(&toast.id, cx)
-                    })
+                    .update(cx, |workspace, cx| workspace.dismiss_toast(&toast.id, cx))
                     .ok();
             })
             .detach();
@@ -171,21 +189,31 @@ impl Workspace {
 }
 
 pub struct LanguageServerPrompt {
+    focus_handle: FocusHandle,
     request: Option<project::LanguageServerPromptRequest>,
     scroll_handle: ScrollHandle,
 }
 
+impl Focusable for LanguageServerPrompt {
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Notification for LanguageServerPrompt {}
+
 impl LanguageServerPrompt {
-    pub fn new(request: project::LanguageServerPromptRequest) -> Self {
+    pub fn new(request: project::LanguageServerPromptRequest, cx: &mut App) -> Self {
         Self {
+            focus_handle: cx.focus_handle(),
             request: Some(request),
             scroll_handle: ScrollHandle::new(),
         }
     }
 
-    async fn select_option(this: Entity<Self>, ix: usize, mut cx: AsyncWindowContext) {
+    async fn select_option(this: Entity<Self>, ix: usize, cx: &mut AsyncWindowContext) {
         util::maybe!(async move {
-            let potential_future = this.update(&mut cx, |this, _| {
+            let potential_future = this.update(cx, |this, _| {
                 this.request.take().map(|request| request.respond(ix))
             });
 
@@ -194,7 +222,7 @@ impl LanguageServerPrompt {
                 .await
                 .ok_or_else(|| anyhow::anyhow!("Stream already closed"))?;
 
-            this.update(&mut cx, |_, cx| cx.emit(DismissEvent))?;
+            this.update(cx, |_, cx| cx.emit(DismissEvent))?;
 
             anyhow::Ok(())
         })
@@ -265,7 +293,7 @@ impl Render for LanguageServerPrompt {
                             .on_click(move |_, window, cx| {
                                 let this_handle = this_handle.clone();
                                 window
-                                    .spawn(cx, |cx| async move {
+                                    .spawn(cx, async move |cx| {
                                         LanguageServerPrompt::select_option(this_handle, ix, cx)
                                             .await
                                     })
@@ -286,16 +314,18 @@ fn workspace_error_notification_id() -> NotificationId {
 #[derive(Debug, Clone)]
 pub struct ErrorMessagePrompt {
     message: SharedString,
+    focus_handle: gpui::FocusHandle,
     label_and_url_button: Option<(SharedString, SharedString)>,
 }
 
 impl ErrorMessagePrompt {
-    pub fn new<S>(message: S) -> Self
+    pub fn new<S>(message: S, cx: &mut App) -> Self
     where
         S: Into<SharedString>,
     {
         Self {
             message: message.into(),
+            focus_handle: cx.focus_handle(),
             label_and_url_button: None,
         }
     }
@@ -364,17 +394,29 @@ impl Render for ErrorMessagePrompt {
     }
 }
 
+impl Focusable for ErrorMessagePrompt {
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl EventEmitter<DismissEvent> for ErrorMessagePrompt {}
+
+impl Notification for ErrorMessagePrompt {}
 
 pub mod simple_message_notification {
     use std::sync::Arc;
 
     use gpui::{
-        div, AnyElement, DismissEvent, EventEmitter, ParentElement, Render, SharedString, Styled,
+        AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
+        SharedString, Styled, div,
     };
     use ui::prelude::*;
 
+    use super::Notification;
+
     pub struct MessageNotification {
+        focus_handle: FocusHandle,
         build_content: Box<dyn Fn(&mut Window, &mut Context<Self>) -> AnyElement>,
         primary_message: Option<SharedString>,
         primary_icon: Option<IconName>,
@@ -390,18 +432,28 @@ pub mod simple_message_notification {
         title: Option<SharedString>,
     }
 
+    impl Focusable for MessageNotification {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
     impl EventEmitter<DismissEvent> for MessageNotification {}
 
+    impl Notification for MessageNotification {}
+
     impl MessageNotification {
-        pub fn new<S>(message: S) -> MessageNotification
+        pub fn new<S>(message: S, cx: &mut App) -> MessageNotification
         where
             S: Into<SharedString>,
         {
             let message = message.into();
-            Self::new_from_builder(move |_, _| Label::new(message.clone()).into_any_element())
+            Self::new_from_builder(cx, move |_, _| {
+                Label::new(message.clone()).into_any_element()
+            })
         }
 
-        pub fn new_from_builder<F>(content: F) -> MessageNotification
+        pub fn new_from_builder<F>(cx: &mut App, content: F) -> MessageNotification
         where
             F: 'static + Fn(&mut Window, &mut Context<Self>) -> AnyElement,
         {
@@ -419,6 +471,7 @@ pub mod simple_message_notification {
                 more_info_url: None,
                 show_close_button: true,
                 title: None,
+                focus_handle: cx.focus_handle(),
             }
         }
 
@@ -717,7 +770,7 @@ pub trait NotifyResultExt {
     type Ok;
 
     fn notify_err(self, workspace: &mut Workspace, cx: &mut Context<Workspace>)
-        -> Option<Self::Ok>;
+    -> Option<Self::Ok>;
 
     fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
 
@@ -769,7 +822,7 @@ where
                     move |cx| {
                         cx.new({
                             let message = message.clone();
-                            move |_cx| ErrorMessagePrompt::new(message)
+                            move |cx| ErrorMessagePrompt::new(message, cx)
                         })
                     }
                 });
@@ -791,10 +844,7 @@ where
 {
     fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {
         window
-            .spawn(
-                cx,
-                |mut cx| async move { self.await.notify_async_err(&mut cx) },
-            )
+            .spawn(cx, async move |mut cx| self.await.notify_async_err(&mut cx))
             .detach();
     }
 }
@@ -829,7 +879,7 @@ where
         f: impl FnOnce(&anyhow::Error, &mut Window, &mut App) -> Option<String> + 'static,
     ) -> Task<Option<R>> {
         let msg = msg.to_owned();
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let result = self.await;
             if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");

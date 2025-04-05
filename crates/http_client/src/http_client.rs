@@ -1,39 +1,20 @@
 mod async_body;
 pub mod github;
 
-pub use anyhow::{anyhow, Result};
+pub use anyhow::{Result, anyhow};
 pub use async_body::{AsyncBody, Inner};
 use derive_more::Deref;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
 use futures::future::BoxFuture;
 use http::request::Builder;
-use rustls::ClientConfig;
-use rustls_platform_verifier::ConfigVerifierExt;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{
     any::type_name,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
 };
 pub use url::Url;
-
-static TLS_CONFIG: OnceLock<rustls::ClientConfig> = OnceLock::new();
-
-pub fn tls_config() -> ClientConfig {
-    TLS_CONFIG
-        .get_or_init(|| {
-            // rustls uses the `aws_lc_rs` provider by default
-            // This only errors if the default provider has already
-            // been installed. We can ignore this `Result`.
-            rustls::crypto::aws_lc_rs::default_provider()
-                .install_default()
-                .ok();
-
-            ClientConfig::with_platform_verifier()
-        })
-        .clone()
-}
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RedirectPolicy {
@@ -79,7 +60,7 @@ pub trait HttpClient: 'static + Send + Sync {
             .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move { self.send(request).await.map_err(Into::into) }),
+            Ok(request) => Box::pin(async move { self.send(request).await }),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }
@@ -96,7 +77,7 @@ pub trait HttpClient: 'static + Send + Sync {
             .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move { self.send(request).await.map_err(Into::into) }),
+            Ok(request) => Box::pin(async move { self.send(request).await }),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }

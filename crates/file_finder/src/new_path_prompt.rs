@@ -6,12 +6,12 @@ use project::{Entry, PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool},
         Arc,
+        atomic::{self, AtomicBool},
     },
 };
-use ui::{highlight_ranges, prelude::*, LabelLike, ListItemSpacing};
 use ui::{Context, ListItem, Window};
+use ui::{LabelLike, ListItemSpacing, highlight_ranges, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -108,7 +108,7 @@ impl Match {
     fn styled_text(&self, project: &Project, window: &Window, cx: &App) -> StyledText {
         let mut text = "./".to_string();
         let mut highlights = Vec::new();
-        let mut offset = text.as_bytes().len();
+        let mut offset = text.len();
 
         let separator = '/';
         let dir_indicator = "[…]";
@@ -125,7 +125,7 @@ impl Match {
                 highlights.push((range.start + offset..range.end + offset, style))
             }
             text.push(separator);
-            offset = text.as_bytes().len();
+            offset = text.len();
 
             if let Some(suffix) = &self.suffix {
                 text.push_str(suffix);
@@ -140,24 +140,24 @@ impl Match {
                     Color::Created
                 };
                 highlights.push((
-                    offset..offset + suffix.as_bytes().len(),
+                    offset..offset + suffix.len(),
                     HighlightStyle::color(color.color(cx)),
                 ));
-                offset += suffix.as_bytes().len();
+                offset += suffix.len();
                 if entry.is_some_and(|e| e.is_dir()) {
                     text.push(separator);
                     offset += separator.len_utf8();
 
                     text.push_str(dir_indicator);
                     highlights.push((
-                        offset..offset + dir_indicator.bytes().len(),
+                        offset..offset + dir_indicator.len(),
                         HighlightStyle::color(Color::Muted.color(cx)),
                     ));
                 }
             } else {
                 text.push_str(dir_indicator);
                 highlights.push((
-                    offset..offset + dir_indicator.bytes().len(),
+                    offset..offset + dir_indicator.len(),
                     HighlightStyle::color(Color::Muted.color(cx)),
                 ))
             }
@@ -165,7 +165,7 @@ impl Match {
             text.push_str(suffix);
             let existing_prefix_len = self
                 .existing_prefix(project, cx)
-                .map(|prefix| prefix.to_string_lossy().as_bytes().len())
+                .map(|prefix| prefix.to_string_lossy().len())
                 .unwrap_or(0);
 
             if existing_prefix_len > 0 {
@@ -175,24 +175,24 @@ impl Match {
                 ));
             }
             highlights.push((
-                offset + existing_prefix_len..offset + suffix.as_bytes().len(),
+                offset + existing_prefix_len..offset + suffix.len(),
                 HighlightStyle::color(if self.entry(project, cx).is_some() {
                     Color::Conflict.color(cx)
                 } else {
                     Color::Created.color(cx)
                 }),
             ));
-            offset += suffix.as_bytes().len();
+            offset += suffix.len();
             if suffix.ends_with('/') {
                 text.push_str(dir_indicator);
                 highlights.push((
-                    offset..offset + dir_indicator.bytes().len(),
+                    offset..offset + dir_indicator.len(),
                     HighlightStyle::color(Color::Muted.color(cx)),
                 ));
             }
         }
 
-        StyledText::new(text).with_highlights(&window.text_style().clone(), highlights)
+        StyledText::new(text).with_default_highlights(&window.text_style().clone(), highlights)
     }
 }
 
@@ -312,7 +312,7 @@ impl PickerDelegate for NewPathDelegate {
         let cancel_flag = self.cancel_flag.clone();
         let query = query.to_string();
         let prefix = dir.clone();
-        cx.spawn_in(window, |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 &dir,
@@ -328,7 +328,7 @@ impl PickerDelegate for NewPathDelegate {
                 return;
             }
             picker
-                .update(&mut cx, |picker, cx| {
+                .update(cx, |picker, cx| {
                     picker
                         .delegate
                         .set_search_matches(query, prefix, suffix, matches, cx)
@@ -378,10 +378,10 @@ impl PickerDelegate for NewPathDelegate {
                 &["Replace", "Cancel"],
             cx);
             let m = m.clone();
-            cx.spawn_in(window, |picker, mut cx| async move {
+            cx.spawn_in(window, async move |picker, cx| {
                 let answer = answer.await.ok();
                 picker
-                    .update(&mut cx, |picker, cx| {
+                    .update(cx, |picker, cx| {
                         picker.delegate.should_dismiss = true;
                         if answer != Some(0) {
                             return;
@@ -436,8 +436,8 @@ impl PickerDelegate for NewPathDelegate {
         )
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        "Type a path...".into()
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("Type a path...".into())
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {

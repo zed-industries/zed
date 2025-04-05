@@ -1,5 +1,5 @@
 use futures::channel::oneshot;
-use futures::{select_biased, FutureExt};
+use futures::{FutureExt, select_biased};
 use gpui::{App, Context, Global, Subscription, Task, Window};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -59,30 +59,9 @@ impl FeatureFlag for Assistant2FeatureFlag {
     const NAME: &'static str = "assistant2";
 }
 
-pub struct PredictEditsFeatureFlag;
-impl FeatureFlag for PredictEditsFeatureFlag {
-    const NAME: &'static str = "predict-edits";
-}
-
 pub struct PredictEditsRateCompletionsFeatureFlag;
 impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
-}
-
-/// A feature flag that controls whether "non eager mode" (holding `alt` to preview) is publicized.
-pub struct PredictEditsNonEagerModeFeatureFlag;
-impl FeatureFlag for PredictEditsNonEagerModeFeatureFlag {
-    const NAME: &'static str = "predict-edits-non-eager-mode";
-
-    fn enabled_for_staff() -> bool {
-        // Don't show to staff so it doesn't leak into media for the launch.
-        false
-    }
-}
-
-pub struct GitUiFeatureFlag;
-impl FeatureFlag for GitUiFeatureFlag {
-    const NAME: &'static str = "git-ui";
 }
 
 pub struct Remoting {}
@@ -111,13 +90,9 @@ impl FeatureFlag for NotebookFeatureFlag {
     const NAME: &'static str = "notebooks";
 }
 
-pub struct AutoCommand {}
-impl FeatureFlag for AutoCommand {
-    const NAME: &'static str = "auto-command";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
+pub struct Debugger {}
+impl FeatureFlag for Debugger {
+    const NAME: &'static str = "debugger";
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {
@@ -252,7 +227,7 @@ impl FeatureFlagAppExt for App {
     fn wait_for_flag_or_timeout<T: FeatureFlag>(&mut self, timeout: Duration) -> Task<bool> {
         let wait_for_flag = self.wait_for_flag::<T>();
 
-        self.spawn(|_cx| async move {
+        self.spawn(async move |_cx| {
             let mut wait_for_flag = wait_for_flag.fuse();
             let mut timeout = FutureExt::fuse(smol::Timer::after(timeout));
 

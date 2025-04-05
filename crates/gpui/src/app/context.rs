@@ -12,6 +12,7 @@ use std::{
     future::Future,
     sync::Arc,
 };
+use util::Deferred;
 
 use super::{App, AsyncWindowContext, Entity, KeystrokeEvent};
 
@@ -51,7 +52,7 @@ impl<'a, T: 'static> Context<'a, T> {
     pub fn observe<W>(
         &mut self,
         entity: &Entity<W>,
-        mut on_notify: impl FnMut(&mut T, Entity<W>, &mut Context<'_, T>) + 'static,
+        mut on_notify: impl FnMut(&mut T, Entity<W>, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -72,7 +73,7 @@ impl<'a, T: 'static> Context<'a, T> {
     pub fn subscribe<T2, Evt>(
         &mut self,
         entity: &Entity<T2>,
-        mut on_event: impl FnMut(&mut T, Entity<T2>, &Evt, &mut Context<'_, T>) + 'static,
+        mut on_event: impl FnMut(&mut T, Entity<T2>, &Evt, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -87,6 +88,21 @@ impl<'a, T: 'static> Context<'a, T> {
             } else {
                 false
             }
+        })
+    }
+
+    /// Subscribe to an event type from ourself
+    pub fn subscribe_self<Evt>(
+        &mut self,
+        mut on_event: impl FnMut(&mut T, &Evt, &mut Context<T>) + 'static,
+    ) -> Subscription
+    where
+        T: 'static + EventEmitter<Evt>,
+        Evt: 'static,
+    {
+        let this = self.entity();
+        self.app.subscribe(&this, move |this, evt, cx| {
+            this.update(cx, |this, cx| on_event(this, evt, cx))
         })
     }
 
@@ -110,7 +126,7 @@ impl<'a, T: 'static> Context<'a, T> {
     pub fn observe_release<T2>(
         &self,
         entity: &Entity<T2>,
-        on_release: impl FnOnce(&mut T, &mut T2, &mut Context<'_, T>) + 'static,
+        on_release: impl FnOnce(&mut T, &mut T2, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: Any,
@@ -134,7 +150,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// Register a callback to for updates to the given global
     pub fn observe_global<G: 'static>(
         &mut self,
-        mut f: impl FnMut(&mut T, &mut Context<'_, T>) + 'static,
+        mut f: impl FnMut(&mut T, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -184,14 +200,14 @@ impl<'a, T: 'static> Context<'a, T> {
     /// The function is provided a weak handle to the entity owned by this context and a context that can be held across await points.
     /// The returned task must be held or detached.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncApp) -> Fut) -> Task<R>
+    pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
         T: 'static,
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(WeakEntity<T>, &mut AsyncApp) -> R + 'static,
         R: 'static,
     {
         let this = self.weak_entity();
-        self.app.spawn(|cx| f(this, cx))
+        self.app.spawn(async move |cx| f(this, cx).await)
     }
 
     /// Convenience method for accessing view state in an event callback.
@@ -207,6 +223,18 @@ impl<'a, T: 'static> Context<'a, T> {
         move |e: &E, window: &mut Window, cx: &mut App| {
             view.update(cx, |view, cx| f(view, e, window, cx)).ok();
         }
+    }
+
+    /// Run something using this entity and cx, when the returned struct is dropped
+    pub fn on_drop(
+        &self,
+        f: impl FnOnce(&mut T, &mut Context<T>) + 'static,
+    ) -> Deferred<impl FnOnce()> {
+        let this = self.weak_entity();
+        let mut cx = self.to_async();
+        util::defer(move || {
+            this.update(&mut cx, f).ok();
+        })
     }
 
     /// Focus the given view in the given window. View type is required to implement Focusable.
@@ -244,7 +272,7 @@ impl<'a, T: 'static> Context<'a, T> {
         &mut self,
         observed: &Entity<V2>,
         window: &mut Window,
-        mut on_notify: impl FnMut(&mut T, Entity<V2>, &mut Window, &mut Context<'_, T>) + 'static,
+        mut on_notify: impl FnMut(&mut T, Entity<V2>, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         V2: 'static,
@@ -282,8 +310,7 @@ impl<'a, T: 'static> Context<'a, T> {
         &mut self,
         emitter: &Entity<Emitter>,
         window: &Window,
-        mut on_event: impl FnMut(&mut T, &Entity<Emitter>, &Evt, &mut Window, &mut Context<'_, T>)
-            + 'static,
+        mut on_event: impl FnMut(&mut T, &Entity<Emitter>, &Evt, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         Emitter: EventEmitter<Evt>,
@@ -335,7 +362,7 @@ impl<'a, T: 'static> Context<'a, T> {
         &self,
         observed: &Entity<T2>,
         window: &Window,
-        mut on_release: impl FnMut(&mut T, &mut T2, &mut Window, &mut Context<'_, T>) + 'static,
+        mut on_release: impl FnMut(&mut T, &mut T2, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -585,24 +612,20 @@ impl<'a, T: 'static> Context<'a, T> {
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
     /// The returned future will be polled on the main thread.
     #[track_caller]
-    pub fn spawn_in<Fut, R>(
-        &self,
-        window: &Window,
-        f: impl FnOnce(WeakEntity<T>, AsyncWindowContext) -> Fut,
-    ) -> Task<R>
+    pub fn spawn_in<AsyncFn, R>(&self, window: &Window, f: AsyncFn) -> Task<R>
     where
         R: 'static,
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(WeakEntity<T>, &mut AsyncWindowContext) -> R + 'static,
     {
         let view = self.weak_entity();
-        window.spawn(self, |mut cx| f(view, cx))
+        window.spawn(self, async move |cx| f(view, cx).await)
     }
 
     /// Register a callback to be invoked when the given global state changes.
     pub fn observe_global_in<G: Global>(
         &mut self,
         window: &Window,
-        mut f: impl FnMut(&mut T, &mut Window, &mut Context<'_, T>) + 'static,
+        mut f: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let window_handle = window.handle;
         let view = self.weak_entity();
@@ -649,7 +672,7 @@ impl<'a, T: 'static> Context<'a, T> {
     }
 }
 
-impl<'a, T> Context<'a, T> {
+impl<T> Context<'_, T> {
     /// Emit an event of the specified type, which can be handled by other entities that have subscribed via `subscribe` methods on their respective contexts.
     pub fn emit<Evt>(&mut self, event: Evt)
     where
@@ -664,13 +687,10 @@ impl<'a, T> Context<'a, T> {
     }
 }
 
-impl<'a, T> AppContext for Context<'a, T> {
+impl<T> AppContext for Context<'_, T> {
     type Result<U> = U;
 
-    fn new<U: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, U>) -> U,
-    ) -> Entity<U> {
+    fn new<U: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<U>) -> U) -> Entity<U> {
         self.app.new(build_entity)
     }
 
@@ -681,7 +701,7 @@ impl<'a, T> AppContext for Context<'a, T> {
     fn insert_entity<U: 'static>(
         &mut self,
         reservation: Reservation<U>,
-        build_entity: impl FnOnce(&mut Context<'_, U>) -> U,
+        build_entity: impl FnOnce(&mut Context<U>) -> U,
     ) -> Self::Result<Entity<U>> {
         self.app.insert_entity(reservation, build_entity)
     }
@@ -689,7 +709,7 @@ impl<'a, T> AppContext for Context<'a, T> {
     fn update_entity<U: 'static, R>(
         &mut self,
         handle: &Entity<U>,
-        update: impl FnOnce(&mut U, &mut Context<'_, U>) -> R,
+        update: impl FnOnce(&mut U, &mut Context<U>) -> R,
     ) -> R {
         self.app.update_entity(handle, update)
     }

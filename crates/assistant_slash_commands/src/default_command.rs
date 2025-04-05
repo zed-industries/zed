@@ -1,14 +1,14 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
 use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
-use prompt_library::PromptStore;
+use prompt_store::PromptStore;
 use std::{
     fmt::Write,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
 use workspace::Workspace;
@@ -21,11 +21,11 @@ impl SlashCommand for DefaultSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert default prompt".into()
+        "Insert default prompt".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Default Prompt".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

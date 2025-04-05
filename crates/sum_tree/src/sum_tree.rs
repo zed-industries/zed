@@ -134,7 +134,7 @@ where
     D3: Dimension<'a, S>,
 {
     fn cmp(&self, cursor_location: &((D1, D2), D3), cx: &S::Context) -> Ordering {
-        self.cmp(&cursor_location.0 .0, cx)
+        self.cmp(&cursor_location.0.0, cx)
     }
 }
 
@@ -220,6 +220,15 @@ impl<T: Item> SumTree<T> {
     pub fn new(cx: &<T::Summary as Summary>::Context) -> Self {
         SumTree(Arc::new(Node::Leaf {
             summary: <T::Summary as Summary>::zero(cx),
+            items: ArrayVec::new(),
+            item_summaries: ArrayVec::new(),
+        }))
+    }
+
+    /// Useful in cases where the item type has a non-trivial context type, but the zero value of the summary type doesn't depend on that context.
+    pub fn from_summary(summary: T::Summary) -> Self {
+        SumTree(Arc::new(Node::Leaf {
+            summary,
             items: ArrayVec::new(),
             item_summaries: ArrayVec::new(),
         }))
@@ -1029,7 +1038,7 @@ mod tests {
             let rng = &mut rng;
             let mut tree = SumTree::<u8>::default();
             let count = rng.gen_range(0..10);
-            if rng.gen() {
+            if rng.r#gen() {
                 tree.extend(rng.sample_iter(distributions::Standard).take(count), &());
             } else {
                 let items = rng
@@ -1055,7 +1064,7 @@ mod tests {
                 tree = {
                     let mut cursor = tree.cursor::<Count>(&());
                     let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right, &());
-                    if rng.gen() {
+                    if rng.r#gen() {
                         new_tree.extend(new_items, &());
                     } else {
                         new_tree.par_extend(new_items, &());
@@ -1082,7 +1091,7 @@ mod tests {
                     .filter(|(_, item)| (item & 1) == 0)
                     .collect::<Vec<_>>();
 
-                let mut item_ix = if rng.gen() {
+                let mut item_ix = if rng.r#gen() {
                     filter_cursor.next(&());
                     0
                 } else {
@@ -1163,8 +1172,8 @@ mod tests {
             for _ in 0..10 {
                 let end = rng.gen_range(0..tree.extent::<Count>(&()).0 + 1);
                 let start = rng.gen_range(0..end + 1);
-                let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
-                let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                let start_bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
+                let end_bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
 
                 let mut cursor = tree.cursor::<Count>(&());
                 cursor.seek(&Count(start), start_bias, &());
@@ -1409,11 +1418,7 @@ mod tests {
         let mut ix = 0;
         let iterator = std::iter::from_fn(|| {
             ix = (ix + 1) % 2;
-            if ix == 1 {
-                Some(1)
-            } else {
-                None
-            }
+            if ix == 1 { Some(1) } else { None }
         });
         assert_eq!(SumTree::from_iter(iterator, &()).items(&()), vec![1]);
     }
@@ -1468,7 +1473,7 @@ mod tests {
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for u8 {
+    impl Dimension<'_, IntegersSummary> for u8 {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }
@@ -1478,7 +1483,7 @@ mod tests {
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for Count {
+    impl Dimension<'_, IntegersSummary> for Count {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }
@@ -1488,13 +1493,13 @@ mod tests {
         }
     }
 
-    impl<'a> SeekTarget<'a, IntegersSummary, IntegersSummary> for Count {
+    impl SeekTarget<'_, IntegersSummary, IntegersSummary> for Count {
         fn cmp(&self, cursor_location: &IntegersSummary, _: &()) -> Ordering {
             self.0.cmp(&cursor_location.count)
         }
     }
 
-    impl<'a> Dimension<'a, IntegersSummary> for Sum {
+    impl Dimension<'_, IntegersSummary> for Sum {
         fn zero(_cx: &()) -> Self {
             Default::default()
         }

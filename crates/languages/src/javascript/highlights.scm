@@ -25,6 +25,9 @@
   name: (identifier) @function)
 (method_definition
   name: (property_identifier) @function.method)
+(method_definition
+    name: (property_identifier) @constructor
+    (#eq? @constructor "constructor"))
 
 (pair
   key: (property_identifier) @function.method
@@ -59,8 +62,8 @@
 
 ; Literals
 
-(this) @keyword
-(super) @keyword
+(this) @variable.special
+(super) @variable.special
 
 [
   (null)

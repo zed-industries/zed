@@ -19,6 +19,10 @@
 # https://github.com/zed-industries/zed/pull/2394
 eca93c124a488b4e538946cd2d313bd571aa2b86
 
+# 2024-02-15 Format YAML files
+# https://github.com/zed-industries/zed/pull/7887
+a161a7d0c95ca7505bf9218bfae640ee5444c88b
+
 # 2024-02-25 Format JSON files in assets/
 # https://github.com/zed-industries/zed/pull/8405
 ffdda588b41f7d9d270ffe76cab116f828ad545e

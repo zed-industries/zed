@@ -168,15 +168,19 @@ h6:target::before {
   margin: 0;
 }
 .content ol {
+  marker: none;
   line-height: 1.8;
-  padding-left: 1.8em;
+  padding-left: 2em;
+  ::marker {
+    font-size: 1.4rem;
+  }
+  li {
+    padding-left: 0;
+  }
 }
 .content ul {
   line-height: 1.8;
   padding-left: 1.8em;
-}
-.content li {
-  padding-left: 0.5em;
 }
 .content a {
   text-decoration: underline;
@@ -209,6 +213,7 @@ iframe {
 }
 
 table {
+  margin-top: 1.4rem;
   width: 100%;
   border-collapse: collapse;
   font-size: 1.4rem;
@@ -254,12 +259,13 @@ blockquote > p {
 }
 
 blockquote:before {
+  --size: 1.4rem;
   position: absolute;
   content: "ⓘ";
   margin: 0.3rem 0;
-  width: 1.6rem;
-  height: 1.6rem;
-  font-size: 1.6rem;
+  width: var(--size);
+  height: var(--size);
+  font-size: var(--size);
   font-weight: bold;
   color: var(--icons);
   display: flex;
@@ -287,12 +293,13 @@ blockquote .warning:before {
 }
 
 .warning:before {
+  --size: 1.4rem;
   position: absolute;
   content: "ⓘ";
   margin: 0.3rem 0;
-  width: 1.6rem;
-  height: 1.6rem;
-  font-size: 1.6rem;
+  width: var(--size);
+  height: var(--size);
+  font-size: var(--size);
   font-weight: bold;
   color: var(--warning-icon);
   display: flex;

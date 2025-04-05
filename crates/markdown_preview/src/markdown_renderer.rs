@@ -5,10 +5,10 @@ use crate::markdown_elements::{
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, img, px, rems, AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context,
-    DefiniteLength, Div, Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource,
-    InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource,
-    SharedString, Styled, StyledText, TextStyle, WeakEntity, Window,
+    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
+    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
+    Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
+    StyledText, TextStyle, WeakEntity, Window, div, img, px, rems,
 };
 use settings::Settings;
 use std::{
@@ -18,12 +18,12 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
-    FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
-    LabelSize, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage, ToggleState,
-    Tooltip, VisibleOnHover,
+    ButtonCommon, Checkbox, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
+    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, StatefulInteractiveElement,
+    StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover, h_flex, relative,
+    tooltip_container, v_flex,
 };
-use workspace::Workspace;
+use workspace::{OpenOptions, OpenVisible, Workspace};
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut Window, &mut App)>>;
 
@@ -370,7 +370,7 @@ fn render_markdown_code_block(
     cx: &mut RenderContext,
 ) -> AnyElement {
     let body = if let Some(highlights) = parsed.highlights.as_ref() {
-        StyledText::new(parsed.contents.clone()).with_highlights(
+        StyledText::new(parsed.contents.clone()).with_default_highlights(
             &cx.buffer_text_style,
             highlights.iter().filter_map(|(range, highlight_id)| {
                 highlight_id
@@ -398,7 +398,7 @@ fn render_markdown_code_block(
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)
-        .rounded_md()
+        .rounded_sm()
         .child(body)
         .child(
             div()
@@ -468,7 +468,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                         InteractiveText::new(
                             element_id,
                             StyledText::new(parsed.contents.clone())
-                                .with_highlights(&text_style, highlights),
+                                .with_default_highlights(&text_style, highlights),
                         )
                         .tooltip({
                             let links = links.clone();
@@ -490,7 +490,15 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                     if let Some(workspace) = &workspace {
                                         _ = workspace.update(cx, |workspace, cx| {
                                             workspace
-                                                .open_abs_path(path.clone(), false, window, cx)
+                                                .open_abs_path(
+                                                    path.clone(),
+                                                    OpenOptions {
+                                                        visible: Some(OpenVisible::None),
+                                                        ..Default::default()
+                                                    },
+                                                    window,
+                                                    cx,
+                                                )
                                                 .detach();
                                         });
                                     }
@@ -513,12 +521,14 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 let image_element = div()
                     .id(element_id)
                     .cursor_pointer()
-                    .child(img(ImageSource::Resource(image_resource)).with_fallback({
-                        let alt_text = image.alt_text.clone();
-                        {
-                            move || div().children(alt_text.clone()).into_any_element()
-                        }
-                    }))
+                    .child(
+                        img(ImageSource::Resource(image_resource))
+                            .max_w_full()
+                            .with_fallback({
+                                let alt_text = image.alt_text.clone();
+                                move || div().children(alt_text.clone()).into_any_element()
+                            }),
+                    )
                     .tooltip({
                         let link = image.link.clone();
                         move |_, cx| {
@@ -541,7 +551,15 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                         if let Some(workspace) = &workspace {
                                             _ = workspace.update(cx, |workspace, cx| {
                                                 workspace
-                                                    .open_abs_path(path.clone(), false, window, cx)
+                                                    .open_abs_path(
+                                                        path.clone(),
+                                                        OpenOptions {
+                                                            visible: Some(OpenVisible::None),
+                                                            ..Default::default()
+                                                        },
+                                                        window,
+                                                        cx,
+                                                    )
                                                     .detach();
                                             });
                                         }

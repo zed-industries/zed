@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, SharedString, Timer, Window,
-    WindowBounds, WindowKind, WindowOptions,
+    App, Application, Bounds, Context, SharedString, Timer, Window, WindowBounds, WindowKind,
+    WindowOptions, div, prelude::*, px, rgb, size,
 };
 
 struct SubWindow {
@@ -16,7 +16,7 @@ fn button(text: &str, on_click: impl Fn(&mut Window, &mut App) + 'static) -> imp
         .active(|this| this.opacity(0.85))
         .border_1()
         .border_color(rgb(0xe0e0e0))
-        .rounded_md()
+        .rounded_sm()
         .cursor_pointer()
         .child(text.to_string())
         .on_click(move |_, window, cx| on_click(window, cx))
@@ -75,7 +75,7 @@ impl Render for WindowDemo {
             .bg(rgb(0xffffff))
             .size_full()
             .justify_center()
-            .items_center()
+            .content_center()
             .gap_2()
             .child(button("Normal", move |_, cx| {
                 cx.open_window(
@@ -157,7 +157,7 @@ impl Render for WindowDemo {
 
                 // Restore the application after 3 seconds
                 window
-                    .spawn(cx, |mut cx| async move {
+                    .spawn(cx, async move |cx| {
                         Timer::after(std::time::Duration::from_secs(3)).await;
                         cx.update(|_, cx| {
                             cx.activate(false);
@@ -165,18 +165,32 @@ impl Render for WindowDemo {
                     })
                     .detach();
             }))
+            .child(button("Resize", |window, _| {
+                let content_size = window.bounds().size;
+                window.resize(size(content_size.height, content_size.width));
+            }))
     }
 }
 
 fn main() {
     Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
+
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| WindowDemo {}),
+            |window, cx| {
+                cx.new(|cx| {
+                    cx.observe_window_bounds(window, move |_, window, _| {
+                        println!("Window bounds changed: {:?}", window.bounds());
+                    })
+                    .detach();
+
+                    WindowDemo {}
+                })
+            },
         )
         .unwrap();
     });

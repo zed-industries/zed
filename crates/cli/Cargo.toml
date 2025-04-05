@@ -31,12 +31,16 @@ release_channel.workspace = true
 serde.workspace = true
 util.workspace = true
 tempfile.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-exec.workspace =  true
+exec.workspace = true
 fork.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 core-services = "0.2"
 plist = "1.3"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true

@@ -131,7 +131,7 @@ In this example:
 
 - `intelephense` is set as the primary language server
 - `phpactor` is disabled (note the `!` prefix)
-- `...` preserves any other default language server settings
+- `...` expands to the rest of the language servers that are registered for PHP
 
 This configuration allows you to tailor the language server setup to your specific needs, ensuring that you get the most suitable functionality for your development workflow.
 

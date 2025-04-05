@@ -229,7 +229,6 @@ impl Database {
     }
 
     /// Creates a new channel message.
-    #[allow(clippy::too_many_arguments)]
     pub async fn create_channel_message(
         &self,
         channel_id: ChannelId,
@@ -481,7 +480,7 @@ impl Database {
         self.notification_kinds_by_id
             .iter()
             .find(|(_, kind)| **kind == notification_kind)
-            .map(|kind| kind.0 .0)
+            .map(|kind| kind.0.0)
     }
 
     /// Removes the channel message with the given ID.

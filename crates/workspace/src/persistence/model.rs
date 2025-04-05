@@ -1,6 +1,6 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
-    item::ItemHandle, Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
+    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
 };
 use anyhow::{Context as _, Result};
 use async_recursion::async_recursion;
@@ -10,14 +10,15 @@ use db::sqlez::{
 };
 use gpui::{AsyncWindowContext, Entity, WeakEntity};
 use itertools::Itertools as _;
-use project::Project;
+use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::ResultExt;
+use util::{ResultExt, paths::SanitizedPath};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -98,7 +99,7 @@ impl LocalPaths {
     pub fn new<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
         let mut paths: Vec<PathBuf> = paths
             .into_iter()
-            .map(|p| p.as_ref().to_path_buf())
+            .map(|p| SanitizedPath::from(p).into())
             .collect();
         // Ensure all future `zed workspace1 workspace2` and `zed workspace2 workspace1` calls are using the same workspace.
         // The actual workspace order is stored in the `LocalPathsOrder` struct.
@@ -263,6 +264,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
+    pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     pub(crate) window_id: Option<u64>,
 }
 

@@ -1,12 +1,12 @@
 use crate::prelude::*;
 use gpui::{
-    div, rems, AnyElement, App, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled,
-    Window,
+    AnyElement, App, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, Window,
+    div, rems,
 };
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 
-use crate::{rems_from_px, Color};
+use crate::{Color, rems_from_px};
 
 /// Extends [`gpui::Styled`] with typography-related styling methods.
 pub trait StyledTypography: Styled + Sized {
@@ -235,7 +235,7 @@ impl Headline {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Headline {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_1()
             .children(vec![

@@ -42,7 +42,7 @@ To bind actions, chain `on_action` on to your element:
 
 ```rust
 impl Render for Menu {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl Component {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .on_action(|this: &mut Menu, move: &MoveUp, window: &mut Window, cx: &mut Context<Menu>| {
                 // ...
@@ -59,7 +59,7 @@ In order to bind keys to actions, you need to declare a _key context_ for part o
 
 ```rust
 impl Render for Menu {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl Component {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("menu")
             .on_action(|this: &mut Menu, move: &MoveUp, window: &mut Window, cx: &mut Context<Menu>| {

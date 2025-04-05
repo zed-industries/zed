@@ -1,10 +1,10 @@
 use editor::Editor;
 use gpui::{
-    div, Context, Entity, IntoElement, ParentElement, Render, Subscription, WeakEntity, Window,
+    Context, Entity, IntoElement, ParentElement, Render, Subscription, WeakEntity, Window, div,
 };
 use language::LanguageName;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 use crate::{LanguageSelector, Toggle};
 

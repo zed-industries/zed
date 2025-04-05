@@ -1,7 +1,7 @@
-use gpui::{hsla, App, Styled};
+use gpui::{App, Styled, hsla};
 
-use crate::prelude::*;
 use crate::ElevationIndex;
+use crate::prelude::*;
 
 fn elevated<E: Styled>(this: E, cx: &App, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
@@ -74,7 +74,7 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Settings Modal, Channel Management, Wizards/Setup UI, Dialogs
-    fn elevation_3(self, cx: &mut App) -> Self {
+    fn elevation_3(self, cx: &App) -> Self {
         elevated(self, cx, ElevationIndex::ModalSurface)
     }
 

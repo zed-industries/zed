@@ -35,11 +35,31 @@ actions!(
         Quit,
         OpenKeymap,
         About,
-        Extensions,
         OpenLicenses,
         OpenTelemetryLog,
     ]
 );
+
+#[derive(PartialEq, Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionCategoryFilter {
+    Themes,
+    IconThemes,
+    Languages,
+    Grammars,
+    LanguageServers,
+    ContextServers,
+    SlashCommands,
+    IndexedDocsProviders,
+    Snippets,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct Extensions {
+    /// Filters the extensions page down to extensions that are in the specified category.
+    #[serde(default)]
+    pub category_filter: Option<ExtensionCategoryFilter>,
+}
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 pub struct DecreaseBufferFontSize {
@@ -80,6 +100,7 @@ pub struct ResetUiFontSize {
 impl_actions!(
     zed,
     [
+        Extensions,
         DecreaseBufferFontSize,
         IncreaseBufferFontSize,
         ResetBufferFontSize,
@@ -114,8 +135,9 @@ pub mod workspace {
 }
 
 pub mod git {
-    use gpui::action_with_deprecated_aliases;
+    use gpui::{action_with_deprecated_aliases, actions};
 
+    actions!(git, [CheckoutBranch, Switch, SelectRepo]);
     action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 
@@ -166,7 +188,7 @@ pub mod assistant {
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    actions!(assistant, [ToggleFocus, DeployPromptLibrary]);
+    actions!(assistant, [ToggleFocus, OpenPromptLibrary]);
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -205,6 +227,12 @@ pub enum Spawn {
     /// Spawns a task by the name given.
     ByName {
         task_name: String,
+        #[serde(default)]
+        reveal_target: Option<RevealTarget>,
+    },
+    /// Spawns a task by the name given.
+    ByTag {
+        task_tag: String,
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },
@@ -253,7 +281,7 @@ impl_actions!(task, [Spawn, Rerun]);
 pub mod outline {
     use std::sync::OnceLock;
 
-    use gpui::{action_as, AnyView, App, Window};
+    use gpui::{AnyView, App, Window, action_as};
 
     action_as!(outline, ToggleOutline as Toggle);
     /// A pointer to outline::toggle function, exposed here to sewer the breadcrumbs <-> outline dependency.
@@ -261,3 +289,4 @@ pub mod outline {
 }
 
 actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
+actions!(git_onboarding, [OpenGitIntegrationOnboarding]);

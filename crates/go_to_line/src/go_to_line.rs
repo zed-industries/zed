@@ -2,11 +2,11 @@ pub mod cursor_position;
 
 use cursor_position::{LineIndicatorFormat, UserCaretPosition};
 use editor::{
-    actions::Tab, scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint, actions::Tab, scroll::Autoscroll,
 };
 use gpui::{
-    div, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    SharedString, Styled, Subscription,
+    App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Styled,
+    Subscription, div, prelude::*,
 };
 use language::Buffer;
 use settings::Settings;
@@ -152,7 +152,10 @@ impl GoToLine {
         cx: &mut Context<Self>,
     ) {
         match event {
-            editor::EditorEvent::Blurred => cx.emit(DismissEvent),
+            editor::EditorEvent::Blurred => {
+                self.prev_scroll_position.take();
+                cx.emit(DismissEvent)
+            }
             editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(cx),
             _ => {}
         }

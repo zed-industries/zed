@@ -1,16 +1,16 @@
-use std::path::PathBuf;
-use util::serde::default_true;
-
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use collections::{HashMap, HashSet};
-use schemars::{gen::SchemaSettings, JsonSchema};
+use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use util::{truncate_and_remove_front, ResultExt};
+use std::path::PathBuf;
+use util::serde::default_true;
+use util::{ResultExt, truncate_and_remove_front};
 
 use crate::{
-    ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId, VariableName,
-    ZED_VARIABLE_NAME_PREFIX,
+    AttachConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TCPHost, TaskContext, TaskId,
+    VariableName, ZED_VARIABLE_NAME_PREFIX,
+    serde_helpers::{non_empty_string_vec, non_empty_string_vec_json_schema},
 };
 
 /// A template definition of a Zed task to run.
@@ -58,8 +58,13 @@ pub struct TaskTemplate {
     /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
     #[serde(default)]
     pub hide: HideStrategy,
-    /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
-    #[serde(default)]
+    /// If this task should start a debugger or not
+    #[serde(default, skip)]
+    pub task_type: TaskType,
+    /// Represents the tags which this template attaches to.
+    /// Adding this removes this task from other UI and gives you ability to run it by tag.
+    #[serde(default, deserialize_with = "non_empty_string_vec")]
+    #[schemars(schema_with = "non_empty_string_vec_json_schema")]
     pub tags: Vec<String>,
     /// Which shell to use when spawning the task.
     #[serde(default)]
@@ -70,6 +75,52 @@ pub struct TaskTemplate {
     /// Whether to show the command line in the task output.
     #[serde(default = "default_true")]
     pub show_command: bool,
+}
+
+#[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
+/// Use to represent debug request type
+pub enum DebugArgsRequest {
+    /// launch (program, cwd) are stored in TaskTemplate as (command, cwd)
+    Launch,
+    /// Attach
+    Attach(AttachConfig),
+}
+
+#[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
+/// This represents the arguments for the debug task.
+pub struct DebugArgs {
+    /// The launch type
+    pub request: DebugArgsRequest,
+    /// Adapter choice
+    pub adapter: String,
+    /// TCP connection to make with debug adapter
+    pub tcp_connection: Option<TCPHost>,
+    /// Args to send to debug adapter
+    pub initialize_args: Option<serde_json::value::Value>,
+    /// the locator to use
+    pub locator: Option<String>,
+    /// Whether to tell the debug adapter to stop on entry
+    pub stop_on_entry: Option<bool>,
+}
+
+/// Represents the type of task that is being ran
+#[derive(Default, Eq, PartialEq, Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum TaskType {
+    /// Act like a typically task that runs commands
+    #[default]
+    Script,
+    /// This task starts the debugger for a language
+    Debug(DebugArgs),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// The type of task modal to spawn
+pub enum TaskModal {
+    /// Show regular tasks
+    ScriptModal,
+    /// Show debug tasks
+    DebugModal,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
@@ -122,7 +173,9 @@ impl TaskTemplate {
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
     /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
     pub fn resolve_task(&self, id_base: &str, cx: &TaskContext) -> Option<ResolvedTask> {
-        if self.label.trim().is_empty() || self.command.trim().is_empty() {
+        if self.label.trim().is_empty()
+            || (self.command.trim().is_empty() && matches!(self.task_type, TaskType::Script))
+        {
             return None;
         }
 
@@ -255,6 +308,7 @@ impl TaskTemplate {
                 shell: self.shell.clone(),
                 show_summary: self.show_summary,
                 show_command: self.show_command,
+                show_rerun: true,
             }),
         })
     }
@@ -599,7 +653,10 @@ mod tests {
             );
             assert_eq!(
                 spawn_in_terminal.command_label,
-                format!("{} arg1 test_selected_text arg2 5678 arg3 {long_value}", spawn_in_terminal.command),
+                format!(
+                    "{} arg1 test_selected_text arg2 5678 arg3 {long_value}",
+                    spawn_in_terminal.command
+                ),
                 "Command label args should be substituted with variables and those should not be shortened"
             );
 
@@ -636,7 +693,10 @@ mod tests {
                     project_env: HashMap::default(),
                 },
             );
-            assert_eq!(resolved_task_attempt, None, "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})");
+            assert_eq!(
+                resolved_task_attempt, None,
+                "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})"
+            );
         }
     }
 
@@ -666,9 +726,10 @@ mod tests {
             args: vec!["$ZED_VARIABLE".into()],
             ..TaskTemplate::default()
         };
-        assert!(task
-            .resolve_task(TEST_ID_BASE, &TaskContext::default())
-            .is_none());
+        assert!(
+            task.resolve_task(TEST_ID_BASE, &TaskContext::default())
+                .is_none()
+        );
     }
 
     #[test]

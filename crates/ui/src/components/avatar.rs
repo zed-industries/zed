@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
+use gpui::{AnyElement, Hsla, ImageSource, Img, IntoElement, Styled, img};
 
 /// An element that renders a user avatar with customizable appearance options.
 ///
@@ -152,7 +152,7 @@ impl RenderOnce for AvatarAudioStatusIndicator {
                     .px(padding_x)
                     .py(px(2.))
                     .bg(cx.theme().status().error_background)
-                    .rounded_md()
+                    .rounded_sm()
                     .child(
                         Icon::new(match self.audio_status {
                             AudioStatus::Muted => IconName::MicMute,
@@ -220,7 +220,7 @@ impl RenderOnce for AvatarAvailabilityIndicator {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Avatar {
-    fn preview(_window: &mut Window, cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let example_avatar = "https://avatars.githubusercontent.com/u/1714999?v=4";
 
         v_flex()

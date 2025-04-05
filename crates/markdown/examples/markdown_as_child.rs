@@ -1,6 +1,6 @@
 use assets::Assets;
-use gpui::{rgb, Application, Entity, KeyBinding, Length, StyleRefinement, WindowOptions};
-use language::{language_settings::AllLanguageSettings, LanguageRegistry};
+use gpui::{Application, Entity, KeyBinding, Length, StyleRefinement, WindowOptions, rgb};
+use language::{LanguageRegistry, language_settings::AllLanguageSettings};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
 use settings::SettingsStore;
@@ -84,6 +84,7 @@ pub fn main() {
                         selection
                     },
                     heading: Default::default(),
+                    ..Default::default()
                 };
                 let markdown = cx.new(|cx| {
                     Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, cx)

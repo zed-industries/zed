@@ -15,9 +15,9 @@ path = "src/component.rs"
 collections.workspace = true
 gpui.workspace = true
 linkme.workspace = true
-once_cell.workspace = true
 parking_lot.workspace = true
 theme.workspace = true
+workspace-hack.workspace = true
 
 [features]
 default = []

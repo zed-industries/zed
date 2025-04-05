@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use gpui::{FontWeight, HighlightStyle, StyledText};
 
-use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
+use crate::{LabelCommon, LabelLike, LabelSize, LineHeightStyle, prelude::*};
 
 #[derive(IntoElement)]
 pub struct HighlightedLabel {
@@ -64,8 +64,8 @@ impl LabelCommon for HighlightedLabel {
         self
     }
 
-    fn text_ellipsis(mut self) -> Self {
-        self.base = self.base.text_ellipsis();
+    fn truncate(mut self) -> Self {
+        self.base = self.base.truncate();
         self
     }
 
@@ -126,6 +126,6 @@ impl RenderOnce for HighlightedLabel {
         text_style.color = self.base.color.color(cx);
 
         self.base
-            .child(StyledText::new(self.label).with_highlights(&text_style, highlights))
+            .child(StyledText::new(self.label).with_default_highlights(&text_style, highlights))
     }
 }

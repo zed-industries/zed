@@ -46,6 +46,8 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     "show_summary": true,
     // Whether to show the command line in the output of the spawned task, defaults to `true`.
     "show_output": true
+    // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
+    "tags": []
   }
 ]
 ```
@@ -198,3 +200,7 @@ To tag a task, add the runnable tag name to the `tags` field on the task templat
 ```
 
 In doing so, you can change which task is shown in the runnables indicator.
+
+## Keybindings to run tasks bound to runnables
+
+When you have a task definition that is bound to the runnable, you can quickly run it using [Code Actions](https://zed.dev/docs/configuring-languages?#code-actions) that you can trigger either via `editor: Toggle Code Actions` command or by the `cmd-.`/`ctrl-.` shortcut. Your task will be the first in the dropdown. The task will run immediately if there are no additional Code Actions for this line.

@@ -2,23 +2,19 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context as _, Result};
-use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
+use crate::ui::InstructionListItem;
+use anyhow::{Context as _, Result, anyhow};
 use aws_config::Region;
+use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
-use bedrock::bedrock_client::types::{
-    ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
-};
+use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ConverseStreamOutput};
 use bedrock::bedrock_client::{self, Config};
-use bedrock::{
-    value_to_aws_document, BedrockError, BedrockInnerContent, BedrockMessage, BedrockSpecificTool,
-    BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
-};
+use bedrock::{BedrockError, BedrockInnerContent, BedrockMessage, BedrockStreamingResponse, Model};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
@@ -37,8 +33,8 @@ use settings::{Settings, SettingsStore};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
-use ui::{prelude::*, Icon, IconName, Tooltip};
-use util::{maybe, ResultExt};
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use util::{ResultExt, maybe};
 
 use crate::AllLanguageModelSettings;
 
@@ -83,19 +79,18 @@ const ZED_AWS_CREDENTIALS_VAR: &str = "ZED_AWS_CREDENTIALS";
 pub struct State {
     credentials: Option<BedrockCredentials>,
     credentials_from_env: bool,
-    region: Option<String>,
     _subscription: Subscription,
 }
 
 impl State {
     fn reset_credentials(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(AMAZON_AWS_URL, &cx)
                 .await
                 .log_err();
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.credentials = None;
                 this.credentials_from_env = false;
                 cx.notify();
@@ -109,7 +104,7 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(
                     AMAZON_AWS_URL,
@@ -118,7 +113,7 @@ impl State {
                     &cx,
                 )
                 .await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.credentials = Some(credentials);
                 cx.notify();
             })
@@ -135,7 +130,7 @@ impl State {
         }
 
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let (credentials, from_env) =
                 if let Ok(credentials) = std::env::var(ZED_AWS_CREDENTIALS_VAR) {
                     (credentials, true)
@@ -154,7 +149,7 @@ impl State {
             let credentials: BedrockCredentials =
                 serde_json::from_str(&credentials).context("failed to parse credentials")?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.credentials = Some(credentials);
                 this.credentials_from_env = from_env;
                 cx.notify();
@@ -175,7 +170,6 @@ impl BedrockLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| State {
             credentials: None,
-            region: Some(String::from("us-east-1")),
             credentials_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
@@ -311,7 +305,7 @@ impl BedrockModel {
                     Ok((
                         credentials.access_key_id.clone(),
                         credentials.secret_access_key.clone(),
-                        state.region.clone(),
+                        credentials.region.clone(),
                     ))
                 } else {
                     return Err(anyhow!("Failed to read credentials"));
@@ -331,7 +325,7 @@ impl BedrockModel {
                     None,
                     "Keychain",
                 ))
-                .region(Region::new(region.unwrap()))
+                .region(Region::new(region))
                 .http_client(self.http_client.clone())
                 .build(),
         );
@@ -363,6 +357,10 @@ impl LanguageModel for BedrockModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn supports_tools(&self) -> bool {
+        true
     }
 
     fn telemetry_id(&self) -> String {
@@ -401,55 +399,13 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.map_err(|e| anyhow!(e)).unwrap().await;
+            let response = request.map_err(|err| anyhow!(err))?.await;
             Ok(map_to_language_model_completion_events(
                 response,
                 owned_handle,
             ))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        name: String,
-        description: String,
-        schema: Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let mut request = into_bedrock(
-            request,
-            self.model.id().into(),
-            self.model.default_temperature(),
-            self.model.max_output_tokens(),
-        );
-
-        request.tool_choice = Some(BedrockToolChoice::Tool(
-            BedrockSpecificTool::builder()
-                .name(name.clone())
-                .build()
-                .unwrap(),
-        ));
-
-        request.tools = vec![BedrockTool::builder()
-            .name(name.clone())
-            .description(description.clone())
-            .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(&schema)))
-            .build()
-            .unwrap()];
-
-        let handle = self.handler.clone();
-
-        let request = self.stream_completion(request, _cx);
-        self.request_limiter
-            .run(async move {
-                let response = request.map_err(|e| anyhow!(e)).unwrap().await;
-                Ok(extract_tool_args_from_events(name, response, handle)
-                    .await?
-                    .boxed())
-            })
-            .boxed()
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -586,70 +542,6 @@ pub fn get_bedrock_tokens(
         .boxed()
 }
 
-pub async fn extract_tool_args_from_events(
-    name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
-    handle: Handle,
-) -> Result<impl Send + Stream<Item = Result<String>>> {
-    handle
-        .spawn(async move {
-            let mut tool_use_index = None;
-            while let Some(event) = events.next().await {
-                if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                    content_block_index,
-                    start,
-                    ..
-                }) = event?
-                {
-                    match start {
-                        None => {
-                            continue;
-                        }
-                        Some(start) => match start.as_tool_use() {
-                            Ok(tool_use) => {
-                                if name == tool_use.name {
-                                    tool_use_index = Some(content_block_index);
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                return Err(anyhow!("Failed to parse tool use event: {:?}", err));
-                            }
-                        },
-                    }
-                }
-            }
-
-            let Some(tool_use_index) = tool_use_index else {
-                return Err(anyhow!("Tool is not used"));
-            };
-
-            Ok(events.filter_map(move |event| {
-                let result = match event {
-                    Err(_err) => None,
-                    Ok(output) => match output.clone() {
-                        BedrockStreamingResponse::ContentBlockDelta(inner) => {
-                            match inner.clone().delta {
-                                Some(ContentBlockDelta::ToolUse(tool_use)) => {
-                                    if inner.content_block_index == tool_use_index {
-                                        Some(Ok(tool_use.input))
-                                    } else {
-                                        None
-                                    }
-                                }
-                                _ => None,
-                            }
-                        }
-                        _ => None,
-                    },
-                };
-
-                async move { result }
-            }))
-        })
-        .await?
-}
-
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
@@ -733,7 +625,7 @@ pub fn map_to_language_model_completion_events(
                                                     Ok(LanguageModelCompletionEvent::ToolUse(
                                                         LanguageModelToolUse {
                                                             id: tool_use.id.into(),
-                                                            name: tool_use.name,
+                                                            name: tool_use.name.into(),
                                                             input: if tool_use.input_json.is_empty()
                                                             {
                                                                 Value::Null
@@ -758,7 +650,8 @@ pub fn map_to_language_model_completion_events(
                         None
                     })
                     .await
-                    .unwrap()
+                    .log_err()
+                    .flatten()
             }
         },
     )
@@ -774,7 +667,9 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    const PLACEHOLDER_TEXT: &'static str = "XXXXXXXXXXXXXXXXXXX";
+    const PLACEHOLDER_ACCESS_KEY_ID_TEXT: &'static str = "XXXXXXXXXXXXXXXX";
+    const PLACEHOLDER_SECRET_ACCESS_KEY_TEXT: &'static str =
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
 
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -785,15 +680,15 @@ impl ConfigurationView {
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
-            |this, mut cx| async move {
+            async move |this, cx| {
                 if let Some(task) = state
-                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
@@ -804,12 +699,12 @@ impl ConfigurationView {
         Self {
             access_key_id_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT, cx);
                 editor
             }),
             secret_access_key_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, cx);
                 editor
             }),
             region_editor: cx.new(|cx| {
@@ -851,9 +746,9 @@ impl ConfigurationView {
             .to_string();
 
         let state = self.state.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             state
-                .update(&mut cx, |state, cx| {
+                .update(cx, |state, cx| {
                     let credentials: BedrockCredentials = BedrockCredentials {
                         access_key_id: access_key_id.clone(),
                         secret_access_key: secret_access_key.clone(),
@@ -876,9 +771,9 @@ impl ConfigurationView {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             state
-                .update(&mut cx, |state, cx| state.reset_credentials(cx))?
+                .update(cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
         .detach_and_log_err(cx);
@@ -954,43 +849,89 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const IAM_CONSOLE_URL: &str = "https://us-east-1.console.aws.amazon.com/iam/home";
-        const INSTRUCTIONS: [&str; 3] = [
-            "To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:",
-            "- Create a pair at:",
-            "- Paste your Access Key ID, Secret Key, and Region below and hit enter to use the assistant:",
-        ];
         let env_var_set = self.state.read(cx).credentials_from_env;
+        let bg_color = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border_variant;
+        let input_base_styles = || {
+            h_flex()
+                .w_full()
+                .px_2()
+                .py_1()
+                .bg(bg_color)
+                .border_1()
+                .border_color(border_color)
+                .rounded_sm()
+        };
 
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
         } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
-                .on_action(cx.listener(Self::save_credentials))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("iam_console", IAM_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ExternalLink)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, _window, cx| cx.open_url(IAM_CONSOLE_URL))
-                )
-                )
-                .child(Label::new(INSTRUCTIONS[2]))
+                .on_action(cx.listener(ConfigurationView::save_credentials))
+                .child(Label::new("To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:"))
                 .child(
-                    h_flex()
-                        .gap_1()
-                        .child(self.render_aa_id_editor(cx))
-                        .child(self.render_sk_editor(cx))
-                        .child(self.render_region_editor(cx))
+                    List::new()
+                        .child(
+                            InstructionListItem::new(
+                                "Start by",
+                                Some("creating a user and security credentials"),
+                                Some("https://us-east-1.console.aws.amazon.com/iam/home")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::new(
+                                "Grant that user permissions according to this documentation:",
+                                Some("Prerequisites"),
+                                Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::new(
+                                "Select the models you would like access to:",
+                                Some("Bedrock Model Catalog"),
+                                Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess")
+                            )
+                        )
+                        .child(
+                            InstructionListItem::text_only("Fill the fields below and hit enter to start using the assistant")
+                        )
+                )
+                .child(
+                    v_flex()
+                        .my_2()
+                        .gap_1p5()
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Access Key ID").size(LabelSize::Small))
+                                .child(
+                                    input_base_styles().child(self.render_aa_id_editor(cx))
+                                )
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Secret Access Key").size(LabelSize::Small))
+                                .child(
+                                    input_base_styles().child(self.render_sk_editor(cx))
+                                )
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Region").size(LabelSize::Small))
+                                .child(
+                                    input_base_styles().child(self.render_region_editor(cx))
+                                )
+                            )
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} and {ZED_BEDROCK_REGION_VAR} environment variable and restart Zed."),
+                        format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed."),
                     )
-                        .size(LabelSize::Small),
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
                 )
                 .into_any()
         } else {

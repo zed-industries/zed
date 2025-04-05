@@ -15,6 +15,7 @@ use std::{
 use text::Anchor;
 use util::paths::PathMatcher;
 
+#[derive(Debug)]
 pub enum SearchResult {
     Buffer {
         buffer: Entity<Buffer>,
@@ -137,7 +138,7 @@ impl SearchQuery {
             query = word_query
         }
 
-        let multiline = query.contains('\n') || query.contains("\\n") || query.contains("\\s");
+        let multiline = query.contains('\n') || query.contains("\\n");
         let regex = RegexBuilder::new(&query)
             .case_insensitive(!case_sensitive)
             .build()?;

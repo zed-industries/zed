@@ -1,4 +1,4 @@
-use crate::{prelude::*, AnyIcon};
+use crate::{AnyIcon, prelude::*};
 
 #[derive(Default)]
 enum IndicatorKind {
@@ -77,7 +77,7 @@ impl RenderOnce for Indicator {
             IndicatorKind::Bar => container
                 .w_full()
                 .h_1p5()
-                .rounded_t_md()
+                .rounded_t_sm()
                 .bg(self.color.color(cx)),
         }
     }

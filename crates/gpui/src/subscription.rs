@@ -45,7 +45,7 @@ where
         &self,
         emitter_key: EmitterKey,
         callback: Callback,
-    ) -> (Subscription, impl FnOnce()) {
+    ) -> (Subscription, impl FnOnce() + use<EmitterKey, Callback>) {
         let active = Rc::new(Cell::new(false));
         let mut lock = self.0.lock();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
@@ -88,7 +88,10 @@ where
         (subscription, move || active.set(true))
     }
 
-    pub fn remove(&self, emitter: &EmitterKey) -> impl IntoIterator<Item = Callback> {
+    pub fn remove(
+        &self,
+        emitter: &EmitterKey,
+    ) -> impl IntoIterator<Item = Callback> + use<EmitterKey, Callback> {
         let subscribers = self.0.lock().subscribers.remove(emitter);
         subscribers
             .unwrap_or_default()
@@ -167,6 +170,23 @@ impl Subscription {
     /// subscribed to are dropped
     pub fn detach(mut self) {
         self.unsubscribe.take();
+    }
+
+    /// Joins two subscriptions into a single subscription. Detach will
+    /// detach both interior subscriptions.
+    pub fn join(mut subscription_a: Self, mut subscription_b: Self) -> Self {
+        let a_unsubscribe = subscription_a.unsubscribe.take();
+        let b_unsubscribe = subscription_b.unsubscribe.take();
+        Self {
+            unsubscribe: Some(Box::new(move || {
+                if let Some(self_unsubscribe) = a_unsubscribe {
+                    self_unsubscribe();
+                }
+                if let Some(other_unsubscribe) = b_unsubscribe {
+                    other_unsubscribe();
+                }
+            })),
+        }
     }
 }
 

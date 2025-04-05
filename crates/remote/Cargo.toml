@@ -19,6 +19,7 @@ test-support = ["fs/test-support"]
 
 [dependencies]
 anyhow.workspace = true
+askpass.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 fs.workspace = true
@@ -26,9 +27,10 @@ futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 log.workspace = true
-paths.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 prost.workspace = true
+release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace =  true
 serde.workspace = true
@@ -37,9 +39,9 @@ shlex.workspace = true
 smol.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+urlencoding.workspace = true
 util.workspace = true
-release_channel.workspace = true
-which.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

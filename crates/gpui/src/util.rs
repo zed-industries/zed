@@ -40,6 +40,19 @@ pub trait FluentBuilder {
             }
         })
     }
+    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    fn when_none<T>(self, option: &Option<T>, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if let Some(_) = option {
+                this
+            } else {
+                then(this)
+            }
+        })
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -59,7 +72,7 @@ where
 pub struct CwdBacktrace<'a>(pub &'a backtrace::Backtrace);
 
 #[cfg(any(test, feature = "test-support"))]
-impl<'a> std::fmt::Debug for CwdBacktrace<'a> {
+impl std::fmt::Debug for CwdBacktrace<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use backtrace::{BacktraceFmt, BytesOrWideString};
 

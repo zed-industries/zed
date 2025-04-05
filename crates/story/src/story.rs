@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rems, AnyElement, App, DefaultColor, DefaultColors, Div, SharedString,
-    Window,
+    AnyElement, App, DefaultColor, DefaultColors, Div, SharedString, Window, div, prelude::*, px,
+    rems,
 };
 use itertools::Itertools;
 use smallvec::SmallVec;
@@ -64,7 +64,7 @@ impl Story {
             .p_2()
             .max_w(rems(36.))
             .bg(DefaultColor::Container.hsla(&colors))
-            .rounded_md()
+            .rounded_sm()
             .text_sm()
             .text_color(DefaultColor::Text.hsla(&colors))
             .overflow_hidden()
@@ -151,7 +151,7 @@ impl RenderOnce for StoryItem {
                     .child(Story::label(self.label))
                     .child(
                         div()
-                            .rounded_md()
+                            .rounded_sm()
                             .bg(DefaultColor::Background.hsla(&colors))
                             .border_1()
                             .border_color(DefaultColor::Border.hsla(&colors))

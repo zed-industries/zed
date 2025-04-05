@@ -1,16 +1,16 @@
 use std::ops::Range;
 
 use crate::{
+    Vim,
     motion::right,
     state::{Mode, Operator},
-    Vim,
 };
 use editor::{
+    Bias, DisplayPoint, Editor, ToOffset,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
-    Bias, DisplayPoint, Editor, ToOffset,
 };
-use gpui::{actions, impl_actions, Window};
+use gpui::{Window, actions, impl_actions};
 use itertools::Itertools;
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
@@ -312,8 +312,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &AnyBrackets, window, cx| {
         vim.object(Object::AnyBrackets, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
-        vim.object(Object::DoubleQuotes, window, cx)
+    Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
+        vim.object(Object::BackQuotes, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
         vim.object(Object::DoubleQuotes, window, cx)

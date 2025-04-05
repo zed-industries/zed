@@ -2,6 +2,7 @@ use crate::prelude::*;
 use gpui::{AnyElement, FocusHandle, ScrollAnchor, ScrollHandle};
 
 /// An element that can be navigated through via keyboard. Intended for use with scrollable views that want to use
+#[derive(IntoElement)]
 pub struct Navigable {
     child: AnyElement,
     selectable_children: Vec<NavigableEntry>,
@@ -44,7 +45,7 @@ impl Navigable {
     /// Add a new entry that can be navigated to via keyboard.
     ///
     /// The order of calls to [Navigable::entry] determines the order of traversal of
-    /// elements via successive uses of `menu:::SelectNext/SelectPrev`
+    /// elements via successive uses of `menu:::SelectNext/SelectPrevious`
     pub fn entry(mut self, child: NavigableEntry) -> Self {
         self.selectable_children.push(child);
         self
@@ -83,7 +84,7 @@ impl RenderOnce for Navigable {
             })
             .on_action({
                 let children = self.selectable_children;
-                move |_: &menu::SelectPrev, window, cx| {
+                move |_: &menu::SelectPrevious, window, cx| {
                     let target = Self::find_focused(&children, window, cx)
                         .and_then(|index| index.checked_sub(1))
                         .or(children.len().checked_sub(1));

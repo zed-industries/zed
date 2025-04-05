@@ -1,11 +1,13 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
 #![deny(missing_docs)]
 
+mod debug_format;
+mod serde_helpers;
 pub mod static_source;
 mod task_template;
 mod vscode_format;
 
-use collections::{hash_map, HashMap, HashSet};
+use collections::{HashMap, HashSet, hash_map};
 use gpui::SharedString;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,7 +15,14 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-pub use task_template::{HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates};
+pub use debug_format::{
+    AttachConfig, DebugAdapterConfig, DebugConnectionType, DebugRequestDisposition,
+    DebugRequestType, DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
+};
+pub use task_template::{
+    DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,
+    TaskTemplates, TaskType,
+};
 pub use vscode_format::VsCodeTaskFile;
 pub use zed_actions::RevealTarget;
 
@@ -58,6 +67,8 @@ pub struct SpawnInTerminal {
     pub show_summary: bool,
     /// Whether to show the command line in the task output.
     pub show_command: bool,
+    /// Whether to show the rerun button in the terminal tab.
+    pub show_rerun: bool,
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particular [`TaskContext`] and now is ready to spawn the actual task.
@@ -84,6 +95,61 @@ impl ResolvedTask {
     /// A task template before the resolution.
     pub fn original_task(&self) -> &TaskTemplate {
         &self.original_task
+    }
+
+    /// Get the task type that determines what this task is used for
+    /// And where is it shown in the UI
+    pub fn task_type(&self) -> TaskType {
+        self.original_task.task_type.clone()
+    }
+
+    /// Get the configuration for the debug adapter that should be used for this task.
+    pub fn resolved_debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
+        match self.original_task.task_type.clone() {
+            TaskType::Debug(debug_args) if self.resolved.is_some() => {
+                let resolved = self
+                    .resolved
+                    .as_ref()
+                    .expect("We just checked if this was some");
+
+                let args = resolved
+                    .args
+                    .iter()
+                    .cloned()
+                    .map(|arg| {
+                        if arg.starts_with("$") {
+                            arg.strip_prefix("$")
+                                .and_then(|arg| resolved.env.get(arg).map(ToOwned::to_owned))
+                                .unwrap_or_else(|| arg)
+                        } else {
+                            arg
+                        }
+                    })
+                    .collect();
+
+                Some(DebugAdapterConfig {
+                    label: resolved.label.clone(),
+                    adapter: debug_args.adapter.clone(),
+                    request: DebugRequestDisposition::UserConfigured(match debug_args.request {
+                        crate::task_template::DebugArgsRequest::Launch => {
+                            DebugRequestType::Launch(LaunchConfig {
+                                program: resolved.command.clone(),
+                                cwd: resolved.cwd.clone(),
+                                args,
+                            })
+                        }
+                        crate::task_template::DebugArgsRequest::Attach(attach_config) => {
+                            DebugRequestType::Attach(attach_config)
+                        }
+                    }),
+                    initialize_args: debug_args.initialize_args,
+                    tcp_connection: debug_args.tcp_connection,
+                    locator: debug_args.locator.clone(),
+                    stop_on_entry: debug_args.stop_on_entry,
+                })
+            }
+            _ => None,
+        }
     }
 
     /// Variables that were substituted during the task template resolution.
@@ -401,8 +467,10 @@ impl ShellBuilder {
 
     // `alacritty_terminal` uses this as default on Windows. See:
     // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
+    // We could use `util::retrieve_system_shell()` here, but we are running tasks here, so leave it to `powershell.exe`
+    // should be okay.
     fn system_shell() -> String {
-        "powershell".to_owned()
+        "powershell.exe".to_string()
     }
 
     fn to_windows_shell_variable(&self, input: String) -> String {

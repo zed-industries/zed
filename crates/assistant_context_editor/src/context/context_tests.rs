@@ -14,13 +14,13 @@ use futures::{
     channel::mpsc,
     stream::{self, StreamExt},
 };
-use gpui::{prelude::*, App, Entity, SharedString, Task, TestAppContext, WeakEntity};
+use gpui::{App, Entity, SharedString, Task, TestAppContext, WeakEntity, prelude::*};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::Project;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
 use settings::SettingsStore;
@@ -30,14 +30,14 @@ use std::{
     ops::Range,
     path::Path,
     rc::Rc,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
-use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToOffset};
+use text::{OffsetRangeExt as _, ReplicaId, ToOffset, network::Network};
 use ui::{IconName, Window};
 use unindent::Unindent;
 use util::{
-    test::{generate_marked_text, marked_text_ranges},
     RandomCharIter,
+    test::{generate_marked_text, marked_text_ranges},
 };
 use workspace::Workspace;
 
@@ -671,7 +671,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
-    cx.update(prompt_library::init);
+    cx.update(prompt_store::init);
     let mut settings_store = cx.update(SettingsStore::test);
     cx.update(|cx| {
         settings_store

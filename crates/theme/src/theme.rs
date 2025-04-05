@@ -23,12 +23,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ::settings::Settings;
+use ::settings::SettingsStore;
 use anyhow::Result;
 use fallback_themes::apply_status_color_defaults;
 use fs::Fs;
 use gpui::{
-    px, App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
-    WindowBackgroundAppearance,
+    App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
+    WindowBackgroundAppearance, px,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -101,6 +102,24 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
 
     ThemeSettings::register(cx);
     FontFamilyCache::init_global(cx);
+
+    let mut prev_buffer_font_size_settings =
+        ThemeSettings::get_global(cx).buffer_font_size_settings();
+    let mut prev_ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let buffer_font_size_settings = ThemeSettings::get_global(cx).buffer_font_size_settings();
+        if buffer_font_size_settings != prev_buffer_font_size_settings {
+            prev_buffer_font_size_settings = buffer_font_size_settings;
+            reset_buffer_font_size(cx);
+        }
+
+        let ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
+        if ui_font_size_settings != prev_ui_font_size_settings {
+            prev_ui_font_size_settings = ui_font_size_settings;
+            reset_ui_font_size(cx);
+        }
+    })
+    .detach();
 }
 
 /// Implementing this trait allows accessing the active theme.

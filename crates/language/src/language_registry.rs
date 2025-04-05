@@ -1,17 +1,18 @@
 use crate::{
+    CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
+    LanguageServerName, LspAdapter, PLAIN_TEXT, ToolchainLister,
     language_settings::{
-        all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
+        AllLanguageSettingsContent, LanguageSettingsContent, all_language_settings,
     },
     task_context::ContextProvider,
-    with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, ToolchainLister, PLAIN_TEXT,
+    with_parser,
 };
-use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, HashMap, HashSet};
+use anyhow::{Context as _, Result, anyhow};
+use collections::{HashMap, HashSet, hash_map};
 
 use futures::{
-    channel::{mpsc, oneshot},
     Future,
+    channel::{mpsc, oneshot},
 };
 use globset::GlobSet;
 use gpui::{App, BackgroundExecutor, SharedString};
@@ -31,7 +32,7 @@ use sum_tree::Bias;
 use text::{Point, Rope};
 use theme::Theme;
 use unicase::UniCase;
-use util::{maybe, post_inc, ResultExt};
+use util::{ResultExt, maybe, post_inc};
 
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
@@ -98,7 +99,8 @@ pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
     executor: BackgroundExecutor,
-    lsp_binary_status_tx: LspBinaryStatusSender,
+    lsp_binary_status_tx: BinaryStatusSender,
+    dap_binary_status_tx: BinaryStatusSender,
 }
 
 struct LanguageRegistryState {
@@ -130,7 +132,7 @@ pub struct FakeLanguageServerEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LanguageServerBinaryStatus {
+pub enum BinaryStatus {
     None,
     CheckingForUpdate,
     Downloading,
@@ -213,8 +215,8 @@ pub struct LanguageQueries {
 }
 
 #[derive(Clone, Default)]
-struct LspBinaryStatusSender {
-    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, LanguageServerBinaryStatus)>>>>,
+struct BinaryStatusSender {
+    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(SharedString, BinaryStatus)>>>>,
 }
 
 pub struct LoadedLanguage {
@@ -247,6 +249,7 @@ impl LanguageRegistry {
             }),
             language_server_download_dir: None,
             lsp_binary_status_tx: Default::default(),
+            dap_binary_status_tx: Default::default(),
             executor,
         };
         this.add(PLAIN_TEXT.clone());
@@ -595,7 +598,7 @@ impl LanguageRegistry {
     pub fn language_for_name(
         self: &Arc<Self>,
         name: &str,
-    ) -> impl Future<Output = Result<Arc<Language>>> {
+    ) -> impl Future<Output = Result<Arc<Language>>> + use<> {
         let name = UniCase::new(name);
         let rx = self.get_or_load_language(|language_name, _| {
             if UniCase::new(&language_name.0) == name {
@@ -677,7 +680,7 @@ impl LanguageRegistry {
         // `Path.extension()` returns None for files with a leading '.'
         // and no other extension which is not the desired behavior here,
         // as we want `.zshrc` to result in extension being `Some("zshrc")`
-        let extension = filename.and_then(|filename| filename.split('.').last());
+        let extension = filename.and_then(|filename| filename.split('.').next_back());
         let path_suffixes = [extension, filename, path.to_str()];
         let empty = GlobSet::empty();
 
@@ -910,16 +913,25 @@ impl LanguageRegistry {
             .unwrap_or_default()
     }
 
+    pub fn all_lsp_adapters(&self) -> Vec<Arc<CachedLspAdapter>> {
+        self.state
+            .read()
+            .all_lsp_adapters
+            .values()
+            .cloned()
+            .collect()
+    }
+
     pub fn adapter_for_name(&self, name: &LanguageServerName) -> Option<Arc<CachedLspAdapter>> {
         self.state.read().all_lsp_adapters.get(name).cloned()
     }
 
-    pub fn update_lsp_status(
-        &self,
-        server_name: LanguageServerName,
-        status: LanguageServerBinaryStatus,
-    ) {
-        self.lsp_binary_status_tx.send(server_name, status);
+    pub fn update_lsp_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
+        self.lsp_binary_status_tx.send(server_name.0, status);
+    }
+
+    pub fn update_dap_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
+        self.dap_binary_status_tx.send(server_name.0, status);
     }
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
@@ -938,7 +950,7 @@ impl LanguageRegistry {
         server_id: LanguageServerId,
         name: &LanguageServerName,
         binary: lsp::LanguageServerBinary,
-        cx: gpui::AsyncApp,
+        cx: &mut gpui::AsyncApp,
     ) -> Option<lsp::LanguageServer> {
         use gpui::AppContext as _;
 
@@ -949,7 +961,7 @@ impl LanguageRegistry {
             binary,
             name.0.to_string(),
             fake_entry.capabilities.clone(),
-            cx.clone(),
+            cx,
         );
         fake_entry._server = Some(fake_server.clone());
 
@@ -974,8 +986,14 @@ impl LanguageRegistry {
 
     pub fn language_server_binary_statuses(
         &self,
-    ) -> mpsc::UnboundedReceiver<(LanguageServerName, LanguageServerBinaryStatus)> {
+    ) -> mpsc::UnboundedReceiver<(SharedString, BinaryStatus)> {
         self.lsp_binary_status_tx.subscribe()
+    }
+
+    pub fn dap_server_binary_statuses(
+        &self,
+    ) -> mpsc::UnboundedReceiver<(SharedString, BinaryStatus)> {
+        self.dap_binary_status_tx.subscribe()
     }
 
     pub async fn delete_server_container(&self, name: LanguageServerName) {
@@ -1088,16 +1106,14 @@ impl LanguageRegistryState {
     }
 }
 
-impl LspBinaryStatusSender {
-    fn subscribe(
-        &self,
-    ) -> mpsc::UnboundedReceiver<(LanguageServerName, LanguageServerBinaryStatus)> {
+impl BinaryStatusSender {
+    fn subscribe(&self) -> mpsc::UnboundedReceiver<(SharedString, BinaryStatus)> {
         let (tx, rx) = mpsc::unbounded();
         self.txs.lock().push(tx);
         rx
     }
 
-    fn send(&self, name: LanguageServerName, status: LanguageServerBinaryStatus) {
+    fn send(&self, name: SharedString, status: BinaryStatus) {
         let mut txs = self.txs.lock();
         txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
     }

@@ -1,8 +1,8 @@
 use crate::PlatformStyle;
-use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
+use crate::{Icon, IconName, IconSize, h_flex, prelude::*};
 use gpui::{
-    relative, Action, AnyElement, App, FocusHandle, Global, IntoElement, Keystroke, Modifiers,
-    Window,
+    Action, AnyElement, App, FocusHandle, Global, IntoElement, Keystroke, Modifiers, Window,
+    relative,
 };
 use itertools::Itertools;
 
@@ -20,6 +20,9 @@ pub struct KeyBinding {
 
     /// Determines whether the keybinding is meant for vim mode.
     vim_mode: bool,
+
+    /// Indicates whether the keybinding is currently disabled.
+    disabled: bool,
 }
 
 struct VimStyle(bool);
@@ -29,9 +32,11 @@ impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
     pub fn for_action(action: &dyn Action, window: &mut Window, cx: &App) -> Option<Self> {
+        if let Some(focused) = window.focused(cx) {
+            return Self::for_action_in(action, &focused, window, cx);
+        }
         let key_binding =
-            gpui::Keymap::binding_to_display_from_bindings(&window.bindings_for_action(action))
-                .cloned()?;
+            gpui::Keymap::binding_to_display_from_bindings(window.bindings_for_action(action))?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -43,9 +48,8 @@ impl KeyBinding {
         cx: &App,
     ) -> Option<Self> {
         let key_binding = gpui::Keymap::binding_to_display_from_bindings(
-            &window.bindings_for_action_in(action, focus),
-        )
-        .cloned()?;
+            window.bindings_for_action_in(action, focus),
+        )?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -63,6 +67,7 @@ impl KeyBinding {
             platform_style: PlatformStyle::platform(),
             size: None,
             vim_mode: KeyBinding::is_vim_mode(cx),
+            disabled: false,
         }
     }
 
@@ -75,6 +80,13 @@ impl KeyBinding {
     /// Sets the size for this [`KeyBinding`].
     pub fn size(mut self, size: impl Into<AbsoluteLength>) -> Self {
         self.size = Some(size.into());
+        self
+    }
+
+    /// Sets whether this keybinding is currently disabled.
+    /// Disabled keybinds will be rendered in a dimmed state.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -97,6 +109,7 @@ impl KeyBinding {
 
 impl RenderOnce for KeyBinding {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let color = self.disabled.then_some(Color::Disabled);
         let use_text = self.vim_mode
             || matches!(
                 self.platform_style,
@@ -120,13 +133,13 @@ impl RenderOnce for KeyBinding {
                 h_flex()
                     .flex_none()
                     .py_0p5()
-                    .rounded_sm()
+                    .rounded_xs()
                     .text_color(cx.theme().colors().text_muted)
                     .when(use_text, |el| {
                         el.child(
                             Key::new(
                                 keystroke_text(&keystroke, self.platform_style, self.vim_mode),
-                                None,
+                                color,
                             )
                             .size(self.size),
                         )
@@ -135,11 +148,11 @@ impl RenderOnce for KeyBinding {
                         el.children(render_modifiers(
                             &keystroke.modifiers,
                             self.platform_style,
-                            None,
+                            color,
                             self.size,
                             true,
                         ))
-                        .map(|el| el.child(self.render_key(&keystroke, None)))
+                        .map(|el| el.child(self.render_key(&keystroke, color)))
                     })
             }))
     }

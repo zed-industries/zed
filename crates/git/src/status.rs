@@ -1,7 +1,7 @@
 use crate::repository::RepoPath;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, process::Stdio, sync::Arc};
+use std::{path::Path, str::FromStr, sync::Arc};
 use util::ResultExt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -51,6 +51,39 @@ impl From<UnmergedStatus> for FileStatus {
 impl From<TrackedStatus> for FileStatus {
     fn from(value: TrackedStatus) -> Self {
         FileStatus::Tracked(value)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StageStatus {
+    Staged,
+    Unstaged,
+    PartiallyStaged,
+}
+
+impl StageStatus {
+    pub fn is_fully_staged(&self) -> bool {
+        matches!(self, StageStatus::Staged)
+    }
+
+    pub fn is_fully_unstaged(&self) -> bool {
+        matches!(self, StageStatus::Unstaged)
+    }
+
+    pub fn has_staged(&self) -> bool {
+        matches!(self, StageStatus::Staged | StageStatus::PartiallyStaged)
+    }
+
+    pub fn has_unstaged(&self) -> bool {
+        matches!(self, StageStatus::Unstaged | StageStatus::PartiallyStaged)
+    }
+
+    pub fn as_bool(self) -> Option<bool> {
+        match self {
+            StageStatus::Staged => Some(true),
+            StageStatus::Unstaged => Some(false),
+            StageStatus::PartiallyStaged => None,
+        }
     }
 }
 
@@ -106,15 +139,15 @@ impl FileStatus {
         Ok(status)
     }
 
-    pub fn is_staged(self) -> Option<bool> {
+    pub fn staging(self) -> StageStatus {
         match self {
             FileStatus::Untracked | FileStatus::Ignored | FileStatus::Unmerged { .. } => {
-                Some(false)
+                StageStatus::Unstaged
             }
             FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
-                (StatusCode::Unmodified, _) => Some(false),
-                (_, StatusCode::Unmodified) => Some(true),
-                _ => None,
+                (StatusCode::Unmodified, _) => StageStatus::Unstaged,
+                (_, StatusCode::Unmodified) => StageStatus::Staged,
+                _ => StageStatus::PartiallyStaged,
             },
         }
     }
@@ -405,50 +438,16 @@ impl std::ops::Sub for GitSummary {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GitStatus {
     pub entries: Arc<[(RepoPath, FileStatus)]>,
 }
 
-impl GitStatus {
-    pub(crate) fn new(
-        git_binary: &Path,
-        working_directory: &Path,
-        path_prefixes: &[RepoPath],
-    ) -> Result<Self> {
-        let child = util::command::new_std_command(git_binary)
-            .current_dir(working_directory)
-            .args([
-                "--no-optional-locks",
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
-                "--no-renames",
-                "-z",
-            ])
-            .args(path_prefixes.iter().map(|path_prefix| {
-                if path_prefix.0.as_ref() == Path::new("") {
-                    Path::new(".")
-                } else {
-                    path_prefix
-                }
-            }))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| anyhow!("Failed to start git status process: {e}"))?;
+impl FromStr for GitStatus {
+    type Err = anyhow::Error;
 
-        let output = child
-            .wait_with_output()
-            .map_err(|e| anyhow!("Failed to read git status output: {e}"))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("git status process failed: {stderr}"));
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut entries = stdout
+    fn from_str(s: &str) -> Result<Self> {
+        let mut entries = s
             .split('\0')
             .filter_map(|entry| {
                 let sep = entry.get(2..3)?;
@@ -463,7 +462,7 @@ impl GitStatus {
                 if path.ends_with('/') {
                     return None;
                 }
-                let status = entry[0..2].as_bytes().try_into().unwrap();
+                let status = entry.as_bytes()[0..2].try_into().unwrap();
                 let status = FileStatus::from_bytes(status).log_err()?;
                 let path = RepoPath(Path::new(path).into());
                 Some((path, status))

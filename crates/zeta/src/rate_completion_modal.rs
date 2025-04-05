@@ -1,9 +1,9 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
-use gpui::{actions, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable};
+use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, actions, prelude::*};
 use language::language_settings;
 use std::time::Duration;
-use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
+use ui::{KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -82,7 +82,12 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.selected_index = self.selected_index.saturating_sub(1);
         cx.notify();
     }
@@ -276,6 +281,7 @@ impl RateCompletionModal {
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_runnables(false, cx);
+                editor.set_show_breakpoints(false, cx);
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
                 editor.set_show_edit_predictions(Some(false), window, cx);
@@ -529,7 +535,7 @@ impl Render for RateCompletionModal {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_prev_edit))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_next_edit))

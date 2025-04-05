@@ -1,19 +1,19 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::{onboarding_event, ZED_PREDICT_DATA_COLLECTION_CHOICE};
+use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
 use anyhow::Context as _;
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
-    ease_in_out, svg, Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, MouseDownEvent, Render,
+    Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, MouseDownEvent, Render, ease_in_out, svg,
 };
 use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
-use settings::{update_settings_file, Settings};
-use ui::{prelude::*, Checkbox, TintColor};
+use settings::{Settings, update_settings_file};
+use ui::{Checkbox, TintColor, prelude::*};
 use util::ResultExt;
-use workspace::{notifications::NotifyTaskExt, ModalView, Workspace};
+use workspace::{ModalView, Workspace, notifications::NotifyTaskExt};
 
 /// Introduces user to Zed's Edit Prediction feature and terms of service
 pub struct ZedPredictModal {
@@ -85,11 +85,11 @@ impl ZedPredictModal {
             .update(cx, |this, cx| this.accept_terms_of_service(cx));
         let fs = self.fs.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             task.await?;
 
             let mut data_collection_opted_in = false;
-            this.update(&mut cx, |this, _cx| {
+            this.update(cx, |this, _cx| {
                 data_collection_opted_in = this.data_collection_opted_in;
             })
             .ok();
@@ -116,7 +116,7 @@ impl ZedPredictModal {
                 }
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
                     file.features
                         .get_or_insert(Default::default())
@@ -138,7 +138,7 @@ impl ZedPredictModal {
         let client = self.client.clone();
         self.sign_in_status = SignInStatus::Waiting;
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let result = client.authenticate_and_connect(true, &cx).await;
 
             let status = match result {
@@ -146,7 +146,7 @@ impl ZedPredictModal {
                 Err(_) => SignInStatus::Idle,
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.sign_in_status = status;
                 onboarding_event!("Signed In");
                 cx.notify()
@@ -248,7 +248,7 @@ impl Render for ZedPredictModal {
                                     .bg(cx.theme().colors().editor_background)
                                     .border_1()
                                     .border_color(border_color)
-                                    .rounded_md()
+                                    .rounded_sm()
                                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                                     .text_size(TextSize::XSmall.rems(cx))
                                     .text_color(text_color)
@@ -395,7 +395,7 @@ impl Render for ZedPredictModal {
                                 v_flex()
                                     .mt_2()
                                     .p_2()
-                                    .rounded_md()
+                                    .rounded_sm()
                                     .bg(cx.theme().colors().editor_background.opacity(0.5))
                                     .border_1()
                                     .border_color(cx.theme().colors().border_variant)

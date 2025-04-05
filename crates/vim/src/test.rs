@@ -6,9 +6,13 @@ use std::time::Duration;
 
 use collections::HashMap;
 use command_palette::CommandPalette;
-use editor::{actions::DeleteLine, display_map::DisplayRow, DisplayPoint};
+use editor::{
+    DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine, display_map::DisplayRow,
+    test::editor_test_context::EditorTestContext,
+};
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
+use language::Point;
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
 pub use vim_test_context::*;
@@ -17,7 +21,7 @@ use indoc::indoc;
 use search::BufferSearchBar;
 use workspace::WorkspaceSettings;
 
-use crate::{insert::NormalBefore, motion, state::Mode, PushSneak, PushSneakBackward};
+use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
 
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
@@ -224,7 +228,9 @@ async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
     cx.set_state("aˇbc\n", Mode::Normal);
     cx.simulate_keystrokes("i cmd-shift-p");
 
-    assert!(cx.workspace(|workspace, _, cx| workspace.active_modal::<CommandPalette>(cx).is_some()));
+    assert!(
+        cx.workspace(|workspace, _, cx| workspace.active_modal::<CommandPalette>(cx).is_some())
+    );
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
     assert!(
@@ -913,12 +919,11 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.set_state("const beˇfore = 2; console.log(before)", Mode::Normal);
     let def_range = cx.lsp_range("const «beforeˇ» = 2; console.log(before)");
     let tgt_range = cx.lsp_range("const before = 2; console.log(«beforeˇ»)");
-    let mut prepare_request =
-        cx.handle_request::<lsp::request::PrepareRenameRequest, _, _>(move |_, _, _| async move {
-            Ok(Some(lsp::PrepareRenameResponse::Range(def_range)))
-        });
+    let mut prepare_request = cx.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+        move |_, _, _| async move { Ok(Some(lsp::PrepareRenameResponse::Range(def_range))) },
+    );
     let mut rename_request =
-        cx.handle_request::<lsp::request::Rename, _, _>(move |url, params, _| async move {
+        cx.set_request_handler::<lsp::request::Rename, _, _>(move |url, params, _| async move {
             Ok(Some(lsp::WorkspaceEdit {
                 changes: Some(
                     [(
@@ -1346,12 +1351,12 @@ async fn test_sneak(cx: &mut gpui::TestAppContext) {
                 Some("vim_mode == normal"),
             ),
             KeyBinding::new(
-                "S",
+                "shift-s",
                 PushSneakBackward { first_char: None },
                 Some("vim_mode == normal"),
             ),
             KeyBinding::new(
-                "S",
+                "shift-s",
                 PushSneakBackward { first_char: None },
                 Some("vim_mode == visual"),
             ),
@@ -1706,4 +1711,264 @@ async fn test_ctrl_o_dot(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("heˇo world.");
     cx.simulate_shared_keystrokes("l l escape .").await;
     cx.shared_state().await.assert_eq("hellˇllo world.");
+}
+
+#[gpui::test]
+async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
+    VimTestContext::init(cx);
+    cx.update(|cx| {
+        VimTestContext::init_keybindings(true, cx);
+    });
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("111\n222\n333\n444\n", vec![Point::row_range(0..2)]),
+                ("aaa\nbbb\nccc\nddd\n", vec![Point::row_range(0..2)]),
+                ("AAA\nBBB\nCCC\nDDD\n", vec![Point::row_range(0..2)]),
+                ("one\ntwo\nthr\nfou\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        let mut editor = Editor::new(EditorMode::Full, multi_buffer.clone(), None, window, cx);
+
+        let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+        // fold all but the second buffer, so that we test navigating between two
+        // adjacent folded buffers, as well as folded buffers at the start and
+        // end the multibuffer
+        editor.fold_buffer(buffer_ids[0], cx);
+        editor.fold_buffer(buffer_ids[2], cx);
+        editor.fold_buffer(buffer_ids[3], cx);
+
+        editor
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇaaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        ˇ[EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇ[FOLDED]
+        "
+    });
+    cx.simulate_keystroke("k");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("k");
+    cx.simulate_keystroke("k");
+    cx.simulate_keystroke("k");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇaaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("k");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystroke("shift-g");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇ[FOLDED]
+        "
+    });
+    cx.simulate_keystrokes("g g");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        aaa
+        bbb
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.update_editor(|editor, _, cx| {
+        let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
+        editor.fold_buffer(buffer_ids[1], cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+    cx.simulate_keystrokes("2 j");
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "
+    });
+}
+
+#[gpui::test]
+async fn test_delete_paragraph_motion(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state(indoc! {
+        "ˇhello world.
+
+        hello world.
+        "
+    })
+    .await;
+    cx.simulate_shared_keystrokes("y }").await;
+    cx.shared_clipboard().await.assert_eq("hello world.\n");
+    cx.simulate_shared_keystrokes("d }").await;
+    cx.shared_state().await.assert_eq("ˇ\nhello world.\n");
+    cx.shared_clipboard().await.assert_eq("hello world.\n");
+
+    cx.set_shared_state(indoc! {
+        "helˇlo world.
+
+            hello world.
+            "
+    })
+    .await;
+    cx.simulate_shared_keystrokes("y }").await;
+    cx.shared_clipboard().await.assert_eq("lo world.");
+    cx.simulate_shared_keystrokes("d }").await;
+    cx.shared_state().await.assert_eq("heˇl\n\nhello world.\n");
+    cx.shared_clipboard().await.assert_eq("lo world.");
+}
+
+#[gpui::test]
+async fn test_delete_unmatched_brace(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state(indoc! {
+        "fn o(wow: i32) {
+          othˇ(wow)
+          oth(wow)
+        }
+        "
+    })
+    .await;
+    cx.simulate_shared_keystrokes("d ] }").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "fn o(wow: i32) {
+          otˇh
+        }
+        "
+    });
+    cx.shared_clipboard().await.assert_eq("(wow)\n  oth(wow)");
+    cx.set_shared_state(indoc! {
+        "fn o(wow: i32) {
+          ˇoth(wow)
+          oth(wow)
+        }
+        "
+    })
+    .await;
+    cx.simulate_shared_keystrokes("d ] }").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "fn o(wow: i32) {
+         ˇ}
+        "
+    });
+    cx.shared_clipboard()
+        .await
+        .assert_eq("  oth(wow)\n  oth(wow)\n");
 }

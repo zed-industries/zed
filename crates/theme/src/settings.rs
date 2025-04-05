@@ -1,23 +1,23 @@
 use crate::fallback_themes::zed_default_dark;
 use crate::{
-    Appearance, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme, ThemeNotFoundError,
-    ThemeRegistry, ThemeStyleContent, DEFAULT_ICON_THEME_NAME,
+    Appearance, DEFAULT_ICON_THEME_NAME, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme,
+    ThemeNotFoundError, ThemeRegistry, ThemeStyleContent,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Subscription, Window,
+    App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
+    Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::{
-    gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
+    r#gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{add_references_to_properties, Settings, SettingsJsonSchemaParams, SettingsSources};
+use settings::{Settings, SettingsJsonSchemaParams, SettingsSources, add_references_to_properties};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -577,6 +577,22 @@ impl ThemeSettings {
             .map(|size| size.0)
             .unwrap_or(self.ui_font_size);
         clamp_font_size(font_size)
+    }
+
+    /// Returns the buffer font size, read from the settings.
+    ///
+    /// The real buffer font size is stored in-memory, to support temporary font size changes.
+    /// Use [`Self::buffer_font_size`] to get the real font size.
+    pub fn buffer_font_size_settings(&self) -> Pixels {
+        self.buffer_font_size
+    }
+
+    /// Returns the UI font size, read from the settings.
+    ///
+    /// The real UI font size is stored in-memory, to support temporary font size changes.
+    /// Use [`Self::ui_font_size`] to get the real font size.
+    pub fn ui_font_size_settings(&self) -> Pixels {
+        self.ui_font_size
     }
 
     // TODO: Rename: `line_height` -> `buffer_line_height`

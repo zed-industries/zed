@@ -9,7 +9,7 @@ use gpui::{AppContext as _, Context, Entity, SharedString, Window};
 use language::Buffer;
 use ui::prelude::*;
 use workspace::notifications::simple_message_notification::MessageNotification;
-use workspace::{notifications::NotificationId, Workspace};
+use workspace::{Workspace, notifications::NotificationId};
 
 const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("astro", &["astro"]),
@@ -168,11 +168,14 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
         );
 
         workspace.show_notification(notification_id, cx, |cx| {
-            cx.new(move |_cx| {
-                MessageNotification::new(format!(
-                    "Do you want to install the recommended '{}' extension for '{}' files?",
-                    extension_id, file_name_or_extension
-                ))
+            cx.new(move |cx| {
+                MessageNotification::new(
+                    format!(
+                        "Do you want to install the recommended '{}' extension for '{}' files?",
+                        extension_id, file_name_or_extension
+                    ),
+                    cx,
+                )
                 .primary_message("Yes, install extension")
                 .primary_icon(IconName::Check)
                 .primary_icon_color(Color::Success)

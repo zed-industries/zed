@@ -22,6 +22,7 @@ async-trait = { workspace = true, "optional" = true }
 collections.workspace = true
 command_palette.workspace = true
 command_palette_hooks.workspace = true
+db.workspace = true
 editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -31,6 +32,8 @@ libc.workspace = true
 log.workspace = true
 multi_buffer.workspace = true
 nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
+picker.workspace = true
+project.workspace = true
 regex.workspace = true
 schemars.workspace = true
 search.workspace = true
@@ -39,6 +42,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 task.workspace = true
+text.workspace = true
 theme.workspace = true
 tokio = { version = "1.15", features = ["full"], optional = true }
 ui.workspace = true
@@ -46,6 +50,7 @@ util.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
@@ -55,6 +60,7 @@ git_ui.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 project_panel.workspace = true

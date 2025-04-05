@@ -48,7 +48,7 @@ pub struct ChannelPathsInsertGuard<'a> {
     channels_by_id: &'a mut BTreeMap<ChannelId, Arc<Channel>>,
 }
 
-impl<'a> ChannelPathsInsertGuard<'a> {
+impl ChannelPathsInsertGuard<'_> {
     pub fn insert(&mut self, channel_proto: proto::Channel) -> bool {
         let mut ret = false;
         let parent_path = channel_proto
@@ -86,7 +86,7 @@ impl<'a> ChannelPathsInsertGuard<'a> {
     }
 }
 
-impl<'a> Drop for ChannelPathsInsertGuard<'a> {
+impl Drop for ChannelPathsInsertGuard<'_> {
     fn drop(&mut self) {
         self.channels_ordered.sort_by(|a, b| {
             let a = channel_path_sorting_key(*a, self.channels_by_id);

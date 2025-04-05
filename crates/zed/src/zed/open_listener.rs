@@ -1,8 +1,8 @@
 use crate::handle_open_request;
 use crate::restorable_workspace_locations;
-use anyhow::{anyhow, Context as _, Result};
-use cli::{ipc, IpcHandshake};
-use cli::{ipc::IpcSender, CliRequest, CliResponse};
+use anyhow::{Context as _, Result, anyhow};
+use cli::{CliRequest, CliResponse, ipc::IpcSender};
+use cli::{IpcHandshake, ipc};
 use client::parse_zed_link;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
@@ -14,16 +14,16 @@ use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
-use recent_projects::{open_ssh_project, SshSettings};
+use recent_projects::{SshSettings, open_ssh_project};
 use remote::SshConnectionOptions;
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use util::paths::PathWithPosition;
 use util::ResultExt;
-use welcome::{show_welcome_view, FIRST_OPEN};
+use util::paths::PathWithPosition;
+use welcome::{FIRST_OPEN, show_welcome_view};
 use workspace::item::ItemHandle;
 use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 
@@ -34,6 +34,7 @@ pub struct OpenRequest {
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
+    pub dock_menu_action: Option<usize>,
 }
 
 impl OpenRequest {
@@ -42,6 +43,8 @@ impl OpenRequest {
         for url in urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.cli_connection = Some(connect_to_cli(server_name)?);
+            } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
+                this.dock_menu_action = Some(action_index.parse()?);
             } else if let Some(file) = url.strip_prefix("file://") {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
@@ -100,7 +103,7 @@ impl OpenRequest {
         let mut parts = request_path.split('/');
         if parts.next() == Some("channel") {
             if let Some(slug) = parts.next() {
-                if let Some(id_str) = slug.split('-').last() {
+                if let Some(id_str) = slug.split('-').next_back() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
                         let Some(next) = parts.next() else {
                             self.join_channel = Some(channel_id);
@@ -248,7 +251,7 @@ pub async fn open_paths_with_positions(
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
-    mut cx: AsyncApp,
+    cx: &mut AsyncApp,
 ) {
     if let Some(request) = requests.next().await {
         match request {
@@ -287,7 +290,7 @@ pub async fn handle_cli_connection(
                     wait,
                     app_state.clone(),
                     env,
-                    &mut cx,
+                    cx,
                 )
                 .await;
 
@@ -376,7 +379,7 @@ async fn open_workspaces(
                             .connection_options_for(ssh.host, ssh.port, ssh.user)
                     });
                     if let Ok(connection_options) = connection_options {
-                        cx.spawn(|mut cx| async move {
+                        cx.spawn(async move |mut cx| {
                             open_ssh_project(
                                 connection_options,
                                 ssh.paths.into_iter().map(PathBuf::from).collect(),
@@ -529,8 +532,8 @@ mod tests {
     use std::sync::Arc;
 
     use cli::{
-        ipc::{self},
         CliResponse,
+        ipc::{self},
     };
     use editor::Editor;
     use gpui::TestAppContext;

@@ -1,14 +1,14 @@
 use crate::{
+    Vim,
     motion::{self, Motion},
     object::Object,
     state::Mode,
-    Vim,
 };
 use editor::{
-    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, Bias, Editor, EditorSnapshot,
-    ToOffset, ToPoint,
+    Anchor, Bias, Editor, EditorSnapshot, ToOffset, ToPoint, display_map::ToDisplayPoint,
+    scroll::Autoscroll,
 };
-use gpui::{actions, Context, Window};
+use gpui::{Context, Window, actions};
 use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;
@@ -95,7 +95,7 @@ impl Vim {
                     .into_iter()
                     .filter_map(|selection| {
                         let end = selection.head();
-                        let start = motion::backspace(
+                        let start = motion::wrapping_left(
                             &map,
                             end.to_display_point(&map),
                             maybe_times.unwrap_or(1),
@@ -170,8 +170,9 @@ impl Vim {
     pub fn clear_exchange(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, _, cx| {
-            editor.clear_highlights::<VimExchange>(cx);
+            editor.clear_background_highlights::<VimExchange>(cx);
         });
+        self.clear_operator(window, cx);
     }
 
     pub fn exchange_motion(
@@ -187,13 +188,7 @@ impl Vim {
             let text_layout_details = editor.text_layout_details(window);
             let mut selection = editor.selections.newest_display(cx);
             let snapshot = editor.snapshot(window, cx);
-            motion.expand_selection(
-                &snapshot,
-                &mut selection,
-                times,
-                false,
-                &text_layout_details,
-            );
+            motion.expand_selection(&snapshot, &mut selection, times, &text_layout_details);
             let start = snapshot
                 .buffer_snapshot
                 .anchor_before(selection.start.to_point(&snapshot));
@@ -482,5 +477,28 @@ mod test {
         cx.set_state("ˇhello world", Mode::Normal);
         cx.simulate_keystrokes("c x t r w c x i w");
         cx.assert_state("hello ˇworld", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_clear_exchange_clears_operator(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇirrelevant", Mode::Normal);
+        cx.simulate_keystrokes("c x c");
+
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_clear_exchange(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇhello world", Mode::Normal);
+        cx.simulate_keystrokes("c x i w c x c");
+
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert_eq!(0, highlights.len());
+        });
     }
 }

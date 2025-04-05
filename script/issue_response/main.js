@@ -24,7 +24,7 @@ async function main() {
 
   const owner = "zed-industries";
   const repo = "zed";
-  const teams = ["staff", "triagers"];
+  const teams = ["staff"];
   const githubHandleSet = new Set();
 
   for (const team of teams) {
@@ -46,23 +46,28 @@ async function main() {
   githubHandles.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
   const commenterFilters = githubHandles.map((name) => `-commenter:${name}`);
   const authorFilters = githubHandles.map((name) => `-author:${name}`);
+  const twoDaysAgo = new Date();
+  twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+  const twoDaysAgoString = twoDaysAgo.toISOString().split("T")[0];
+  const dateRangeFilter = `2025-02-01..${twoDaysAgoString}`;
 
   const q = [
     `repo:${owner}/${repo}`,
     "is:issue",
     "state:open",
-    "created:>=2025-02-01",
+    `created:${dateRangeFilter}`,
     "sort:created-asc",
     ...commenterFilters,
     ...authorFilters,
   ];
 
-  const response = await octokit.rest.search.issuesAndPullRequests({
-    q: q.join("+"),
-    per_page: 100,
-  });
-
-  const issues = response.data.items;
+  const issues = await octokit.paginate(
+    octokit.rest.search.issuesAndPullRequests,
+    {
+      q: q.join("+"),
+      per_page: 100,
+    },
+  );
   const issueLines = issues.map((issue, index) => {
     const formattedDate = new Date(issue.created_at).toLocaleDateString(
       "en-US",

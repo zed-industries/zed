@@ -1,9 +1,9 @@
 [
   {
     "bindings": {
-      "ctrl-{": "pane::ActivatePrevItem",
+      "ctrl-{": "pane::ActivatePreviousItem",
       "ctrl-}": "pane::ActivateNextItem",
-      "ctrl-pageup": "pane::ActivatePrevItem",
+      "ctrl-pageup": "pane::ActivatePreviousItem",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-1": ["workspace::ActivatePane", 0],
       "ctrl-2": ["workspace::ActivatePane", 1],
@@ -44,7 +44,7 @@
       "shift-f12": "editor::FindAllReferences",
       "ctrl-shift-f12": "editor::FindAllReferences",
       "ctrl-.": "editor::GoToHunk",
-      "ctrl-,": "editor::GoToPrevHunk",
+      "ctrl-,": "editor::GoToPreviousHunk",
       "ctrl-k ctrl-u": "editor::ConvertToUpperCase",
       "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
@@ -62,7 +62,7 @@
     "context": "Pane",
     "bindings": {
       "f4": "search::SelectNextMatch",
-      "shift-f4": "search::SelectPrevMatch",
+      "shift-f4": "search::SelectPreviousMatch",
       "alt-1": ["pane::ActivateItem", 0],
       "alt-2": ["pane::ActivateItem", 1],
       "alt-3": ["pane::ActivateItem", 2],

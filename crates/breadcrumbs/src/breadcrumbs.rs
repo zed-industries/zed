@@ -6,10 +6,10 @@ use gpui::{
 use itertools::Itertools;
 use std::cmp;
 use theme::ActiveTheme;
-use ui::{prelude::*, ButtonLike, ButtonStyle, Label, Tooltip};
+use ui::{ButtonLike, ButtonStyle, Label, Tooltip, prelude::*};
 use workspace::{
-    item::{BreadcrumbText, ItemEvent, ItemHandle},
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    item::{BreadcrumbText, ItemEvent, ItemHandle},
 };
 
 pub struct Breadcrumbs {
@@ -81,8 +81,8 @@ impl Render for Breadcrumbs {
             }
             text_style.color = Color::Muted.color(cx);
 
-            StyledText::new(segment.text.replace('\n', "␤"))
-                .with_highlights(&text_style, segment.highlights.unwrap_or_default())
+            StyledText::new(segment.text.replace('\n', "⏎"))
+                .with_default_highlights(&text_style, segment.highlights.unwrap_or_default())
                 .into_any()
         });
         let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {

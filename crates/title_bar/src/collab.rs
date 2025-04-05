@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, User};
-use gpui::{actions, App, Task, Window};
-use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
+use client::{User, proto::PeerId};
+use gpui::{AnyElement, Hsla, IntoElement, MouseButton, Path, Styled, canvas, point};
+use gpui::{App, Task, Window, actions};
 use rpc::proto::{self};
 use theme::ActiveTheme;
-use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip};
+use ui::{Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip, prelude::*};
 use workspace::notifications::DetachAndPromptErr;
 
 use crate::TitleBar;
@@ -191,7 +191,6 @@ impl TitleBar {
             )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_collaborator(
         &self,
         user: &Arc<User>,
@@ -220,7 +219,7 @@ impl TitleBar {
                 // When the collaborator is not followed, still draw this wrapper div, but leave
                 // it transparent, so that it does not shift the layout when following.
                 .when_some(leader_selection_color, |div, color| {
-                    div.rounded_md().bg(color)
+                    div.rounded_sm().bg(color)
                 })
                 .child(
                     Facepile::empty()
@@ -324,9 +323,9 @@ impl TitleBar {
                 .label_size(LabelSize::Small)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if is_shared {
-                        this.unshare_project(&Default::default(), window, cx);
+                        this.unshare_project(window, cx);
                     } else {
-                        this.share_project(&Default::default(), cx);
+                        this.share_project(cx);
                     }
                 }))
                 .into_any_element(),
@@ -348,42 +347,6 @@ impl TitleBar {
                         }),
                 )
                 .into_any_element(),
-        );
-
-        children.push(
-            IconButton::new(
-                "mute-sound",
-                if is_deafened {
-                    ui::IconName::AudioOff
-                } else {
-                    ui::IconName::AudioOn
-                },
-            )
-            .style(ButtonStyle::Subtle)
-            .selected_style(ButtonStyle::Tinted(TintColor::Error))
-            .icon_size(IconSize::Small)
-            .toggle_state(is_deafened)
-            .tooltip(move |window, cx| {
-                if is_deafened {
-                    let label = "Unmute Audio";
-
-                    if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be unmuted", window, cx)
-                    } else {
-                        Tooltip::simple(label, cx)
-                    }
-                } else {
-                    let label = "Mute Audio";
-
-                    if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be muted", window, cx)
-                    } else {
-                        Tooltip::simple(label, cx)
-                    }
-                }
-            })
-            .on_click(move |_, _, cx| toggle_deafen(&Default::default(), cx))
-            .into_any_element(),
         );
 
         if can_use_microphone {
@@ -422,25 +385,61 @@ impl TitleBar {
                 })
                 .into_any_element(),
             );
+        }
 
-            if screen_sharing_supported {
-                children.push(
-                    IconButton::new("screen-share", ui::IconName::Screen)
-                        .style(ButtonStyle::Subtle)
-                        .icon_size(IconSize::Small)
-                        .toggle_state(is_screen_sharing)
-                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                        .tooltip(Tooltip::text(if is_screen_sharing {
-                            "Stop Sharing Screen"
-                        } else {
-                            "Share Screen"
-                        }))
-                        .on_click(move |_, window, cx| {
-                            toggle_screen_sharing(&Default::default(), window, cx)
-                        })
-                        .into_any_element(),
-                );
-            }
+        children.push(
+            IconButton::new(
+                "mute-sound",
+                if is_deafened {
+                    ui::IconName::AudioOff
+                } else {
+                    ui::IconName::AudioOn
+                },
+            )
+            .style(ButtonStyle::Subtle)
+            .selected_style(ButtonStyle::Tinted(TintColor::Error))
+            .icon_size(IconSize::Small)
+            .toggle_state(is_deafened)
+            .tooltip(move |window, cx| {
+                if is_deafened {
+                    let label = "Unmute Audio";
+
+                    if !muted_by_user {
+                        Tooltip::with_meta(label, None, "Microphone will be unmuted", window, cx)
+                    } else {
+                        Tooltip::simple(label, cx)
+                    }
+                } else {
+                    let label = "Mute Audio";
+
+                    if !muted_by_user {
+                        Tooltip::with_meta(label, None, "Microphone will be muted", window, cx)
+                    } else {
+                        Tooltip::simple(label, cx)
+                    }
+                }
+            })
+            .on_click(move |_, _, cx| toggle_deafen(&Default::default(), cx))
+            .into_any_element(),
+        );
+
+        if can_use_microphone && screen_sharing_supported {
+            children.push(
+                IconButton::new("screen-share", ui::IconName::Screen)
+                    .style(ButtonStyle::Subtle)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(is_screen_sharing)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .tooltip(Tooltip::text(if is_screen_sharing {
+                        "Stop Sharing Screen"
+                    } else {
+                        "Share Screen"
+                    }))
+                    .on_click(move |_, window, cx| {
+                        toggle_screen_sharing(&Default::default(), window, cx)
+                    })
+                    .into_any_element(),
+            );
         }
 
         children.push(div().pr_2().into_any_element());

@@ -8,8 +8,8 @@ use gpui::{
 use project::search::SearchQuery;
 
 use crate::{
-    item::{Item, WeakItemHandle},
     ItemHandle,
+    item::{Item, WeakItemHandle},
 };
 
 #[derive(Clone, Debug)]
@@ -150,6 +150,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     ) -> Task<Vec<Self::Match>>;
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Self::Match],
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -208,6 +209,7 @@ pub trait SearchableItemHandle: ItemHandle {
     ) -> Task<AnyVec<dyn Send>>;
     fn active_match_index(
         &self,
+        direction: Direction,
         matches: &AnyVec<dyn Send>,
         window: &mut Window,
         cx: &mut App,
@@ -301,7 +303,7 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         cx: &mut App,
     ) -> Task<AnyVec<dyn Send>> {
         let matches = self.update(cx, |this, cx| this.find_matches(query, window, cx));
-        window.spawn(cx, |_| async {
+        window.spawn(cx, async |_| {
             let matches = matches.await;
             let mut any_matches = AnyVec::with_capacity::<T::Match>(matches.len());
             {
@@ -315,13 +317,14 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
     }
     fn active_match_index(
         &self,
+        direction: Direction,
         matches: &AnyVec<dyn Send>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<usize> {
         let matches = matches.downcast_ref()?;
         self.update(cx, |this, cx| {
-            this.active_match_index(matches.as_slice(), window, cx)
+            this.active_match_index(direction, matches.as_slice(), window, cx)
         })
     }
 

@@ -1,22 +1,26 @@
 use std::sync::Arc;
 
-use crate::active_item_selection_properties;
+use crate::TaskContexts;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    rems, Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
+    Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
     Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window,
+    WeakEntity, Window, rems,
 };
-use picker::{highlighted_match_with_paths::HighlightedMatch, Picker, PickerDelegate};
-use project::{task_store::TaskStore, TaskSourceKind};
-use task::{ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
+use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
+use project::{TaskSourceKind, task_store::TaskStore};
+use task::{
+    DebugRequestType, DebugTaskDefinition, ResolvedTask, RevealTarget, TaskContext, TaskModal,
+    TaskTemplate, TaskType,
+};
 use ui::{
-    div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
-    FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
-    KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
+    ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon,
+    IconButton, IconButtonShape, IconName, IconSize, IntoElement, KeyBinding, Label, LabelSize,
+    ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div, h_flex, v_flex,
 };
-use util::ResultExt;
-use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
+
+use util::{ResultExt, truncate_and_trailoff};
+use workspace::{ModalView, Workspace, tasks::schedule_resolved_task};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
@@ -30,8 +34,10 @@ pub(crate) struct TasksModalDelegate {
     selected_index: usize,
     workspace: WeakEntity<Workspace>,
     prompt: String,
-    task_context: TaskContext,
+    task_contexts: TaskContexts,
     placeholder_text: Arc<str>,
+    /// If this delegate is responsible for running a scripting task or a debugger
+    task_modal_type: TaskModal,
 }
 
 /// Task template amendments to do before resolving the context.
@@ -44,8 +50,9 @@ pub(crate) struct TaskOverrides {
 impl TasksModalDelegate {
     fn new(
         task_store: Entity<TaskStore>,
-        task_context: TaskContext,
+        task_contexts: TaskContexts,
         task_overrides: Option<TaskOverrides>,
+        task_modal_type: TaskModal,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
         let placeholder_text = if let Some(TaskOverrides {
@@ -65,7 +72,8 @@ impl TasksModalDelegate {
             divider_index: None,
             selected_index: 0,
             prompt: String::default(),
-            task_context,
+            task_contexts,
+            task_modal_type,
             task_overrides,
             placeholder_text,
         }
@@ -76,6 +84,11 @@ impl TasksModalDelegate {
             return None;
         }
 
+        let default_context = TaskContext::default();
+        let active_context = self
+            .task_contexts
+            .active_context()
+            .unwrap_or(&default_context);
         let source_kind = TaskSourceKind::UserInput;
         let id_base = source_kind.to_id_base();
         let mut new_oneshot = TaskTemplate {
@@ -91,7 +104,7 @@ impl TasksModalDelegate {
         }
         Some((
             source_kind,
-            new_oneshot.resolve_task(&id_base, &self.task_context)?,
+            new_oneshot.resolve_task(&id_base, active_context)?,
         ))
     }
 
@@ -122,15 +135,22 @@ pub(crate) struct TasksModal {
 impl TasksModal {
     pub(crate) fn new(
         task_store: Entity<TaskStore>,
-        task_context: TaskContext,
+        task_contexts: TaskContexts,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakEntity<Workspace>,
+        task_modal_type: TaskModal,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(task_store, task_context, task_overrides, workspace),
+                TasksModalDelegate::new(
+                    task_store,
+                    task_contexts,
+                    task_overrides,
+                    task_modal_type,
+                    workspace,
+                ),
                 window,
                 cx,
             )
@@ -168,6 +188,8 @@ impl Focusable for TasksModal {
 
 impl ModalView for TasksModal {}
 
+const MAX_TAGS_LINE_LEN: usize = 30;
+
 impl PickerDelegate for TasksModalDelegate {
     type ListItem = ListItem;
 
@@ -198,48 +220,37 @@ impl PickerDelegate for TasksModalDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Task<()> {
-        cx.spawn_in(window, move |picker, mut cx| async move {
+        let task_type = self.task_modal_type.clone();
+        cx.spawn_in(window, async move |picker, cx| {
             let Some(candidates) = picker
-                .update(&mut cx, |picker, cx| {
-                    match &mut picker.delegate.candidates {
-                        Some(candidates) => string_match_candidates(candidates.iter()),
-                        None => {
-                            let Ok((worktree, location)) =
-                                picker.delegate.workspace.update(cx, |workspace, cx| {
-                                    active_item_selection_properties(workspace, cx)
-                                })
-                            else {
-                                return Vec::new();
-                            };
-                            let Some(task_inventory) = picker
-                                .delegate
-                                .task_store
-                                .read(cx)
-                                .task_inventory()
-                                .cloned()
-                            else {
-                                return Vec::new();
-                            };
+                .update(cx, |picker, cx| match &mut picker.delegate.candidates {
+                    Some(candidates) => string_match_candidates(candidates.iter(), task_type),
+                    None => {
+                        let Some(task_inventory) = picker
+                            .delegate
+                            .task_store
+                            .read(cx)
+                            .task_inventory()
+                            .cloned()
+                        else {
+                            return Vec::new();
+                        };
 
-                            let (used, current) =
-                                task_inventory.read(cx).used_and_current_resolved_tasks(
-                                    worktree,
-                                    location,
-                                    &picker.delegate.task_context,
-                                    cx,
-                                );
-                            picker.delegate.last_used_candidate_index = if used.is_empty() {
-                                None
-                            } else {
-                                Some(used.len() - 1)
-                            };
+                        let (used, current) = task_inventory
+                            .read(cx)
+                            .used_and_current_resolved_tasks(&picker.delegate.task_contexts, cx);
+                        picker.delegate.last_used_candidate_index = if used.is_empty() {
+                            None
+                        } else {
+                            Some(used.len() - 1)
+                        };
 
-                            let mut new_candidates = used;
-                            new_candidates.extend(current);
-                            let match_candidates = string_match_candidates(new_candidates.iter());
-                            let _ = picker.delegate.candidates.insert(new_candidates);
-                            match_candidates
-                        }
+                        let mut new_candidates = used;
+                        new_candidates.extend(current);
+                        let match_candidates =
+                            string_match_candidates(new_candidates.iter(), task_type);
+                        let _ = picker.delegate.candidates.insert(new_candidates);
+                        match_candidates
                     }
                 })
                 .ok()
@@ -256,7 +267,7 @@ impl PickerDelegate for TasksModalDelegate {
             )
             .await;
             picker
-                .update(&mut cx, |picker, _| {
+                .update(cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
                     if let Some(index) = delegate.last_used_candidate_index {
@@ -285,7 +296,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn confirm(
         &mut self,
         omit_history_entry: bool,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) {
         let current_match_index = self.selected_index();
@@ -312,7 +323,47 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                match task.task_type() {
+                    TaskType::Debug(config) if config.locator.is_none() => {
+                        let Some(config): Option<DebugTaskDefinition> = task
+                            .resolved_debug_adapter_config()
+                            .and_then(|config| config.try_into().ok())
+                        else {
+                            return;
+                        };
+                        let project = workspace.project().clone();
+
+                        match &config.request {
+                            DebugRequestType::Attach(attach_config)
+                                if attach_config.process_id.is_none() =>
+                            {
+                                workspace.toggle_modal(window, cx, |window, cx| {
+                                    debugger_ui::attach_modal::AttachModal::new(
+                                        project,
+                                        config.clone(),
+                                        true,
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            }
+                            _ => {
+                                project.update(cx, |project, cx| {
+                                    project
+                                        .start_debug_session(config.into(), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            }
+                        }
+                    }
+                    _ => schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        task,
+                        omit_history_entry,
+                        cx,
+                    ),
+                };
             })
             .ok();
         cx.emit(DismissEvent);
@@ -349,6 +400,18 @@ impl PickerDelegate for TasksModalDelegate {
                 }
                 tooltip_label_text.push_str(&resolved.command_label);
             }
+        }
+        if template.tags.len() > 0 {
+            tooltip_label_text.push('\n');
+            tooltip_label_text.push_str(
+                template
+                    .tags
+                    .iter()
+                    .map(|tag| format!("\n#{}", tag))
+                    .collect::<Vec<_>>()
+                    .join("")
+                    .as_str(),
+            );
         }
         let tooltip_label = if tooltip_label_text.trim().is_empty() {
             None
@@ -391,7 +454,22 @@ impl PickerDelegate for TasksModalDelegate {
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .start_slot::<Icon>(icon)
-                .end_slot::<AnyElement>(history_run_icon)
+                .end_slot::<AnyElement>(
+                    h_flex()
+                        .gap_1()
+                        .child(Label::new(truncate_and_trailoff(
+                            &template
+                                .tags
+                                .iter()
+                                .map(|tag| format!("#{}", tag))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                            MAX_TAGS_LINE_LEN,
+                        )))
+                        .flex_none()
+                        .child(history_run_icon.unwrap())
+                        .into_any_element(),
+                )
                 .spacing(ListItemSpacing::Sparse)
                 .when_some(tooltip_label, |list_item, item_label| {
                     list_item.tooltip(move |_, _| item_label.clone())
@@ -466,7 +544,39 @@ impl PickerDelegate for TasksModalDelegate {
         }
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                match task.task_type() {
+                    TaskType::Script => schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        task,
+                        omit_history_entry,
+                        cx,
+                    ),
+                    // todo(debugger): Should create a schedule_resolved_debug_task function
+                    // This would allow users to access to debug history and other issues
+                    TaskType::Debug(debug_args) => {
+                        let Some(debug_config) = task.resolved_debug_adapter_config() else {
+                            // todo(debugger) log an error, this should never happen
+                            return;
+                        };
+
+                        if debug_args.locator.is_some() {
+                            schedule_resolved_task(
+                                workspace,
+                                task_source_kind,
+                                task,
+                                omit_history_entry,
+                                cx,
+                            );
+                        } else {
+                            workspace.project().update(cx, |project, cx| {
+                                project
+                                    .start_debug_session(debug_config, cx)
+                                    .detach_and_log_err(cx);
+                            });
+                        }
+                    }
+                };
             })
             .ok();
         cx.emit(DismissEvent);
@@ -504,7 +614,7 @@ impl PickerDelegate for TasksModalDelegate {
                 .h_8()
                 .p_2()
                 .justify_between()
-                .rounded_b_md()
+                .rounded_b_sm()
                 .bg(cx.theme().colors().ghost_element_selected)
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
@@ -588,9 +698,14 @@ impl PickerDelegate for TasksModalDelegate {
 
 fn string_match_candidates<'a>(
     candidates: impl Iterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
+    task_modal_type: TaskModal,
 ) -> Vec<StringMatchCandidate> {
     candidates
         .enumerate()
+        .filter(|(_, (_, candidate))| match candidate.task_type() {
+            TaskType::Script => task_modal_type == TaskModal::ScriptModal,
+            TaskType::Debug(_) => task_modal_type == TaskModal::DebugModal,
+        })
         .map(|(index, (_, candidate))| StringMatchCandidate::new(index, candidate.display_label()))
         .collect()
 }
@@ -606,7 +721,7 @@ mod tests {
     use serde_json::json;
     use task::TaskTemplates;
     use util::path;
-    use workspace::CloseInactiveTabsAndPanes;
+    use workspace::{CloseInactiveTabsAndPanes, OpenOptions, OpenVisible};
 
     use crate::{modal::Spawn, tests::init_test};
 
@@ -650,14 +765,22 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "With no global tasks and no open item, no tasks should be listed"
+            vec!["another one", "example task"],
+            "With no global tasks and no open item, a single worktree should be used and its tasks listed"
         );
         drop(tasks_picker);
 
         let _ = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -810,8 +933,8 @@ mod tests {
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "Should list no file or worktree context-dependent when no file is open"
+            vec![concat!("opened now: ", path!("/dir")).to_string()],
+            "When no file is open for a single worktree, should autodetect all worktree-related tasks"
         );
         tasks_picker.update(cx, |_, cx| {
             cx.emit(DismissEvent);
@@ -823,7 +946,10 @@ mod tests {
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from(path!("/dir/file_with.odd_extension")),
-                    true,
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
                     window,
                     cx,
                 )
@@ -850,7 +976,10 @@ mod tests {
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from(path!("/dir/file_without_extension")),
-                    true,
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
                     window,
                     cx,
                 )
@@ -958,7 +1087,15 @@ mod tests {
 
         let _ts_file_1 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a1.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a1.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -999,7 +1136,15 @@ mod tests {
 
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a2.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a2.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1022,7 +1167,15 @@ mod tests {
 
         let _rs_file = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/b.rs")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/b.rs")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1037,7 +1190,15 @@ mod tests {
         emulate_task_schedule(tasks_picker, &project, "Rust task", cx);
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from(path!("/dir/a2.ts")), true, window, cx)
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/a2.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();

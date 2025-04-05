@@ -1,15 +1,15 @@
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement, Render,
-    Styled, WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement, Render, Styled,
+    WeakEntity, Window, actions,
 };
 use language::LanguageRegistry;
 use paths::config_dir;
 use picker::{Picker, PickerDelegate};
 use std::{borrow::Borrow, fs, sync::Arc};
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, ModalView, Workspace};
+use workspace::{ModalView, OpenOptions, OpenVisible, Workspace, notifications::NotifyResultExt};
 
 actions!(snippets, [ConfigureSnippets, OpenFolder]);
 
@@ -134,17 +134,20 @@ impl PickerDelegate for ScopeSelectorDelegate {
             let language = self.language_registry.language_for_name(&scope_name);
 
             if let Some(workspace) = self.workspace.upgrade() {
-                cx.spawn_in(window, |_, mut cx| async move {
+                cx.spawn_in(window, async move |_, cx| {
                     let scope = match scope_name.as_str() {
                         "Global" => "snippets".to_string(),
                         _ => language.await?.lsp_id(),
                     };
 
-                    workspace.update_in(&mut cx, |workspace, window, cx| {
+                    workspace.update_in(cx, |workspace, window, cx| {
                         workspace
                             .open_abs_path(
                                 config_dir().join("snippets").join(scope + ".json"),
-                                false,
+                                OpenOptions {
+                                    visible: Some(OpenVisible::None),
+                                    ..Default::default()
+                                },
                                 window,
                                 cx,
                             )
@@ -184,7 +187,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
     ) -> gpui::Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self.candidates.clone();
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -208,7 +211,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let delegate = &mut this.delegate;
                 delegate.matches = matches;
                 delegate.selected_index = delegate

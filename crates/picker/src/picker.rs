@@ -1,17 +1,17 @@
 use anyhow::Result;
-use editor::{scroll::Autoscroll, Editor};
+use editor::{Editor, scroll::Autoscroll};
 use gpui::{
-    actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, App, ClickEvent,
-    Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Length,
-    ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render, ScrollHandle, ScrollStrategy,
-    Stateful, Task, UniformListScrollHandle, Window,
+    AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
+    ScrollHandle, ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div,
+    impl_actions, list, prelude::*, uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use ui::{
-    prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
+    Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, prelude::*, v_flex,
 };
 use util::ResultExt;
 use workspace::ModalView;
@@ -48,6 +48,7 @@ pub struct Picker<D: PickerDelegate> {
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
     width: Option<Length>,
+    widest_item: Option<usize>,
     max_height: Option<Length>,
     focus_handle: FocusHandle,
     /// An external control to display a scrollbar in the `Picker`.
@@ -95,8 +96,8 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str>;
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        "No matches".into()
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("No matches".into())
     }
     fn update_matches(
         &mut self,
@@ -283,6 +284,7 @@ impl<D: PickerDelegate> Picker<D> {
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
+            widest_item: None,
             max_height: Some(rems(18.).into()),
             focus_handle,
             show_scrollbar: false,
@@ -329,6 +331,11 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn width(mut self, width: impl Into<gpui::Length>) -> Self {
         self.width = Some(width.into());
+        self
+    }
+
+    pub fn widest_item(mut self, ix: Option<usize>) -> Self {
+        self.widest_item = ix;
         self
     }
 
@@ -391,7 +398,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -514,7 +526,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Head::Editor(ref editor) = &self.head else {
+        let Head::Editor(editor) = &self.head else {
             panic!("unexpected call");
         };
         match event {
@@ -566,8 +578,8 @@ impl<D: PickerDelegate> Picker<D> {
         // asynchronously.
         self.pending_update_matches = Some(PendingUpdateMatches {
             delegate_update_matches: Some(delegate_pending_update_matches),
-            _task: cx.spawn_in(window, |this, mut cx| async move {
-                let delegate_pending_update_matches = this.update(&mut cx, |this, _| {
+            _task: cx.spawn_in(window, async move |this, cx| {
+                let delegate_pending_update_matches = this.update(cx, |this, _| {
                     this.pending_update_matches
                         .as_mut()
                         .unwrap()
@@ -576,7 +588,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .unwrap()
                 })?;
                 delegate_pending_update_matches.await;
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update_in(cx, |this, window, cx| {
                     this.matches_updated(window, cx);
                 })
             }),
@@ -605,7 +617,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn set_query(&self, query: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
-        if let Head::Editor(ref editor) = &self.head {
+        if let Head::Editor(editor) = &self.head {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, window, cx);
                 let editor_offset = editor.buffer().read(cx).len(cx);
@@ -630,7 +642,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
         ix: usize,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<D> {
         div()
             .id(("item", ix))
             .cursor_pointer()
@@ -685,6 +697,9 @@ impl<D: PickerDelegate> Picker<D> {
                 },
             )
             .with_sizing_behavior(sizing_behavior)
+            .when_some(self.widest_item, |el, widest_item| {
+                el.with_width_from_item(Some(widest_item))
+            })
             .flex_grow()
             .py_1()
             .track_scroll(scroll_handle.clone())
@@ -709,12 +724,12 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn hide_scrollbar(&mut self, cx: &mut Context<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        self.hide_scrollbar_task = Some(cx.spawn(|panel, mut cx| async move {
+        self.hide_scrollbar_task = Some(cx.spawn(async move |panel, cx| {
             cx.background_executor()
                 .timer(SCROLLBAR_SHOW_INTERVAL)
                 .await;
             panel
-                .update(&mut cx, |panel, cx| {
+                .update(cx, |panel, cx| {
                     panel.scrollbar_visibility = false;
                     cx.notify();
                 })
@@ -786,7 +801,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             // We should revisit how the `Picker` is styled to make it more composable.
             .when(self.is_modal, |this| this.elevation_3(cx))
             .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::cancel))
@@ -829,18 +844,17 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 )
             })
             .when(self.delegate.match_count() == 0, |el| {
-                el.child(
-                    v_flex().flex_grow().py_2().child(
-                        ListItem::new("empty_state")
-                            .inset(true)
-                            .spacing(ListItemSpacing::Sparse)
-                            .disabled(true)
-                            .child(
-                                Label::new(self.delegate.no_matches_text(window, cx))
-                                    .color(Color::Muted),
-                            ),
-                    ),
-                )
+                el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
+                    el.child(
+                        v_flex().flex_grow().py_2().child(
+                            ListItem::new("empty_state")
+                                .inset(true)
+                                .spacing(ListItemSpacing::Sparse)
+                                .disabled(true)
+                                .child(Label::new(text).color(Color::Muted)),
+                        ),
+                    )
+                })
             })
             .children(self.delegate.render_footer(window, cx))
             .children(match &self.head {

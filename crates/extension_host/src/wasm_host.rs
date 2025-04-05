@@ -1,21 +1,21 @@
 pub mod wit;
 
 use crate::ExtensionManifest;
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use extension::{
     CodeLabel, Command, Completion, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate,
     SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
-use fs::{normalize_path, Fs};
+use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
 use futures::{
+    Future, FutureExt, StreamExt as _,
     channel::{
         mpsc::{self, UnboundedSender},
         oneshot,
     },
     future::BoxFuture,
-    Future, FutureExt, StreamExt as _,
 };
 use gpui::{App, AsyncApp, BackgroundExecutor, Task};
 use http_client::HttpClient;
@@ -29,8 +29,8 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use wasmtime::{
-    component::{Component, ResourceTable},
     Engine, Store,
+    component::{Component, ResourceTable},
 };
 use wasmtime_wasi::{self as wasi, WasiView};
 use wit::Extension;
@@ -129,6 +129,56 @@ impl extension::Extension for WasmExtension {
                     .call_language_server_workspace_configuration(
                         store,
                         &language_server_id,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+                anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn language_server_additional_initialization_options(
+        &self,
+        language_server_id: LanguageServerName,
+        target_language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let options = extension
+                    .call_language_server_additional_initialization_options(
+                        store,
+                        &language_server_id,
+                        &target_language_server_id,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+                anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn language_server_additional_workspace_configuration(
+        &self,
+        language_server_id: LanguageServerName,
+        target_language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let options = extension
+                    .call_language_server_additional_workspace_configuration(
+                        store,
+                        &language_server_id,
+                        &target_language_server_id,
                         resource,
                     )
                     .await?
@@ -334,9 +384,9 @@ impl WasmHost {
         cx: &mut App,
     ) -> Arc<Self> {
         let (tx, mut rx) = mpsc::unbounded::<MainThreadCall>();
-        let task = cx.spawn(|mut cx| async move {
+        let task = cx.spawn(async move |cx| {
             while let Some(message) = rx.next().await {
-                message(&mut cx).await;
+                message(cx).await;
             }
         });
         Arc::new(Self {

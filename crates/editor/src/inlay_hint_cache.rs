@@ -14,28 +14,29 @@ use std::{
 };
 
 use crate::{
-    display_map::Inlay, Anchor, Editor, ExcerptId, InlayId, MultiBuffer, MultiBufferSnapshot,
+    Anchor, Editor, ExcerptId, InlayId, MultiBuffer, MultiBufferSnapshot, display_map::Inlay,
 };
 use anyhow::Context as _;
 use clock::Global;
 use futures::future;
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task, Window};
-use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
+use language::{Buffer, BufferSnapshot, language_settings::InlayHintKind};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
 
-use collections::{hash_map, HashMap, HashSet};
+use collections::{HashMap, HashSet, hash_map};
 use language::language_settings::InlayHintSettings;
 use smol::lock::Semaphore;
 use sum_tree::Bias;
 use text::{BufferId, ToOffset, ToPoint};
-use util::{post_inc, ResultExt};
+use util::{ResultExt, post_inc};
 
 pub struct InlayHintCache {
     hints: HashMap<ExcerptId, Arc<RwLock<CachedExcerptHints>>>,
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     version: usize,
     pub(super) enabled: bool,
+    modifiers_override: bool,
     enabled_in_settings: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
     refresh_task: Task<()>,
@@ -265,6 +266,7 @@ impl InlayHintCache {
         Self {
             allowed_hint_kinds: inlay_hint_settings.enabled_inlay_hint_kinds(),
             enabled: inlay_hint_settings.enabled,
+            modifiers_override: false,
             enabled_in_settings: inlay_hint_settings.enabled,
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
@@ -295,8 +297,9 @@ impl InlayHintCache {
         // visibility would not change when updating the setting if they were ever toggled.
         if new_hint_settings.enabled != self.enabled_in_settings {
             self.enabled = new_hint_settings.enabled;
+            self.enabled_in_settings = new_hint_settings.enabled;
+            self.modifiers_override = false;
         };
-        self.enabled_in_settings = new_hint_settings.enabled;
         self.invalidate_debounce = debounce_value(new_hint_settings.edit_debounce_ms);
         self.append_debounce = debounce_value(new_hint_settings.scroll_debounce_ms);
         let new_allowed_hint_kinds = new_hint_settings.enabled_inlay_hint_kinds();
@@ -323,6 +326,7 @@ impl InlayHintCache {
                 }
             }
             (true, false) => {
+                self.modifiers_override = false;
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
                 if self.hints.is_empty() {
                     ControlFlow::Break(None)
@@ -335,10 +339,37 @@ impl InlayHintCache {
                 }
             }
             (false, true) => {
+                self.modifiers_override = false;
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
                 ControlFlow::Continue(())
             }
         }
+    }
+
+    pub(super) fn modifiers_override(&mut self, new_override: bool) -> Option<bool> {
+        if self.modifiers_override == new_override {
+            return None;
+        }
+        self.modifiers_override = new_override;
+        if (self.enabled && self.modifiers_override) || (!self.enabled && !self.modifiers_override)
+        {
+            self.clear();
+            Some(false)
+        } else {
+            Some(true)
+        }
+    }
+
+    pub(super) fn toggle(&mut self, enabled: bool) -> bool {
+        if self.enabled == enabled {
+            return false;
+        }
+        self.enabled = enabled;
+        self.modifiers_override = false;
+        if !enabled {
+            self.clear();
+        }
+        true
     }
 
     /// If needed, queries LSP for new inlay hints, using the invalidation strategy given.
@@ -353,7 +384,8 @@ impl InlayHintCache {
         ignore_debounce: bool,
         cx: &mut Context<Editor>,
     ) -> Option<InlaySplice> {
-        if !self.enabled {
+        if (self.enabled && self.modifiers_override) || (!self.enabled && !self.modifiers_override)
+        {
             return None;
         }
         let mut invalidated_hints = Vec::new();
@@ -380,13 +412,13 @@ impl InlayHintCache {
         } else {
             self.append_debounce
         };
-        self.refresh_task = cx.spawn(|editor, mut cx| async move {
+        self.refresh_task = cx.spawn(async move |editor, cx| {
             if let Some(debounce_duration) = debounce_duration {
                 cx.background_executor().timer(debounce_duration).await;
             }
 
             editor
-                .update(&mut cx, |editor, cx| {
+                .update(cx, |editor, cx| {
                     spawn_new_update_tasks(
                         editor,
                         reason_description,
@@ -549,6 +581,7 @@ impl InlayHintCache {
             self.version += 1;
         }
         self.update_tasks.clear();
+        self.refresh_task = Task::ready(());
         self.hints.clear();
     }
 
@@ -593,8 +626,8 @@ impl InlayHintCache {
                     let server_id = *server_id;
                     cached_hint.resolve_state = ResolveState::Resolving;
                     drop(guard);
-                    cx.spawn_in(window, |editor, mut cx| async move {
-                        let resolved_hint_task = editor.update(&mut cx, |editor, cx| {
+                    cx.spawn_in(window, async move |editor, cx| {
+                        let resolved_hint_task = editor.update(cx, |editor, cx| {
                             let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
                             editor.semantics_provider.as_ref()?.resolve_inlay_hint(
                                 hint_to_resolve,
@@ -606,7 +639,7 @@ impl InlayHintCache {
                         if let Some(resolved_hint_task) = resolved_hint_task {
                             let mut resolved_hint =
                                 resolved_hint_task.await.context("hint resolve task")?;
-                            editor.update(&mut cx, |editor, _| {
+                            editor.update(cx, |editor, _| {
                                 if let Some(excerpt_hints) =
                                     editor.inlay_hint_cache.hints.get(&excerpt_id)
                                 {
@@ -741,7 +774,7 @@ fn determine_query_ranges(
     excerpt_id: ExcerptId,
     excerpt_buffer: &Entity<Buffer>,
     excerpt_visible_range: Range<usize>,
-    cx: &mut Context<'_, MultiBuffer>,
+    cx: &mut Context<MultiBuffer>,
 ) -> Option<QueryRanges> {
     let buffer = excerpt_buffer.read(cx);
     let full_excerpt_range = multi_buffer
@@ -813,14 +846,14 @@ fn new_update_task(
     excerpt_buffer: Entity<Buffer>,
     cx: &mut Context<Editor>,
 ) -> Task<()> {
-    cx.spawn(move |editor, mut cx| async move {
+    cx.spawn(async move |editor, cx| {
         let visible_range_update_results = future::join_all(
             query_ranges
                 .visible
                 .into_iter()
                 .filter_map(|visible_range| {
                     let fetch_task = editor
-                        .update(&mut cx, |_, cx| {
+                        .update(cx, |_, cx| {
                             fetch_and_update_hints(
                                 excerpt_buffer.clone(),
                                 query,
@@ -858,7 +891,7 @@ fn new_update_task(
 
         for (range, result) in visible_range_update_results {
             if let Err(e) = result {
-                query_range_failed(&range, e, &mut cx);
+                query_range_failed(&range, e, cx);
             }
         }
 
@@ -870,7 +903,7 @@ fn new_update_task(
                 .chain(query_ranges.after_visible.into_iter())
                 .filter_map(|invisible_range| {
                     let fetch_task = editor
-                        .update(&mut cx, |_, cx| {
+                        .update(cx, |_, cx| {
                             fetch_and_update_hints(
                                 excerpt_buffer.clone(),
                                 query,
@@ -886,7 +919,7 @@ fn new_update_task(
         .await;
         for (range, result) in invisible_range_update_results {
             if let Err(e) = result {
-                query_range_failed(&range, e, &mut cx);
+                query_range_failed(&range, e, cx);
             }
         }
     })
@@ -899,10 +932,10 @@ fn fetch_and_update_hints(
     invalidate: bool,
     cx: &mut Context<Editor>,
 ) -> Task<anyhow::Result<()>> {
-    cx.spawn(|editor, mut cx| async move {
-        let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+    cx.spawn(async move |editor, cx|{
+        let buffer_snapshot = excerpt_buffer.update(cx, |buffer, _| buffer.snapshot())?;
         let (lsp_request_limiter, multi_buffer_snapshot) =
-            editor.update(&mut cx, |editor, cx| {
+            editor.update(cx, |editor, cx| {
                 let multi_buffer_snapshot =
                     editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
                 let lsp_request_limiter = Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter);
@@ -920,7 +953,7 @@ fn fetch_and_update_hints(
         let fetch_range_to_log = fetch_range.start.to_point(&buffer_snapshot)
             ..fetch_range.end.to_point(&buffer_snapshot);
         let inlay_hints_fetch_task = editor
-            .update(&mut cx, |editor, cx| {
+            .update(cx, |editor, cx| {
                 if got_throttled {
                     let query_not_around_visible_range = match editor
                         .excerpts_for_inlay_hints_query(None, cx)
@@ -964,7 +997,7 @@ fn fetch_and_update_hints(
             .ok()
             .flatten();
 
-        let cached_excerpt_hints = editor.update(&mut cx, |editor, _| {
+        let cached_excerpt_hints = editor.update(cx, |editor, _| {
             editor
                 .inlay_hint_cache
                 .hints
@@ -972,7 +1005,7 @@ fn fetch_and_update_hints(
                 .cloned()
         })?;
 
-        let visible_hints = editor.update(&mut cx, |editor, cx| editor.visible_inlay_hints(cx))?;
+        let visible_hints = editor.update(cx, |editor, cx| editor.visible_inlay_hints(cx))?;
         let new_hints = match inlay_hints_fetch_task {
             Some(fetch_task) => {
                 log::debug!(
@@ -1017,7 +1050,7 @@ fn fetch_and_update_hints(
             );
             log::trace!("New update: {new_update:?}");
             editor
-                .update(&mut cx, |editor,  cx| {
+                .update(cx, |editor,  cx| {
                     apply_hint_update(
                         editor,
                         new_update,
@@ -1259,11 +1292,11 @@ fn apply_hint_update(
 pub mod tests {
     use crate::editor_tests::update_test_language_settings;
     use crate::scroll::ScrollAmount;
-    use crate::{scroll::Autoscroll, test::editor_lsp_test_context::rust_lang, ExcerptRange};
+    use crate::{ExcerptRange, scroll::Autoscroll, test::editor_lsp_test_context::rust_lang};
     use futures::StreamExt;
     use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
-    use language::{language_settings::AllLanguageSettingsContent, Capability, FakeLspAdapter};
+    use language::{Capability, FakeLspAdapter, language_settings::AllLanguageSettingsContent};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use lsp::FakeLanguageServer;
     use parking_lot::Mutex;
@@ -1288,30 +1321,33 @@ pub mod tests {
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
             let lsp_request_count = Arc::new(AtomicU32::new(0));
-            fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-                let task_lsp_request_count = Arc::clone(&lsp_request_count);
-                async move {
-                    let i = task_lsp_request_count.fetch_add(1, Ordering::Release) + 1;
-                    assert_eq!(
-                        params.text_document.uri,
-                        lsp::Url::from_file_path(file_with_hints).unwrap(),
-                    );
-                    Ok(Some(vec![lsp::InlayHint {
-                        position: lsp::Position::new(0, i),
-                        label: lsp::InlayHintLabel::String(i.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    }]))
-                }
-            });
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                move |params, _| {
+                    let task_lsp_request_count = Arc::clone(&lsp_request_count);
+                    async move {
+                        let i = task_lsp_request_count.fetch_add(1, Ordering::Release) + 1;
+                        assert_eq!(
+                            params.text_document.uri,
+                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                        );
+                        Ok(Some(vec![lsp::InlayHint {
+                            position: lsp::Position::new(0, i),
+                            label: lsp::InlayHintLabel::String(i.to_string()),
+                            kind: None,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        }]))
+                    }
+                },
+            );
         })
         .await;
         cx.executor().run_until_parked();
@@ -1391,32 +1427,35 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
         let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
             let lsp_request_count = Arc::new(AtomicU32::new(0));
-            fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-                let task_lsp_request_count = Arc::clone(&lsp_request_count);
-                async move {
-                    assert_eq!(
-                        params.text_document.uri,
-                        lsp::Url::from_file_path(file_with_hints).unwrap(),
-                    );
-                    let current_call_id =
-                        Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
-                    Ok(Some(vec![lsp::InlayHint {
-                        position: lsp::Position::new(0, current_call_id),
-                        label: lsp::InlayHintLabel::String(current_call_id.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    }]))
-                }
-            });
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                move |params, _| {
+                    let task_lsp_request_count = Arc::clone(&lsp_request_count);
+                    async move {
+                        assert_eq!(
+                            params.text_document.uri,
+                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                        );
+                        let current_call_id =
+                            Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
+                        Ok(Some(vec![lsp::InlayHint {
+                            position: lsp::Position::new(0, current_call_id),
+                            label: lsp::InlayHintLabel::String(current_call_id.to_string()),
+                            kind: None,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        }]))
+                    }
+                },
+            );
         })
         .await;
         cx.executor().run_until_parked();
@@ -1493,6 +1532,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -1535,43 +1575,48 @@ pub mod tests {
                         move |fake_server| {
                             let rs_lsp_request_count = Arc::new(AtomicU32::new(0));
                             let md_lsp_request_count = Arc::new(AtomicU32::new(0));
-                            fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
-                                move |params, _| {
-                                    let i = match name {
-                                        "Rust" => {
-                                            assert_eq!(
-                                                params.text_document.uri,
-                                                lsp::Url::from_file_path(path!("/a/main.rs"))
-                                                    .unwrap(),
-                                            );
-                                            rs_lsp_request_count.fetch_add(1, Ordering::Release) + 1
-                                        }
-                                        "Markdown" => {
-                                            assert_eq!(
-                                                params.text_document.uri,
-                                                lsp::Url::from_file_path(path!("/a/other.md"))
-                                                    .unwrap(),
-                                            );
-                                            md_lsp_request_count.fetch_add(1, Ordering::Release) + 1
-                                        }
-                                        unexpected => panic!("Unexpected language: {unexpected}"),
-                                    };
+                            fake_server
+                                .set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                                    move |params, _| {
+                                        let i = match name {
+                                            "Rust" => {
+                                                assert_eq!(
+                                                    params.text_document.uri,
+                                                    lsp::Url::from_file_path(path!("/a/main.rs"))
+                                                        .unwrap(),
+                                                );
+                                                rs_lsp_request_count.fetch_add(1, Ordering::Release)
+                                                    + 1
+                                            }
+                                            "Markdown" => {
+                                                assert_eq!(
+                                                    params.text_document.uri,
+                                                    lsp::Url::from_file_path(path!("/a/other.md"))
+                                                        .unwrap(),
+                                                );
+                                                md_lsp_request_count.fetch_add(1, Ordering::Release)
+                                                    + 1
+                                            }
+                                            unexpected => {
+                                                panic!("Unexpected language: {unexpected}")
+                                            }
+                                        };
 
-                                    async move {
-                                        let query_start = params.range.start;
-                                        Ok(Some(vec![lsp::InlayHint {
-                                            position: query_start,
-                                            label: lsp::InlayHintLabel::String(i.to_string()),
-                                            kind: None,
-                                            text_edits: None,
-                                            tooltip: None,
-                                            padding_left: None,
-                                            padding_right: None,
-                                            data: None,
-                                        }]))
-                                    }
-                                },
-                            );
+                                        async move {
+                                            let query_start = params.range.start;
+                                            Ok(Some(vec![lsp::InlayHint {
+                                                position: query_start,
+                                                label: lsp::InlayHintLabel::String(i.to_string()),
+                                                kind: None,
+                                                text_edits: None,
+                                                tooltip: None,
+                                                padding_left: None,
+                                                padding_right: None,
+                                                data: None,
+                                            }]))
+                                        }
+                                    },
+                                );
                         }
                     })),
                     ..Default::default()
@@ -1712,6 +1757,7 @@ pub mod tests {
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -1720,7 +1766,7 @@ pub mod tests {
             let lsp_request_count = lsp_request_count.clone();
             move |fake_server, file_with_hints| {
                 let lsp_request_count = lsp_request_count.clone();
-                fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                     move |params, _| {
                         lsp_request_count.fetch_add(1, Ordering::Release);
                         async move {
@@ -1871,6 +1917,7 @@ pub mod tests {
                         .contains(&Some(InlayHintKind::Parameter)),
                     show_other_hints: new_allowed_hint_kinds.contains(&None),
                     show_background: false,
+                    toggle_on_modifiers_press: None,
                 })
             });
             cx.executor().run_until_parked();
@@ -1913,6 +1960,7 @@ pub mod tests {
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: another_allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -1967,6 +2015,7 @@ pub mod tests {
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: final_allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -2038,6 +2087,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2046,7 +2096,7 @@ pub mod tests {
             let lsp_request_count = lsp_request_count.clone();
             move |fake_server, file_with_hints| {
                 let lsp_request_count = lsp_request_count.clone();
-                fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                     move |params, _| {
                         let lsp_request_count = lsp_request_count.clone();
                         async move {
@@ -2169,6 +2219,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2202,7 +2253,7 @@ pub mod tests {
                     move |fake_server| {
                         let closure_lsp_request_ranges = Arc::clone(&lsp_request_ranges);
                         let closure_lsp_request_count = Arc::clone(&lsp_request_count);
-                        fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                             move |params, _| {
                                 let task_lsp_request_ranges =
                                     Arc::clone(&closure_lsp_request_ranges);
@@ -2467,6 +2518,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2513,60 +2565,24 @@ pub mod tests {
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(2, 0),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(4, 0)..Point::new(11, 0),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(22, 0)..Point::new(33, 0),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(44, 0)..Point::new(55, 0),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(56, 0)..Point::new(66, 0),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(67, 0)..Point::new(77, 0),
-                        primary: None,
-                    },
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0)),
+                    ExcerptRange::new(Point::new(4, 0)..Point::new(11, 0)),
+                    ExcerptRange::new(Point::new(22, 0)..Point::new(33, 0)),
+                    ExcerptRange::new(Point::new(44, 0)..Point::new(55, 0)),
+                    ExcerptRange::new(Point::new(56, 0)..Point::new(66, 0)),
+                    ExcerptRange::new(Point::new(67, 0)..Point::new(77, 0)),
                 ],
                 cx,
             );
             multibuffer.push_excerpts(
                 buffer_2.clone(),
                 [
-                    ExcerptRange {
-                        context: Point::new(0, 1)..Point::new(2, 1),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(4, 1)..Point::new(11, 1),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(22, 1)..Point::new(33, 1),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(44, 1)..Point::new(55, 1),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(56, 1)..Point::new(66, 1),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(67, 1)..Point::new(77, 1),
-                        primary: None,
-                    },
+                    ExcerptRange::new(Point::new(0, 1)..Point::new(2, 1)),
+                    ExcerptRange::new(Point::new(4, 1)..Point::new(11, 1)),
+                    ExcerptRange::new(Point::new(22, 1)..Point::new(33, 1)),
+                    ExcerptRange::new(Point::new(44, 1)..Point::new(55, 1)),
+                    ExcerptRange::new(Point::new(56, 1)..Point::new(66, 1)),
+                    ExcerptRange::new(Point::new(67, 1)..Point::new(77, 1)),
                 ],
                 cx,
             );
@@ -2575,14 +2591,14 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         let editor = cx.add_window(|window, cx| {
-            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
         });
 
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);
         fake_server
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
@@ -2787,7 +2803,6 @@ pub mod tests {
                     "main hint #5".to_string(),
                     "other hint(edited) #0".to_string(),
                     "other hint(edited) #1".to_string(),
-                    "other hint(edited) #2".to_string(),
                 ];
                 assert_eq!(
                     expected_hints,
@@ -2811,6 +2826,7 @@ pub mod tests {
                 show_parameter_hints: false,
                 show_other_hints: false,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2855,18 +2871,12 @@ pub mod tests {
         let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
             let buffer_1_excerpts = multibuffer.push_excerpts(
                 buffer_1.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(2, 0),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
                 cx,
             );
             let buffer_2_excerpts = multibuffer.push_excerpts(
                 buffer_2.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 1)..Point::new(2, 1),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 1)..Point::new(2, 1))],
                 cx,
             );
             (buffer_1_excerpts, buffer_2_excerpts)
@@ -2877,13 +2887,13 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         let editor = cx.add_window(|window, cx| {
-            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
         });
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);
         fake_server
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
@@ -2992,6 +3002,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -3023,6 +3034,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -3049,7 +3061,7 @@ pub mod tests {
                 },
                 initializer: Some(Box::new(move |fake_server| {
                     let lsp_request_count = Arc::new(AtomicU32::new(0));
-                    fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                         move |params, _| {
                             let i = lsp_request_count.fetch_add(1, Ordering::Release) + 1;
                             async move {
@@ -3114,32 +3126,35 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
         let (_, editor, _fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
             let lsp_request_count = Arc::new(AtomicU32::new(0));
-            fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-                let lsp_request_count = lsp_request_count.clone();
-                async move {
-                    assert_eq!(
-                        params.text_document.uri,
-                        lsp::Url::from_file_path(file_with_hints).unwrap(),
-                    );
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                move |params, _| {
+                    let lsp_request_count = lsp_request_count.clone();
+                    async move {
+                        assert_eq!(
+                            params.text_document.uri,
+                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                        );
 
-                    let i = lsp_request_count.fetch_add(1, Ordering::SeqCst) + 1;
-                    Ok(Some(vec![lsp::InlayHint {
-                        position: lsp::Position::new(0, i),
-                        label: lsp::InlayHintLabel::String(i.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    }]))
-                }
-            });
+                        let i = lsp_request_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        Ok(Some(vec![lsp::InlayHint {
+                            position: lsp::Position::new(0, i),
+                            label: lsp::InlayHintLabel::String(i.to_string()),
+                            kind: None,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        }]))
+                    }
+                },
+            );
         })
         .await;
 
@@ -3187,6 +3202,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -3246,6 +3262,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -3278,7 +3295,7 @@ pub mod tests {
                     ..Default::default()
                 },
                 initializer: Some(Box::new(move |fake_server| {
-                    fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                         move |params, _| async move {
                             assert_eq!(
                                 params.text_document.uri,

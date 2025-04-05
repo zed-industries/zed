@@ -37,12 +37,12 @@ use std::time::Duration;
 
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    percentage, Animation, AnimationExt, AnyElement, ClipboardItem, Entity, Render, Transformation,
-    WeakEntity,
+    Animation, AnimationExt, AnyElement, ClipboardItem, Entity, Render, Transformation, WeakEntity,
+    percentage,
 };
 use language::Buffer;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
-use ui::{div, prelude::*, v_flex, Context, IntoElement, Styled, Tooltip, Window};
+use ui::{Context, IntoElement, Styled, Tooltip, Window, div, prelude::*, v_flex};
 
 mod image;
 use image::ImageView;
@@ -185,13 +185,7 @@ impl Output {
                                             multi_buffer
                                         });
 
-                                        Editor::for_multibuffer(
-                                            multibuffer,
-                                            None,
-                                            false,
-                                            window,
-                                            cx,
-                                        )
+                                        Editor::for_multibuffer(multibuffer, None, window, cx)
                                     }));
                                     workspace
                                         .update(cx, |workspace, cx| {
@@ -211,11 +205,10 @@ impl Output {
 
     pub fn render(
         &self,
-
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<ExecutionView>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let content = match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),

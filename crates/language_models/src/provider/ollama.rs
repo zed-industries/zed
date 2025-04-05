@@ -1,5 +1,5 @@
-use anyhow::{anyhow, bail, Result};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use anyhow::{Result, anyhow};
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{AuthenticateError, LanguageModelCompletionEvent};
@@ -9,14 +9,14 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use ollama::{
-    get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
-    ChatResponseDelta, KeepAlive, OllamaToolCall,
+    ChatMessage, ChatOptions, ChatRequest, KeepAlive, get_models, preload_model,
+    stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{prelude::*, ButtonLike, Indicator};
+use ui::{ButtonLike, Indicator, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
@@ -69,7 +69,7 @@ impl State {
         let api_url = settings.api_url.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
 
             let mut models: Vec<ollama::Model> = models
@@ -83,7 +83,7 @@ impl State {
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.available_models = models;
                 cx.notify();
             })
@@ -101,7 +101,7 @@ impl State {
         }
 
         let fetch_models_task = self.fetch_models(cx);
-        cx.spawn(|_this, _cx| async move { Ok(fetch_models_task.await?) })
+        cx.spawn(async move |_this, _cx| Ok(fetch_models_task.await?))
     }
 }
 
@@ -204,7 +204,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
         let id = model.id().0.to_string();
-        cx.spawn(|_| async move { preload_model(http_client, &api_url, &id).await })
+        cx.spawn(async move |_| preload_model(http_client, &api_url, &id).await)
             .detach_and_log_err(cx);
     }
 
@@ -265,22 +265,6 @@ impl OllamaLanguageModel {
             tools: vec![],
         }
     }
-    fn request_completion(
-        &self,
-        request: ChatRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<ChatResponseDelta>> {
-        let http_client = self.http_client.clone();
-
-        let Ok(api_url) = cx.update(|cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-            settings.api_url.clone()
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        async move { ollama::complete(http_client.as_ref(), &api_url, request).await }.boxed()
-    }
 }
 
 impl LanguageModel for OllamaLanguageModel {
@@ -298,6 +282,10 @@ impl LanguageModel for OllamaLanguageModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn supports_tools(&self) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String {
@@ -368,48 +356,6 @@ impl LanguageModel for OllamaLanguageModel {
         }
         .boxed()
     }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        use ollama::{OllamaFunctionTool, OllamaTool};
-        let function = OllamaFunctionTool {
-            name: tool_name.clone(),
-            description: Some(tool_description),
-            parameters: Some(schema),
-        };
-        let tools = vec![OllamaTool::Function { function }];
-        let request = self.to_ollama_request(request).with_tools(tools);
-        let response = self.request_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                let ChatMessage::Assistant { tool_calls, .. } = response.message else {
-                    bail!("message does not have an assistant role");
-                };
-                if let Some(tool_calls) = tool_calls.filter(|calls| !calls.is_empty()) {
-                    for call in tool_calls {
-                        let OllamaToolCall::Function(function) = call;
-                        if function.name == tool_name {
-                            return Ok(futures::stream::once(async move {
-                                Ok(function.arguments.to_string())
-                            })
-                            .boxed());
-                        }
-                    }
-                } else {
-                    bail!("assistant message does not have any tool calls");
-                };
-
-                bail!("tool not used")
-            })
-            .boxed()
-    }
 }
 
 struct ConfigurationView {
@@ -421,14 +367,14 @@ impl ConfigurationView {
     pub fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let loading_models_task = Some(cx.spawn_in(window, {
             let state = state.clone();
-            |this, mut cx| async move {
+            async move |this, cx| {
                 if let Some(task) = state
-                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
                     task.await.log_err();
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.loading_models_task = None;
                     cx.notify();
                 })
@@ -480,7 +426,7 @@ impl Render for ConfigurationView {
                                     div()
                                         .bg(inline_code_bg)
                                         .px_1p5()
-                                        .rounded_md()
+                                        .rounded_sm()
                                         .child(Label::new("ollama run llama3.2")),
                                 ),
                         ),

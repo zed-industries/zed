@@ -124,8 +124,8 @@ impl PartialOrd for Point {
 impl Ord for Point {
     #[cfg(target_pointer_width = "64")]
     fn cmp(&self, other: &Point) -> Ordering {
-        let a = (self.row as usize) << 32 | self.column as usize;
-        let b = (other.row as usize) << 32 | other.column as usize;
+        let a = ((self.row as usize) << 32) | self.column as usize;
+        let b = ((other.row as usize) << 32) | other.column as usize;
         a.cmp(&b)
     }
 

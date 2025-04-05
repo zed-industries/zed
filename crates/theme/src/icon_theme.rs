@@ -85,7 +85,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("coffeescript", &["coffee"]),
     (
         "cpp",
-        &["c++", "cc", "cpp", "cxx", "hh", "hpp", "hxx", "inl"],
+        &["c++", "cc", "cpp", "cxx", "hh", "hpp", "hxx", "inl", "ixx"],
     ),
     ("crystal", &["cr", "ecr"]),
     ("csharp", &["cs"]),
@@ -264,6 +264,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("vs_sln", &["sln"]),
     ("vs_suo", &["suo"]),
     ("vue", &["vue"]),
+    ("wgsl", &["wgsl"]),
     ("zig", &["zig"]),
 ];
 
@@ -311,7 +312,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("lock", "icons/file_icons/lock.svg"),
     ("log", "icons/file_icons/info.svg"),
     ("lua", "icons/file_icons/lua.svg"),
-    ("luau", "icons/file_icons/file.svg"),
+    ("luau", "icons/file_icons/luau.svg"),
     ("markdown", "icons/file_icons/book.svg"),
     ("metal", "icons/file_icons/metal.svg"),
     ("nim", "icons/file_icons/nim.svg"),
@@ -348,6 +349,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("vs_sln", "icons/file_icons/file.svg"),
     ("vs_suo", "icons/file_icons/file.svg"),
     ("vue", "icons/file_icons/vue.svg"),
+    ("wgsl", "icons/file_icons/wgsl.svg"),
     ("zig", "icons/file_icons/zig.svg"),
 ];
 

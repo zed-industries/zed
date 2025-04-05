@@ -1,16 +1,16 @@
 use futures::channel::oneshot;
-use fuzzy::StringMatchCandidate;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use picker::{Picker, PickerDelegate};
 use project::DirectoryLister;
 use std::{
-    path::{Path, PathBuf},
+    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool},
         Arc,
+        atomic::{self, AtomicBool},
     },
 };
-use ui::{prelude::*, LabelLike, ListItemSpacing};
 use ui::{Context, ListItem, Window};
+use ui::{HighlightedLabel, ListItemSpacing, prelude::*};
 use util::{maybe, paths::compare_paths};
 use workspace::Workspace;
 
@@ -22,6 +22,7 @@ pub struct OpenPathDelegate {
     selected_index: usize,
     directory_state: Option<DirectoryState>,
     matches: Vec<usize>,
+    string_matches: Vec<StringMatch>,
     cancel_flag: Arc<AtomicBool>,
     should_dismiss: bool,
 }
@@ -34,16 +35,41 @@ impl OpenPathDelegate {
             selected_index: 0,
             directory_state: None,
             matches: Vec::new(),
+            string_matches: Vec::new(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             should_dismiss: true,
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn collect_match_candidates(&self) -> Vec<String> {
+        if let Some(state) = self.directory_state.as_ref() {
+            self.matches
+                .iter()
+                .filter_map(|&index| {
+                    state
+                        .match_candidates
+                        .get(index)
+                        .map(|candidate| candidate.path.string.clone())
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
 }
 
+#[derive(Debug)]
 struct DirectoryState {
     path: String,
-    match_candidates: Vec<StringMatchCandidate>,
+    match_candidates: Vec<CandidateInfo>,
     error: Option<SharedString>,
+}
+
+#[derive(Debug, Clone)]
+struct CandidateInfo {
+    path: StringMatchCandidate,
+    is_dir: bool,
 }
 
 impl OpenPathPrompt {
@@ -93,8 +119,6 @@ impl PickerDelegate for OpenPathDelegate {
         cx.notify();
     }
 
-    // todo(windows)
-    // Is this method woring correctly on Windows? This method uses `/` for path separator.
     fn update_matches(
         &mut self,
         query: String,
@@ -102,13 +126,26 @@ impl PickerDelegate for OpenPathDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
         let lister = self.lister.clone();
-        let (mut dir, suffix) = if let Some(index) = query.rfind('/') {
-            (query[..index].to_string(), query[index + 1..].to_string())
+        let query_path = Path::new(&query);
+        let last_item = query_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let (mut dir, suffix) = if let Some(dir) = query.strip_suffix(&last_item) {
+            (dir.to_string(), last_item)
         } else {
             (query, String::new())
         };
         if dir == "" {
-            dir = "/".to_string();
+            #[cfg(not(target_os = "windows"))]
+            {
+                dir = "/".to_string();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                dir = "C:\\".to_string();
+            }
         }
 
         let query = if self
@@ -124,22 +161,26 @@ impl PickerDelegate for OpenPathDelegate {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             if let Some(query) = query {
                 let paths = query.await;
                 if cancel_flag.load(atomic::Ordering::Relaxed) {
                     return;
                 }
 
-                this.update(&mut cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.delegate.directory_state = Some(match paths {
                         Ok(mut paths) => {
-                            paths.sort_by(|a, b| compare_paths((a, true), (b, true)));
+                            paths.sort_by(|a, b| compare_paths((&a.path, true), (&b.path, true)));
                             let match_candidates = paths
                                 .iter()
                                 .enumerate()
-                                .map(|(ix, path)| {
-                                    StringMatchCandidate::new(ix, &path.to_string_lossy())
+                                .map(|(ix, item)| CandidateInfo {
+                                    path: StringMatchCandidate::new(
+                                        ix,
+                                        &item.path.to_string_lossy(),
+                                    ),
+                                    is_dir: item.is_dir,
                                 })
                                 .collect::<Vec<_>>();
 
@@ -160,7 +201,7 @@ impl PickerDelegate for OpenPathDelegate {
             }
 
             let match_candidates = this
-                .update(&mut cx, |this, cx| {
+                .update(cx, |this, cx| {
                     let directory_state = this.delegate.directory_state.as_ref()?;
                     if directory_state.error.is_some() {
                         this.delegate.matches.clear();
@@ -178,15 +219,16 @@ impl PickerDelegate for OpenPathDelegate {
             };
 
             if !suffix.starts_with('.') {
-                match_candidates.retain(|m| !m.string.starts_with('.'));
+                match_candidates.retain(|m| !m.path.string.starts_with('.'));
             }
 
             if suffix == "" {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.delegate.matches.clear();
+                    this.delegate.string_matches.clear();
                     this.delegate
                         .matches
-                        .extend(match_candidates.iter().map(|m| m.id));
+                        .extend(match_candidates.iter().map(|m| m.path.id));
 
                     cx.notify();
                 })
@@ -194,8 +236,9 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             }
 
+            let candidates = match_candidates.iter().map(|m| &m.path).collect::<Vec<_>>();
             let matches = fuzzy::match_strings(
-                match_candidates.as_slice(),
+                candidates.as_slice(),
                 &suffix,
                 false,
                 100,
@@ -207,8 +250,9 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.delegate.matches.clear();
+                this.delegate.string_matches = matches.clone();
                 this.delegate
                     .matches
                     .extend(matches.into_iter().map(|m| m.candidate_id));
@@ -217,11 +261,12 @@ impl PickerDelegate for OpenPathDelegate {
                         this.delegate.directory_state.as_ref().and_then(|d| {
                             d.match_candidates
                                 .get(*m)
-                                .map(|c| !c.string.starts_with(&suffix))
+                                .map(|c| !c.path.string.starts_with(&suffix))
                         }),
                         *m,
                     )
                 });
+                this.delegate.selected_index = 0;
                 cx.notify();
             })
             .ok();
@@ -239,7 +284,16 @@ impl PickerDelegate for OpenPathDelegate {
                 let m = self.matches.get(self.selected_index)?;
                 let directory_state = self.directory_state.as_ref()?;
                 let candidate = directory_state.match_candidates.get(*m)?;
-                Some(format!("{}/{}", directory_state.path, candidate.string))
+                Some(format!(
+                    "{}{}{}",
+                    directory_state.path,
+                    candidate.path.string,
+                    if candidate.is_dir {
+                        MAIN_SEPARATOR_STR
+                    } else {
+                        ""
+                    }
+                ))
             })
             .unwrap_or(query),
         )
@@ -260,7 +314,7 @@ impl PickerDelegate for OpenPathDelegate {
                 .resolve_tilde(&directory_state.path, cx)
                 .as_ref(),
         )
-        .join(&candidate.string);
+        .join(&candidate.path.string);
         if let Some(tx) = self.tx.take() {
             tx.send(Some(vec![result])).ok();
         }
@@ -288,25 +342,36 @@ impl PickerDelegate for OpenPathDelegate {
         let m = self.matches.get(ix)?;
         let directory_state = self.directory_state.as_ref()?;
         let candidate = directory_state.match_candidates.get(*m)?;
+        let highlight_positions = self
+            .string_matches
+            .iter()
+            .find(|string_match| string_match.candidate_id == *m)
+            .map(|string_match| string_match.positions.clone())
+            .unwrap_or_default();
 
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
                 .toggle_state(selected)
-                .child(LabelLike::new().child(candidate.string.clone())),
+                .child(HighlightedLabel::new(
+                    candidate.path.string.clone(),
+                    highlight_positions,
+                )),
         )
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        if let Some(error) = self.directory_state.as_ref().and_then(|s| s.error.clone()) {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if let Some(error) = self.directory_state.as_ref().and_then(|s| s.error.clone())
+        {
             error
         } else {
             "No such file or directory".into()
-        }
+        };
+        Some(text)
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from("[directory/]filename.ext")
+        Arc::from(format!("[directory{MAIN_SEPARATOR_STR}]filename.ext"))
     }
 }

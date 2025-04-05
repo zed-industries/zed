@@ -1,6 +1,6 @@
 use gpui::{
-    div, green, red, App, AppContext as _, Context, Entity, HighlightStyle, InteractiveText,
-    IntoElement, ParentElement, Render, Styled, StyledText, Window,
+    App, AppContext as _, Context, Entity, HighlightStyle, InteractiveText, IntoElement,
+    ParentElement, Render, Styled, StyledText, Window, div, green, red,
 };
 use indoc::indoc;
 use story::*;
@@ -81,7 +81,7 @@ impl Render for TextStory {
                             "Interactive Text",
                             InteractiveText::new(
                                 "interactive",
-                                StyledText::new("Hello world, how is it going?").with_highlights(
+                                StyledText::new("Hello world, how is it going?").with_default_highlights(
                                     &window.text_style(),
                                     [
                                         (

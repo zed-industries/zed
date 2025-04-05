@@ -2,26 +2,26 @@ mod channel_modal;
 mod contact_finder;
 
 use self::channel_modal::ChannelModal;
-use crate::{channel_view::ChannelView, chat_panel::ChatPanel, CollaborationPanelSettings};
+use crate::{CollaborationPanelSettings, channel_view::ChannelView, chat_panel::ChatPanel};
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
-use fuzzy::{match_strings, StringMatchCandidate};
+use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement, App,
-    AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, DismissEvent, Div, Entity,
-    EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement, ListOffset,
-    ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString,
-    Styled, Subscription, Task, TextStyle, WeakEntity, Window,
+    AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, DismissEvent,
+    Div, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement,
+    ListOffset, ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
+    SharedString, Styled, Subscription, Task, TextStyle, WeakEntity, Window, actions, anchored,
+    canvas, deferred, div, fill, list, point, prelude::*, px,
 };
-use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
+use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
 use rpc::{
-    proto::{self, ChannelVisibility, PeerId},
     ErrorCode, ErrorExt,
+    proto::{self, ChannelVisibility, PeerId},
 };
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
@@ -29,15 +29,15 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    prelude::*, tooltip_container, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu,
-    Facepile, Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem,
-    Tooltip,
+    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Facepile, Icon, IconButton,
+    IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tooltip, prelude::*,
+    tooltip_container,
 };
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
+    Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
-    OpenChannelNotes, Workspace,
 };
 
 actions!(
@@ -77,6 +77,57 @@ pub fn init(cx: &mut App) {
                 window.defer(cx, move |window, cx| {
                     ChannelView::open(channel_id, None, workspace, window, cx)
                         .detach_and_log_err(cx)
+                });
+            }
+        });
+        // TODO: make it possible to bind this one to a held key for push to talk?
+        // how to make "toggle_on_modifiers_press" contextual?
+        workspace.register_action(|_, _: &Mute, window, cx| {
+            let room = ActiveCall::global(cx).read(cx).room().cloned();
+            if let Some(room) = room {
+                window.defer(cx, move |_window, cx| {
+                    room.update(cx, |room, cx| room.toggle_mute(cx))
+                });
+            }
+        });
+        workspace.register_action(|_, _: &Deafen, window, cx| {
+            let room = ActiveCall::global(cx).read(cx).room().cloned();
+            if let Some(room) = room {
+                window.defer(cx, move |_window, cx| {
+                    room.update(cx, |room, cx| room.toggle_deafen(cx))
+                });
+            }
+        });
+        workspace.register_action(|_, _: &LeaveCall, window, cx| {
+            CollabPanel::leave_call(window, cx);
+        });
+        workspace.register_action(|workspace, _: &ShareProject, window, cx| {
+            let project = workspace.project().clone();
+            println!("{project:?}");
+            window.defer(cx, move |_window, cx| {
+                ActiveCall::global(cx).update(cx, move |call, cx| {
+                    if let Some(room) = call.room() {
+                        println!("{room:?}");
+                        if room.read(cx).is_sharing_project() {
+                            call.unshare_project(project, cx).ok();
+                        } else {
+                            call.share_project(project, cx).detach_and_log_err(cx);
+                        }
+                    }
+                });
+            });
+        });
+        workspace.register_action(|_, _: &ScreenShare, window, cx| {
+            let room = ActiveCall::global(cx).read(cx).room().cloned();
+            if let Some(room) = room {
+                window.defer(cx, move |_window, cx| {
+                    room.update(cx, |room, cx| {
+                        if room.is_screen_sharing() {
+                            room.unshare_screen(cx).ok();
+                        } else {
+                            room.share_screen(cx).detach_and_log_err(cx);
+                        };
+                    });
                 });
             }
         });
@@ -869,7 +920,6 @@ impl CollabPanel {
             })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_participant_project(
         &self,
         project_id: u64,
@@ -1430,7 +1480,7 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
         let ix = self.selection.take().unwrap_or(0);
         if ix > 0 {
             self.selection = Some(ix - 1);
@@ -1570,9 +1620,9 @@ impl CollabPanel {
                         channel_store.create_channel(&channel_name, *location, cx)
                     });
                     if location.is_none() {
-                        cx.spawn_in(window, |this, mut cx| async move {
+                        cx.spawn_in(window, async move |this, cx| {
                             let channel_id = create.await?;
-                            this.update_in(&mut cx, |this, window, cx| {
+                            this.update_in(cx, |this, window, cx| {
                                 this.show_channel_modal(
                                     channel_id,
                                     channel_modal::Mode::InviteMembers,
@@ -1945,8 +1995,8 @@ impl CollabPanel {
         let user_store = self.user_store.clone();
         let channel_store = self.channel_store.clone();
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+        cx.spawn_in(window, async move |_, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
                     ChannelModal::new(
                         user_store.clone(),
@@ -1977,11 +2027,11 @@ impl CollabPanel {
             &["Leave", "Cancel"],
             cx,
         );
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             if answer.await? != 0 {
                 return Ok(());
             }
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.channel_store.update(cx, |channel_store, cx| {
                     channel_store.remove_member(channel_id, user_id, cx)
                 })
@@ -2010,13 +2060,13 @@ impl CollabPanel {
                 &["Remove", "Cancel"],
                 cx,
             );
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 if answer.await? == 0 {
                     channel_store
-                        .update(&mut cx, |channels, _| channels.remove_channel(channel_id))?
+                        .update(cx, |channels, _| channels.remove_channel(channel_id))?
                         .await
-                        .notify_async_err(&mut cx);
-                    this.update_in(&mut cx, |_, window, cx| cx.focus_self(window))
+                        .notify_async_err(cx);
+                    this.update_in(cx, |_, window, cx| cx.focus_self(window))
                         .ok();
                 }
                 anyhow::Ok(())
@@ -2044,12 +2094,12 @@ impl CollabPanel {
             &["Remove", "Cancel"],
             cx,
         );
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             if answer.await? == 0 {
                 user_store
-                    .update(&mut cx, |store, cx| store.remove_contact(user_id, cx))?
+                    .update(cx, |store, cx| store.remove_contact(user_id, cx))?
                     .await
-                    .notify_async_err(&mut cx);
+                    .notify_async_err(cx);
             }
             anyhow::Ok(())
         })
@@ -2162,11 +2212,11 @@ impl CollabPanel {
                             .full_width()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let client = this.client.clone();
-                                cx.spawn_in(window, |_, mut cx| async move {
+                                cx.spawn_in(window, async move |_, cx| {
                                     client
                                         .authenticate_and_connect(true, &cx)
                                         .await
-                                        .notify_async_err(&mut cx);
+                                        .notify_async_err(cx);
                                 })
                                 .detach()
                             })),
@@ -2520,12 +2570,14 @@ impl CollabPanel {
             ]
         } else {
             let github_login = github_login.clone();
-            vec![IconButton::new("remove_contact", IconName::Close)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.remove_contact(user_id, &github_login, window, cx);
-                }))
-                .icon_color(color)
-                .tooltip(Tooltip::text("Cancel invite"))]
+            vec![
+                IconButton::new("remove_contact", IconName::Close)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.remove_contact(user_id, &github_login, window, cx);
+                    }))
+                    .icon_color(color)
+                    .tooltip(Tooltip::text("Cancel invite")),
+            ]
         };
 
         ListItem::new(github_login.clone())
@@ -2878,7 +2930,7 @@ impl Render for CollabPanel {
             .key_context("CollabPanel")
             .on_action(cx.listener(CollabPanel::cancel))
             .on_action(cx.listener(CollabPanel::select_next))
-            .on_action(cx.listener(CollabPanel::select_prev))
+            .on_action(cx.listener(CollabPanel::select_previous))
             .on_action(cx.listener(CollabPanel::confirm))
             .on_action(cx.listener(CollabPanel::insert_space))
             .on_action(cx.listener(CollabPanel::remove_selected_channel))

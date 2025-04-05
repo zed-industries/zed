@@ -1,16 +1,16 @@
-use crate::{collab_panel, ChatPanelButton, ChatPanelSettings};
+use crate::{ChatPanelButton, ChatPanelSettings, collab_panel};
 use anyhow::Result;
-use call::{room, ActiveCall};
+use call::{ActiveCall, room};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, ChannelStore};
 use client::{ChannelId, Client};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
-use editor::{actions, Editor};
+use editor::{Editor, actions};
 use gpui::{
-    actions, div, list, prelude::*, px, Action, App, AsyncWindowContext, ClipboardItem, Context,
-    CursorStyle, DismissEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    HighlightStyle, ListOffset, ListScrollEvent, ListState, Render, Stateful, Subscription, Task,
-    WeakEntity, Window,
+    Action, App, AsyncWindowContext, ClipboardItem, Context, CursorStyle, DismissEvent, ElementId,
+    Entity, EventEmitter, FocusHandle, Focusable, FontWeight, HighlightStyle, ListOffset,
+    ListScrollEvent, ListState, Render, Stateful, Subscription, Task, WeakEntity, Window, actions,
+    div, list, prelude::*, px,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -22,13 +22,13 @@ use settings::Settings;
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label, PopoverMenu,
-    Tab, TabBar, Tooltip,
+    Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label, PopoverMenu, Tab, TabBar,
+    Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
     Workspace,
+    dock::{DockPosition, Panel, PanelEvent},
 };
 
 mod message_editor;
@@ -199,7 +199,7 @@ impl ChatPanel {
         workspace: WeakEntity<Workspace>,
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let serialized_panel = if let Some(panel) = cx
                 .background_spawn(async move { KEY_VALUE_STORE.read_kvp(CHAT_PANEL_KEY) })
                 .await
@@ -211,7 +211,7 @@ impl ChatPanel {
                 None
             };
 
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let panel = Self::new(workspace, window, cx);
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
@@ -323,7 +323,7 @@ impl ChatPanel {
                         .my_0p5()
                         .px_0p5()
                         .gap_x_1()
-                        .rounded_md()
+                        .rounded_sm()
                         .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
                         .when(reply_to_message.is_none(), |el| {
                             el.child(
@@ -332,7 +332,7 @@ impl ChatPanel {
                                     .color(Color::Muted),
                             )
                         }),
-                )
+                );
             }
             Some(val) => val,
         };
@@ -358,7 +358,7 @@ impl ChatPanel {
                 .my_0p5()
                 .px_0p5()
                 .gap_x_1()
-                .rounded_md()
+                .rounded_sm()
                 .overflow_hidden()
                 .hover(|style| style.bg(cx.theme().colors().element_background))
                 .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
@@ -476,7 +476,7 @@ impl ChatPanel {
                 div()
                     .group("")
                     .bg(background)
-                    .rounded_md()
+                    .rounded_sm()
                     .overflow_hidden()
                     .px_1p5()
                     .py_0p5()
@@ -563,7 +563,7 @@ impl ChatPanel {
                             .child(
                                 div()
                                     .px_1()
-                                    .rounded_md()
+                                    .rounded_sm()
                                     .text_ui_xs(cx)
                                     .bg(cx.theme().colors().background)
                                     .child("New messages"),
@@ -589,7 +589,7 @@ impl ChatPanel {
         div()
             .w_6()
             .bg(cx.theme().colors().element_background)
-            .hover(|style| style.bg(cx.theme().colors().element_hover).rounded_md())
+            .hover(|style| style.bg(cx.theme().colors().element_hover).rounded_sm())
             .child(child)
     }
 
@@ -604,7 +604,7 @@ impl ChatPanel {
             .absolute()
             .right_2()
             .overflow_hidden()
-            .rounded_md()
+            .rounded_sm()
             .border_color(cx.theme().colors().element_selected)
             .border_1()
             .when(!self.has_open_menu(message_id), |el| {
@@ -867,10 +867,10 @@ impl ChatPanel {
                 })
             });
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let chat = open_chat.await?;
             let highlight_message_id = scroll_to_message_id;
-            let scroll_to_message_id = this.update(&mut cx, |this, cx| {
+            let scroll_to_message_id = this.update(cx, |this, cx| {
                 this.set_active_chat(chat.clone(), cx);
 
                 scroll_to_message_id.or(this.last_acknowledged_message_id)
@@ -881,11 +881,11 @@ impl ChatPanel {
                     ChannelChat::load_history_since_message(chat.clone(), message_id, cx.clone())
                         .await
                 {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if let Some(highlight_message_id) = highlight_message_id {
-                            let task = cx.spawn(|this, mut cx| async move {
+                            let task = cx.spawn(async move |this, cx| {
                                 cx.background_executor().timer(Duration::from_secs(2)).await;
-                                this.update(&mut cx, |this, cx| {
+                                this.update(cx, |this, cx| {
                                     this.highlighted_message.take();
                                     cx.notify();
                                 })
@@ -1156,20 +1156,7 @@ impl Panel for ChatPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {
-        let show_icon = match ChatPanelSettings::get_global(cx).button {
-            ChatPanelButton::Never => false,
-            ChatPanelButton::Always => true,
-            ChatPanelButton::WhenInCall => {
-                let is_in_call = ActiveCall::global(cx)
-                    .read(cx)
-                    .room()
-                    .map_or(false, |room| room.read(cx).contains_guests());
-
-                self.active || is_in_call
-            }
-        };
-
-        show_icon.then(|| ui::IconName::MessageBubbles)
+        self.enabled(cx).then(|| ui::IconName::MessageBubbles)
     }
 
     fn icon_tooltip(&self, _: &Window, _: &App) -> Option<&'static str> {
@@ -1189,6 +1176,21 @@ impl Panel for ChatPanel {
 
     fn activation_priority(&self) -> u32 {
         7
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        match ChatPanelSettings::get_global(cx).button {
+            ChatPanelButton::Never => false,
+            ChatPanelButton::Always => true,
+            ChatPanelButton::WhenInCall => {
+                let is_in_call = ActiveCall::global(cx)
+                    .read(cx)
+                    .room()
+                    .map_or(false, |room| room.read(cx).contains_guests());
+
+                self.active || is_in_call
+            }
+        }
     }
 }
 

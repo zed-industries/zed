@@ -6,18 +6,18 @@ use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
-use futures::future::Shared;
 use futures::FutureExt;
+use futures::future::Shared;
 use gpui::{
-    actions, list, prelude::*, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
-    ListScrollEvent, ListState, Point, Task,
+    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, ListScrollEvent, ListState,
+    Point, Task, actions, list, prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
-use ui::{prelude::*, Tooltip};
+use ui::{Tooltip, prelude::*};
 use workspace::item::{ItemEvent, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
-use workspace::{Item, ItemHandle, ProjectItem, ToolbarItemLocation};
+use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
 use workspace::{ToolbarItemEvent, ToolbarItemView};
 
 use super::{Cell, CellPosition, RenderableCell};
@@ -92,7 +92,9 @@ impl NotebookEditor {
         let language_name = notebook_item.read(cx).language_name();
 
         let notebook_language = notebook_item.read(cx).notebook_language();
-        let notebook_language = cx.spawn_in(window, |_, _| notebook_language).shared();
+        let notebook_language = cx
+            .spawn_in(window, async move |_, _| notebook_language.await)
+            .shared();
 
         let mut cell_order = vec![]; // Vec<CellId>
         let mut cell_map = HashMap::default(); // HashMap<CellId, Cell>
@@ -245,7 +247,7 @@ impl NotebookEditor {
 
     pub fn select_previous(
         &mut self,
-        _: &menu::SelectPrev,
+        _: &menu::SelectPrevious,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -570,9 +572,9 @@ impl project::ProjectItem for NotebookItem {
         let languages = project.read(cx).languages().clone();
 
         if path.path.extension().unwrap_or_default() == "ipynb" {
-            Some(cx.spawn(|mut cx| async move {
+            Some(cx.spawn(async move |cx| {
                 let abs_path = project
-                    .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
+                    .read_with(cx, |project, cx| project.absolute_path(&path, cx))?
                     .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
 
                 // todo: watch for changes to the file
@@ -595,7 +597,7 @@ impl project::ProjectItem for NotebookItem {
                 };
 
                 let id = project
-                    .update(&mut cx, |project, cx| project.entry_for_path(&path, cx))?
+                    .update(cx, |project, cx| project.entry_for_path(&path, cx))?
                     .context("Entry not found")?
                     .id;
 
@@ -640,7 +642,7 @@ impl NotebookItem {
                 .and_then(|spec| spec.language.clone()))
     }
 
-    pub fn notebook_language(&self) -> impl Future<Output = Option<Arc<Language>>> {
+    pub fn notebook_language(&self) -> impl Future<Output = Option<Arc<Language>>> + use<> {
         let language_name = self.language_name();
         let languages = self.languages.clone();
 
@@ -823,6 +825,7 @@ impl ProjectItem for NotebookEditor {
 
     fn for_project_item(
         project: Entity<Project>,
+        _: &Pane,
         item: Entity<Self::Item>,
         window: &mut Window,
         cx: &mut Context<Self>,

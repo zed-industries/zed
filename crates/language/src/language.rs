@@ -11,6 +11,7 @@ mod diagnostic_set;
 mod highlight_map;
 mod language_registry;
 pub mod language_settings;
+mod manifest;
 mod outline;
 pub mod proto;
 mod syntax_map;
@@ -23,7 +24,7 @@ pub mod buffer_tests;
 
 pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use fs::Fs;
@@ -33,14 +34,15 @@ pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
-    gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
+    r#gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
 };
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
@@ -55,26 +57,26 @@ use std::{
     pin::Pin,
     str,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
         Arc, LazyLock,
+        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
 };
 use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
-pub use text_diff::{line_diff, text_diff, text_diff_with_options, unified_diff, DiffOptions};
+pub use text_diff::{DiffOptions, line_diff, text_diff, text_diff_with_options, unified_diff};
 use theme::SyntaxTheme;
 pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
-use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
+use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::serde::default_true;
 
 pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
 pub use language_registry::{
-    AvailableLanguage, LanguageNotFound, LanguageQueries, LanguageRegistry,
-    LanguageServerBinaryStatus, QUERY_FILENAME_PREFIXES,
+    AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
+    QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
@@ -163,6 +165,7 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+    manifest_name: OnceLock<Option<ManifestName>>,
     attach_kind: OnceLock<Attach>,
 }
 
@@ -200,6 +203,7 @@ impl CachedLspAdapter {
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
             attach_kind: Default::default(),
+            manifest_name: Default::default(),
         })
     }
 
@@ -225,8 +229,14 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
-        self.adapter.process_diagnostics(params)
+    pub fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        server_id: LanguageServerId,
+        existing_diagnostics: Option<&'_ Buffer>,
+    ) {
+        self.adapter
+            .process_diagnostics(params, server_id, existing_diagnostics)
     }
 
     pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
@@ -261,14 +271,10 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
-    pub fn find_project_root(
-        &self,
-        path: &Path,
-        ancestor_depth: usize,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> Option<Arc<Path>> {
-        self.adapter
-            .find_project_root(path, ancestor_depth, delegate)
+    pub fn manifest_name(&self) -> Option<ManifestName> {
+        self.manifest_name
+            .get_or_init(|| self.adapter.manifest_name())
+            .clone()
     }
     pub fn attach_kind(&self) -> Attach {
         *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
@@ -304,7 +310,8 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
-    fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
+    fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
+    fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
     async fn npm_package_installed_version(
@@ -382,7 +389,7 @@ pub trait LspAdapter: 'static + Send + Sync {
                 } else {
                     delegate.update_status(
                         self.name(),
-                        LanguageServerBinaryStatus::Failed {
+                        BinaryStatus::Failed {
                             error: format!("{error:?}"),
                         },
                     );
@@ -442,7 +449,13 @@ pub trait LspAdapter: 'static + Send + Sync {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary>;
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    fn process_diagnostics(
+        &self,
+        _: &mut lsp::PublishDiagnosticsParams,
+        _: LanguageServerId,
+        _: Option<&'_ Buffer>,
+    ) {
+    }
 
     /// Post-processes completions provided by the language server.
     async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
@@ -515,6 +528,26 @@ pub trait LspAdapter: 'static + Send + Sync {
         Ok(serde_json::json!({}))
     }
 
+    async fn additional_initialization_options(
+        self: Arc<Self>,
+        _target_language_server_id: LanguageServerName,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(None)
+    }
+
+    async fn additional_workspace_configuration(
+        self: Arc<Self>,
+        _target_language_server_id: LanguageServerName,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
+        _cx: &mut AsyncApp,
+    ) -> Result<Option<Value>> {
+        Ok(None)
+    }
+
     /// Returns a list of code actions supported by a given LspAdapter
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         Some(vec![
@@ -542,18 +575,32 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
         Ok(original)
     }
+
     fn attach_kind(&self) -> Attach {
         Attach::Shared
     }
-    fn find_project_root(
-        &self,
 
-        _path: &Path,
-        _ancestor_depth: usize,
-        _: &Arc<dyn LspAdapterDelegate>,
-    ) -> Option<Arc<Path>> {
-        // By default all language servers are rooted at the root of the worktree.
-        Some(Arc::from("".as_ref()))
+    fn manifest_name(&self) -> Option<ManifestName> {
+        None
+    }
+
+    /// Method only implemented by the default JSON language server adapter.
+    /// Used to provide dynamic reloading of the JSON schemas used to
+    /// provide autocompletion and diagnostics in Zed setting and keybind
+    /// files
+    fn is_primary_zed_json_schema_adapter(&self) -> bool {
+        false
+    }
+
+    /// Method only implemented by the default JSON language server adapter.
+    /// Used to clear the cache of JSON schemas that are used to provide
+    /// autocompletion and diagnostics in Zed settings and keybinds files.
+    /// Should not be called unless the callee is sure that
+    /// `Self::is_primary_zed_json_schema_adapter` returns `true`
+    async fn clear_zed_json_schema_cache(&self) {
+        unreachable!(
+            "Not implemented for this adapter. This method should only be called on the default JSON language server adapter"
+        );
     }
 }
 
@@ -569,7 +616,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
 
     let name = adapter.name();
     log::info!("fetching latest version of language server {:?}", name.0);
-    delegate.update_status(name.clone(), LanguageServerBinaryStatus::CheckingForUpdate);
+    delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
         .fetch_latest_server_version(delegate.as_ref())
@@ -580,16 +627,16 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .await
     {
         log::info!("language server {:?} is already installed", name.0);
-        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        delegate.update_status(name.clone(), BinaryStatus::None);
         Ok(binary)
     } else {
         log::info!("downloading language server {:?}", name.0);
-        delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
+        delegate.update_status(adapter.name(), BinaryStatus::Downloading);
         let binary = adapter
             .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
             .await;
 
-        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        delegate.update_status(name.clone(), BinaryStatus::None);
         binary
     }
 }
@@ -680,6 +727,12 @@ pub struct LanguageConfig {
     /// languages, but should not appear to the user as a distinct language.
     #[serde(default)]
     pub hidden: bool,
+    /// If configured, this language contains JSX style tags, and should support auto-closing of those tags.
+    #[serde(default)]
+    pub jsx_tag_auto_close: Option<JsxTagAutoCloseConfig>,
+    /// A list of characters that Zed should treat as word characters for completion queries.
+    #[serde(default)]
+    pub completion_query_characters: HashSet<char>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -695,6 +748,39 @@ pub struct LanguageMatcher {
     )]
     #[schemars(schema_with = "regex_json_schema")]
     pub first_line_pattern: Option<Regex>,
+}
+
+/// The configuration for JSX tag auto-closing.
+#[derive(Clone, Deserialize, JsonSchema)]
+pub struct JsxTagAutoCloseConfig {
+    /// The name of the node for a opening tag
+    pub open_tag_node_name: String,
+    /// The name of the node for an closing tag
+    pub close_tag_node_name: String,
+    /// The name of the node for a complete element with children for open and close tags
+    pub jsx_element_node_name: String,
+    /// The name of the node found within both opening and closing
+    /// tags that describes the tag name
+    pub tag_name_node_name: String,
+    /// Alternate Node names for tag names.
+    /// Specifically needed as TSX represents the name in `<Foo.Bar>`
+    /// as `member_expression` rather than `identifier` as usual
+    #[serde(default)]
+    pub tag_name_node_name_alternates: Vec<String>,
+    /// Some grammars are smart enough to detect a closing tag
+    /// that is not valid i.e. doesn't match it's corresponding
+    /// opening tag or does not have a corresponding opening tag
+    /// This should be set to the name of the node for invalid
+    /// closing tags if the grammar contains such a node, otherwise
+    /// detecting already closed tags will not work properly
+    #[serde(default)]
+    pub erroneous_close_tag_node_name: Option<String>,
+    /// See above for erroneous_close_tag_node_name for details
+    /// This should be set if the node used for the tag name
+    /// within erroneous closing tags is different from the
+    /// normal tag name node name
+    #[serde(default)]
+    pub erroneous_close_tag_name_node_name: Option<String>,
 }
 
 /// Represents a language for the given range. Some languages (e.g. HTML)
@@ -716,6 +802,8 @@ pub struct LanguageConfigOverride {
     pub disabled_bracket_ixs: Vec<u16>,
     #[serde(default)]
     pub word_characters: Override<HashSet<char>>,
+    #[serde(default)]
+    pub completion_query_characters: Override<HashSet<char>>,
     #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
 }
@@ -767,6 +855,8 @@ impl Default for LanguageConfig {
             soft_wrap: None,
             prettier_parser_name: None,
             hidden: false,
+            jsx_tag_auto_close: None,
+            completion_query_characters: Default::default(),
         }
     }
 }
@@ -837,8 +927,14 @@ pub struct BracketPairConfig {
     pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
 }
 
-fn bracket_pair_config_json_schema(gen: &mut SchemaGenerator) -> Schema {
-    Option::<Vec<BracketPairContent>>::json_schema(gen)
+impl BracketPairConfig {
+    pub fn is_closing_brace(&self, c: char) -> bool {
+        self.pairs.iter().any(|pair| pair.end.starts_with(c))
+    }
+}
+
+fn bracket_pair_config_json_schema(r#gen: &mut SchemaGenerator) -> Schema {
+    Option::<Vec<BracketPairContent>>::json_schema(r#gen)
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -888,7 +984,7 @@ pub struct BracketPair {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub(crate) struct LanguageId(usize);
+pub struct LanguageId(usize);
 
 impl LanguageId {
     pub(crate) fn new() -> Self {
@@ -1054,6 +1150,10 @@ struct BracketsPatternConfig {
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
         Self::new_with_id(LanguageId::new(), config, ts_language)
+    }
+
+    pub fn id(&self) -> LanguageId {
+        self.id
     }
 
     fn new_with_id(
@@ -1434,7 +1534,9 @@ impl Language {
                     .scope_opt_in_language_servers
                     .contains(server_name)
                 {
-                    util::debug_panic!("Server {server_name:?} has been opted-in by scope {name:?} but has not been marked as an opt-in server");
+                    util::debug_panic!(
+                        "Server {server_name:?} has been opted-in by scope {name:?} but has not been marked as an opt-in server"
+                    );
                 }
             }
 
@@ -1649,6 +1751,16 @@ impl LanguageScope {
         Override::as_option(
             self.config_override().map(|o| &o.word_characters),
             Some(&self.language.config.word_characters),
+        )
+    }
+
+    /// Returns a list of language-specific characters that are considered part of
+    /// a completion query.
+    pub fn completion_query_characters(&self) -> Option<&HashSet<char>> {
+        Override::as_option(
+            self.config_override()
+                .map(|o| &o.completion_query_characters),
+            Some(&self.language.config.completion_query_characters),
         )
     }
 
@@ -1963,8 +2075,6 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<LanguageServerBinary> {
         unreachable!();
     }
-
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         self.disk_based_diagnostics_sources.clone()

@@ -25,7 +25,7 @@
   // Features that can be globally enabled or disabled
   "features": {
     // Which edit prediction provider to use.
-    "edit_prediction_provider": "copilot"
+    "edit_prediction_provider": "zed"
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Plex Mono",
@@ -115,6 +115,15 @@
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
   "restore_on_startup": "last_session",
+  // Whether to attempt to restore previous file's state when opening it again.
+  // The state is stored per pane.
+  // When disabled, defaults are applied instead of the state restoration.
+  //
+  // E.g. for editors, selections, folds and scroll positions are restored, if the same file is closed and, later, opened again in the same pane.
+  // When disabled, a single selection in the very beginning of the file, zero scroll position and no folds state is used as a default.
+  //
+  // Default: true
+  "restore_on_file_reopen": true,
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
@@ -136,6 +145,11 @@
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
+  // Whether to use the system provided dialogs for prompts, such as confirmation
+  // prompts.
+  // When set to false, Zed will use its built-in prompts. Note that on Linux,
+  // this option is ignored and Zed will always use the built-in prompts.
+  "use_system_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // Cursor shape for the default editor.
@@ -150,6 +164,8 @@
   //
   // Default: not set, defaults to "bar"
   "cursor_shape": null,
+  // Determines when the mouse cursor should be hidden in an editor or input box.
+  "hide_mouse": "on_typing_and_movement",
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -176,9 +192,14 @@
   "show_completion_documentation": true,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
-  /// Whether to show the signature help after completion or a bracket pair inserted.
-  /// If `auto_signature_help` is enabled, this setting will be treated as enabled also.
+  // Whether to show the signature help after completion or a bracket pair inserted.
+  // If `auto_signature_help` is enabled, this setting will be treated as enabled also.
   "show_signature_help_after_edits": false,
+  // What to do when go to definition yields no results.
+  //
+  // 1. Do nothing: `none`
+  // 2. Find references for the same symbol: `find_all_references` (default)
+  "go_to_definition_fallback": "find_all_references",
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -298,11 +319,11 @@
     //  - "information": show only errors, warnings, and information
     //  - "all" or true: show all diagnostics
     "diagnostics": "all",
-    /// Forcefully enable or disable the scrollbar for each axis
+    // Forcefully enable or disable the scrollbar for each axis
     "axes": {
-      /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+      // When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
       "horizontal": true,
-      /// When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+      // When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
       "vertical": true
     }
   },
@@ -324,28 +345,30 @@
     "code_actions": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
+    // Whether to show breakpoints in the gutter.
+    "breakpoints": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
   "indent_guides": {
-    /// Whether to show indent guides in the editor.
+    // Whether to show indent guides in the editor.
     "enabled": true,
-    /// The width of the indent guides in pixels, between 1 and 10.
+    // The width of the indent guides in pixels, between 1 and 10.
     "line_width": 1,
-    /// The width of the active indent guide in pixels, between 1 and 10.
+    // The width of the active indent guide in pixels, between 1 and 10.
     "active_line_width": 1,
-    /// Determines how indent guides are colored.
-    /// This setting can take the following three values:
-    ///
-    /// 1. "disabled"
-    /// 2. "fixed"
-    /// 3. "indent_aware"
+    // Determines how indent guides are colored.
+    // This setting can take the following three values:
+    //
+    // 1. "disabled"
+    // 2. "fixed"
+    // 3. "indent_aware"
     "coloring": "fixed",
-    /// Determines how indent guide backgrounds are colored.
-    /// This setting can take the following two values:
-    ///
-    /// 1. "disabled"
-    /// 2. "indent_aware"
+    // Determines how indent guide backgrounds are colored.
+    // This setting can take the following two values:
+    //
+    // 1. "disabled"
+    // 2. "indent_aware"
     "background_coloring": "disabled"
   },
   // Whether the editor will scroll beyond the last line.
@@ -379,6 +402,9 @@
   // 3. Never populate the search query
   //    "never"
   "seed_search_query_from_cursor": "always",
+  // When enabled, automatically adjusts search case sensitivity based on your query.
+  // If your search query contains any uppercase letters, the search becomes case-sensitive;
+  // if it contains only lowercase letters, the search becomes case-insensitive.
   "use_smartcase_search": false,
   // Inlay hint related settings
   "inlay_hints": {
@@ -398,11 +424,22 @@
     "edit_debounce_ms": 700,
     // Time to wait after scrolling the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
-    "scroll_debounce_ms": 50
+    "scroll_debounce_ms": 50,
+    // A set of modifiers which, when pressed, will toggle the visibility of inlay hints.
+    // If the set if empty or not all the modifiers specified are pressed, inlay hints will not be toggled.
+    "toggle_on_modifiers_press": {
+      "control": false,
+      "shift": false,
+      "alt": false,
+      "platform": false,
+      "function": false
+    }
   },
   "project_panel": {
     // Whether to show the project panel button in the status bar
     "button": true,
+    // Whether to hide the gitignore entries in the project panel.
+    "hide_gitignore": false,
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
@@ -424,32 +461,32 @@
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": true,
-    /// Scrollbar-related settings
+    // Scrollbar-related settings
     "scrollbar": {
-      /// When to show the scrollbar in the project panel.
-      /// This setting can take five values:
-      ///
-      /// 1. null (default): Inherit editor settings
-      /// 2. Show the scrollbar if there's important information or
-      ///    follow the system's configured behavior (default):
-      ///   "auto"
-      /// 3. Match the system's configured behavior:
-      ///    "system"
-      /// 4. Always show the scrollbar:
-      ///    "always"
-      /// 5. Never show the scrollbar:
-      ///    "never"
+      // When to show the scrollbar in the project panel.
+      // This setting can take five values:
+      //
+      // 1. null (default): Inherit editor settings
+      // 2. Show the scrollbar if there's important information or
+      //    follow the system's configured behavior (default):
+      //   "auto"
+      // 3. Match the system's configured behavior:
+      //    "system"
+      // 4. Always show the scrollbar:
+      //    "always"
+      // 5. Never show the scrollbar:
+      //    "never"
       "show": null
     },
-    /// Which files containing diagnostic errors/warnings to mark in the project panel.
-    /// This setting can take the following three values:
-    ///
-    /// 1. Do not mark any files:
-    ///    "off"
-    /// 2. Only mark files with errors:
-    ///    "errors"
-    /// 3. Mark files with errors and warnings:
-    ///    "all"
+    // Which files containing diagnostic errors/warnings to mark in the project panel.
+    // This setting can take the following three values:
+    //
+    // 1. Do not mark any files:
+    //    "off"
+    // 2. Only mark files with errors:
+    //    "errors"
+    // 3. Mark files with errors and warnings:
+    //    "all"
     "show_diagnostics": "all",
     // Settings related to indent guides in the project panel.
     "indent_guides": {
@@ -482,8 +519,8 @@
     // when a corresponding outline entry becomes active.
     // Gitignored entries are never auto revealed.
     "auto_reveal_entries": true,
-    /// Whether to fold directories automatically
-    /// when a directory has only one directory inside.
+    // Whether to fold directories automatically
+    // when a directory has only one directory inside.
     "auto_fold_dirs": true,
     // Settings related to indent guides in the outline panel.
     "indent_guides": {
@@ -496,21 +533,21 @@
       //    "never"
       "show": "always"
     },
-    /// Scrollbar-related settings
+    // Scrollbar-related settings
     "scrollbar": {
-      /// When to show the scrollbar in the project panel.
-      /// This setting can take five values:
-      ///
-      /// 1. null (default): Inherit editor settings
-      /// 2. Show the scrollbar if there's important information or
-      ///    follow the system's configured behavior (default):
-      ///   "auto"
-      /// 3. Match the system's configured behavior:
-      ///    "system"
-      /// 4. Always show the scrollbar:
-      ///    "always"
-      /// 5. Never show the scrollbar:
-      ///    "never"
+      // When to show the scrollbar in the project panel.
+      // This setting can take five values:
+      //
+      // 1. null (default): Inherit editor settings
+      // 2. Show the scrollbar if there's important information or
+      //    follow the system's configured behavior (default):
+      //   "auto"
+      // 3. Match the system's configured behavior:
+      //    "system"
+      // 4. Always show the scrollbar:
+      //    "always"
+      // 5. Never show the scrollbar:
+      //    "never"
       "show": null
     }
   },
@@ -535,7 +572,7 @@
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
-    // Where to the git panel. Can be 'left' or 'right'.
+    // Where to show the git panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the git panel.
     "default_width": 360,
@@ -543,6 +580,12 @@
     //
     // Default: icon
     "status_style": "icon",
+    // What branch name to use if init.defaultBranch
+    // is not set
+    //
+    // Default: main
+    "fallback_branch_name": "main",
+
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -582,7 +625,64 @@
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
-    }
+    },
+    // The model to use when applying edits from the assistant.
+    "editor_model": {
+      // The provider to use.
+      "provider": "zed.dev",
+      // The model to use.
+      "model": "claude-3-5-sonnet-latest"
+    },
+    // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    "always_allow_tool_actions": false,
+    "default_profile": "write",
+    "profiles": {
+      "ask": {
+        "name": "Ask",
+        // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
+        // "enable_all_context_servers": true,
+        "tools": {
+          "diagnostics": true,
+          "fetch": true,
+          "list_directory": false,
+          "now": true,
+          "path_search": true,
+          "read_file": true,
+          "regex_search": true,
+          "thinking": true
+        }
+      },
+      "write": {
+        "name": "Write",
+        "enable_all_context_servers": true,
+        "tools": {
+          "bash": true,
+          "batch_tool": true,
+          "code_symbols": true,
+          "copy_path": false,
+          "create_file": true,
+          "delete_path": false,
+          "diagnostics": true,
+          "find_replace_file": true,
+          "fetch": true,
+          "list_directory": false,
+          "move_path": false,
+          "now": true,
+          "path_search": true,
+          "read_file": true,
+          "regex_search": true,
+          "symbol_info": true,
+          "thinking": true
+        }
+      }
+    },
+    // Where to show notifications when an agent has either completed
+    // its response, or else needs confirmation before it can run a
+    // tool action.
+    // "primary_screen" - Show the notification only on your primary screen (default)
+    // "all_screens" - Show these notifications on all screens
+    // "never" - Never show these notifications
+    "notify_when_agent_waiting": "primary_screen"
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -628,7 +728,7 @@
     "show": true,
     // Whether or not to show the navigation history buttons.
     "show_nav_history_buttons": true,
-    /// Whether or not to show the tab bar buttons.
+    // Whether or not to show the tab bar buttons.
     "show_tab_bar_buttons": true
   },
   // Settings related to the editor's tabs
@@ -636,11 +736,19 @@
     // Show git status colors in the editor tabs.
     "git_status": false,
     // Position of the close button on the editor tabs.
+    // One of: ["right", "left", "hidden"]
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,
-    // Whether to always show the close button on tabs.
-    "always_show_close_button": false,
+    // Controls the appearance behavior of the tab's close button.
+    //
+    // 1. Show it just upon hovering the tab. (default)
+    //     "hover"
+    // 2. Show it persistently.
+    //     "always"
+    // 3. Never show it, even if hovering it.
+    //     "hidden"
+    "show_close_button": "hover",
     // What to do after closing the current tab.
     //
     // 1. Activate the tab that was open previously (default)
@@ -650,16 +758,16 @@
     // 3. Activate the left neighbour tab if present
     //     "left_neighbour"
     "activate_on_close": "history",
-    /// Which files containing diagnostic errors/warnings to mark in the tabs.
-    /// Diagnostics are only shown when file icons are also active.
-    /// This setting only works when can take the following three values:
-    ///
-    /// 1. Do not mark any files:
-    ///    "off"
-    /// 2. Only mark files with errors:
-    ///    "errors"
-    /// 3. Mark files with errors and warnings:
-    ///    "all"
+    // Which files containing diagnostic errors/warnings to mark in the tabs.
+    // Diagnostics are only shown when file icons are also active.
+    // This setting only works when can take the following three values:
+    //
+    // 1. Do not mark any files:
+    //    "off"
+    // 2. Only mark files with errors:
+    //    "errors"
+    // 3. Mark files with errors and warnings:
+    //    "all"
     "show_diagnostics": "off"
   },
   // Settings related to preview tabs.
@@ -700,8 +808,8 @@
   "remove_trailing_whitespace_on_save": true,
   // Whether to start a new line with a comment when a previous line is a comment as well.
   "extend_comment_on_newline": true,
-  // Whether or not to ensure there's a single newline at the end of a buffer
-  // when saving it.
+  // Removes any lines containing only whitespace at the end of the file and
+  // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
   // Whether or not to perform a buffer format before saving
   //
@@ -817,8 +925,24 @@
       //
       // The minimum column number to show the inline blame information at
       // "min_column": 0
-    }
+    },
+    // How git hunks are displayed visually in the editor.
+    // This setting can take two values:
+    //
+    // 1. Show unstaged hunks filled and staged hunks hollow:
+    //    "hunk_style": "staged_hollow"
+    // 2. Show unstaged hunks hollow and staged hunks filled:
+    //    "hunk_style": "unstaged_hollow"
+    "hunk_style": "staged_hollow"
   },
+  // The list of custom Git hosting providers.
+  "git_hosting_providers": [
+    // {
+    //   "provider": "github",
+    //   "name": "BigCorp GitHub",
+    //   "base_url": "https://code.big-corp.com"
+    // }
+  ],
   // Configuration for how direnv configuration should be loaded. May take 2 values:
   // 1. Load direnv configuration using `direnv export json` directly.
   //      "load_direnv": "direct"
@@ -829,22 +953,19 @@
     // A list of globs representing files that edit predictions should be disabled for.
     // There's a sensible default list of globs already included.
     // Any addition to this list will be merged with the default list.
-    "disabled_globs": [
-      "**/.env*",
-      "**/*.pem",
-      "**/*.key",
-      "**/*.cert",
-      "**/*.crt",
-      "**/.dev.vars",
-      "**/secrets.yml"
-    ],
+    // Globs are matched relative to the worktree root,
+    // except when starting with a slash (/) or equivalent in Windows.
+    "disabled_globs": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
-    // 1. Display inline when there are no language server completions available.
-    //     "mode": "eager_preview"
-    // 2. Display inline when holding modifier key (alt by default).
-    //     "mode": "auto"
-    "mode": "eager_preview"
+    // 1. Display predictions inline when there are no language server completions available.
+    //     "mode": "eager"
+    // 2. Display predictions inline only when holding a modifier key (alt by default).
+    //     "mode": "subtle"
+    "mode": "eager",
+    // Whether edit predictions are enabled in the assistant panel.
+    // This setting has no effect if globally disabled.
+    "enabled_in_assistant": true
   },
   // Settings specific to journaling
   "journal": {
@@ -928,7 +1049,7 @@
     //         "alternate_scroll": "on",
     //  2. Default alternate scroll mode to off
     //         "alternate_scroll": "off",
-    "alternate_scroll": "off",
+    "alternate_scroll": "on",
     // Set whether the option key behaves as the meta key.
     // May take 2 values:
     //  1. Rely on default platform handling of option key, on macOS
@@ -980,21 +1101,21 @@
       // Example: `echo -e "\e]2;New Title\007";`
       "breadcrumbs": true
     },
-    /// Scrollbar-related settings
+    // Scrollbar-related settings
     "scrollbar": {
-      /// When to show the scrollbar in the terminal.
-      /// This setting can take five values:
-      ///
-      /// 1. null (default): Inherit editor settings
-      /// 2. Show the scrollbar if there's important information or
-      ///    follow the system's configured behavior (default):
-      ///   "auto"
-      /// 3. Match the system's configured behavior:
-      ///    "system"
-      /// 4. Always show the scrollbar:
-      ///    "always"
-      /// 5. Never show the scrollbar:
-      ///    "never"
+      // When to show the scrollbar in the terminal.
+      // This setting can take five values:
+      //
+      // 1. null (default): Inherit editor settings
+      // 2. Show the scrollbar if there's important information or
+      //    follow the system's configured behavior (default):
+      //   "auto"
+      // 3. Match the system's configured behavior:
+      //    "system"
+      // 4. Always show the scrollbar:
+      //    "always"
+      // 5. Never show the scrollbar:
+      //    "never"
       "show": null
     }
     // Set the terminal's font size. If this option is not included,
@@ -1013,7 +1134,7 @@
     // "max_scroll_history_lines": 10000,
   },
   "code_actions_on_format": {},
-  /// Settings related to running tasks.
+  // Settings related to running tasks.
   "tasks": {
     "variables": {}
   },
@@ -1030,24 +1151,23 @@
   // }
   //
   "file_types": {
-    "Plain Text": ["txt"],
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
     "Shell Script": [".env.*"]
   },
-  /// By default use a recent system version of node, or install our own.
-  /// You can override this to use a version of node that is not in $PATH with:
-  /// {
-  ///   "node": {
-  ///     "path": "/path/to/node"
-  ///     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
-  ///   }
-  /// }
-  /// or to ensure Zed always downloads and installs an isolated version of node:
-  /// {
-  ///   "node": {
-  ///     "ignore_system_version": true,
-  ///   }
-  /// NOTE: changing this setting currently requires restarting Zed.
+  // By default use a recent system version of node, or install our own.
+  // You can override this to use a version of node that is not in $PATH with:
+  // {
+  //   "node": {
+  //     "path": "/path/to/node"
+  //     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
+  //   }
+  // }
+  // or to ensure Zed always downloads and installs an isolated version of node:
+  // {
+  //   "node": {
+  //     "ignore_system_version": true,
+  //   }
+  // NOTE: changing this setting currently requires restarting Zed.
   "node": {},
   // The extensions that Zed should automatically install on startup.
   //
@@ -1055,6 +1175,52 @@
   // and change the value to `false`.
   "auto_install_extensions": {
     "html": true
+  },
+  // Controls how completions are processed for this language.
+  "completions": {
+    // Controls how words are completed.
+    // For large documents, not all words may be fetched for completion.
+    //
+    // May take 3 values:
+    // 1. "enabled"
+    //   Always fetch document's words for completions along with LSP completions.
+    // 2. "fallback"
+    //   Only if LSP response errors or times out, use document's words to show completions.
+    // 3. "disabled"
+    //   Never fetch or complete document's words for completions.
+    //   (Word-based completions can still be queried via a separate action)
+    //
+    // Default: fallback
+    "words": "fallback",
+    // Whether to fetch LSP completions or not.
+    //
+    // Default: true
+    "lsp": true,
+    // When fetching LSP completions, determines how long to wait for a response of a particular server.
+    // When set to 0, waits indefinitely.
+    //
+    // Default: 0
+    "lsp_fetch_timeout_ms": 0,
+    // Controls what range to replace when accepting LSP completions.
+    //
+    // When LSP servers give an `InsertReplaceEdit` completion, they provides two ranges: `insert` and `replace`. Usually, `insert`
+    // contains the word prefix before your cursor and `replace` contains the whole word.
+    //
+    // Effectively, this setting just changes whether Zed will use the received range for `insert` or `replace`, so the results may
+    // differ depending on the underlying LSP server.
+    //
+    // Possible values:
+    // 1. "insert"
+    //   Replaces text before the cursor, using the `insert` range described in the LSP specification.
+    // 2. "replace"
+    //   Replaces text before and after the cursor, using the `replace` range described in the LSP specification.
+    // 3. "replace_subsequence"
+    //   Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text,
+    //   and like `"insert"` otherwise.
+    // 4. "replace_suffix"
+    //   Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
+    //   `"insert"` otherwise.
+    "lsp_insert_mode": "replace_suffix"
   },
   // Different settings for specific languages.
   "languages": {
@@ -1146,10 +1312,19 @@
         "allowed": true
       }
     },
+    "LaTeX": {
+      "format_on_save": "on",
+      "formatter": "language_server",
+      "language_servers": ["texlab", "..."],
+      "prettier": {
+        "allowed": false
+      }
+    },
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width",
       "prettier": {
         "allowed": true
       }
@@ -1273,6 +1448,10 @@
     // "semi": false,
     // "singleQuote": true
   },
+  // Settings for auto-closing of JSX tags.
+  "jsx_tag_auto_close": {
+    "enabled": true
+  },
   // LSP Specific settings.
   "lsp": {
     // Specify the LSP name as a key here.
@@ -1296,6 +1475,7 @@
   },
   // Vim settings
   "vim": {
+    "default_mode": "normal",
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_multiline_find": false,
@@ -1325,11 +1505,6 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
-  },
-  // Task-related settings.
-  "task": {
-    // Whether to show task status indicator in the status bar. Default: true
-    "show_status_indicator": true
   },
   // Whether to show full labels in line indicator or short ones
   //
@@ -1376,6 +1551,12 @@
   //   }
   // ]
   "ssh_connections": [],
+
   // Configures context servers for use in the Assistant.
-  "context_servers": {}
+  "context_servers": {},
+  "debugger": {
+    "stepping_granularity": "line",
+    "save_breakpoints": true,
+    "button": true
+  }
 }

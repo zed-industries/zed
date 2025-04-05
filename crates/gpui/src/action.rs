@@ -1,7 +1,7 @@
 use crate::SharedString;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
-pub use no_action::{is_no_action, NoAction};
+pub use no_action::{NoAction, is_no_action};
 use serde_json::json;
 use std::{
     any::{Any, TypeId},
@@ -68,7 +68,7 @@ pub trait Action: 'static + Send {
 
     /// Optional JSON schema for the action's input data.
     fn action_json_schema(
-        _: &mut schemars::gen::SchemaGenerator,
+        _: &mut schemars::r#gen::SchemaGenerator,
     ) -> Option<schemars::schema::Schema>
     where
         Self: Sized,
@@ -167,7 +167,7 @@ impl Default for ActionRegistry {
 
 struct ActionData {
     pub build: ActionBuilder,
-    pub json_schema: fn(&mut schemars::gen::SchemaGenerator) -> Option<schemars::schema::Schema>,
+    pub json_schema: fn(&mut schemars::r#gen::SchemaGenerator) -> Option<schemars::schema::Schema>,
 }
 
 /// This type must be public so that our macros can build it in other crates.
@@ -183,7 +183,7 @@ pub struct MacroActionData {
     pub aliases: &'static [&'static str],
     pub type_id: TypeId,
     pub build: ActionBuilder,
-    pub json_schema: fn(&mut schemars::gen::SchemaGenerator) -> Option<schemars::schema::Schema>,
+    pub json_schema: fn(&mut schemars::r#gen::SchemaGenerator) -> Option<schemars::schema::Schema>,
 }
 
 inventory::collect!(MacroActionBuilder);
@@ -271,7 +271,7 @@ impl ActionRegistry {
 
     pub fn action_schemas(
         &self,
-        generator: &mut schemars::gen::SchemaGenerator,
+        generator: &mut schemars::r#gen::SchemaGenerator,
     ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
         // Use the order from all_names so that the resulting schema has sensible order.
         self.all_names
@@ -310,7 +310,7 @@ macro_rules! actions {
                     Ok(Box::new(Self))
                 },
                 fn action_json_schema(
-                    _: &mut gpui::private::schemars::gen::SchemaGenerator,
+                    _: &mut gpui::private::schemars::r#gen::SchemaGenerator,
                 ) -> Option<gpui::private::schemars::schema::Schema> {
                     None
                 }
@@ -347,7 +347,7 @@ macro_rules! action_as {
                 Ok(Box::new(Self))
             },
             fn action_json_schema(
-                generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
             ) -> Option<gpui::private::schemars::schema::Schema> {
                 None
             }
@@ -375,16 +375,50 @@ macro_rules! action_with_deprecated_aliases {
             $name,
             $name,
             fn build(
-                _: gpui::private::serde_json::Value,
+                value: gpui::private::serde_json::Value,
             ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                 Ok(Box::new(Self))
             },
+
             fn action_json_schema(
-                generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
             ) -> Option<gpui::private::schemars::schema::Schema> {
                 None
-
             },
+
+            fn deprecated_aliases() -> &'static [&'static str] {
+                &[
+                    $($alias),*
+                ]
+            }
+        );
+
+        gpui::register_action!($name);
+    };
+}
+
+/// Defines and registers a unit struct that can be used as an action, with some deprecated aliases.
+#[macro_export]
+macro_rules! impl_action_with_deprecated_aliases {
+    ($namespace:path, $name:ident, [$($alias:literal),* $(,)?]) => {
+        gpui::__impl_action!(
+            $namespace,
+            $name,
+            $name,
+            fn build(
+                value: gpui::private::serde_json::Value,
+            ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
+            },
+
+            fn action_json_schema(
+                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
+            ) -> Option<gpui::private::schemars::schema::Schema> {
+                Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(
+                    generator,
+                ))
+            },
+
             fn deprecated_aliases() -> &'static [&'static str] {
                 &[
                     $($alias),*
@@ -399,6 +433,8 @@ macro_rules! action_with_deprecated_aliases {
 /// Registers the action and implements the Action trait for any struct that implements Clone,
 /// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
 ///
+/// Similar to `actions!`, but accepts structs with fields.
+///
 /// Fields and variants that don't make sense for user configuration should be annotated with
 /// #[serde(skip)].
 #[macro_export]
@@ -410,7 +446,7 @@ macro_rules! impl_actions {
                     Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
                 },
                 fn action_json_schema(
-                    generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+                    generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
                 ) -> Option<gpui::private::schemars::schema::Schema> {
                     Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(
                         generator,
@@ -443,7 +479,7 @@ macro_rules! impl_internal_actions {
                         )))
                 },
                 fn action_json_schema(
-                    generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+                    generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
                 ) -> Option<gpui::private::schemars::schema::Schema> {
                     None
                 }
@@ -473,7 +509,7 @@ macro_rules! impl_action_as {
                 ))
             },
             fn action_json_schema(
-                generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
             ) -> Option<gpui::private::schemars::schema::Schema> {
                 Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(
                     generator,
