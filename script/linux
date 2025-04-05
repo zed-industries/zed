@@ -28,7 +28,6 @@ if [[ -n $apt ]]; then
     libasound2-dev
     libfontconfig-dev
     libwayland-dev
-    libx11-xcb-dev
     libxkbcommon-x11-dev
     libssl-dev
     libzstd-dev
@@ -77,7 +76,6 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     alsa-lib-devel
     fontconfig-devel
     wayland-devel
-    libxcb-devel
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
@@ -146,7 +144,6 @@ if [[ -n $zyp ]]; then
     gzip
     jq
     libvulkan1
-    libxcb-devel
     libxkbcommon-devel
     libxkbcommon-x11-devel
     libzstd-devel
@@ -177,7 +174,6 @@ if [[ -n $pacman ]]; then
     fontconfig
     wayland
     libgit2
-    libxcb
     libxkbcommon-x11
     openbsd-netcat
     openssl
