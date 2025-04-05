@@ -8,10 +8,7 @@ use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
-use bedrock::bedrock_client::types::{
-    ContentBlockDelta, ContentBlockStart, ConverseStreamOutput,
-    ReasoningContentBlockDelta,
-};
+use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ConverseStreamOutput, ReasoningContentBlockDelta, StopReason};
 use bedrock::{
     BedrockAutoToolChoice, BedrockError, BedrockInnerContent, BedrockMessage, BedrockModelMode,
     BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolConfig,
@@ -838,8 +835,6 @@ pub fn map_to_language_model_completion_events(
                                                             .input_json
                                                             .push_str(text_out.input());
                                                     }
-
-                                                    return Some((None, state));
                                                 }
 
                                                 Some(ContentBlockDelta::ReasoningContent(
@@ -873,10 +868,9 @@ pub fn map_to_language_model_completion_events(
                                                             state,
                                                         ));
                                                     }
-                                                    _ => return Some((None, state)),
+                                                    _ => {}
                                                 },
-                                                None => return Some((None, state)),
-                                                _ => return Some((None, state)),
+                                                _ => {}
                                             }
                                         }
 
@@ -927,25 +921,19 @@ pub fn map_to_language_model_completion_events(
                                                 ));
                                             }
                                         }
-                                        ConverseStreamOutput::Metadata(cb_meta) => {
-                                            if let Some(metadata) = cb_meta.usage {
-                                                let completion_event =
-                                                    LanguageModelCompletionEvent::UsageUpdate(
-                                                        TokenUsage {
-                                                            input_tokens: metadata.input_tokens
-                                                                as u32,
-                                                            output_tokens: metadata.output_tokens
-                                                                as u32,
-                                                            cache_creation_input_tokens: default(),
-                                                            cache_read_input_tokens: default(),
-                                                        },
-                                                    );
-                                                return Some((Some(Ok(completion_event)), state));
-                                            }
+                                        ConverseStreamOutput::MessageStop(message_stop) => {
+                                            let reason = match message_stop.stop_reason {
+                                                StopReason::ContentFiltered => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
+                                                StopReason::EndTurn => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
+                                                StopReason::GuardrailIntervened => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
+                                                StopReason::MaxTokens => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
+                                                StopReason::StopSequence => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
+                                                StopReason::ToolUse => { LanguageModelCompletionEvent::Stop(language_model::StopReason::ToolUse) }
+                                                _ => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
+                                            };
+                                            return Some((Some(Ok(reason)), state));
                                         }
-                                        _ => {
-                                            return Some((None, state));
-                                        }
+                                        _ => {}
                                     }
                                 }
 

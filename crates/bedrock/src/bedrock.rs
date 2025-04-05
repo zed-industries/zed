@@ -37,8 +37,7 @@ pub async fn stream_completion(
         .spawn(async move {
             let mut response = bedrock::Client::converse_stream(&client)
                 .model_id(request.model.clone())
-                .set_messages(request.messages.into())
-                .set_tool_config(request.tools);
+                .set_messages(request.messages.into());
 
             if let Some(Thinking::Enabled {
                 budget_tokens: Some(budget_tokens),
@@ -55,6 +54,10 @@ pub async fn stream_completion(
                             ),
                         ])),
                     )])));
+            }
+
+            if request.tools.is_some() && !request.tools.as_ref().unwrap().tools.is_empty() {
+                response = response.set_tool_config(request.tools);
             }
 
             let response = response.send().await;
