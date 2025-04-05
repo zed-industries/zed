@@ -479,26 +479,39 @@ impl Vim {
                     if replacement.should_replace_all {
                         search_bar.select_last_match(window, cx);
                         search_bar.replace_all(&Default::default(), window, cx);
-                        cx.spawn(async move |_, cx| {
-                            cx.background_executor()
-                                .timer(Duration::from_millis(200))
-                                .await;
-                            editor
-                                .update(cx, |editor, cx| editor.clear_search_within_ranges(cx))
-                                .ok();
-                        })
-                        .detach();
-                        vim.update(cx, |vim, cx| {
-                            vim.move_cursor(
-                                Motion::StartOfLine {
-                                    display_lines: false,
-                                },
-                                None,
-                                window,
-                                cx,
-                            )
-                        });
+                    } else {
+                        // TODO: Confirm whether we want to have the same
+                        // behaviour as the regular search bar, where the next
+                        // ocurrence, relative to the cursor, is replaced, or if
+                        // we want to have the same behaviour as NeoVim, where
+                        // regardless of the cursor position, the first
+                        // ocurrence in the line is the one that gets replaced.
+                        // For example, for the string "this and this and this",
+                        // if the cursor is in the second "this", then a Zed
+                        // search and replace will replace the second "this",
+                        // while NeoVim would replace the first one.
+                        search_bar.replace_next(&Default::default(), window, cx);
                     }
+
+                    cx.spawn(async move |_, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(200))
+                            .await;
+                        editor
+                            .update(cx, |editor, cx| editor.clear_search_within_ranges(cx))
+                            .ok();
+                    })
+                    .detach();
+                    vim.update(cx, |vim, cx| {
+                        vim.move_cursor(
+                            Motion::StartOfLine {
+                                display_lines: false,
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
+                    });
                 })?;
                 anyhow::Ok(())
             })
@@ -564,13 +577,13 @@ impl Replacement {
         let mut replacement = Replacement {
             search,
             replacement,
-            should_replace_all: true,
+            should_replace_all: false,
             is_case_sensitive: true,
         };
 
         for c in flags.chars() {
             match c {
-                'g' | 'I' => {}
+                'g' | 'I' => replacement.should_replace_all = true,
                 'c' | 'n' => replacement.should_replace_all = false,
                 'i' => replacement.is_case_sensitive = false,
                 _ => {}
