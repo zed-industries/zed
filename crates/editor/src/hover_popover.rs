@@ -292,7 +292,12 @@ fn show_hover(
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
                     Some(ref source) => {
-                        format!("{source}: {}", local_diagnostic.diagnostic.message)
+                        let message = &local_diagnostic.diagnostic.message;
+                        if let Some(code) = &local_diagnostic.diagnostic.code {
+                            format!("{source}: {} ({})", message, code)
+                        } else {
+                            format!("{source}: {}", message)
+                        }
                     }
                     None => local_diagnostic.diagnostic.message.clone(),
                 };
