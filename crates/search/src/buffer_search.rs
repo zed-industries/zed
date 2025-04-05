@@ -1056,6 +1056,21 @@ impl BufferSearchBar {
         }
     }
 
+    pub fn select_first_match(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+        if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+            if let Some(matches) = self
+                .searchable_items_with_matches
+                .get(&searchable_item.downgrade())
+            {
+                if matches.is_empty() {
+                    return;
+                }
+
+                self.active_match_index = Some(0);
+            }
+        }
+    }
+
     pub fn select_last_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(searchable_item) = self.active_searchable_item.as_ref() {
             if let Some(matches) = self
