@@ -143,6 +143,7 @@ let
           wayland
           gpu-lib
           xorg.libxcb
+          xorg.libX11
         ]
         ++ lib.optionals stdenv'.hostPlatform.isDarwin [
           apple-sdk_15
