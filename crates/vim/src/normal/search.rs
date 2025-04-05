@@ -480,16 +480,7 @@ impl Vim {
                         search_bar.select_last_match(window, cx);
                         search_bar.replace_all(&Default::default(), window, cx);
                     } else {
-                        // TODO: Confirm whether we want to have the same
-                        // behaviour as the regular search bar, where the next
-                        // ocurrence, relative to the cursor, is replaced, or if
-                        // we want to have the same behaviour as NeoVim, where
-                        // regardless of the cursor position, the first
-                        // ocurrence in the line is the one that gets replaced.
-                        // For example, for the string "this and this and this",
-                        // if the cursor is in the second "this", then a Zed
-                        // search and replace will replace the second "this",
-                        // while NeoVim would replace the first one.
+                        search_bar.select_first_match(window, cx);
                         search_bar.replace_next(&Default::default(), window, cx);
                     }
 
