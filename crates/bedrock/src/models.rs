@@ -110,7 +110,9 @@ impl Model {
             Model::Claude3Sonnet => "anthropic.claude-3-sonnet-20240229-v1:0",
             Model::Claude3Haiku => "anthropic.claude-3-haiku-20240307-v1:0",
             Model::Claude3_5Haiku => "anthropic.claude-3-5-haiku-20241022-v1:0",
-            Model::Claude3_7Sonnet | Model::Claude3_7SonnetThinking => "anthropic.claude-3-7-sonnet-20250219-v1:0",
+            Model::Claude3_7Sonnet | Model::Claude3_7SonnetThinking => {
+                "anthropic.claude-3-7-sonnet-20250219-v1:0"
+            }
             Model::AmazonNovaLite => "amazon.nova-lite-v1:0",
             Model::AmazonNovaMicro => "amazon.nova-micro-v1:0",
             Model::AmazonNovaPro => "amazon.nova-pro-v1:0",
@@ -274,7 +276,9 @@ impl Model {
             }
 
             // Models available only in US
-            (Model::Claude3Opus, "us") | (Model::Claude3_7Sonnet, "us") | (Model::Claude3_7SonnetThinking, "us") => {
+            (Model::Claude3Opus, "us")
+            | (Model::Claude3_7Sonnet, "us")
+            | (Model::Claude3_7SonnetThinking, "us") => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 

@@ -8,15 +8,18 @@ use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
-use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ConverseStreamOutput, ReasoningContentBlockDelta, StopReason};
+use bedrock::bedrock_client::Client as BedrockClient;
+use bedrock::bedrock_client::config::timeout::TimeoutConfig;
+use bedrock::bedrock_client::types::{
+    ContentBlockDelta, ContentBlockStart, ConverseStreamOutput, ReasoningContentBlockDelta,
+    StopReason,
+};
 use bedrock::{
     BedrockAutoToolChoice, BedrockError, BedrockInnerContent, BedrockMessage, BedrockModelMode,
     BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolConfig,
     BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock,
     BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
 };
-use bedrock::bedrock_client::Client as BedrockClient;
-use bedrock::bedrock_client::config::timeout::TimeoutConfig;
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -838,8 +841,8 @@ pub fn map_to_language_model_completion_events(
                                                 }
 
                                                 Some(ContentBlockDelta::ReasoningContent(
-                                                         thinking,
-                                                     )) => match thinking {
+                                                    thinking,
+                                                )) => match thinking {
                                                     ReasoningContentBlockDelta::RedactedContent(
                                                         redacted,
                                                     ) => {
@@ -848,7 +851,7 @@ pub fn map_to_language_model_completion_events(
                                                                 String::from_utf8(
                                                                     redacted.into_inner(),
                                                                 )
-                                                                    .unwrap_or("REDACTED".to_string()),
+                                                                .unwrap_or("REDACTED".to_string()),
                                                             );
 
                                                         return Some((
@@ -856,7 +859,8 @@ pub fn map_to_language_model_completion_events(
                                                             state,
                                                         ));
                                                     }
-                                                    ReasoningContentBlockDelta::Signature(_sig) => {}
+                                                    ReasoningContentBlockDelta::Signature(_sig) => {
+                                                    }
                                                     ReasoningContentBlockDelta::Text(thoughts) => {
                                                         let thinking_event =
                                                             LanguageModelCompletionEvent::Thinking(
@@ -906,8 +910,8 @@ pub fn map_to_language_model_completion_events(
                                                         serde_json::Value::from_str(
                                                             &tool_use.input_json,
                                                         )
-                                                            .map_err(|err| anyhow!(err))
-                                                            .unwrap()
+                                                        .map_err(|err| anyhow!(err))
+                                                        .unwrap()
                                                     },
                                                 };
 
@@ -921,15 +925,59 @@ pub fn map_to_language_model_completion_events(
                                                 ));
                                             }
                                         }
+
+                                        ConverseStreamOutput::Metadata(cb_meta) => {
+                                            if let Some(metadata) = cb_meta.usage {
+                                                let completion_event =
+                                                    LanguageModelCompletionEvent::UsageUpdate(
+                                                        TokenUsage {
+                                                            input_tokens: metadata.input_tokens
+                                                                as u32,
+                                                            output_tokens: metadata.output_tokens
+                                                                as u32,
+                                                            cache_creation_input_tokens: default(),
+                                                            cache_read_input_tokens: default(),
+                                                        },
+                                                    );
+                                                return Some((Some(Ok(completion_event)), state));
+                                            }
+                                        }
+
                                         ConverseStreamOutput::MessageStop(message_stop) => {
                                             let reason = match message_stop.stop_reason {
-                                                StopReason::ContentFiltered => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
-                                                StopReason::EndTurn => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
-                                                StopReason::GuardrailIntervened => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
-                                                StopReason::MaxTokens => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
-                                                StopReason::StopSequence => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
-                                                StopReason::ToolUse => { LanguageModelCompletionEvent::Stop(language_model::StopReason::ToolUse) }
-                                                _ => { LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn) }
+                                                StopReason::ContentFiltered => {
+                                                    LanguageModelCompletionEvent::Stop(
+                                                        language_model::StopReason::EndTurn,
+                                                    )
+                                                }
+                                                StopReason::EndTurn => {
+                                                    LanguageModelCompletionEvent::Stop(
+                                                        language_model::StopReason::EndTurn,
+                                                    )
+                                                }
+                                                StopReason::GuardrailIntervened => {
+                                                    LanguageModelCompletionEvent::Stop(
+                                                        language_model::StopReason::EndTurn,
+                                                    )
+                                                }
+                                                StopReason::MaxTokens => {
+                                                    LanguageModelCompletionEvent::Stop(
+                                                        language_model::StopReason::EndTurn,
+                                                    )
+                                                }
+                                                StopReason::StopSequence => {
+                                                    LanguageModelCompletionEvent::Stop(
+                                                        language_model::StopReason::EndTurn,
+                                                    )
+                                                }
+                                                StopReason::ToolUse => {
+                                                    LanguageModelCompletionEvent::Stop(
+                                                        language_model::StopReason::ToolUse,
+                                                    )
+                                                }
+                                                _ => LanguageModelCompletionEvent::Stop(
+                                                    language_model::StopReason::EndTurn,
+                                                ),
                                             };
                                             return Some((Some(Ok(reason)), state));
                                         }
