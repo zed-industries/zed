@@ -1,8 +1,9 @@
 use crate::actions::ShowSignatureHelp;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
+use ::markdown::{Markdown, MarkdownStyle};
 use gpui::{
-    App, Context, HighlightStyle, MouseButton, Size, StyledText, Task, TextStyle, Window,
-    combine_highlights,
+    App, AppContext, Context, Entity, HighlightStyle, MouseButton, Size, StyledText, Task,
+    TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
 use multi_buffer::{Anchor, ToOffset};
@@ -15,7 +16,7 @@ use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, Button, ButtonCommon, ButtonSize, Clickable, FluentBuilder,
     InteractiveElement, IntoElement, Label, ParentElement, Pixels, SharedString, Styled, StyledExt,
-    div, relative,
+    div, px, relative,
 };
 
 // Language-specific settings may define quotes as "brackets", so filter them out separately.
@@ -180,6 +181,7 @@ impl Editor {
             lsp_store.signature_help(&buffer, buffer_position, cx)
         });
         let language = self.language_at(position, cx);
+        let languages = lsp_store.read(cx).languages.clone();
 
         self.signature_help_state
             .set_task(cx.spawn_in(window, async move |editor, cx| {
@@ -217,15 +219,39 @@ impl Editor {
                             line_height: relative(settings.buffer_line_height.value()),
                             ..Default::default()
                         };
-
+                        let markdown_style = MarkdownStyle {
+                            base_text_style: text_style.clone(),
+                            syntax: cx.theme().syntax().clone(),
+                            selection_background_color: cx.theme().players().local().selection,
+                            code_block_overflow_x_scroll: true,
+                            link: gpui::TextStyleRefinement {
+                                underline: Some(gpui::UnderlineStyle {
+                                    thickness: px(1.),
+                                    color: Some(cx.theme().colors().editor_foreground),
+                                    wavy: false,
+                                }),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        };
                         let signature_help_popover = SignatureHelpPopover {
-                            style: text_style,
+                            style: text_style.clone(),
                             signature: signature_help
                                 .signatures
                                 .into_iter()
                                 .map(|s| SignatureHelpData {
                                     label: s.label.into(),
-                                    documentation: s.documentation.map(|s| s.into()),
+                                    documentation: s.documentation.map(|s| {
+                                        cx.new(|cx| {
+                                            Markdown::new(
+                                                s.into(),
+                                                markdown_style.clone(),
+                                                Some(languages.clone()),
+                                                None,
+                                                cx,
+                                            )
+                                        })
+                                    }),
                                     highlights: s.highlights,
                                 })
                                 .collect::<Vec<_>>(),
@@ -309,7 +335,7 @@ impl SignatureHelpState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SignatureHelpData {
     pub(crate) label: SharedString,
-    documentation: Option<SharedString>,
+    documentation: Option<Entity<Markdown>>,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
@@ -342,7 +368,9 @@ impl SignatureHelpPopover {
         let signature_description = signature.documentation.clone().map(|description| {
             return div()
                 .id("signature_help_description")
-                .child(div().px_2().py_1().child(StyledText::new(description)))
+                .px_2()
+                .py_0p5()
+                .child(description)
                 .into_any_element();
         });
         let signature = div()
