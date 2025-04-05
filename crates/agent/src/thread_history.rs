@@ -258,11 +258,7 @@ impl ThreadHistory {
             };
 
             if let Some(task) = task_result.log_err() {
-                cx.spawn(async move |this, cx| {
-                    task.await?;
-                    this.update(cx, |this, cx| this.update_all_entries(cx))
-                })
-                .detach_and_log_err(cx);
+                task.detach_and_log_err(cx);
             };
 
             cx.notify();
