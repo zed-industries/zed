@@ -37,11 +37,11 @@ use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
 use util::{ResultExt, maybe};
 use workspace::DraggedTab;
 use workspace::{
-    DraggedSelection, Pane, ShowConfiguration, ToggleZoom, Workspace,
+    DraggedSelection, Pane, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     pane,
 };
-use zed_actions::assistant::{InlineAssist, OpenPromptLibrary, ToggleFocus};
+use zed_actions::assistant::{InlineAssist, OpenPromptLibrary, ShowConfiguration, ToggleFocus};
 
 pub fn init(cx: &mut App) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);

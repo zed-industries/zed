@@ -37,8 +37,8 @@ use text::{OffsetRangeExt, ToPoint as _};
 use ui::prelude::*;
 use util::RangeExt;
 use util::ResultExt;
-use workspace::{ItemHandle, Toast, Workspace, notifications::NotificationId};
-use workspace::{ShowConfiguration, dock::Panel};
+use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
+use zed_actions::agent::OpenConfiguration;
 
 use crate::AssistantPanel;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
@@ -295,7 +295,7 @@ impl InlineAssistant {
                     if let Some(answer) = answer {
                         if answer == 0 {
                             cx.update(|window, cx| {
-                                window.dispatch_action(Box::new(ShowConfiguration), cx)
+                                window.dispatch_action(Box::new(OpenConfiguration), cx)
                             })
                             .ok();
                         }
