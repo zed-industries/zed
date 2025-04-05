@@ -6,9 +6,10 @@ pub mod terminal_tab_tooltip;
 
 use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
 use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent,
-    Stateful, Styled, Subscription, Task, WeakEntity, anchored, deferred, div, impl_actions,
+    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyCode,
+    KeyContext, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, Pixels, Render,
+    ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity, anchored, deferred, div,
+    impl_actions,
 };
 use itertools::Itertools;
 use persistence::TERMINAL_DB;
