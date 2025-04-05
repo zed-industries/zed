@@ -127,8 +127,6 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
         .and_then(parse_pixel_position_env_var)
 });
 
-actions!(assistant, [ShowConfiguration]);
-
 actions!(
     workspace,
     [
