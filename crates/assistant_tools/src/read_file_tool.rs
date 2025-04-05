@@ -125,25 +125,26 @@ impl Tool for ReadFileTool {
                     log.buffer_read(buffer, cx);
                 })?;
 
-                anyhow::Ok(result)
+                Ok(result)
             } else {
-                // No line ranges specified, check file size
+                // No line ranges specified, so check file size to see if it's too big.
                 let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
 
                 if file_size <= MAX_FILE_SIZE_TO_READ {
-                    // File is small enough, return all contents
+                    // File is small enough, so return its contents.
                     let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                     action_log.update(cx, |log, cx| {
                         log.buffer_read(buffer, cx);
                     })?;
 
-                    anyhow::Ok(result)
+                    Ok(result)
                 } else {
-                    // File is too large, so return an error with the outline and a suggestion to read again with line numbers.
+                    // File is too big, so return an error with the outline
+                    // and a suggestion to read again with line numbers.
                     let outline = file_outline(project, file_path, action_log, None, 0, cx).await?;
 
-                    Err(anyhow!("This file is too big to read all at once. Here is an outline of its symbols:\n\n{outline}\n\nUsing the line numbers in this outline, you can call this tool again while specifying the start_line and end_line fields to see the implementations of symbols in the outline."))
+                    Ok(format!("This file was too big to read all at once. Here is an outline of its symbols:\n\n{outline}\n\nUsing the line numbers in this outline, you can call this tool again while specifying the start_line and end_line fields to see the implementations of symbols in the outline."))
                 }
             }
         })
