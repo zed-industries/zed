@@ -78,8 +78,9 @@ pub enum BedrockAuthMethod {
     StaticCredentials,
     #[serde(rename = "sso")]
     SingleSignOn,
+    /// IMDSv2, PodIdentity, env vars, etc.
     #[serde(rename = "default")]
-    Automatic, // IMDSv2, PodIdentity, Env vars, etc.
+    Automatic,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -202,8 +203,7 @@ impl State {
                             "You are authenticated using a Named Profile, but no profile is set.",
                         )),
                         Some(profile_name) => Some(format!(
-                            "You are authenticated using a Named Profile: {}",
-                            profile_name
+                            "You are authenticated using a Named Profile: {profile_name}",
                         )),
                     },
                 }
