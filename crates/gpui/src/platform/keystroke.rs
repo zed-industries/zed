@@ -189,7 +189,10 @@ impl Keystroke {
                     if let Some(key_face) = key_face {
                         key = key_face;
                     }
-                    let ret = Ok(Keystroke {
+                    if code == KeyCode::Unknown {
+                        log::error!("Parse key stroke key-based: {}, {:#?}", source, ret);
+                    }
+                    return Ok(Keystroke {
                         modifiers: Modifiers {
                             control,
                             alt,
@@ -199,12 +202,8 @@ impl Keystroke {
                         },
                         code,
                         face: key,
-                        key_char: None,
+                        key_char,
                     });
-                    if code == KeyCode::Unknown {
-                        println!("parse key stroke key-based: {}, {:#?}", source, ret);
-                    }
-                    return ret;
                 }
             }
         }
@@ -219,24 +218,30 @@ impl Keystroke {
             KeyCode::parse_char(&key, keyboard_mapper).unwrap_or_default();
         if modifiers.shift {
             if shift {
-                log::error!("Key {} has both shift and alt modifiers", key);
+                log::error!(
+                    "Shortcut conflicts itself since this shortcut requires two shift keys to be pressed: {}",
+                    source
+                );
             }
             shift = true;
-            println!("shift");
         }
         if modifiers.alt {
             if alt {
-                log::error!("Key {} has both alt and shift modifiers", key);
+                log::error!(
+                    "Shortcut conflicts itself since this shortcut requires two alt keys to be pressed: {}",
+                    source
+                );
             }
             alt = true;
-            println!("alt");
         }
         if let Some(key_face) = key_face {
             key = key_face;
         }
-        println!("Key {} -> {:?}", source, code);
 
-        let ret = Ok(Keystroke {
+        if code == KeyCode::Unknown {
+            log::error!("Parse key stroke char-based: {}, {:#?}", source, ret);
+        }
+        Ok(Keystroke {
             modifiers: Modifiers {
                 control,
                 alt,
@@ -247,11 +252,7 @@ impl Keystroke {
             code,
             face: key,
             key_char,
-        });
-        if code == KeyCode::Unknown {
-            println!("parse key stroke char-based: {}, {:#?}", source, ret);
-        }
-        ret
+        })
     }
 
     /// Produces a representation of this key that Parse can understand.
