@@ -158,17 +158,17 @@ impl SemanticTokensCache {
         }
     }
 
-    /// Checks semantic token settings for enabled hint kinds and general enabled state.
-    /// Generates corresponding inlay_map splice updates on settings changes.
-    /// Does not update inlay hint cache state on disabling or inlay hint kinds change: only reenabling forces new LSP queries.
+    /// Checks semantic token settings for general enabled state.
+    /// Generates corresponding semantic_token_map splice updates on settings changes.
+    /// Does not update semantic token cache state: only reenabling forces new LSP queries.
     pub(super) fn update_settings(
         &mut self,
         new_token_settings: SemanticTokensSettings,
         visible_tokens: Vec<Token>,
     ) -> ControlFlow<Option<TokenSplice>> {
         let old_enabled = self.enabled;
-        // If the setting for semantic tokens has changed, update `enabled`. This condition avoids inlay
-        // hint visibility changes when other settings change (such as theme).
+        // If the setting for semantic tokens has changed, update `enabled`. This condition avoids semantic
+        // token visibility changes when other settings change (such as theme).
         //
         // Another option might be to store whether the user has manually toggled semantic tokens
         // visibility, and prefer this. This could lead to confusion as it means semantic tokens
@@ -188,7 +188,7 @@ impl SemanticTokensCache {
                 } else {
                     self.clear();
                     ControlFlow::Break(Some(TokenSplice {
-                        to_remove: visible_tokens.iter().map(|inlay| inlay.id).collect(),
+                        to_remove: visible_tokens.iter().map(|token| token.id).collect(),
                         to_insert: Vec::new(),
                     }))
                 }
@@ -796,7 +796,10 @@ fn apply_token_update(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{atomic::AtomicU32, Arc};
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
 
     use fs::FakeFs;
     use futures::StreamExt as _;
@@ -804,9 +807,8 @@ mod tests {
     use language::language_settings::{AllLanguageSettingsContent, SemanticTokensSettings};
     use languages::FakeLspAdapter;
     use lsp::{
-        FakeLanguageServer, SemanticToken, SemanticTokenModifier, SemanticTokenType,
-        SemanticTokensClientCapabilities, SemanticTokensFullOptions, SemanticTokensLegend,
-        SemanticTokensRangeResult, SemanticTokensServerCapabilities,
+        FakeLanguageServer, SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions,
+        SemanticTokensLegend, SemanticTokensRangeResult, SemanticTokensServerCapabilities,
     };
     use project::Project;
     use serde_json::json;
@@ -843,13 +845,29 @@ mod tests {
                                 lsp::Url::from_file_path(file_with_semantic_tokens).unwrap(),
                             );
 
-                            Ok(SemanticTokensRangeResult::Tokens(lsp::SemanticTokens {
-                                result_id: None,
-                                data: vec![SemanticToken {
-                                    token_type: i,
-                                    ..Default::default()
-                                }],
-                            }))
+                            Ok(Some(SemanticTokensRangeResult::Tokens(
+                                lsp::SemanticTokens {
+                                    result_id: None,
+                                    data: vec![
+                                        // fn main
+                                        lsp::SemanticToken {
+                                            delta_line: 0,
+                                            delta_start: i, // position will change slightly with each request
+                                            length: 4,
+                                            token_type: 0,             // FUNCTION
+                                            token_modifiers_bitset: 1, // DECLARATION
+                                        },
+                                        // let x
+                                        lsp::SemanticToken {
+                                            delta_line: 0,
+                                            delta_start: 10,
+                                            length: 1,
+                                            token_type: 1,             // VARIABLE
+                                            token_modifiers_bitset: 1, // DECLARATION
+                                        },
+                                    ],
+                                },
+                            )))
                         }
                     },
                 );
@@ -933,7 +951,7 @@ mod tests {
         fs.insert_tree(
             path!("/a"),
             json!({
-                "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
+                "main.rs": "fn main() { let x = 42; } // and some long comment to ensure tokens are not trimmed out",
                 "other.rs": "// Test file",
             }),
         )
@@ -1031,7 +1049,12 @@ mod tests {
             let excerpt_tokens = excerpt_tokens.read();
             for id in &excerpt_tokens.ordered_tokens {
                 let semantic_token = &excerpt_tokens.tokens_by_id[id];
-                semantic_tokens.push(format!("{}", semantic_token.r#type.as_str()))
+                semantic_tokens.push(format!(
+                    "{}:{}:{}",
+                    semantic_token.r#type.as_str(),
+                    semantic_token.range.start.offset,
+                    semantic_token.range.end.offset
+                ))
             }
         }
         semantic_tokens
@@ -1041,7 +1064,7 @@ mod tests {
         editor
             .visible_semantic_tokens(cx)
             .into_iter()
-            .map(|hint| hint.text.to_string())
+            .map(|token| token.text.to_string())
             .collect()
     }
 }
