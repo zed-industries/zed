@@ -406,9 +406,9 @@ aws-smithy-runtime-api = { version = "1.7.3", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.2.13", features = ["http-body-1-x"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "4487cb4d6e849d36e03b2ec47286f9ef566061e3" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "4487cb4d6e849d36e03b2ec47286f9ef566061e3" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "4487cb4d6e849d36e03b2ec47286f9ef566061e3" }
 naga = { version = "23.1.0", features = ["wgsl-in"] }
 blake3 = "1.5.3"
 bytes = "1.0"
