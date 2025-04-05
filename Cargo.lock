@@ -3395,7 +3395,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "strum",
  "task",
  "theme",
