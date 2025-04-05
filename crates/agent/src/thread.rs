@@ -391,17 +391,20 @@ impl Thread {
         self.summary.clone().unwrap_or(Self::DEFAULT_SUMMARY)
     }
 
-    pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut Context<Self>) {
-        let summary = summary.into();
-        let old_summary = self.summary_or_default();
-
-        self.summary = if summary.is_empty() {
-            Some(Self::DEFAULT_SUMMARY)
-        } else {
-            Some(summary)
+    pub fn set_summary(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let Some(current_summary) = &self.summary else {
+            // Don't allow setting summary until generated
+            return;
         };
 
-        if Some(old_summary) != self.summary {
+        let mut new_summary = new_summary.into();
+
+        if new_summary.is_empty() {
+            new_summary = Self::DEFAULT_SUMMARY;
+        }
+
+        if current_summary != &new_summary {
+            self.summary = Some(new_summary);
             cx.emit(ThreadEvent::SummaryChanged);
         }
     }
