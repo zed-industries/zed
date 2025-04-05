@@ -56,7 +56,7 @@ There are rules that apply to these root directories:
 <code_blocks>
 Whenever you mention a code block, you MUST use ONLY use the following format:
 
-```path/to/Something.blah#L123-456
+```language path/to/Something.blah#L123-456
 (code goes here)
 ```
 
@@ -64,9 +64,12 @@ The `#L123-456` means the line number range 123 through 456, and the path/to/Som
 is a path in the project. (If there is no valid path in the project, then you can use
 /dev/null/path.extension for its path.) This is the ONLY valid way to format code blocks, because the Markdown parser
 does not understand the more common ```language syntax, or bare ``` blocks. It only
-understands this path-based syntax.
+understands this path-based syntax, and if the path is missing, then it will error and you will have to do it over again.
 
-<good_example>
+Just to be really clear about this, if you ever find yourself writing three backticks followed by a language name, STOP!
+You have made a mistake. You can only ever put paths after triple backticks!
+
+<example>
 The explanation can be found in the README:
 
 ```path/to/README.md#L8-11
@@ -74,9 +77,9 @@ The explanation can be found in the README:
 
 Here is the explanation
 ```
-</bad_example>
+</example>
 
-<good_example>
+<example>
 In Markdown, hash marks signify headings. For example:
 
 ```/dev/null/example.md#L1-3
@@ -84,25 +87,5 @@ In Markdown, hash marks signify headings. For example:
 ## Level 2 heading
 ### Level 3 heading
 ```
-</good_example>
-
-<bad_example>
-The explanation can be found in the README:
-
-```
-## Explanation
-
-Here is the explanation
-```
-</bad_example>
-
-<bad_example>
-In Markdown, hash marks signify headings. For example:
-
-```markdown
-# Level 1 heading
-## Level 2 heading
-### Level 3 heading
-```
-</bad_example>
-</code_blocks>
+</example>
+<code_blocks>

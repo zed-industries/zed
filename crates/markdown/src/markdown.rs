@@ -1,6 +1,7 @@
 pub mod parser;
 mod path_range;
 
+use file_icons::FileIcons;
 use path_range::PathRange;
 use std::collections::{HashMap, HashSet};
 use std::iter;
@@ -646,7 +647,26 @@ impl Element for MarkdownElement {
                                                 markdown_end,
                                             );
 
+                                            // Clone project_path for the closure to avoid ownership issues
+                                            let click_project_path = project_path.clone();
+
                                             builder.modify_current_div(|el| {
+                                                let file_icon =
+                                                    FileIcons::get_icon(&project_path.path, cx)
+                                                        .map(|path| {
+                                                            Icon::from_path(path)
+                                                                .color(Color::Muted)
+                                                                .into_any_element()
+                                                        })
+                                                        .unwrap_or_else(|| {
+                                                            IconButton::new(
+                                                                "file-path-icon",
+                                                                IconName::File,
+                                                            )
+                                                            .shape(ui::IconButtonShape::Square)
+                                                            .into_any_element()
+                                                        });
+
                                                 el.child(
                                                     ButtonLike::new(ElementId::NamedInteger(
                                                         code_citation_id.clone(),
@@ -658,14 +678,7 @@ impl Element for MarkdownElement {
                                                             .flex()
                                                             .items_center()
                                                             .gap_1()
-                                                            .child(
-                                                                IconButton::new(
-                                                                    "file-path-icon",
-                                                                    IconName::File,
-                                                                )
-                                                                .icon_color(Color::Muted)
-                                                                .shape(ui::IconButtonShape::Square),
-                                                            )
+                                                            .child(file_icon)
                                                             .child(
                                                                 Label::new(
                                                                     project_path
@@ -677,19 +690,17 @@ impl Element for MarkdownElement {
                                                             ),
                                                     )
                                                     .on_click({
+                                                        let click_path = click_project_path.clone();
                                                         move |_, window, cx| {
                                                             if let Some(workspace) =
                                                                 window.root::<Workspace>().flatten()
                                                             {
-                                                                let project_path =
-                                                                    project_path.clone();
-
                                                                 workspace.update(
                                                                     cx,
                                                                     |workspace, cx| {
                                                                         workspace
                                                                             .open_path(
-                                                                                project_path,
+                                                                                click_path.clone(),
                                                                                 None,
                                                                                 true, // Focus the newly opened file
                                                                                 window,
@@ -706,7 +717,6 @@ impl Element for MarkdownElement {
 
                                             builder.pop_div();
 
-                                            // Could implement language detection by file extension here if needed
                                             None
                                         } else {
                                             None
