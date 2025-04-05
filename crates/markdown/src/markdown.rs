@@ -23,6 +23,7 @@ use pulldown_cmark::Alignment;
 use theme::SyntaxTheme;
 use ui::{ButtonLike, Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
+use workspace::Workspace;
 
 use crate::parser::CodeBlockKind;
 
@@ -576,7 +577,9 @@ impl Element for MarkdownElement {
         } else {
             0
         };
-        for (range, event) in parsed_markdown.events.iter() {
+
+        let code_citation_id = SharedString::from("code-citation-link");
+        for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
@@ -616,32 +619,39 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::CodeBlock(kind) => {
                             let language = if let CodeBlockKind::Fenced(path) = kind {
+                                dbg!(&path);
                                 // First, check to see if the model generated a language (despite having been
-                                // told not to). If so, the best we can do is to use that.
+                                // told not to). If so, the best we can do is to use that language.
                                 match parsed_markdown.languages.get(path).cloned() {
                                     None => {
                                         let path_range = PathRange::new(path);
-                                        
-                                        // Determine if this path is a valid file in the project
-                                        // We check for some basic path sanity rules
-                                        let path_looks_valid = !path_range.path.is_empty() && 
-                                            !path_range.path.contains("../..") && // Avoid suspicious paths
-                                            !path_range.path.contains("://") && // Not a URL
-                                            path_range.path.len() < 1024; // Reasonable length
-                                        
-                                        // Only show file link UI for paths that look like valid file paths
-                                        if path_looks_valid {
+
+                                        // If the path actually exists in the project, render a link to it.
+                                        if let Some(project_path) = window
+                                            .root::<Workspace>()
+                                            .flatten()
+                                            .and_then(|workspace| {
+                                                workspace
+                                                    .read(cx)
+                                                    .project()
+                                                    .read(cx)
+                                                    .find_project_path(path_range.path, cx)
+                                            })
+                                        {
                                             builder.flush_text();
-                                            
+
                                             builder.push_div(
                                                 div().relative().w_full(),
                                                 range,
                                                 markdown_end,
                                             );
-                                            
+
                                             builder.modify_current_div(|el| {
-                                            el.child(
-                                                ButtonLike::new("open-file-link")
+                                                el.child(
+                                                    ButtonLike::new(ElementId::NamedInteger(
+                                                        code_citation_id.clone(),
+                                                        index,
+                                                    ))
                                                     .child(
                                                         div()
                                                             .mb_1()
@@ -650,10 +660,7 @@ impl Element for MarkdownElement {
                                                             .gap_1()
                                                             .child(
                                                                 IconButton::new(
-                                                                    ElementId::NamedInteger(
-                                                                        "file-path-button".into(),
-                                                                        range.start,
-                                                                    ),
+                                                                    "file-path-icon",
                                                                     IconName::File,
                                                                 )
                                                                 .icon_color(Color::Muted)
@@ -661,29 +668,32 @@ impl Element for MarkdownElement {
                                                             )
                                                             .child(
                                                                 Label::new(
-                                                                    path_range.path.to_string(),
+                                                                    project_path
+                                                                        .path
+                                                                        .display()
+                                                                        .to_string(),
                                                                 )
                                                                 .color(Color::Accent),
                                                             ),
                                                     )
                                                     .on_click({
-                                                        let path_str = path_range.path.to_string();
-                                                        move |_, _, cx| {
-                                                            // Open the file path or URL
-
-                                                            // Open the path or URL
-                                                            cx.open_url(&path_str);
+                                                        move |_, _, _cx| {
+                                                            dbg!(
+                                                                &project_path,
+                                                                path_range.range.clone()
+                                                            );
                                                         }
                                                     }),
-                                            )
-                                        });
+                                                )
+                                            });
 
-                                        builder.pop_div();
-                                        } // Close the if path_looks_valid block
+                                            builder.pop_div();
 
-                                        // Could implement language detection by file extension here if needed
-
-                                        None
+                                            // Could implement language detection by file extension here if needed
+                                            None
+                                        } else {
+                                            None
+                                        }
                                     }
                                     Some(language) => Some(language.clone()),
                                 }

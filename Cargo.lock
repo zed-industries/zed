@@ -8344,6 +8344,7 @@ dependencies = [
  "linkify",
  "log",
  "node_runtime",
+ "project",
  "pulldown-cmark 0.12.2",
  "settings",
  "theme",
