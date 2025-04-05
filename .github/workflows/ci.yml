@@ -747,9 +747,11 @@ jobs:
           name: zed-industries
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
           skipPush: true
-      - run: nix build .#debug
-      - name: Limit /nix/store to 50GB
-        run: "[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d"
+      - run: nix build .#debug -L --accept-flake-config
+      - name: Limit /nix/store to 50GB # cleanup only if not ephemeral (macos)
+        if: ${{ ! matrix.system.install_nix }}
+        run: |
+          [ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d || :
 
   auto-release-preview:
     name: Auto release preview
