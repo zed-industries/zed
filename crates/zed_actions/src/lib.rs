@@ -190,13 +190,16 @@ pub mod agent {
 }
 
 pub mod assistant {
-    use gpui::{actions, impl_actions};
+    use gpui::{action_with_deprecated_aliases, actions, impl_actions};
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    actions!(
+    actions!(assistant, [ToggleFocus, ShowConfiguration]);
+
+    action_with_deprecated_aliases!(
         assistant,
-        [ToggleFocus, OpenPromptLibrary, ShowConfiguration]
+        OpenPromptLibrary,
+        ["assistant::DeployPromptLibrary"]
     );
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
