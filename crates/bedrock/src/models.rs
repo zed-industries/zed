@@ -236,6 +236,32 @@ impl Model {
         }
     }
 
+    pub fn tool_use(&self) -> bool {
+        match self {
+            // Anthropic Claude 3 models (all support tool use)
+            Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3_5Sonnet
+            | Self::Claude3_5SonnetV2
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::Claude3_5Haiku => true,
+
+            // Amazon Nova models (all support tool use)
+            Self::AmazonNovaPro | Self::AmazonNovaLite | Self::AmazonNovaMicro => true,
+
+            // AI21 Jamba 1.5 models support tool use
+            Self::AI21Jamba15LargeV1 | Self::AI21Jamba15MiniV1 => true,
+
+            // Cohere Command R models support tool use
+            Self::CohereCommandRV1 | Self::CohereCommandRPlusV1 => true,
+
+            // All other models don't support tool use
+            // Including Meta Llama 3.2, AI21 Jurassic, and others
+            _ => false,
+        }
+    }
+
     pub fn mode(&self) -> BedrockModelMode {
         match self {
             Model::Claude3_7SonnetThinking => BedrockModelMode::Thinking {

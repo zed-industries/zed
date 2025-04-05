@@ -528,7 +528,7 @@ impl LanguageModel for BedrockModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        self.model.tool_use()
     }
 
     fn max_token_count(&self) -> usize {
