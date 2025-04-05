@@ -400,17 +400,14 @@ impl BedrockModel {
             .get_or_try_init_blocking(|| {
                 let Ok((auth_method, credentials, endpoint, region, settings)) =
                     cx.read_entity(&self.state, |state, _cx| {
-                        // Get the authentication method and credentials
                         let auth_method = state
                             .settings
                             .as_ref()
                             .and_then(|s| s.authentication_method.clone())
                             .unwrap_or(BedrockAuthMethod::Automatic);
 
-                        // Get endpoint if configured
                         let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
 
-                        // Get region - from credentials or directly from settings
                         let region = state
                             .settings
                             .as_ref()
@@ -435,14 +432,12 @@ impl BedrockModel {
                     .region(Region::new(region))
                     .timeout_config(TimeoutConfig::disabled());
 
-                // Apply endpoint configuration if specified
                 if let Some(endpoint_url) = endpoint {
                     if !endpoint_url.is_empty() {
                         config_builder = config_builder.endpoint_url(endpoint_url);
                     }
                 }
 
-                // Configure authentication based on method
                 match auth_method {
                     BedrockAuthMethod::StaticCredentials => {
                         if let Some(creds) = credentials {
@@ -459,8 +454,6 @@ impl BedrockModel {
                     BedrockAuthMethod::NamedProfile | BedrockAuthMethod::SingleSignOn => {
                         // Currently NamedProfile and SSO behave the same way but only the instructions change
                         // Until we support BearerAuth through SSO, this will not change.
-
-                        // Use profile from settings or environment
                         let profile_name = settings
                             .and_then(|s| s.profile_name)
                             .unwrap_or_else(|| "default".to_string());
@@ -477,10 +470,11 @@ impl BedrockModel {
                 let config = self.handler.block_on(config_builder.load());
                 Ok(BedrockClient::new(&config))
             })
-            .map_err(|e| anyhow!("Failed to initialize Bedrock client: {}", e))?;
+            .map_err(|err| anyhow!("Failed to initialize Bedrock client: {err}"))?;
 
-        // safe unwrap since we know it was initialized
-        Ok(self.client.get().unwrap())
+        self.client
+            .get()
+            .ok_or_else(|| anyhow!("Bedrock client not initialized"))
     }
 
     fn stream_completion(
@@ -523,12 +517,12 @@ impl LanguageModel for BedrockModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn telemetry_id(&self) -> String {
-        format!("bedrock/{}", self.model.id())
+    fn supports_tools(&self) -> bool {
+        self.model.supports_tool_use()
     }
 
-    fn supports_tools(&self) -> bool {
-        self.model.tool_use()
+    fn telemetry_id(&self) -> String {
+        format!("bedrock/{}", self.model.id())
     }
 
     fn max_token_count(&self) -> usize {

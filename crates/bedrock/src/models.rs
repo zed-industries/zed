@@ -236,7 +236,7 @@ impl Model {
         }
     }
 
-    pub fn tool_use(&self) -> bool {
+    pub fn supports_tool_use(&self) -> bool {
         match self {
             // Anthropic Claude 3 models (all support tool use)
             Self::Claude3Opus
@@ -272,7 +272,6 @@ impl Model {
     }
 
     pub fn cross_region_inference_id(&self, region: &str) -> Result<String, anyhow::Error> {
-        // Determine the regional prefix based on the AWS region
         let region_group = if region.starts_with("us-gov-") {
             "us-gov"
         } else if region.starts_with("us-") {
@@ -285,15 +284,14 @@ impl Model {
             // Canada and South America regions - default to US profiles
             "us"
         } else {
-            return Err(anyhow!("Unsupported Region")); // Unknown region
+            // Unknown region
+            return Err(anyhow!("Unsupported Region"));
         };
 
-        // Get the standard model ID
         let model_id = self.id();
 
-        // Check if the model is available in the specified region
         match (self, region_group) {
-            // Custom models can't have CRI ids
+            // Custom models can't have CRI IDs
             (Model::Custom { .. }, _) => Ok(self.id().into()),
 
             // Models with US Gov only
