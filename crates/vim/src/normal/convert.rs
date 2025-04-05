@@ -29,7 +29,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let inclusive_override = self.inclusive_mode_override;
+        let forced_motion = self.forced_motion;
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);
@@ -45,7 +45,7 @@ impl Vim {
                             selection,
                             times,
                             &text_layout_details,
-                            inclusive_override,
+                            forced_motion,
                         );
                     });
                 });

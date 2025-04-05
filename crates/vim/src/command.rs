@@ -1327,7 +1327,7 @@ impl Vim {
         cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
-        let inclusive_override = self.inclusive_mode_override;
+        let forced_motion = self.forced_motion;
         let Some(workspace) = self.workspace(window) else {
             return;
         };
@@ -1341,7 +1341,7 @@ impl Vim {
                     start.clone(),
                     times,
                     &text_layout_details,
-                    inclusive_override,
+                    forced_motion,
                 )
                 .unwrap_or((start.range(), MotionKind::Exclusive));
             if range.start != start.start {
