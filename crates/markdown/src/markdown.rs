@@ -22,6 +22,7 @@ use theme::SyntaxTheme;
 use ui::{Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
 
+
 use crate::parser::CodeBlockKind;
 
 /// A callback function that can be used to customize the style of links based on the destination URL.
@@ -624,22 +625,24 @@ impl Element for MarkdownElement {
                                     // Add a file link UI element instead of debug statement
                                     builder.flush_text(); // Ensure any pending text is flushed
                                     
-                                    // Create a clickable file link using the current link mechanism
-                                    let file_url = format!("file:{}", path_range.path);
+                                    // Format the file path with line/column info for the link
+                                    let display_path = format!("File: {}", path_range.path);
+                                    
+                                    // Special URL format for file linking
+                                    let mut file_url = format!("file://{}", path_range.path);
                                     if let Some(range) = &path_range.range {
                                         // Add line and column information to URL if available
-                                        let file_url = if range.start.col.is_some() {
-                                            format!("{}:{}:{}", file_url, range.start.line, range.start.col.unwrap_or(0))
+                                        if range.start.col.is_some() {
+                                            file_url = format!("{}#L{}:{}", file_url, range.start.line, range.start.col.unwrap_or(0));
                                         } else {
-                                            format!("{}:{}", file_url, range.start.line)
-                                        };
-                                        // Use the source range from the markdown text for the link
-                                        builder.push_link(file_url.into(), range.start.line as usize..range.end.line as usize);
-                                    } else {
-                                        builder.push_link(file_url.into(), 0..0);
+                                            file_url = format!("{}#L{}", file_url, range.start.line);
+                                        }
                                     }
                                     
-                                    // Add a visual indicator for the file link
+                                    // Create a parent div to contain our link
+                                    builder.push_div(div().relative().w_full(), range, markdown_end);
+                                    
+                                    // Add the file icon and link text to the container
                                     builder.modify_current_div(|el| {
                                         el.child(
                                             div()
@@ -653,10 +656,19 @@ impl Element for MarkdownElement {
                                                         .color(Color::Muted),
                                                 )
                                                 .child(
-                                                    Label::new(format!("File: {}", path_range.path))
+                                                    Label::new(display_path)
+                                                        .color(Color::Accent)
                                                 )
                                         )
                                     });
+                                    
+                                    // Use the existing link mechanism in markdown
+                                    // This gives us the hover styling and click handling for free
+                                    builder.push_link(file_url.into(), 0..0);
+                                    
+                                    // Pop the parent div we created
+                                    builder.pop_div();
+                                    
                                     None
                                 } else {
                                     parsed_markdown.languages.get(language).cloned()
