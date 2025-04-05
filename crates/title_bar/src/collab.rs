@@ -320,9 +320,9 @@ impl TitleBar {
                 .label_size(LabelSize::Small)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if is_shared {
-                        this.unshare_project(&Default::default(), window, cx);
+                        this.unshare_project(window, cx);
                     } else {
-                        this.share_project(&Default::default(), cx);
+                        this.share_project(cx);
                     }
                 }))
                 .into_any_element(),
