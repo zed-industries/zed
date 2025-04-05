@@ -2918,7 +2918,32 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-async fn test_tab_with_mixed_whitespace(cx: &mut TestAppContext) {
+async fn test_tab_with_mixed_whitespace_txt(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(3)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+         ˇ
+        \t ˇ
+        \t  ˇ
+        \t   ˇ
+         \t  \t\t \t      \t\t   \t\t    \t \t ˇ
+    "});
+
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+           ˇ
+        \t   ˇ
+        \t   ˇ
+        \t      ˇ
+         \t  \t\t \t      \t\t   \t\t    \t \t   ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_tab_with_mixed_whitespace_rust(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4)
     });
