@@ -1,8 +1,7 @@
 use crate::{
-    KeyCode, KeyDownEvent, KeyPosition, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent,
-    TouchPhase,
+    KeyCode, KeyDownEvent, KeyPosition, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
+    Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
     platform::mac::{
         LMGetKbdType, NSStringExt, TISCopyCurrentKeyboardLayoutInputSource,
         TISGetInputSourceProperty, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData,
@@ -15,13 +14,8 @@ use cocoa::{
 };
 use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
 use core_graphics::event::CGKeyCode;
-use objc::{msg_send, runtime::Object, sel, sel_impl};
-use std::{
-    borrow::Cow,
-    ffi::{c_void, CStr},
-};
-
-use super::kTISPropertyInputSourceID;
+use objc::{msg_send, sel, sel_impl};
+use std::{borrow::Cow, ffi::c_void};
 
 const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
@@ -295,25 +289,24 @@ impl PlatformInput {
 }
 
 unsafe fn parse_keystroke(native_event: id) -> Keystroke {
-    unsafe {
-        use cocoa::appkit::{NSModeSwitchFunctionKey, NSUpArrowFunctionKey};
+    use cocoa::appkit::{NSModeSwitchFunctionKey, NSUpArrowFunctionKey};
 
     let scan_code = native_event.keyCode();
-        let characters = native_event
-            .charactersIgnoringModifiers()
-            .to_str()
-            .to_string();
-            let first_char = characters.chars().next().map(|ch| ch as u16);
-    
+    let characters = native_event
+        .charactersIgnoringModifiers()
+        .to_str()
+        .to_string();
+    let first_char = characters.chars().next().map(|ch| ch as u16);
+
     let modifiers = native_event.modifierFlags();
-        let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-        let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-        let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-        let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-        let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask)
-            && first_char.map_or(true, |ch| {
-                !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
-            });
+    let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
+    let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
+    let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
+    let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
+    let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask)
+        && first_char.map_or(true, |ch| {
+            !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
+        });
 
     let modifiers = Modifiers {
         control,
@@ -352,8 +345,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         modifiers,
         code,
         face: key,
-            key_char,
-        }
+        key_char,
     })
 }
 
