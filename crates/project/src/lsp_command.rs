@@ -36,6 +36,7 @@ use std::{cmp::Reverse, mem, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
 pub use signature_help::SignatureHelp;
+pub use signature_help::SignatureHelpData;
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
