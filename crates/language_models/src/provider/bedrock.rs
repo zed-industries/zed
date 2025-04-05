@@ -486,8 +486,8 @@ impl BedrockModel {
     > {
         let runtime_client = self
             .get_or_init_client(cx)
-            .expect("Failed to initialize Bedrock Client")
-            .clone();
+            .cloned()
+            .context("Bedrock client not initialized")?;
         let owned_handle = self.handler.clone();
 
         Ok(async move {
