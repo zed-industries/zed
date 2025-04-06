@@ -2159,22 +2159,24 @@ impl GitPanel {
     }
 
     fn toggle_ammend(&mut self, _: &ToggleAmend, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.as_ref() else {
+            return;
+        };
+        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
+            return;
+        };
+        let Some(recent_sha) = branch
+            .most_recent_commit
+            .as_ref()
+            .map(|commit| commit.sha.to_string())
+        else {
+            return;
+        };
+
         self.amend_commit = !self.amend_commit;
         cx.notify();
+
         if self.amend_commit && self.commit_editor.read(cx).is_empty(cx) {
-            let Some(active_repository) = self.active_repository.as_ref() else {
-                return;
-            };
-            let Some(branch) = active_repository.read(cx).branch.as_ref() else {
-                return;
-            };
-            let Some(recent_sha) = branch
-                .most_recent_commit
-                .as_ref()
-                .map(|commit| commit.sha.to_string())
-            else {
-                return;
-            };
             let detail_task = self.load_commit_details(recent_sha, cx);
             cx.spawn(async move |this, cx| {
                 if let Ok(message) = detail_task.await.map(|detail| detail.message) {
@@ -3953,6 +3955,9 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::expand_commit_editor))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
+            })
+            .when(has_write_access, |git_panel| {
+                git_panel.on_action(cx.listener(Self::toggle_ammend))
             })
             .on_hover(cx.listener(move |this, hovered, window, cx| {
                 if *hovered {
