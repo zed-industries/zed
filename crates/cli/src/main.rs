@@ -26,7 +26,11 @@ struct Detect;
 trait InstalledApp {
     fn zed_version_string(&self) -> String;
     fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
-    fn run_foreground(&self, ipc_url: String, user_data_dir: Option<&str>) -> io::Result<ExitStatus>;
+    fn run_foreground(
+        &self,
+        ipc_url: String,
+        user_data_dir: Option<&str>,
+    ) -> io::Result<ExitStatus>;
     fn path(&self) -> PathBuf;
 }
 
@@ -58,7 +62,11 @@ struct Args {
     /// Create a new workspace
     #[arg(short, long, overrides_with = "add")]
     new: bool,
-    /// Sets a custom directory for all user data
+    /// Sets a custom directory for all user data (e.g., database, extensions, logs).
+    /// This overrides the default platform-specific data directory location.
+    /// On macOS, the default is `~/Library/Application Support/Zed`.
+    /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/zed`.
+    /// On Windows, the default is `%LOCALAPPDATA%\Zed`.
     #[arg(long, value_name = "DIR")]
     user_data_dir: Option<String>,
     /// The paths to open in Zed (space-separated).
@@ -458,7 +466,11 @@ mod linux {
             Ok(())
         }
 
-        fn run_foreground(&self, ipc_url: String, user_data_dir: Option<&str>) -> io::Result<ExitStatus> {
+        fn run_foreground(
+            &self,
+            ipc_url: String,
+            user_data_dir: Option<&str>,
+        ) -> io::Result<ExitStatus> {
             let mut cmd = std::process::Command::new(self.0.clone());
             cmd.arg(ipc_url);
             if let Some(dir) = user_data_dir {
@@ -702,7 +714,11 @@ mod windows {
             Ok(())
         }
 
-        fn run_foreground(&self, ipc_url: String, user_data_dir: Option<&str>) -> io::Result<ExitStatus> {
+        fn run_foreground(
+            &self,
+            ipc_url: String,
+            user_data_dir: Option<&str>,
+        ) -> io::Result<ExitStatus> {
             let mut cmd = std::process::Command::new(self.0.clone());
             cmd.arg(ipc_url).arg("--foreground");
             if let Some(dir) = user_data_dir {
@@ -890,7 +906,11 @@ mod mac_os {
             Ok(())
         }
 
-        fn run_foreground(&self, ipc_url: String, user_data_dir: Option<&str>) -> io::Result<ExitStatus> {
+        fn run_foreground(
+            &self,
+            ipc_url: String,
+            user_data_dir: Option<&str>,
+        ) -> io::Result<ExitStatus> {
             let path = match self {
                 Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
                 Bundle::LocalPath { executable, .. } => executable.clone(),

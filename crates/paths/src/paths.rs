@@ -8,13 +8,23 @@ pub use util::paths::home_dir;
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 
-// Custom data directory override, set only by set_custom_data_dir.
+/// A custom data directory override, set only by `set_custom_data_dir`.
+/// This is used to override the default data directory location.
+/// The directory will be created if it doesn't exist when set.
 static CUSTOM_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-// Resolved data directory, combining custom or platform defaults, set once.
+/// The resolved data directory, combining custom override or platform defaults.
+/// This is set once and cached for subsequent calls.
+/// On macOS, this is `~/Library/Application Support/Zed`.
+/// On Linux/FreeBSD, this is `$XDG_DATA_HOME/zed`.
+/// On Windows, this is `%LOCALAPPDATA%\Zed`.
 static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-// Resolved config directory, combining custom or platform defaults, set once.
+/// The resolved config directory, combining custom override or platform defaults.
+/// This is set once and cached for subsequent calls.
+/// On macOS, this is `~/.config/zed`.
+/// On Linux/FreeBSD, this is `$XDG_CONFIG_HOME/zed`.
+/// On Windows, this is `%APPDATA%\Zed`.
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the relative path to the zed_server directory on the ssh host.
@@ -23,8 +33,23 @@ pub fn remote_server_dir_relative() -> &'static Path {
 }
 
 /// Sets a custom directory for all user data, overriding the default data directory.
+/// This function must be called before any other path operations that depend on the data directory.
+/// The directory will be created if it doesn't exist.
 ///
-/// Panics if called after the data directory has been initialized (e.g., via `data_dir` or `config_dir`).
+/// # Arguments
+///
+/// * `dir` - The path to use as the custom data directory. This will be used as the base
+///           directory for all user data, including databases, extensions, and logs.
+///
+/// # Returns
+///
+/// A reference to the static `PathBuf` containing the custom data directory path.
+///
+/// # Panics
+///
+/// Panics if:
+/// * Called after the data directory has been initialized (e.g., via `data_dir` or `config_dir`)
+/// * The directory cannot be created
 pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
     if CURRENT_DATA_DIR.get().is_some() || CONFIG_DIR.get().is_some() {
         panic!("set_custom_data_dir called after data_dir or config_dir was initialized");
@@ -35,6 +60,7 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
         path
     })
 }
+
 
 /// Returns the path to the configuration directory used by Zed.
 pub fn config_dir() -> &'static PathBuf {
