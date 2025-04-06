@@ -488,6 +488,7 @@ pub trait ItemHandle: 'static + Send {
     fn is_dirty(&self, cx: &App) -> bool;
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
+    fn has_changed(&self, cx: &App) -> bool;
     fn can_save(&self, cx: &App) -> bool;
     fn can_save_as(&self, cx: &App) -> bool;
     fn save(

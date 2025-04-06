@@ -1829,7 +1829,9 @@ impl Pane {
             return Ok(true);
         };
 
+    
         let (
+            has_changed,
             mut has_conflict,
             mut is_dirty,
             mut can_save,
@@ -1838,6 +1840,7 @@ impl Pane {
             has_deleted_file,
         ) = cx.update(|_window, cx| {
             (
+                item.has_changed(cx),
                 item.has_conflict(cx),
                 item.is_dirty(cx),
                 item.can_save(cx),
@@ -1846,6 +1849,10 @@ impl Pane {
                 item.has_deleted_file(cx),
             )
         })?;
+        if !has_changed{
+            // we do nothing if a file doesn't change.
+            return Ok(true);
+        }
 
         // when saving a single buffer, we ignore whether or not it's dirty.
         if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
@@ -1863,7 +1870,7 @@ impl Pane {
         }
 
         let should_format = save_intent != SaveIntent::SaveWithoutFormat;
-
+        
         if has_conflict && can_save {
             if has_deleted_file && is_singleton {
                 let answer = pane.update_in(cx, |pane, window, cx| {
