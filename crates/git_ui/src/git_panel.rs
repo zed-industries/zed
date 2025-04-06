@@ -81,6 +81,7 @@ actions!(
         FocusEditor,
         FocusChanges,
         ToggleFillCoAuthors,
+        ToggleAmend,
         GenerateCommitMessage
     ]
 );
@@ -1439,15 +1440,20 @@ impl GitPanel {
     }
 
     fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.commit_editor.read(cx).is_empty(cx) {
-            return;
-        }
         if self
             .commit_editor
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
             telemetry::event!("Git Amended", source = "Git Panel");
+            self.commit_changes(
+                CommitOptions {
+                    amend: self.amend_commit,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
         } else {
             cx.propagate();
         }
@@ -2152,6 +2158,39 @@ impl GitPanel {
         cx.notify();
     }
 
+    fn toggle_ammend(&mut self, _: &ToggleAmend, _: &mut Window, cx: &mut Context<Self>) {
+        self.amend_commit = !self.amend_commit;
+        cx.notify();
+        if self.amend_commit && self.commit_editor.read(cx).is_empty(cx) {
+            let Some(active_repository) = self.active_repository.as_ref() else {
+                return;
+            };
+            let Some(branch) = active_repository.read(cx).branch.as_ref() else {
+                return;
+            };
+            let Some(recent_sha) = branch
+                .most_recent_commit
+                .as_ref()
+                .map(|commit| commit.sha.to_string())
+            else {
+                return;
+            };
+            let detail_task = self.load_commit_details(recent_sha, cx);
+            cx.spawn(async move |this, cx| {
+                if let Ok(message) = detail_task.await.map(|detail| detail.message) {
+                    this.update(cx, |this, cx| {
+                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                            let insert_position = buffer.anchor_before(buffer.len());
+                            buffer.edit([(insert_position..insert_position, message)], None, cx);
+                        });
+                    })
+                    .log_err();
+                }
+            })
+            .detach();
+        }
+    }
+
     fn fill_co_authors(&mut self, message: &mut String, cx: &mut Context<Self>) {
         const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 
@@ -2756,11 +2795,7 @@ impl GitPanel {
     pub(crate) fn render_amend_button(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).branch.as_ref()?;
-        if let Some(recent_commit_sha) = branch
-            .most_recent_commit
-            .as_ref()
-            .map(|c| c.sha.to_string())
-        {
+        if branch.most_recent_commit.is_some() {
             Some(
                 IconButton::new("amend", IconName::FilePen)
                     .shape(ui::IconButtonShape::Square)
@@ -2771,32 +2806,8 @@ impl GitPanel {
                         let title = format!("Toggle Amend");
                         Tooltip::simple(title, cx)
                     })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.amend_commit = !this.amend_commit;
-                        cx.notify();
-
-                        if this.amend_commit && this.commit_editor.read(cx).is_empty(cx) {
-                            let detail_task =
-                                this.load_commit_details(recent_commit_sha.clone(), cx);
-                            cx.spawn(async move |this, cx| {
-                                if let Ok(message) = detail_task.await.map(|detail| detail.message)
-                                {
-                                    this.update(cx, |this, cx| {
-                                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                            let insert_position =
-                                                buffer.anchor_before(buffer.len());
-                                            buffer.edit(
-                                                [(insert_position..insert_position, message)],
-                                                None,
-                                                cx,
-                                            );
-                                        });
-                                    })
-                                    .log_err();
-                                }
-                            })
-                            .detach();
-                        }
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.toggle_ammend(&ToggleAmend, window, cx);
                     }))
                     .into_any_element(),
             )
