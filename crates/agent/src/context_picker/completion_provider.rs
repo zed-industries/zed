@@ -232,8 +232,8 @@ impl ContextPickerCompletionProvider {
                                 url_to_fetch.to_string(),
                             ))
                             .await?;
-                        context_store.update(cx, |context_store, _| {
-                            context_store.add_fetched_url(url_to_fetch.to_string(), content)
+                        context_store.update(cx, |context_store, cx| {
+                            context_store.add_fetched_url(url_to_fetch.to_string(), content, cx)
                         })
                     })
                     .detach_and_log_err(cx);
