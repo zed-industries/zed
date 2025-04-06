@@ -366,23 +366,23 @@ message Envelope {
         BreakpointsForFile breakpoints_for_file = 327;
 
         UpdateRepository update_repository = 328;
-        RemoveRepository remove_repository = 329; // current max
+        RemoveRepository remove_repository = 329;
 
         GetDocumentSymbols get_document_symbols = 330;
 
-        GetDocumentSymbolsResponse get_document_symbols_response = 331;
-        SemanticTokensFullRequest semantic_tokens_full_request = 332;
-        SemanticTokensResponse semantic_tokens_response = 333;
-        RefreshSemanticTokens refresh_semantic_tokens = 334;
-        SemanticTokensRangeRequest semantic_tokens_range_request = 335;
+        LanguageServerIdForName language_server_id_for_name = 331;
+        LanguageServerIdForNameResponse language_server_id_for_name_response = 332;
 
-        LanguageServerIdForName language_server_id_for_name = 336;
-        LanguageServerIdForNameResponse language_server_id_for_name_response = 337;
+        LoadCommitDiff load_commit_diff = 333;
+        LoadCommitDiffResponse load_commit_diff_response = 334;
 
-        LoadCommitDiff load_commit_diff = 338;
-        LoadCommitDiffResponse load_commit_diff_response = 339;
+        StopLanguageServers stop_language_servers = 335;
 
-        StopLanguageServers stop_language_servers = 340; // current max
+        GetDocumentSymbolsResponse get_document_symbols_response = 336;
+        SemanticTokensFullRequest semantic_tokens_full_request = 337;
+        SemanticTokensResponse semantic_tokens_response = 338;
+        RefreshSemanticTokens refresh_semantic_tokens = 339;
+        SemanticTokensRangeRequest semantic_tokens_range_request = 340;  // current max
     }
 
     reserved 87 to 88;
