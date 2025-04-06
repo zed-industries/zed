@@ -370,7 +370,7 @@ impl Render for MessageEditor {
         let button_width = if linux || windows || vim_mode_enabled {
             px(82.)
         } else {
-            px(64.)
+            px(52.)
         };
 
         let action_log = self.thread.read(cx).action_log();
@@ -415,70 +415,6 @@ impl Render for MessageEditor {
                                 Label::new("Summarizing context…")
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted),
-                            ),
-                    ),
-                )
-            })
-            .when(is_generating, |parent| {
-                let focus_handle = self.editor.focus_handle(cx).clone();
-                parent.child(
-                    h_flex().py_3().w_full().justify_center().child(
-                        h_flex()
-                            .flex_none()
-                            .pl_2()
-                            .pr_1()
-                            .py_1()
-                            .bg(editor_bg_color)
-                            .border_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .rounded_lg()
-                            .shadow_md()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::ArrowCircle)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted)
-                                    .with_animation(
-                                        "arrow-circle",
-                                        Animation::new(Duration::from_secs(2)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(gpui::Transformation::rotate(
-                                                gpui::percentage(delta),
-                                            ))
-                                        },
-                                    ),
-                            )
-                            .child({
-
-
-                                Label::new(if needs_confirmation {
-                                    "Waiting for confirmation…"
-                                } else {
-                                    "Generating…"
-                                })
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                            })
-                            .child(ui::Divider::vertical())
-                            .child(
-                                Button::new("cancel-generation", "Cancel")
-                                    .label_size(LabelSize::XSmall)
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &editor::actions::Cancel,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                    )
-                                    .on_click(move |_event, window, cx| {
-                                        focus_handle.dispatch_action(
-                                            &editor::actions::Cancel,
-                                            window,
-                                            cx,
-                                        );
-                                    }),
                             ),
                     ),
                 )
@@ -733,7 +669,6 @@ impl Render for MessageEditor {
                                             ..Default::default()
                                         },
                                     ).into_any()
-
                             })
                             .child(
                                 PopoverMenu::new("inline-context-picker")
@@ -741,7 +676,6 @@ impl Render for MessageEditor {
                                         inline_context_picker.update(cx, |this, cx| {
                                             this.init(window, cx);
                                         });
-
                                         Some(inline_context_picker.clone())
                                     })
                                     .attach(gpui::Corner::TopLeft)
@@ -758,60 +692,80 @@ impl Render for MessageEditor {
                                     .justify_between()
                                     .child(h_flex().gap_2().child(self.profile_selector.clone()))
                                     .child(
-                                        h_flex().gap_1().child(self.model_selector.clone()).child(
-                                            ButtonLike::new("submit-message")
-                                                .width(button_width.into())
-                                                .style(ButtonStyle::Filled)
-                                                .disabled(
-                                                    is_editor_empty
-                                                        || !is_model_selected
-                                                        || is_generating
-                                                        || self.waiting_for_summaries_to_send
-                                                )
-                                                .child(
-                                                    h_flex()
-                                                        .w_full()
-                                                        .justify_between()
-                                                        .child(
-                                                            Label::new("Submit")
-                                                                .size(LabelSize::Small)
-                                                                .color(submit_label_color),
-                                                        )
-                                                        .children(
-                                                            KeyBinding::for_action_in(
-                                                                &Chat,
-                                                                &focus_handle,
-                                                                window,
-                                                                cx,
-                                                            )
-                                                            .map(|binding| {
-                                                                binding
-                                                                    .when(vim_mode_enabled, |kb| {
-                                                                        kb.size(rems_from_px(12.))
-                                                                    })
-                                                                    .into_any_element()
+                                        h_flex().gap_1().child(self.model_selector.clone())
+                                            .map(|parent| {
+                                                if is_generating {
+                                                    parent.child(
+                                                        IconButton::new("stop-generation", IconName::Stop)
+                                                            .icon_color(Color::Error)
+                                                            .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                                                            .tooltip(move |window, cx| {
+                                                                Tooltip::for_action(
+                                                                    "Stop Generation",
+                                                                    &editor::actions::Cancel,
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                            })
+                                                            .on_click(move |_event, window, cx| {
+                                                                focus_handle.dispatch_action(
+                                                                    &editor::actions::Cancel,
+                                                                    window,
+                                                                    cx,
+                                                                );
                                                             }),
-                                                        ),
-                                                )
-                                                .on_click(move |_event, window, cx| {
-                                                    focus_handle.dispatch_action(&Chat, window, cx);
-                                                })
-                                                .when(is_editor_empty, |button| {
-                                                    button.tooltip(Tooltip::text(
-                                                        "Type a message to submit",
-                                                    ))
-                                                })
-                                                .when(is_generating, |button| {
-                                                    button.tooltip(Tooltip::text(
-                                                        "Cancel to submit a new message",
-                                                    ))
-                                                })
-                                                .when(!is_model_selected, |button| {
-                                                    button.tooltip(Tooltip::text(
-                                                        "Select a model to continue",
-                                                    ))
-                                                }),
-                                        ),
+                                                    )
+                                                } else {
+                                                    parent.child(
+                                                        ButtonLike::new("submit-message")
+                                                            .width(button_width.into())
+                                                            .style(ButtonStyle::Filled)
+                                                            .disabled(
+                                                                is_editor_empty
+                                                                    || !is_model_selected
+                                                                    || self.waiting_for_summaries_to_send
+                                                            )
+                                                            .child(
+                                                                h_flex()
+                                                                    .w_full()
+                                                                    .justify_between()
+                                                                    .child(
+                                                                        Label::new("Send")
+                                                                            .size(LabelSize::Small)
+                                                                            .color(submit_label_color),
+                                                                    )
+                                                                    .children(
+                                                                        KeyBinding::for_action_in(
+                                                                            &Chat,
+                                                                            &focus_handle,
+                                                                            window,
+                                                                            cx,
+                                                                        )
+                                                                        .map(|binding| {
+                                                                            binding
+                                                                                .when(vim_mode_enabled, |kb| {
+                                                                                    kb.size(rems_from_px(12.))
+                                                                                })
+                                                                                .into_any_element()
+                                                                        }),
+                                                                    )
+                                                            )
+                                                            .on_click(move |_event, window, cx| {
+                                                                focus_handle.dispatch_action(&Chat, window, cx);
+                                                            })
+                                                            .when(is_editor_empty, |button| {
+                                                                button.tooltip(Tooltip::text(
+                                                                    "Type a message to submit",
+                                                                ))
+                                                            })
+                                                            .when(!is_model_selected, |button| {
+                                                                button.tooltip(Tooltip::text(
+                                                                    "Select a model to continue",
+                                                                ))
+                                                            })
+                                                    )
+                                                }
+                                            })
                                     ),
                             ),
                     )
