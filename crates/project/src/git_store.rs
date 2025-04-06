@@ -1656,11 +1656,22 @@ impl GitStore {
         let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
+        let options = envelope
+            .payload
+            .options
+            .map(proto::commit::CommitOptions::from)
+            .unwrap_or_default();
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                // TODO forward commit options from remote
-                repository_handle.commit(message, name.zip(email), Default::default(), cx)
+                repository_handle.commit(
+                    message,
+                    name.zip(email),
+                    CommitOptions {
+                        amend: options.amend,
+                    },
+                    cx,
+                )
             })?
             .await??;
         Ok(proto::Ack {})
@@ -3267,7 +3278,6 @@ impl Repository {
                 }
                 RepositoryState::Remote { project_id, client } => {
                     let (name, email) = name_and_email.unzip();
-                    // Todo: Handle options for remote
                     client
                         .request(proto::Commit {
                             project_id: project_id.0,
@@ -3275,6 +3285,9 @@ impl Repository {
                             message: String::from(message),
                             name: name.map(String::from),
                             email: email.map(String::from),
+                            options: Some(proto::commit::CommitOptions {
+                                amend: options.amend,
+                            }),
                         })
                         .await
                         .context("sending commit request")?;
