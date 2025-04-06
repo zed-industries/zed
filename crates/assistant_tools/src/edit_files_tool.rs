@@ -9,7 +9,7 @@ use collections::HashSet;
 use edit_action::{EditAction, EditActionParser, edit_model_prompt};
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
-use language_model::LanguageModelToolSchemaFormat;
+use language_model::{ConfiguredModel, LanguageModelToolSchemaFormat};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
@@ -205,8 +205,8 @@ impl EditToolRequest {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.editor_model() else {
-            return Task::ready(Err(anyhow!("No editor model configured")));
+        let Some(ConfiguredModel { model, .. }) = model_registry.default_model() else {
+            return Task::ready(Err(anyhow!("No model configured")));
         };
 
         let mut messages = messages.to_vec();

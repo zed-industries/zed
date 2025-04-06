@@ -73,8 +73,7 @@ fn main() {
         };
 
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry.set_active_model(Some(model.clone()), cx);
-            registry.set_editor_model(Some(editor_model.clone()), cx);
+            registry.set_default_model(Some(model.clone()), cx);
         });
 
         let model_provider_id = model.provider_id();
