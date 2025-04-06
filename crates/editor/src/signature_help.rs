@@ -1,11 +1,11 @@
 use crate::actions::ShowSignatureHelp;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
-use ::markdown::{Markdown, MarkdownStyle};
 use gpui::{
     App, AppContext, Context, Entity, HighlightStyle, MouseButton, Size, StyledText, Task,
     TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
+use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
 use std::cell::RefCell;
@@ -357,16 +357,18 @@ impl SignatureHelpPopover {
             .when(signature.label.is_empty(), |_| "<No Parameters>".into());
         let signature_count = self.signature.len();
         let signature_label = div()
+            .max_w(max_size.width)
             .id("signature_help_popover")
+            .px_2()
+            .py_0p5()
             .child(
-                div().px_2().py_0p5().child(
-                    StyledText::new(label)
-                        .with_default_highlights(&self.style, signature.highlights.iter().cloned()),
-                ),
+                StyledText::new(label)
+                    .with_default_highlights(&self.style, signature.highlights.iter().cloned()),
             )
             .into_any_element();
         let signature_description = signature.documentation.clone().map(|description| {
             return div()
+                .max_w(max_size.width)
                 .id("signature_help_description")
                 .px_2()
                 .py_0p5()
