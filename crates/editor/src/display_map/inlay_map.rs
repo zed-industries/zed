@@ -10,8 +10,8 @@ use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
 use super::{
-    token_map::{TokenBufferRows, TokenChunks, TokenEdit, TokenOffset, TokenPoint, TokenSnapshot},
     Highlights,
+    token_map::{TokenBufferRows, TokenChunks, TokenEdit, TokenOffset, TokenPoint, TokenSnapshot},
 };
 
 /// Decides where the [`Inlay`]s should be displayed.
@@ -641,13 +641,13 @@ impl InlayMap {
         let mut to_insert = Vec::new();
         let snapshot = &mut self.snapshot;
         for i in 0..rng.gen_range(1..=5) {
-            if self.inlays.is_empty() || rng.gen() {
+            if self.inlays.is_empty() || rng.r#gen() {
                 let position = snapshot
                     .token_snapshot
                     .buffer
                     .random_byte_range(0, rng)
                     .start;
-                let bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                let bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
                 let len = if rng.gen_bool(0.01) {
                     0
                 } else {
@@ -712,7 +712,7 @@ impl InlaySnapshot {
                     .token_snapshot
                     .buffer
                     .offset_to_point(buffer_offset_end);
-                InlayPoint(cursor.start().1 .0 .0 + (buffer_end - buffer_start))
+                InlayPoint(cursor.start().1.0.0 + (buffer_end - buffer_start))
             }
             Some(Transform::Inlay(inlay)) => {
                 let overshoot = inlay.text.offset_to_point(overshoot);
@@ -746,7 +746,7 @@ impl InlaySnapshot {
                     .point_to_offset(buffer_point_start);
                 let buffer_offset_end =
                     self.token_snapshot.buffer.point_to_offset(buffer_point_end);
-                InlayOffset(cursor.start().1 .0 .0 + (buffer_offset_end - buffer_offset_start))
+                InlayOffset(cursor.start().1.0.0 + (buffer_offset_end - buffer_offset_start))
             }
             Some(Transform::Inlay(inlay)) => {
                 let overshoot = inlay.text.point_to_offset(overshoot);
@@ -760,7 +760,7 @@ impl InlaySnapshot {
         cursor.seek(&point, Bias::Right, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let overshoot = point.0 - cursor.start().0 .0;
+                let overshoot = point.0 - cursor.start().0.0;
                 cursor.start().1 + TokenPoint(overshoot)
             }
             Some(Transform::Inlay(_)) => cursor.start().1,
@@ -955,7 +955,7 @@ impl InlaySnapshot {
                 let buffer_start = cursor.start().1;
                 let suffix_start = buffer_start + overshoot;
                 let suffix_end =
-                    buffer_start + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0);
+                    buffer_start + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0.0);
                 summary = self
                     .token_snapshot
                     .buffer
@@ -1009,7 +1009,7 @@ impl InlaySnapshot {
         } else {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
-                    buffer_point += inlay_point.0 - cursor.start().0 .0;
+                    buffer_point += inlay_point.0 - cursor.start().0.0;
                     buffer_point.row
                 }
                 _ => cmp::min(buffer_point.row + 1, max_buffer_row),
@@ -1117,8 +1117,9 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{token_map::TokenMap, InlayHighlights, TextHighlights},
-        hover_links::InlayHighlight, InlayId, MultiBuffer,
+        InlayId, MultiBuffer,
+        display_map::{InlayHighlights, TextHighlights, token_map::TokenMap},
+        hover_links::InlayHighlight,
     };
     use gpui::{App, HighlightStyle};
     use project::{InlayHint, InlayHintLabel, ResolveState};

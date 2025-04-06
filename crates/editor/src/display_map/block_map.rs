@@ -3526,7 +3526,8 @@ mod tests {
         let text = "abc\ndef\nghi\njkl\nmno";
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
-        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_token_map, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_wrap_map, wraps_snapshot) =

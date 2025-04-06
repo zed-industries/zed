@@ -785,13 +785,13 @@ impl LanguageServer {
                         augments_syntax_tokens: Some(true),
                         overlapping_token_support: Some(true),
                         server_cancel_support: Some(true),
-                        dynamic_registration: Some(false),
                         requests: SemanticTokensClientCapabilitiesRequests {
                             range: Some(true),
-                            full: Some(SemanticTokensFullOptions::Delta { delta: Some(false) }),
+                            full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
                         },
-                        multiline_token_support: Some(false),
-                        formats: vec![TokenFormat::new("relative")],
+                        dynamic_registration: None,
+                        multiline_token_support: None,
+                        formats: vec![TokenFormat::RELATIVE],
                         token_types: vec![
                             SemanticTokenType::NAMESPACE,
                             SemanticTokenType::TYPE,

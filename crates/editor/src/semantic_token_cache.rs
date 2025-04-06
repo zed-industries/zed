@@ -10,22 +10,22 @@ use clock::Global;
 use collections::{HashMap, HashSet, IndexMap};
 use futures::future;
 use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
-use language::{language_settings::SemanticTokensSettings, Buffer, BufferSnapshot};
+use language::{Buffer, BufferSnapshot, language_settings::SemanticTokensSettings};
 use multi_buffer::{ExcerptId, MultiBufferSnapshot};
 use parking_lot::RwLock;
 use project::SemanticToken;
 use smol::lock::Semaphore;
 use text::{AnchorRangeExt, BufferId, ToOffset, ToPoint as _};
 use ui::{ActiveTheme, Context};
-use util::{post_inc, ResultExt};
+use util::{ResultExt, post_inc};
 
 use crate::{
+    Editor,
     display_map::Token,
     tasks_for_ranges::{
-        contains_position, determine_query_ranges, InvalidationStrategy, QueryRanges,
-        TasksForRanges,
+        InvalidationStrategy, QueryRanges, TasksForRanges, contains_position,
+        determine_query_ranges,
     },
-    Editor,
 };
 
 const MAX_CONCURRENT_LSP_REQUESTS: usize = 5;
@@ -800,8 +800,8 @@ fn apply_token_update(
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        atomic::{AtomicU32, Ordering},
         Arc,
+        atomic::{AtomicU32, Ordering},
     };
 
     use fs::FakeFs;
@@ -820,8 +820,8 @@ mod tests {
     use util::path;
 
     use crate::{
-        editor_tests::update_test_language_settings, test::editor_lsp_test_context::rust_lang,
-        Editor,
+        Editor, editor_tests::update_test_language_settings,
+        test::editor_lsp_test_context::rust_lang,
     };
 
     #[gpui::test]

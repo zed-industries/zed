@@ -280,7 +280,7 @@ impl FoldMapWriter<'_> {
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
         let inlay_snapshot = self.0.snapshot.inlay_snapshot.clone();
-        let buffer = &inlay_snapshot.buffer;
+        let buffer = &inlay_snapshot.token_snapshot.buffer;
 
         for (id, new_width) in new_widths {
             if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned() {
@@ -1530,8 +1530,8 @@ pub type FoldEdit = Edit<FoldOffset>;
 mod tests {
     use super::*;
     use crate::{
-        display_map::{inlay_map::InlayMap, token_map::TokenMap},
         MultiBuffer, ToPoint,
+        display_map::{inlay_map::InlayMap, token_map::TokenMap},
     };
     use Bias::{Left, Right};
     use collections::HashSet;

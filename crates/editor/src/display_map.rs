@@ -337,6 +337,7 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.token_map.sync(snapshot, edits);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -536,7 +537,7 @@ impl DisplayMap {
     pub(crate) fn current_tokens(&self) -> impl Iterator<Item = &Token> {
         self.token_map.current_tokens()
     }
-  
+
     pub fn update_fold_widths(
         &mut self,
         widths: impl IntoIterator<Item = (FoldId, Pixels)>,
@@ -545,6 +546,7 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.token_map.sync(snapshot, edits);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
