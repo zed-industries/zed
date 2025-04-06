@@ -24,6 +24,10 @@ use util::{ResultExt, TryFutureExt};
 
 use crate::parser::CodeBlockKind;
 
+/// A callback function that can be used to customize the style of links based on the destination URL.
+/// If the callback returns `None`, the default link style will be used.
+type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
+
 #[derive(Clone)]
 pub struct MarkdownStyle {
     pub base_text_style: TextStyle,
@@ -32,6 +36,7 @@ pub struct MarkdownStyle {
     pub inline_code: TextStyleRefinement,
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
+    pub link_callback: Option<LinkStyleCallback>,
     pub rule_color: Hsla,
     pub block_quote_border_color: Hsla,
     pub syntax: Arc<SyntaxTheme>,
@@ -49,6 +54,7 @@ impl Default for MarkdownStyle {
             inline_code: Default::default(),
             block_quote: Default::default(),
             link: Default::default(),
+            link_callback: None,
             rule_color: Default::default(),
             block_quote_border_color: Default::default(),
             syntax: Arc::new(SyntaxTheme::default()),
@@ -679,7 +685,13 @@ impl Element for MarkdownElement {
                         MarkdownTag::Link { dest_url, .. } => {
                             if builder.code_block_stack.is_empty() {
                                 builder.push_link(dest_url.clone(), range.clone());
-                                builder.push_text_style(self.style.link.clone())
+                                let style = self
+                                    .style
+                                    .link_callback
+                                    .as_ref()
+                                    .and_then(|callback| callback(dest_url, cx))
+                                    .unwrap_or_else(|| self.style.link.clone());
+                                builder.push_text_style(style)
                             }
                         }
                         MarkdownTag::MetadataBlock(_) => {}
@@ -856,8 +868,11 @@ impl Element for MarkdownElement {
                     }
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
-                MarkdownEvent::Text(parsed) => {
-                    builder.push_text(parsed, range.start);
+                MarkdownEvent::Text => {
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                }
+                MarkdownEvent::SubstitutedText(text) => {
+                    builder.push_text(text, range.start);
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(self.style.inline_code.clone());

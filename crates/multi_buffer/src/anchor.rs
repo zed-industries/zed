@@ -57,6 +57,10 @@ impl Anchor {
     }
 
     pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
+        if self == other {
+            return Ordering::Equal;
+        }
+
         let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id, snapshot);
         if excerpt_id_cmp.is_ne() {
             return excerpt_id_cmp;

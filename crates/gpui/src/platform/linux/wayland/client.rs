@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::anyhow;
 use calloop::{
     EventLoop, LoopHandle,
     timer::{TimeoutAction, Timer},
@@ -14,7 +15,7 @@ use calloop::{
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
-
+use futures::channel::oneshot;
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
@@ -85,7 +86,8 @@ use crate::{
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, SCROLL_LINES,
-    ScaledPixels, ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
+    ScaledPixels, ScreenCaptureSource, ScrollDelta, ScrollWheelEvent, Size, TouchPhase,
+    WindowParams, point, px, size,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -631,6 +633,24 @@ impl LinuxClient for WaylandClient {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         None
+    }
+
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        // TODO: Get screen capture working on wayland. Be sure to try window resizing as that may
+        // be tricky.
+        //
+        // start_scap_default_target_source()
+        let (sources_tx, sources_rx) = oneshot::channel();
+        sources_tx
+            .send(Err(anyhow!("Wayland screen capture not yet implemented.")))
+            .ok();
+        sources_rx
     }
 
     fn open_window(

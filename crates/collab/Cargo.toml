@@ -76,6 +76,7 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "registry", "tracing-log"] } # workaround for https://github.com/tokio-rs/tracing/issues/2927
 util.workspace = true
 uuid.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 assistant = { workspace = true, features = ["test-support"] }

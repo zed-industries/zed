@@ -59,19 +59,18 @@ impl OnboardingBanner {
 }
 
 fn dismissed_at_key(source: &str) -> String {
-    format!(
-        "{}_{}",
-        "_banner_dismissed_at",
-        source.to_lowercase().trim().replace(" ", "_")
-    )
+    if source == "Git Onboarding" {
+        "zed_git_banner_dismissed_at".to_string()
+    } else {
+        format!(
+            "{}_banner_dismissed_at",
+            source.to_lowercase().trim().replace(" ", "_")
+        )
+    }
 }
 
 fn get_dismissed(source: &str) -> bool {
-    let dismissed_at = if source == "Git Onboarding" {
-        "zed_git_banner_dismissed_at".to_string()
-    } else {
-        dismissed_at_key(source)
-    };
+    let dismissed_at = dismissed_at_key(source);
     db::kvp::KEY_VALUE_STORE
         .read_kvp(&dismissed_at)
         .log_err()

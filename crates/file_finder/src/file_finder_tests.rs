@@ -2372,3 +2372,48 @@ fn assert_match_at_position(
     .to_string_lossy();
     assert_eq!(match_file_name, expected_file_name);
 }
+
+#[gpui::test]
+async fn test_filename_precedence(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "layout": {
+                    "app.css": "",
+                    "app.d.ts": "",
+                    "app.html": "",
+                    "+page.svelte": "",
+                },
+                "routes": {
+                    "+layout.svelte": "",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("layout");
+
+    picker.update(cx, |finder, _| {
+        let search_matches = collect_search_matches(finder).search_paths_only();
+
+        assert_eq!(
+            search_matches,
+            vec![
+                PathBuf::from("routes/+layout.svelte"),
+                PathBuf::from("layout/app.css"),
+                PathBuf::from("layout/app.d.ts"),
+                PathBuf::from("layout/app.html"),
+                PathBuf::from("layout/+page.svelte"),
+            ],
+            "File with 'layout' in filename should be prioritized over files in 'layout' directory"
+        );
+    });
+}

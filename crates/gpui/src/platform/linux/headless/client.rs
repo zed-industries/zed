@@ -1,13 +1,16 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use anyhow::anyhow;
 use calloop::{EventLoop, LoopHandle};
-
+use futures::channel::oneshot;
 use util::ResultExt;
 
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
-use crate::{AnyWindowHandle, CursorStyle, DisplayId, PlatformDisplay, WindowParams};
+use crate::{
+    AnyWindowHandle, CursorStyle, DisplayId, PlatformDisplay, ScreenCaptureSource, WindowParams,
+};
 
 pub struct HeadlessClientState {
     pub(crate) _loop_handle: LoopHandle<'static, HeadlessClient>,
@@ -61,6 +64,21 @@ impl LinuxClient for HeadlessClient {
 
     fn display(&self, _id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         None
+    }
+
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (mut tx, rx) = oneshot::channel();
+        tx.send(Err(anyhow!(
+            "Headless mode does not support screen capture."
+        )))
+        .ok();
+        rx
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

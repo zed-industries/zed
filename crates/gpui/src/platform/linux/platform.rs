@@ -28,6 +28,7 @@ use crate::{
     Pixels, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Point, Result,
     ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
 };
+
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
 
@@ -50,6 +51,10 @@ pub trait LinuxClient {
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    fn is_screen_capture_supported(&self) -> bool;
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -230,12 +235,14 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        self.is_screen_capture_supported()
+    }
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        let (mut tx, rx) = oneshot::channel();
-        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
-        rx
+        self.screen_capture_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

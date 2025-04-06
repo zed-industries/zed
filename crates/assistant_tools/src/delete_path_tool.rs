@@ -30,7 +30,7 @@ pub struct DeletePathTool;
 
 impl Tool for DeletePathTool {
     fn name(&self) -> String {
-        "delete-path".into()
+        "delete_path".into()
     }
 
     fn needs_confirmation(&self) -> bool {

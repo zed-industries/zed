@@ -15,10 +15,9 @@ use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use ui::{
-    ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Context, ContextMenu,
-    Disableable, Divider, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, Indicator,
-    InteractiveElement, IntoElement, Label, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Tooltip, Window, div, h_flex, v_flex,
+    ActiveTheme, AnyElement, App, Button, Context, ContextMenu, DropdownMenu, FluentBuilder,
+    Indicator, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -42,7 +41,7 @@ pub struct RunningState {
 }
 
 impl Render for RunningState {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let threads = self.session.update(cx, |this, cx| this.threads(cx));
         self.select_current_thread(&threads, cx);
 
@@ -51,255 +50,27 @@ impl Render for RunningState {
             .map(|thread_id| self.session.read(cx).thread_status(thread_id))
             .unwrap_or(ThreadStatus::Exited);
 
-        let selected_thread_name = threads
-            .iter()
-            .find(|(thread, _)| self.thread_id.map(|id| id.0) == Some(thread.id))
-            .map(|(thread, _)| thread.name.clone())
-            .unwrap_or("Threads".to_owned());
-
         self.variable_list.update(cx, |this, cx| {
             this.disabled(thread_status != ThreadStatus::Stopped, cx);
         });
 
         let active_thread_item = &self.active_thread_item;
 
-        let has_no_threads = threads.is_empty();
         let capabilities = self.capabilities(cx);
-        let state = cx.entity();
         h_flex()
             .key_context("DebugPanelItem")
             .track_focus(&self.focus_handle(cx))
             .size_full()
             .items_start()
             .child(
-                v_flex()
-                    .size_full()
-                    .items_start()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .justify_between()
-                            .child(
-                                h_flex()
-                                    .px_1()
-                                    .py_0p5()
-                                    .w_full()
-                                    .gap_1()
-                                    .map(|this| {
-                                        if thread_status == ThreadStatus::Running {
-                                            this.child(
-                                                IconButton::new(
-                                                    "debug-pause",
-                                                    IconName::DebugPause,
-                                                )
-                                                .icon_size(IconSize::XSmall)
-                                                .on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.pause_thread(cx);
-                                                }))
-                                                .tooltip(move |window, cx| {
-                                                    Tooltip::text("Pause program")(window, cx)
-                                                }),
-                                            )
-                                        } else {
-                                            this.child(
-                                                IconButton::new(
-                                                    "debug-continue",
-                                                    IconName::DebugContinue,
-                                                )
-                                                .icon_size(IconSize::XSmall)
-                                                .on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.continue_thread(cx)
-                                                }))
-                                                .disabled(thread_status != ThreadStatus::Stopped)
-                                                .tooltip(move |window, cx| {
-                                                    Tooltip::text("Continue program")(window, cx)
-                                                }),
-                                            )
-                                        }
-                                    })
-                                    .child(
-                                        IconButton::new("debug-restart", IconName::DebugRestart)
-                                            .icon_size(IconSize::XSmall)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.restart_session(cx);
-                                            }))
-                                            .disabled(
-                                                !capabilities
-                                                    .supports_restart_request
-                                                    .unwrap_or_default(),
-                                            )
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Restart")(window, cx)
-                                            }),
-                                    )
-                                    .child(
-                                        IconButton::new("debug-stop", IconName::DebugStop)
-                                            .icon_size(IconSize::XSmall)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.stop_thread(cx);
-                                            }))
-                                            .disabled(
-                                                thread_status != ThreadStatus::Stopped
-                                                    && thread_status != ThreadStatus::Running,
-                                            )
-                                            .tooltip({
-                                                let label = if capabilities
-                                                    .supports_terminate_threads_request
-                                                    .unwrap_or_default()
-                                                {
-                                                    "Terminate Thread"
-                                                } else {
-                                                    "Terminate all Threads"
-                                                };
-                                                move |window, cx| Tooltip::text(label)(window, cx)
-                                            }),
-                                    )
-                                    .child(
-                                        IconButton::new(
-                                            "debug-disconnect",
-                                            IconName::DebugDisconnect,
-                                        )
-                                        .icon_size(IconSize::XSmall)
-                                        .on_click(cx.listener(|this, _, _window, cx| {
-                                            this.disconnect_client(cx);
-                                        }))
-                                        .disabled(
-                                            thread_status == ThreadStatus::Exited
-                                                || thread_status == ThreadStatus::Ended,
-                                        )
-                                        .tooltip(Tooltip::text("Disconnect")),
-                                    )
-                                    .child(Divider::vertical())
-                                    .when(
-                                        capabilities.supports_step_back.unwrap_or(false),
-                                        |this| {
-                                            this.child(
-                                                IconButton::new(
-                                                    "debug-step-back",
-                                                    IconName::DebugStepBack,
-                                                )
-                                                .icon_size(IconSize::XSmall)
-                                                .on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.step_back(cx);
-                                                }))
-                                                .disabled(thread_status != ThreadStatus::Stopped)
-                                                .tooltip(move |window, cx| {
-                                                    Tooltip::text("Step back")(window, cx)
-                                                }),
-                                            )
-                                        },
-                                    )
-                                    .child(
-                                        IconButton::new("debug-step-over", IconName::DebugStepOver)
-                                            .icon_size(IconSize::XSmall)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.step_over(cx);
-                                            }))
-                                            .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Step over")(window, cx)
-                                            }),
-                                    )
-                                    .child(
-                                        IconButton::new("debug-step-in", IconName::DebugStepInto)
-                                            .icon_size(IconSize::XSmall)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.step_in(cx);
-                                            }))
-                                            .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Step in")(window, cx)
-                                            }),
-                                    )
-                                    .child(
-                                        IconButton::new("debug-step-out", IconName::DebugStepOut)
-                                            .icon_size(IconSize::XSmall)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.step_out(cx);
-                                            }))
-                                            .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Step out")(window, cx)
-                                            }),
-                                    )
-                                    .child(Divider::vertical())
-                                    .child(
-                                        IconButton::new(
-                                            "debug-ignore-breakpoints",
-                                            if self.session.read(cx).breakpoints_enabled() {
-                                                IconName::DebugBreakpoint
-                                            } else {
-                                                IconName::DebugIgnoreBreakpoints
-                                            },
-                                        )
-                                        .icon_size(IconSize::XSmall)
-                                        .on_click(cx.listener(|this, _, _window, cx| {
-                                            this.toggle_ignore_breakpoints(cx);
-                                        }))
-                                        .disabled(
-                                            thread_status == ThreadStatus::Exited
-                                                || thread_status == ThreadStatus::Ended,
-                                        )
-                                        .tooltip(
-                                            move |window, cx| {
-                                                Tooltip::text("Ignore breakpoints")(window, cx)
-                                            },
-                                        ),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .px_1()
-                                    .py_0p5()
-                                    .gap_2()
-                                    .w_3_4()
-                                    .justify_end()
-                                    .child(Label::new("Thread:"))
-                                    .child(
-                                        DropdownMenu::new(
-                                            ("thread-list", self.session_id.0),
-                                            selected_thread_name,
-                                            ContextMenu::build(
-                                                window,
-                                                cx,
-                                                move |mut this, _, _| {
-                                                    for (thread, _) in threads {
-                                                        let state = state.clone();
-                                                        let thread_id = thread.id;
-                                                        this = this.entry(
-                                                            thread.name,
-                                                            None,
-                                                            move |_, cx| {
-                                                                state.update(cx, |state, cx| {
-                                                                    state.select_thread(
-                                                                        ThreadId(thread_id),
-                                                                        cx,
-                                                                    );
-                                                                });
-                                                            },
-                                                        );
-                                                    }
-                                                    this
-                                                },
-                                            ),
-                                        )
-                                        .disabled(
-                                            has_no_threads
-                                                || thread_status != ThreadStatus::Stopped,
-                                        ),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .size_full()
-                            .items_start()
-                            .p_1()
-                            .gap_4()
-                            .child(self.stack_frame_list.clone()),
-                    ),
+                v_flex().size_full().items_start().child(
+                    h_flex()
+                        .size_full()
+                        .items_start()
+                        .p_1()
+                        .gap_4()
+                        .child(self.stack_frame_list.clone()),
+                ),
             )
             .child(
                 v_flex()
@@ -450,35 +221,30 @@ impl RunningState {
         self.session_id
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn set_thread_item(&mut self, thread_item: ThreadItem, cx: &mut Context<Self>) {
         self.active_thread_item = thread_item;
         cx.notify()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn stack_frame_list(&self) -> &Entity<StackFrameList> {
         &self.stack_frame_list
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn console(&self) -> &Entity<Console> {
         &self.console
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn module_list(&self) -> &Entity<ModuleList> {
+    #[cfg(test)]
+    pub(crate) fn module_list(&self) -> &Entity<ModuleList> {
         &self.module_list
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn variable_list(&self) -> &Entity<VariableList> {
+    #[cfg(test)]
+    pub(crate) fn variable_list(&self) -> &Entity<VariableList> {
         &self.variable_list
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn are_breakpoints_ignored(&self, cx: &App) -> bool {
-        self.session.read(cx).ignore_breakpoints()
     }
 
     pub fn capabilities(&self, cx: &App) -> Capabilities {
@@ -504,8 +270,8 @@ impl RunningState {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn selected_thread_id(&self) -> Option<ThreadId> {
+    #[cfg(test)]
+    pub(crate) fn selected_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
 
@@ -583,7 +349,7 @@ impl RunningState {
         });
     }
 
-    pub fn step_in(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn step_in(&mut self, cx: &mut Context<Self>) {
         let Some(thread_id) = self.thread_id else {
             return;
         };
@@ -595,7 +361,7 @@ impl RunningState {
         });
     }
 
-    pub fn step_out(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn step_out(&mut self, cx: &mut Context<Self>) {
         let Some(thread_id) = self.thread_id else {
             return;
         };
@@ -607,7 +373,7 @@ impl RunningState {
         });
     }
 
-    pub fn step_back(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn step_back(&mut self, cx: &mut Context<Self>) {
         let Some(thread_id) = self.thread_id else {
             return;
         };
@@ -675,6 +441,10 @@ impl RunningState {
         });
     }
 
+    #[expect(
+        unused,
+        reason = "Support for disconnecting a client is not wired through yet"
+    )]
     pub fn disconnect_client(&self, cx: &mut Context<Self>) {
         self.session().update(cx, |state, cx| {
             state.disconnect_client(cx);
@@ -685,6 +455,36 @@ impl RunningState {
         self.session.update(cx, |session, cx| {
             session.toggle_ignore_breakpoints(cx).detach();
         });
+    }
+
+    pub(crate) fn thread_dropdown(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<'_, RunningState>,
+    ) -> DropdownMenu {
+        let state = cx.entity();
+        let threads = self.session.update(cx, |this, cx| this.threads(cx));
+        let selected_thread_name = threads
+            .iter()
+            .find(|(thread, _)| self.thread_id.map(|id| id.0) == Some(thread.id))
+            .map(|(thread, _)| thread.name.clone())
+            .unwrap_or("Threads".to_owned());
+        DropdownMenu::new(
+            ("thread-list", self.session_id.0),
+            selected_thread_name,
+            ContextMenu::build(window, cx, move |mut this, _, _| {
+                for (thread, _) in threads {
+                    let state = state.clone();
+                    let thread_id = thread.id;
+                    this = this.entry(thread.name, None, move |_, cx| {
+                        state.update(cx, |state, cx| {
+                            state.select_thread(ThreadId(thread_id), cx);
+                        });
+                    });
+                }
+                this
+            }),
+        )
     }
 }
 

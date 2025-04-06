@@ -2051,6 +2051,68 @@ Examples:
 
 `boolean` values
 
+## Completions
+
+- Description: Controls how completions are processed for this language.
+- Setting: `completions`
+- Default:
+
+```json
+{
+  "completions": {
+    "words": "fallback",
+    "lsp": true,
+    "lsp_fetch_timeout_ms": 0,
+    "lsp_insert_mode": "replace_suffix"
+  }
+}
+```
+
+### Words
+
+- Description: Controls how words are completed. For large documents, not all words may be fetched for completion.
+- Setting: `words`
+- Default: `fallback`
+
+**Options**
+
+1. `enabled` - Always fetch document's words for completions along with LSP completions
+2. `fallback` - Only if LSP response errors or times out, use document's words to show completions
+3. `disabled` - Never fetch or complete document's words for completions (word-based completions can still be queried via a separate action)
+
+### LSP
+
+- Description: Whether to fetch LSP completions or not.
+- Setting: `lsp`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### LSP Fetch Timeout (ms)
+
+- Description: When fetching LSP completions, determines how long to wait for a response of a particular server. When set to 0, waits indefinitely.
+- Setting: `lsp_fetch_timeout_ms`
+- Default: `0`
+
+**Options**
+
+`integer` values representing milliseconds
+
+### LSP Insert Mode
+
+- Description: Controls what range to replace when accepting LSP completions.
+- Setting: `lsp_insert_mode`
+- Default: `replace_suffix`
+
+**Options**
+
+1. `insert` - Replaces text before the cursor, using the `insert` range described in the LSP specification
+2. `replace` - Replaces text before and after the cursor, using the `replace` range described in the LSP specification
+3. `replace_subsequence` - Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text, and like `"insert"` otherwise
+4. `replace_suffix` - Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like `"insert"` otherwise
+
 ## Show Completions On Input
 
 - Description: Whether or not to show completions as you type.

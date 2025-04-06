@@ -37,7 +37,8 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
@@ -408,8 +409,12 @@ impl GitPanel {
                     this.active_repository = git_store.read(cx).active_repository();
                     this.schedule_update(true, window, cx);
                 }
-                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated, true) => {
-                    this.schedule_update(true, window, cx);
+                GitStoreEvent::RepositoryUpdated(
+                    _,
+                    RepositoryEvent::Updated { full_scan },
+                    true,
+                ) => {
+                    this.schedule_update(*full_scan, window, cx);
                 }
                 GitStoreEvent::RepositoryUpdated(_, _, _) => {}
                 GitStoreEvent::RepositoryAdded(_) | GitStoreEvent::RepositoryRemoved(_) => {
@@ -3760,8 +3765,9 @@ fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn Language
     assistant_settings::AssistantSettings::get_global(cx)
         .enabled
         .then(|| {
-            let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-            let model = LanguageModelRegistry::read_global(cx).active_model()?;
+            let ConfiguredModel { provider, model } =
+                LanguageModelRegistry::read_global(cx).commit_message_model()?;
+
             provider.is_authenticated(cx).then(|| model)
         })
         .flatten()

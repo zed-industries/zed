@@ -147,7 +147,7 @@ impl NeovimBackedTestContext {
             .name()
             .expect("thread is not named")
             .split(':')
-            .last()
+            .next_back()
             .unwrap()
             .to_string();
         Self {
@@ -171,7 +171,7 @@ impl NeovimBackedTestContext {
             .name()
             .expect("thread is not named")
             .split(':')
-            .last()
+            .next_back()
             .unwrap()
             .to_string();
         Self {

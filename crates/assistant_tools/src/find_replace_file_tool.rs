@@ -126,11 +126,11 @@ pub struct FindReplaceFileTool;
 
 impl Tool for FindReplaceFileTool {
     fn name(&self) -> String {
-        "find-replace-file".into()
+        "find_replace_file".into()
     }
 
     fn needs_confirmation(&self) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
@@ -225,15 +225,20 @@ impl Tool for FindReplaceFileTool {
                 return Err(err)
             };
 
-            let snapshot = buffer.update(cx, |buffer, cx| {
-                buffer.finalize_last_transaction();
-                buffer.apply_diff(diff, cx);
-                buffer.finalize_last_transaction();
-                buffer.snapshot()
-            })?;
-
-            action_log.update(cx, |log, cx| {
-                log.buffer_edited(buffer.clone(), cx)
+            let snapshot = cx.update(|cx| {
+                action_log.update(cx, |log, cx| {
+                    log.buffer_read(buffer.clone(), cx)
+                });
+                let snapshot = buffer.update(cx, |buffer, cx| {
+                    buffer.finalize_last_transaction();
+                    buffer.apply_diff(diff, cx);
+                    buffer.finalize_last_transaction();
+                    buffer.snapshot()
+                });
+                action_log.update(cx, |log, cx| {
+                    log.buffer_edited(buffer.clone(), cx)
+                });
+                snapshot
             })?;
 
             project.update( cx, |project, cx| {

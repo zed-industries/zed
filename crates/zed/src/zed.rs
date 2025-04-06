@@ -8,7 +8,7 @@ mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent::AssistantDiffToolbar;
+use agent::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -938,8 +938,8 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
-            let assistant_diff_toolbar = cx.new(|cx| AssistantDiffToolbar::new(workspace, cx));
-            toolbar.add_item(assistant_diff_toolbar, window, cx);
+            let agent_diff_toolbar = cx.new(|cx| AgentDiffToolbar::new(workspace, cx));
+            toolbar.add_item(agent_diff_toolbar, window, cx);
         })
     });
 }

@@ -3,6 +3,7 @@
   (raw_string)
   (heredoc_body)
   (heredoc_start)
+  (heredoc_end)
   (ansi_c_string)
   (word)
 ] @string
@@ -54,6 +55,7 @@
   "$"
   "&&"
   ">"
+  "<<"
   ">>"
   ">&"
   ">&-"

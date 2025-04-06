@@ -35,6 +35,18 @@ pub enum ToolUseStatus {
     Error(SharedString),
 }
 
+impl ToolUseStatus {
+    pub fn text(&self) -> SharedString {
+        match self {
+            ToolUseStatus::NeedsConfirmation => "".into(),
+            ToolUseStatus::Pending => "".into(),
+            ToolUseStatus::Running => "".into(),
+            ToolUseStatus::Finished(out) => out.clone(),
+            ToolUseStatus::Error(out) => out.clone(),
+        }
+    }
+}
+
 pub struct ToolUseState {
     tools: Arc<ToolWorkingSet>,
     tool_uses_by_assistant_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,
@@ -42,6 +54,8 @@ pub struct ToolUseState {
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
 }
+
+pub const USING_TOOL_MARKER: &str = "<using_tool>";
 
 impl ToolUseState {
     pub fn new(tools: Arc<ToolWorkingSet>) -> Self {
@@ -357,8 +371,28 @@ impl ToolUseState {
         request_message: &mut LanguageModelRequestMessage,
     ) {
         if let Some(tool_uses) = self.tool_uses_by_assistant_message.get(&message_id) {
+            let mut found_tool_use = false;
+
             for tool_use in tool_uses {
                 if self.tool_results.contains_key(&tool_use.id) {
+                    if !found_tool_use {
+                        // The API fails if a message contains a tool use without any (non-whitespace) text around it
+                        match request_message.content.last_mut() {
+                            Some(MessageContent::Text(txt)) => {
+                                if txt.is_empty() {
+                                    txt.push_str(USING_TOOL_MARKER);
+                                }
+                            }
+                            None | Some(_) => {
+                                request_message
+                                    .content
+                                    .push(MessageContent::Text(USING_TOOL_MARKER.into()));
+                            }
+                        };
+                    }
+
+                    found_tool_use = true;
+
                     // Do not send tool uses until they are completed
                     request_message
                         .content

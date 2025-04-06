@@ -368,55 +368,6 @@ impl LanguageModel for MistralLanguageModel {
         }
         .boxed()
     }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = into_mistral(request, self.model.id().into(), self.max_output_tokens());
-        request.tools = vec![mistral::ToolDefinition::Function {
-            function: mistral::FunctionDefinition {
-                name: tool_name.clone(),
-                description: Some(tool_description),
-                parameters: Some(schema),
-            },
-        }];
-
-        let response = self.stream_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let stream = response.await?;
-
-                let tool_args_stream = stream
-                    .filter_map(move |response| async move {
-                        match response {
-                            Ok(response) => {
-                                for choice in response.choices {
-                                    if let Some(tool_calls) = choice.delta.tool_calls {
-                                        for tool_call in tool_calls {
-                                            if let Some(function) = tool_call.function {
-                                                if let Some(args) = function.arguments {
-                                                    return Some(Ok(args));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                None
-                            }
-                            Err(e) => Some(Err(e)),
-                        }
-                    })
-                    .boxed();
-
-                Ok(tool_args_stream)
-            })
-            .boxed()
-    }
 }
 
 pub fn into_mistral(

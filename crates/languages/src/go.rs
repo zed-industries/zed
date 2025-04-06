@@ -528,7 +528,7 @@ impl ContextProvider for GoContextProvider {
                 args: vec![
                     "test".into(),
                     "-run".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value(),),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
                 ],
                 tags: vec!["go-test".to_owned()],
                 cwd: package_cwd.clone(),
@@ -561,7 +561,7 @@ impl ContextProvider for GoContextProvider {
                     "-v".into(),
                     "-run".into(),
                     format!(
-                        "^{}\\$/^{}\\$",
+                        "\\^{}\\$/\\^{}\\$",
                         VariableName::Symbol.template_value(),
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
                     ),
@@ -580,9 +580,9 @@ impl ContextProvider for GoContextProvider {
                 args: vec![
                     "test".into(),
                     "-benchmem".into(),
-                    "-run=^$".into(),
+                    "-run='^$'".into(),
                     "-bench".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value()),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value()),
                 ],
                 cwd: package_cwd.clone(),
                 tags: vec!["go-benchmark".to_owned()],
@@ -599,7 +599,7 @@ impl ContextProvider for GoContextProvider {
                     "test".into(),
                     "-fuzz=Fuzz".into(),
                     "-run".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value(),),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
                 ],
                 tags: vec!["go-fuzz".to_owned()],
                 cwd: package_cwd.clone(),

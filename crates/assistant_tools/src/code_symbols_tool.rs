@@ -79,7 +79,7 @@ pub struct CodeSymbolsTool;
 
 impl Tool for CodeSymbolsTool {
     fn name(&self) -> String {
-        "code-symbols".into()
+        "code_symbols".into()
     }
 
     fn needs_confirmation(&self) -> bool {
@@ -156,7 +156,7 @@ impl Tool for CodeSymbolsTool {
     }
 }
 
-async fn file_outline(
+pub async fn file_outline(
     project: Entity<Project>,
     path: String,
     action_log: Entity<ActionLog>,

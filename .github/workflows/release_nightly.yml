@@ -216,7 +216,8 @@ jobs:
           name: zed-industries
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - run: nix build
-      - run: nix-collect-garbage -d
+      - name: Limit /nix/store to 50GB
+        run: '[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d'
 
   update-nightly-tag:
     name: Update nightly tag

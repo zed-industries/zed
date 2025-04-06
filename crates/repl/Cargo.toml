@@ -52,6 +52,7 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

@@ -1713,6 +1713,56 @@ fn test_autoindent_block_mode(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_autoindent_block_mode_with_newline(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = r#"
+            fn a() {
+                b();
+            }
+        "#
+        .unindent();
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        // First line contains just '\n', it's indentation is stored in "original_indent_columns"
+        let original_indent_columns = vec![Some(4)];
+        let inserted_text = r#"
+
+                c();
+                    d();
+                        e();
+        "#
+        .unindent();
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
+            Some(AutoindentMode::Block {
+                original_indent_columns: original_indent_columns.clone(),
+            }),
+            cx,
+        );
+
+        // While making edit, we ignore first line as it only contains '\n'
+        // hence second line indent is used to calculate delta
+        assert_eq!(
+            buffer.text(),
+            r#"
+            fn a() {
+                b();
+
+                c();
+                    d();
+                        e();
+            }
+            "#
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
     init_settings(cx, |_| {});
 

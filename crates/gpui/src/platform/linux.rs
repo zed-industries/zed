@@ -21,4 +21,7 @@ pub(crate) use wayland::*;
 #[cfg(feature = "x11")]
 pub(crate) use x11::*;
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
+#[cfg(not(any(feature = "wayland", feature = "x11")))]
 pub(crate) type PlatformScreenCaptureFrame = ();

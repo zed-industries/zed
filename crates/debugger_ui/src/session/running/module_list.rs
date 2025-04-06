@@ -147,11 +147,9 @@ impl ModuleList {
             )
             .into_any()
     }
-}
 
-#[cfg(any(test, feature = "test-support"))]
-impl ModuleList {
-    pub fn modules(&self, cx: &mut Context<Self>) -> Vec<dap::Module> {
+    #[cfg(test)]
+    pub(crate) fn modules(&self, cx: &mut Context<Self>) -> Vec<dap::Module> {
         self.session
             .update(cx, |session, cx| session.modules(cx).to_vec())
     }

@@ -258,7 +258,7 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug)]
 pub enum RepositoryEvent {
-    Updated,
+    Updated { full_scan: bool },
     MergeHeadsChanged,
 }
 
@@ -1017,7 +1017,18 @@ impl GitStore {
                 }
             }
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(worktree_id, changed_repos) => {
-                self.update_repositories_from_worktrees(
+                let Some(worktree) = worktree_store.read(cx).worktree_for_id(*worktree_id, cx)
+                else {
+                    return;
+                };
+                if !worktree.read(cx).is_visible() {
+                    log::debug!(
+                        "not adding repositories for local worktree {:?} because it's not visible",
+                        worktree.read(cx).abs_path()
+                    );
+                    return;
+                }
+                self.update_repositories_from_worktree(
                     project_environment.clone(),
                     next_repository_id.clone(),
                     downstream
@@ -1027,9 +1038,7 @@ impl GitStore {
                     fs.clone(),
                     cx,
                 );
-                if let Some(worktree) = worktree_store.read(cx).worktree_for_id(*worktree_id, cx) {
-                    self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
-                }
+                self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
             }
             _ => {}
         }
@@ -1050,7 +1059,7 @@ impl GitStore {
     }
 
     /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
-    fn update_repositories_from_worktrees(
+    fn update_repositories_from_worktree(
         &mut self,
         project_environment: Entity<ProjectEnvironment>,
         next_repository_id: Arc<AtomicU64>,
@@ -3512,7 +3521,7 @@ impl Repository {
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
-        cx.emit(RepositoryEvent::Updated);
+        cx.emit(RepositoryEvent::Updated { full_scan: true });
         Ok(())
     }
 
@@ -3623,12 +3632,13 @@ impl Repository {
                 .upgrade()
                 .ok_or_else(|| anyhow!("missing project environment"))?
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_environment(Some(work_directory_abs_path), cx)
+                    project_environment.get_environment(Some(work_directory_abs_path.clone()), cx)
                 })?
                 .await
-                .ok_or_else(|| {
-                    anyhow!("failed to get environment for repository working directory")
-                })?;
+                .unwrap_or_else(|| {
+                    log::error!("failed to get working directory environment for repository {work_directory_abs_path:?}");
+                    HashMap::default()
+                });
             let backend = cx
                 .background_spawn(async move {
                     fs.open_repo(&dot_git_abs_path)
@@ -3856,7 +3866,7 @@ impl Repository {
                                 .ok();
                         }
                     }
-                    cx.emit(RepositoryEvent::Updated);
+                    cx.emit(RepositoryEvent::Updated { full_scan: false });
                 })
             },
         );
@@ -4096,7 +4106,7 @@ async fn compute_snapshot(
         || branch != prev_snapshot.branch
         || statuses_by_path != prev_snapshot.statuses_by_path
     {
-        events.push(RepositoryEvent::Updated);
+        events.push(RepositoryEvent::Updated { full_scan: true });
     }
 
     let mut current_merge_conflicts = TreeSet::default();

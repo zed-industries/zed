@@ -40,7 +40,7 @@ pub struct CopyPathTool;
 
 impl Tool for CopyPathTool {
     fn name(&self) -> String {
-        "copy-path".into()
+        "copy_path".into()
     }
 
     fn needs_confirmation(&self) -> bool {

@@ -1,17 +1,17 @@
 use context_server::{ContextServerSettings, ServerCommand, ServerConfig};
-use editor::Editor;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, prelude::*};
 use serde_json::json;
 use settings::update_settings_file;
 use ui::{Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*};
+use ui_input::SingleLineInput;
 use workspace::{ModalView, Workspace};
 
 use crate::AddContextServer;
 
 pub struct AddContextServerModal {
     workspace: WeakEntity<Workspace>,
-    name_editor: Entity<Editor>,
-    command_editor: Entity<Editor>,
+    name_editor: Entity<SingleLineInput>,
+    command_editor: Entity<SingleLineInput>,
 }
 
 impl AddContextServerModal {
@@ -33,15 +33,10 @@ impl AddContextServerModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let name_editor = cx.new(|cx| Editor::single_line(window, cx));
-        let command_editor = cx.new(|cx| Editor::single_line(window, cx));
-
-        name_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Context server name", cx);
-        });
-
-        command_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Command to run the context server", cx);
+        let name_editor =
+            cx.new(|cx| SingleLineInput::new(window, cx, "Your server name").label("Name"));
+        let command_editor = cx.new(|cx| {
+            SingleLineInput::new(window, cx, "Command").label("Command to run the context server")
         });
 
         Self {
@@ -52,8 +47,22 @@ impl AddContextServerModal {
     }
 
     fn confirm(&mut self, cx: &mut Context<Self>) {
-        let name = self.name_editor.read(cx).text(cx).trim().to_string();
-        let command = self.command_editor.read(cx).text(cx).trim().to_string();
+        let name = self
+            .name_editor
+            .read(cx)
+            .editor()
+            .read(cx)
+            .text(cx)
+            .trim()
+            .to_string();
+        let command = self
+            .command_editor
+            .read(cx)
+            .editor()
+            .read(cx)
+            .text(cx)
+            .trim()
+            .to_string();
 
         if name.is_empty() || command.is_empty() {
             return;
@@ -104,8 +113,8 @@ impl EventEmitter<DismissEvent> for AddContextServerModal {}
 
 impl Render for AddContextServerModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_name_empty = self.name_editor.read(cx).text(cx).trim().is_empty();
-        let is_command_empty = self.command_editor.read(cx).text(cx).trim().is_empty();
+        let is_name_empty = self.name_editor.read(cx).is_empty(cx);
+        let is_command_empty = self.command_editor.read(cx).is_empty(cx);
 
         div()
             .elevation_3(cx)
@@ -122,18 +131,8 @@ impl Render for AddContextServerModal {
                     .header(ModalHeader::new().headline("Add Context Server"))
                     .section(
                         Section::new()
-                            .child(
-                                v_flex()
-                                    .gap_1()
-                                    .child(Label::new("Name"))
-                                    .child(self.name_editor.clone()),
-                            )
-                            .child(
-                                v_flex()
-                                    .gap_1()
-                                    .child(Label::new("Command"))
-                                    .child(self.command_editor.clone()),
-                            ),
+                            .child(self.name_editor.clone())
+                            .child(self.command_editor.clone()),
                     )
                     .footer(
                         ModalFooter::new()

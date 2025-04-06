@@ -7,7 +7,6 @@ mod create_directory_tool;
 mod create_file_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
-mod edit_files_tool;
 mod fetch_tool;
 mod find_replace_file_tool;
 mod list_directory_tool;
@@ -37,7 +36,6 @@ use crate::create_directory_tool::CreateDirectoryTool;
 use crate::create_file_tool::CreateFileTool;
 use crate::delete_path_tool::DeletePathTool;
 use crate::diagnostics_tool::DiagnosticsTool;
-use crate::edit_files_tool::EditFilesTool;
 use crate::fetch_tool::FetchTool;
 use crate::find_replace_file_tool::FindReplaceFileTool;
 use crate::list_directory_tool::ListDirectoryTool;
@@ -51,7 +49,6 @@ use crate::thinking_tool::ThinkingTool;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
-    crate::edit_files_tool::log::init(cx);
 
     let registry = ToolRegistry::global(cx);
     registry.register_tool(BashTool);
@@ -64,7 +61,6 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(SymbolInfoTool);
     registry.register_tool(MovePathTool);
     registry.register_tool(DiagnosticsTool);
-    registry.register_tool(EditFilesTool);
     registry.register_tool(ListDirectoryTool);
     registry.register_tool(NowTool);
     registry.register_tool(OpenTool);

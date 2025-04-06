@@ -131,25 +131,70 @@ pub struct Request {
     pub temperature: f32,
     pub model: Model,
     pub messages: Vec<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
 }
 
-impl Request {
-    pub fn new(model: Model, messages: Vec<ChatMessage>) -> Self {
-        Self {
-            intent: true,
-            n: 1,
-            stream: model.uses_streaming(),
-            temperature: 0.1,
-            model,
-            messages,
-        }
-    }
+#[derive(Serialize, Deserialize)]
+pub struct Function {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Tool {
+    Function { function: Function },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolChoice {
+    Auto,
+    Any,
+    Tool { name: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ChatMessage {
-    pub role: Role,
-    pub content: String,
+#[serde(tag = "role", rename_all = "lowercase")]
+pub enum ChatMessage {
+    Assistant {
+        content: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<ToolCall>,
+    },
+    User {
+        content: String,
+    },
+    System {
+        content: String,
+    },
+    Tool {
+        content: String,
+        tool_call_id: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(flatten)]
+    pub content: ToolCallContent,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolCallContent {
+    Function { function: FunctionContent },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionContent {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -172,6 +217,21 @@ pub struct ResponseChoice {
 pub struct ResponseDelta {
     pub content: Option<String>,
     pub role: Option<Role>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallChunk>,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCallChunk {
+    pub index: usize,
+    pub id: Option<String>,
+    pub function: Option<FunctionChunk>,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionChunk {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -385,7 +445,8 @@ async fn stream_completion(
 
     let is_streaming = request.stream;
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let json = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(json))?;
     let mut response = client.send(request).await?;
 
     if !response.status().is_success() {
@@ -413,9 +474,7 @@ async fn stream_completion(
 
                         match serde_json::from_str::<ResponseEvent>(line) {
                             Ok(response) => {
-                                if response.choices.is_empty()
-                                    || response.choices.first().unwrap().finish_reason.is_some()
-                                {
+                                if response.choices.is_empty() {
                                     None
                                 } else {
                                     Some(Ok(response))
