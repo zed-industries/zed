@@ -53,9 +53,9 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
-    IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
-    Tooltip, prelude::*, v_flex,
+    Color, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
+    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, Scrollbar,
+    ScrollbarState, Tooltip, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
@@ -128,6 +128,7 @@ struct EditState {
     depth: usize,
     processing_filename: Option<String>,
     previously_focused: Option<SelectedEntry>,
+    validation_error: bool,
 }
 
 impl EditState {
@@ -408,7 +409,11 @@ impl ProjectPanel {
             cx.subscribe(
                 &filename_editor,
                 |project_panel, _, editor_event, cx| match editor_event {
-                    EditorEvent::BufferEdited | EditorEvent::SelectionsChanged { .. } => {
+                    EditorEvent::BufferEdited => {
+                        project_panel.populate_validation_error(cx);
+                        project_panel.autoscroll(cx);
+                    }
+                    EditorEvent::SelectionsChanged { .. } => {
                         project_panel.autoscroll(cx);
                     }
                     EditorEvent::Blurred => {
@@ -1133,14 +1138,58 @@ impl ProjectPanel {
         }
     }
 
+    fn populate_validation_error(&mut self, cx: &mut Context<Self>) {
+        let edit_state = match self.edit_state.as_mut() {
+            Some(state) => state,
+            None => return,
+        };
+        let filename = self.filename_editor.read(cx).text(cx);
+        if !filename.is_empty() {
+            if let Some(worktree) = self
+                .project
+                .read(cx)
+                .worktree_for_id(edit_state.worktree_id, cx)
+            {
+                if let Some(entry) = worktree.read(cx).entry_for_id(edit_state.entry_id) {
+                    if edit_state.is_new_entry() {
+                        let new_path = entry.path.join(filename.trim_start_matches('/'));
+                        if worktree
+                            .read(cx)
+                            .entry_for_path(new_path.as_path())
+                            .is_some()
+                        {
+                            edit_state.validation_error = true;
+                            cx.notify();
+                            return;
+                        }
+                    } else {
+                        let new_path = if let Some(parent) = entry.path.clone().parent() {
+                            parent.join(&filename)
+                        } else {
+                            filename.clone().into()
+                        };
+                        if let Some(existing) = worktree.read(cx).entry_for_path(new_path.as_path())
+                        {
+                            if existing.id != entry.id {
+                                edit_state.validation_error = true;
+                                cx.notify();
+                                return;
+                            }
+                        }
+                    };
+                }
+            }
+        }
+        edit_state.validation_error = false;
+        cx.notify();
+    }
+
     fn confirm_edit(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let edit_state = self.edit_state.as_mut()?;
-        window.focus(&self.focus_handle);
-
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry();
         let filename = self.filename_editor.read(cx).text(cx);
@@ -1155,7 +1204,6 @@ impl ProjectPanel {
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
 
-        let path_already_exists = |path| worktree.read(cx).entry_for_path(path).is_some();
         let edit_task;
         let edited_entry_id;
         if is_new_entry {
@@ -1164,7 +1212,11 @@ impl ProjectPanel {
                 entry_id: NEW_ENTRY_ID,
             });
             let new_path = entry.path.join(filename.trim_start_matches('/'));
-            if path_already_exists(new_path.as_path()) {
+            if worktree
+                .read(cx)
+                .entry_for_path(new_path.as_path())
+                .is_some()
+            {
                 return None;
             }
 
@@ -1178,7 +1230,10 @@ impl ProjectPanel {
             } else {
                 filename.clone().into()
             };
-            if path_already_exists(new_path.as_path()) {
+            if let Some(existing) = worktree.read(cx).entry_for_path(new_path.as_path()) {
+                if existing.id == entry.id {
+                    window.focus(&self.focus_handle);
+                }
                 return None;
             }
             edited_entry_id = entry.id;
@@ -1187,6 +1242,7 @@ impl ProjectPanel {
             });
         };
 
+        window.focus(&self.focus_handle);
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
@@ -1347,6 +1403,7 @@ impl ProjectPanel {
                 processing_filename: None,
                 previously_focused: self.selection,
                 depth: 0,
+                validation_error: false,
             });
             self.filename_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
@@ -1396,6 +1453,7 @@ impl ProjectPanel {
                         processing_filename: None,
                         previously_focused: None,
                         depth: 0,
+                        validation_error: false,
                     });
                     let file_name = entry
                         .path
@@ -3945,6 +4003,31 @@ impl ProjectPanel {
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
+                                .when(self.edit_state.as_ref().is_some_and(|edit_state| edit_state.validation_error), |el| {
+                                    el
+                                        .relative()
+                                        .child(
+                                            deferred(
+                                                div()
+                                                    .occlude()
+                                                    .absolute()
+                                                    .mt_2()
+                                                    .top_full()
+                                                    .left_0()
+                                                    .right_auto()
+                                                    .py_1()
+                                                    .px_2()
+                                                    .shadow_sm()
+                                                    .rounded_md()
+                                                    .bg(cx.theme().colors().background)
+                                                    .child(
+                                                        Label::new(format!("{} already exists", editor.read(cx).text(cx)))
+                                                            .color(Color::Error)
+                                                            .size(LabelSize::Small)
+                                                    )
+                                            )
+                                    )
+                                })
                         } else {
                             h_flex().h_6().map(|mut this| {
                                 if let Some(folded_ancestors) = self.ancestors.get(&entry_id) {
