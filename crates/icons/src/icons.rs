@@ -191,6 +191,7 @@ pub enum IconName {
     SearchCode,
     SearchSelection,
     SelectAll,
+    Send,
     Server,
     Settings,
     SettingsAlt,

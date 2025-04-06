@@ -717,41 +717,29 @@ impl Render for MessageEditor {
                                                     )
                                                 } else {
                                                     parent.child(
-                                                        ButtonLike::new("submit-message")
-                                                            .width(button_width.into())
+                                                        Button::new("submit-message", "Send")
                                                             .style(ButtonStyle::Filled)
+                                                            .label_size(LabelSize::Small)
+                                                            .icon(IconName::Send)
+                                                            .icon_size(IconSize::XSmall)
+                                                            .icon_position(IconPosition::End)
                                                             .disabled(
                                                                 is_editor_empty
                                                                     || !is_model_selected
                                                                     || self.waiting_for_summaries_to_send
                                                             )
-                                                            .child(
-                                                                h_flex()
-                                                                    .w_full()
-                                                                    .justify_between()
-                                                                    .child(
-                                                                        Label::new("Send")
-                                                                            .size(LabelSize::Small)
-                                                                            .color(submit_label_color),
-                                                                    )
-                                                                    .children(
-                                                                        KeyBinding::for_action_in(
-                                                                            &Chat,
-                                                                            &focus_handle,
-                                                                            window,
-                                                                            cx,
-                                                                        )
-                                                                        .map(|binding| {
-                                                                            binding
-                                                                                .when(vim_mode_enabled, |kb| {
-                                                                                    kb.size(rems_from_px(12.))
-                                                                                })
-                                                                                .into_any_element()
-                                                                        }),
-                                                                    )
-                                                            )
                                                             .on_click(move |_event, window, cx| {
                                                                 focus_handle.dispatch_action(&Chat, window, cx);
+                                                            })
+                                                            .when(!is_editor_empty && is_model_selected, |button| {
+                                                                button.tooltip(move |window, cx| {
+                                                                    Tooltip::for_action(
+                                                                        "Send",
+                                                                        &Chat,
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                })
                                                             })
                                                             .when(is_editor_empty, |button| {
                                                                 button.tooltip(Tooltip::text(
