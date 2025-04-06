@@ -313,6 +313,7 @@ pub struct ParsedMarkdown {
     source: SharedString,
     events: Arc<[(Range<usize>, MarkdownEvent)]>,
     languages: HashMap<SharedString, Arc<Language>>,
+    language_registry: Arc<LanguageRegistry>,
 }
 
 impl ParsedMarkdown {
@@ -715,7 +716,20 @@ impl Element for MarkdownElement {
 
                                             builder.pop_div();
 
-                                            None
+                                            match parsed_markdown
+                                                .language_registry
+                                                .loaded_language_for_file_path(&project_path.path)
+                                            {
+                                                Ok(Ok(language)) => Some(language.clone()),
+                                                Ok(Err(_future)) => {
+                                                    let _todo = (); // TODO
+                                                    None
+                                                }
+                                                Err(_) => {
+                                                    let _todo = (); // TODO
+                                                    None
+                                                }
+                                            }
                                         } else {
                                             None
                                         }
