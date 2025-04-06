@@ -461,7 +461,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<project::SemanticToken>>>> {
-        let buffer = self.to_base(&buffer, &[], cx)?;
+        let buffer = self.to_base(&buffer, &[range.start, range.end], cx)?;
         self.0.semantic_tokens(buffer, range, cx)
     }
 

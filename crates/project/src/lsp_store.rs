@@ -5605,6 +5605,14 @@ impl LspStore {
                     })
                     .collect_vec()
             });
+            if server_ids.is_empty() {
+                return self.request_lsp(
+                    buffer_handle.clone(),
+                    LanguageServerToQuery::FirstCapable,
+                    SemanticTokensFull,
+                    cx,
+                );
+            }
             let requests = server_ids
                 .into_iter()
                 .map(|id| {
@@ -5668,6 +5676,14 @@ impl LspStore {
                     })
                     .collect_vec()
             });
+            if server_ids.is_empty() {
+                return self.request_lsp(
+                    buffer_handle.clone(),
+                    LanguageServerToQuery::FirstCapable,
+                    SemanticTokensFull,
+                    cx,
+                );
+            }
             let requests = server_ids
                 .into_iter()
                 .map(|id| {

@@ -336,7 +336,7 @@ fn new_update_task(
             log::error!("trying to update semantic tokens without visible tokens");
             return;
         };
-        let visible_range_update_results = editor
+        let visible_range_update_result = editor
             .update(cx, |_, cx| {
                 fetch_and_update_tokens(
                     excerpt_buffer.clone(),
@@ -348,7 +348,7 @@ fn new_update_task(
             })
             .log_err();
 
-        let result = match visible_range_update_results {
+        let result = match visible_range_update_result {
             Some(task) => Some(task.await),
             None => None,
         };
@@ -464,7 +464,6 @@ async fn semantic_tokens_fetch(
 
         let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
 
-        // TODO: request range
         editor
             .semantics_provider
             .as_ref()?
@@ -545,8 +544,7 @@ fn fetch_and_update_tokens(
                 cached_excerpt_tokens,
                 &visible_tokens,
             )
-        })
-            .await;
+        }).await;
         if let Some(new_update) = new_update {
             log::debug!(
                 "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
@@ -569,7 +567,7 @@ fn fetch_and_update_tokens(
                 })
                 .ok();
         }
-        anyhow::Ok(())
+        Ok(())
     })
 }
 
@@ -837,7 +835,7 @@ mod tests {
         let (_, editor, fake_server) =
             prepare_test_objects(cx, |fake_server, file_with_semantic_tokens| {
                 let lsp_request_count = Arc::new(AtomicU32::new(0));
-                fake_server.set_request_handler::<lsp::request::SemanticTokensRangeRequest, _, _>(
+                fake_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
                     move |params, _| {
                         let task_lsp_request_count = Arc::clone(&lsp_request_count);
                         async move {
@@ -847,7 +845,7 @@ mod tests {
                                 lsp::Url::from_file_path(file_with_semantic_tokens).unwrap(),
                             );
 
-                            Ok(Some(lsp::SemanticTokensRangeResult::Tokens(
+                            Ok(Some(lsp::SemanticTokensResult::Tokens(
                                 lsp::SemanticTokens {
                                     result_id: None,
                                     data: vec![
