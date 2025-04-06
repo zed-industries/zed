@@ -51,7 +51,6 @@ actions!(
         ToggleProfileSelector,
         RemoveAllContext,
         OpenHistory,
-        OpenConfiguration,
         AddContextServer,
         RemoveSelectedThread,
         Chat,

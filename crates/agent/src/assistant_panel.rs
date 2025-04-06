@@ -17,7 +17,7 @@ use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, Corner, Entity,
     EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels, Subscription, Task,
-    UpdateGlobal, WeakEntity, action_with_deprecated_aliases, prelude::*, pulsating_between,
+    UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -33,7 +33,8 @@ use ui::{
 use util::ResultExt as _;
 use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
-use zed_actions::assistant::ToggleFocus;
+use zed_actions::agent::OpenConfiguration;
+use zed_actions::assistant::{OpenPromptLibrary, ToggleFocus};
 
 use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
@@ -44,14 +45,8 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
     AgentDiff, InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, OpenConfiguration, OpenHistory, ThreadEvent, ToggleContextPicker,
+    OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
-
-action_with_deprecated_aliases!(
-    assistant,
-    OpenPromptLibrary,
-    ["assistant::DeployPromptLibrary"]
-);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(

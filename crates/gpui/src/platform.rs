@@ -26,12 +26,6 @@ mod test;
 #[cfg(target_os = "windows")]
 mod windows;
 
-#[cfg(all(
-    any(target_os = "linux", target_os = "freebsd"),
-    any(feature = "wayland", feature = "x11"),
-))]
-pub(crate) mod scap_screen_capture;
-
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
@@ -164,7 +158,6 @@ pub(crate) trait Platform: 'static {
         None
     }
 
-    fn is_screen_capture_supported(&self) -> bool;
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
@@ -253,14 +246,13 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 /// A source of on-screen video content that can be captured.
 pub trait ScreenCaptureSource {
     /// Returns the video resolution of this source.
-    fn resolution(&self) -> Result<Size<DevicePixels>>;
+    fn resolution(&self) -> Result<Size<Pixels>>;
 
     /// Start capture video from this source, invoking the given callback
     /// with each frame.
     fn stream(
         &self,
-        foreground_executor: &ForegroundExecutor,
-        frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
 }
 
