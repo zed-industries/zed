@@ -111,8 +111,8 @@ use language::{
     IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
     TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
-        SemanticTokensSettings, WordsCompletionMode,
+        self, InlayHintSettings, RewrapBehavior, SemanticTokensSettings, WordsCompletionMode,
+        all_language_settings, language_settings,
     },
     point_from_lsp, text_diff_with_options,
 };

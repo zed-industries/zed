@@ -607,8 +607,8 @@ impl<'a> Iterator for TabChunks<'a> {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, token_map::TokenMap},
         MultiBuffer,
+        display_map::{fold_map::FoldMap, inlay_map::InlayMap, token_map::TokenMap},
     };
     use rand::{Rng, prelude::StdRng};
 

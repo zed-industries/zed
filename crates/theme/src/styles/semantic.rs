@@ -85,7 +85,7 @@ impl From<Arc<SyntaxTheme>> for TokenHighlight {
 impl TokenHighlight {
     pub(crate) fn import(mut self, items: &[(String, HighlightStyle)]) -> Self {
         for (name, highlight) in items {
-            self.highlights.insert(name.clone(), highlight.clone());
+            self.highlights.insert(name.clone(), *highlight);
         }
         self
     }
@@ -93,7 +93,7 @@ impl TokenHighlight {
     pub(crate) fn assemble(&self, fallback: &TokenHighlight) -> Self {
         let mut this = self.clone();
         for (name, value) in fallback.highlights.iter() {
-            this.highlights.entry(name.clone()).or_insert(value.clone());
+            this.highlights.entry(name.clone()).or_insert(*value);
         }
         this
     }

@@ -219,10 +219,8 @@ impl QueryRanges {
 
     pub fn visible_range(self) -> Option<Range<text::Anchor>> {
         let mut iter = self.visible.into_iter();
-        let Some(first) = iter.next() else {
-            return None;
-        };
-        let last = iter.last().unwrap_or(first.clone());
+        let first = iter.next()?;
+        let last = iter.next_back().unwrap_or(first.clone());
         Some(first.start..last.end)
     }
 }

@@ -2,8 +2,8 @@ mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
-use crate::editor_settings::ScrollBeyondLastLine;
 use crate::SemanticTokensRefreshReason;
+use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
     InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,

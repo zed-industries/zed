@@ -14,11 +14,11 @@ use std::{
 };
 
 use crate::{
+    Anchor, Editor, ExcerptId, InlayId, MultiBuffer, MultiBufferSnapshot,
     display_map::Inlay,
     tasks_for_ranges::{
-        contains_position, ExcerptQuery, InvalidationStrategy, QueryRanges, TasksForRanges,
+        ExcerptQuery, InvalidationStrategy, QueryRanges, TasksForRanges, contains_position,
     },
-    Anchor, Editor, ExcerptId, InlayId, MultiBuffer, MultiBufferSnapshot,
 };
 use anyhow::Context as _;
 use clock::Global;

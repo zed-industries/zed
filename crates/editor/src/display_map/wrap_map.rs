@@ -1182,11 +1182,11 @@ fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
 mod tests {
     use super::*;
     use crate::{
+        MultiBuffer,
         display_map::{
             fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, token_map::TokenMap,
         },
         test::test_font,
-        MultiBuffer,
     };
     use gpui::{LineFragment, px, test::observe};
     use rand::prelude::*;

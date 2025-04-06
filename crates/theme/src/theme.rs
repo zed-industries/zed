@@ -199,15 +199,11 @@ impl ThemeFamily {
                 .style
                 .modifiers
                 .as_ref()
-                .map_or(vec![], |tokens| refine_highlights(tokens)),
+                .map_or(vec![], refine_highlights),
         );
         let tokens_theme = SemanticTheme::from(syntax_theme.clone()).import(
             default_token,
-            &theme
-                .style
-                .tokens
-                .as_ref()
-                .map_or(vec![], |tokens| refine_tokens(tokens)),
+            &theme.style.tokens.as_ref().map_or(vec![], refine_tokens),
         );
 
         let window_background_appearance = theme
