@@ -681,6 +681,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::ConfirmCompletion",
+      "shift-enter": "editor::ConfirmCompletionReplace",
       "tab": "editor::ComposeCompletion"
     }
   },
