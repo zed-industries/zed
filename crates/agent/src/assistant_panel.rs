@@ -253,6 +253,8 @@ impl AssistantPanel {
         let history_store =
             cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
 
+        cx.observe(&history_store, |_, _, cx| cx.notify()).detach();
+
         let active_view = ActiveView::thread(thread.clone(), window, cx);
         let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
             if let ThreadEvent::MessageAdded(_) = &event {

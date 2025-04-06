@@ -13,7 +13,8 @@ use editor::display_map::{Crease, FoldId};
 use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
 use file_context_picker::render_file_context_entry;
 use gpui::{
-    App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
+    App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task,
+    WeakEntity,
 };
 use multi_buffer::MultiBufferRow;
 use project::{Entry, ProjectPath};
@@ -105,6 +106,7 @@ pub(super) struct ContextPicker {
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     confirm_behavior: ConfirmBehavior,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ContextPicker {
@@ -116,6 +118,22 @@ impl ContextPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let subscriptions = context_store
+            .upgrade()
+            .map(|context_store| {
+                cx.observe(&context_store, |this, _, cx| this.notify_current_picker(cx))
+            })
+            .into_iter()
+            .chain(
+                thread_store
+                    .as_ref()
+                    .and_then(|thread_store| thread_store.upgrade())
+                    .map(|thread_store| {
+                        cx.observe(&thread_store, |this, _, cx| this.notify_current_picker(cx))
+                    }),
+            )
+            .collect::<Vec<Subscription>>();
+
         ContextPicker {
             mode: ContextPickerState::Default(ContextMenu::build(
                 window,
@@ -126,6 +144,7 @@ impl ContextPicker {
             context_store,
             thread_store,
             confirm_behavior,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -369,6 +388,16 @@ impl ContextPicker {
         };
 
         recent_context_picker_entries(context_store, self.thread_store.clone(), workspace, cx)
+    }
+
+    fn notify_current_picker(&mut self, cx: &mut Context<Self>) {
+        match &self.mode {
+            ContextPickerState::Default(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::File(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::Symbol(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::Fetch(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::Thread(entity) => entity.update(cx, |_, cx| cx.notify()),
+        }
     }
 }
 
