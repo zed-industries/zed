@@ -1636,7 +1636,7 @@ impl ActiveThread {
                             h_flex()
                                 .gap_1p5()
                                 .child(
-                                    Icon::new(IconName::Brain)
+                                    Icon::new(IconName::LightBulb)
                                         .size(IconSize::XSmall)
                                         .color(Color::Muted),
                                 )
