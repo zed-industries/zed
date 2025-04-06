@@ -194,23 +194,20 @@ impl ThemeFamily {
 
         let syntax_highlights = refine_highlights(&theme.style.syntax);
         let syntax_theme = SyntaxTheme::merge(Arc::new(SyntaxTheme::default()), syntax_highlights);
-        let tokens_theme = SemanticTheme::new(
-            DEFAULT_SEMANTIC_TOKENS,
-            syntax_theme.clone(),
-            &theme
-                .style
-                .tokens
-                .as_ref()
-                .map_or(vec![], |tokens| refine_highlights(tokens)),
-        );
-        let modifiers_theme = SemanticTheme::new(
-            DEFAULT_SEMANTIC_MODIFIERS,
-            syntax_theme.clone(),
+        let default_token = TokenHighlight::from(syntax_theme.clone()).import(
             &theme
                 .style
                 .modifiers
                 .as_ref()
                 .map_or(vec![], |tokens| refine_highlights(tokens)),
+        );
+        let tokens_theme = SemanticTheme::from(syntax_theme.clone()).import(
+            default_token,
+            &theme
+                .style
+                .tokens
+                .as_ref()
+                .map_or(vec![], |tokens| refine_tokens(tokens)),
         );
 
         let window_background_appearance = theme
@@ -232,10 +229,38 @@ impl ThemeFamily {
                 player: refined_player_colors,
                 syntax: syntax_theme,
                 tokens: Arc::new(tokens_theme),
-                modifiers: Arc::new(modifiers_theme),
             },
         }
     }
+}
+
+fn refine_tokens(map: &IndexMap<String, TokenHighlightContent>) -> Vec<(String, TokenHighlight)> {
+    map.iter()
+        .map(|(id, highlight)| {
+            let token = highlight.token.clone().unwrap_or_default();
+            (
+                id.clone(),
+                TokenHighlight {
+                    style: HighlightStyle {
+                        color: token
+                            .color
+                            .as_ref()
+                            .and_then(|color| try_parse_color(color).ok()),
+                        background_color: token
+                            .background_color
+                            .as_ref()
+                            .and_then(|color| try_parse_color(color).ok()),
+                        font_style: token.font_style.map(Into::into),
+                        font_weight: token.font_weight.map(Into::into),
+                        ..Default::default()
+                    },
+                    highlights: refine_highlights(&highlight.modifiers.clone().unwrap_or_default())
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })
+        .collect::<Vec<_>>()
 }
 
 fn refine_highlights(
@@ -326,16 +351,10 @@ impl Theme {
         &self.styles.colors
     }
 
-    /// Returns the [`SyntaxTheme`] for the semantic tokens theme.
+    /// Returns the [`SemanticTheme`] for the semantic tokens theme.
     #[inline(always)]
     pub fn tokens(&self) -> &Arc<SemanticTheme> {
         &self.styles.tokens
-    }
-
-    /// Returns the [`SyntaxTheme`] for the semantic modifiers theme.
-    #[inline(always)]
-    pub fn modifiers(&self) -> &Arc<SemanticTheme> {
-        &self.styles.modifiers
     }
 
     /// Returns the [`SyntaxTheme`] for the theme.

@@ -5,7 +5,7 @@ use gpui::{hsla, FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAp
 use crate::{
     default_color_scales, AccentColors, Appearance, PlayerColors, SemanticTheme, StatusColors,
     StatusColorsRefinement, SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily,
-    ThemeStyles, DEFAULT_SEMANTIC_MODIFIERS, DEFAULT_SEMANTIC_TOKENS,
+    ThemeStyles, TokenHighlight,
 };
 
 /// The default theme family for Zed.
@@ -313,16 +313,9 @@ pub(crate) fn zed_default_dark() -> Theme {
                 warning_border: yellow,
             },
             player: PlayerColors::dark(),
-            tokens: Arc::new(SemanticTheme::new(
-                DEFAULT_SEMANTIC_TOKENS,
-                syntax.clone(),
-                &[],
-            )),
-            modifiers: Arc::new(SemanticTheme::new(
-                DEFAULT_SEMANTIC_MODIFIERS,
-                syntax.clone(),
-                &[],
-            )),
+            tokens: SemanticTheme::from(syntax.clone())
+                .import(TokenHighlight::default(), &[])
+                .into(),
             syntax,
         },
     }

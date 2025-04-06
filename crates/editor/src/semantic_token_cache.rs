@@ -705,14 +705,16 @@ fn apply_token_update(
     let mut splice = TokenSplice::default();
     splice.to_remove.extend(new_update.remove_from_visible);
     for new_token in new_update.add_to_cache {
-        let Some(mut style) = cx.theme().tokens().get(new_token.r#type.as_str()) else {
+        log::error!("{}", new_token.r#type.as_str());
+        let Some(mut token_highlight) = cx.theme().tokens().get(new_token.r#type.as_str()) else {
             continue;
         };
         for r#mod in new_token.modifiers.iter() {
-            let Some(r#mod) = cx.theme().modifiers().get(r#mod.as_str()) else {
+            log::error!("+ {}", r#mod.as_str());
+            let Some(r#mod) = token_highlight.get(r#mod.as_str()) else {
                 continue;
             };
-            style.highlight(r#mod);
+            token_highlight.style.highlight(r#mod);
         }
         let insert_position = match cached_excerpt_tokens
             .ordered_tokens
@@ -738,9 +740,12 @@ fn apply_token_update(
             let text = multi_buffer_snapshot
                 .text_for_range(new_start..new_end)
                 .collect::<String>();
-            splice
-                .to_insert
-                .push(Token::new(new_token_id, new_start..new_end, style, text));
+            splice.to_insert.push(Token::new(
+                new_token_id,
+                new_start..new_end,
+                token_highlight,
+                text,
+            ));
         }
         cached_excerpt_tokens
             .tokens_by_id

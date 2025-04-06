@@ -529,8 +529,6 @@ pub struct ThemeStyles {
     pub syntax: Arc<SyntaxTheme>,
 
     pub tokens: Arc<SemanticTheme>,
-
-    pub modifiers: Arc<SemanticTheme>,
 }
 
 #[cfg(test)]
