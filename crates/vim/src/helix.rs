@@ -256,6 +256,7 @@ impl Vim {
             });
 
             vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
+            eprintln!("deleting");
             editor.insert("", window, cx);
         });
     }
@@ -371,7 +372,9 @@ mod test {
             Mode::HelixNormal,
         );
 
+        eprintln!("gonna simulate");
         cx.simulate_keystrokes("d");
+        eprintln!("did simulate");
 
         cx.assert_state(
             indoc! {"
