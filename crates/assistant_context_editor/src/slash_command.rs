@@ -127,6 +127,7 @@ impl SlashCommandCompletionProvider {
                                 new_text,
                                 label: command.label(cx),
                                 icon_path: None,
+                                insert_text_mode: None,
                                 confirm,
                                 source: CompletionSource::Custom,
                             })
@@ -228,6 +229,7 @@ impl SlashCommandCompletionProvider {
                                 new_text,
                                 documentation: None,
                                 confirm,
+                                insert_text_mode: None,
                                 source: CompletionSource::Custom,
                             }
                         })
