@@ -8,8 +8,8 @@ use collab_ui::{
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    point, AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString,
-    TestAppContext, VisualTestContext,
+    AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString, TestAppContext,
+    VisualTestContext, point,
 };
 use language::Capability;
 use project::WorktreeSettings;
@@ -17,7 +17,7 @@ use rpc::proto::PeerId;
 use serde_json::json;
 use settings::SettingsStore;
 use util::path;
-use workspace::{item::ItemHandle as _, SplitDirection, Workspace};
+use workspace::{SplitDirection, Workspace, item::ItemHandle as _};
 
 use super::TestClient;
 
@@ -295,22 +295,8 @@ async fn test_basic_following(
                 .unwrap()
         });
         let mut result = MultiBuffer::new(Capability::ReadWrite);
-        result.push_excerpts(
-            buffer_a1,
-            [ExcerptRange {
-                context: 0..3,
-                primary: None,
-            }],
-            cx,
-        );
-        result.push_excerpts(
-            buffer_a2,
-            [ExcerptRange {
-                context: 4..7,
-                primary: None,
-            }],
-            cx,
-        );
+        result.push_excerpts(buffer_a1, [ExcerptRange::new(0..3)], cx);
+        result.push_excerpts(buffer_a2, [ExcerptRange::new(4..7)], cx);
         result
     });
     let multibuffer_editor_a = workspace_a.update_in(cx_a, |workspace, window, cx| {
@@ -436,15 +422,12 @@ async fn test_basic_following(
         editor_a1.item_id()
     );
 
-    // TODO: Re-enable this test once we can replace our swift Livekit SDK with the rust SDK
-    // todo(windows)
-    // Fix this on Windows
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         use crate::rpc::RECONNECT_TIMEOUT;
         use gpui::TestScreenCaptureSource;
         use workspace::{
-            dock::{test::TestPanel, DockPosition},
+            dock::{DockPosition, test::TestPanel},
             item::test::TestItem,
             shared_screen::SharedScreen,
         };
@@ -463,8 +446,9 @@ async fn test_basic_following(
                     .update(cx, |room, cx| room.share_screen(cx))
             })
             .await
-            .unwrap(); // This is what breaks
+            .unwrap();
         executor.run_until_parked();
+
         let shared_screen = workspace_a.update(cx_a, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -573,7 +557,7 @@ async fn test_following_tab_order(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "1.txt": "one",
                 "2.txt": "two",
@@ -581,7 +565,7 @@ async fn test_following_tab_order(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
@@ -690,7 +674,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "1.txt": "one",
                 "2.txt": "two",
@@ -699,7 +683,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await

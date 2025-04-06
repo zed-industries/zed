@@ -2,12 +2,12 @@ use crate::{
     adapters::{DebugAdapterBinary, DebugAdapterName},
     transport::{IoKind, LogKind, TransportDelegate},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use dap_types::{
     messages::{Message, Response},
     requests::Request,
 };
-use futures::{channel::oneshot, select, FutureExt as _};
+use futures::{FutureExt as _, channel::oneshot, select};
 use gpui::{AppContext, AsyncApp, BackgroundExecutor};
 use smol::channel::{Receiver, Sender};
 use std::{
@@ -71,7 +71,6 @@ impl DebugAdapterClient {
         let client_id = this.id;
 
         // start handling events/reverse requests
-
         cx.background_spawn(Self::handle_receive_messages(
             client_id,
             server_rx,
@@ -119,7 +118,6 @@ impl DebugAdapterClient {
                 Ok(message) => message,
                 Err(e) => break Err(e.into()),
             };
-
             match message {
                 Message::Event(ev) => {
                     log::debug!("Client {} received event `{}`", client_id.0, &ev);
@@ -164,7 +162,6 @@ impl DebugAdapterClient {
             command: R::COMMAND.to_string(),
             arguments: Some(serialized_arguments),
         };
-
         self.transport_delegate
             .add_pending_request(sequence_id, callback_tx)
             .await;
@@ -284,17 +281,17 @@ mod tests {
     use super::*;
     use crate::{client::DebugAdapterClient, debugger_settings::DebuggerSettings};
     use dap_types::{
-        messages::Events,
-        requests::{Initialize, Request, RunInTerminal},
         Capabilities, InitializeRequestArguments, InitializeRequestArgumentsPathFormat,
         RunInTerminalRequestArguments,
+        messages::Events,
+        requests::{Initialize, Request, RunInTerminal},
     };
     use gpui::TestAppContext;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     };
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
@@ -434,7 +431,7 @@ mod tests {
 
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
-            DebugAdapterName(Arc::from("test-adapter")),
+            DebugAdapterName("test-adapter".into()),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),

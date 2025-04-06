@@ -8,26 +8,27 @@ mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
+use agent::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
 use assistant_context_editor::AssistantPanelDelegate;
 use breadcrumbs::Breadcrumbs;
-use client::{zed_urls, ZED_URL_SCHEME};
+use client::{ZED_URL_SCHEME, zed_urls};
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
-use editor::{scroll::Autoscroll, Editor, MultiBuffer};
+use editor::{Editor, MultiBuffer, scroll::Autoscroll};
 use feature_flags::{Debugger, FeatureFlagAppExt, FeatureFlagViewExt};
-use futures::{channel::mpsc, select_biased, StreamExt};
+use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    actions, point, px, Action, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
-    DismissEvent, Element, Entity, Focusable, KeyBinding, MenuItem, ParentElement,
-    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task, TitlebarOptions,
-    UpdateGlobal, Window, WindowKind, WindowOptions,
+    Action, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, DismissEvent, Element,
+    Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
+    ReadGlobal, SharedString, Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind,
+    WindowOptions, actions, point, px,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -47,9 +48,9 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
-    update_settings_file, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
-    SettingsStore, DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
+    DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
+    SettingsStore, VIM_KEYMAP_PATH, initial_debug_tasks_content, initial_project_settings_content,
+    initial_tasks_content, update_settings_file,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
@@ -58,19 +59,20 @@ use std::time::Duration;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
-use ui::{prelude::*, PopoverMenuHandle};
+use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
-use util::{asset_str, ResultExt};
+use util::{ResultExt, asset_str};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
 use welcome::{BaseKeymap, MultibufferHint};
-use workspace::notifications::{dismiss_app_notification, show_app_notification, NotificationId};
+use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
+    AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
+    open_new,
 };
-use workspace::{notifications::DetachAndPromptErr, Pane};
 use workspace::{CloseIntent, RestoreBanner};
+use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
 };
@@ -464,12 +466,9 @@ fn initialize_panels(
         };
 
         let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
-            let assistant2_panel = assistant2::AssistantPanel::load(
-                workspace_handle.clone(),
-                prompt_builder,
-                cx.clone(),
-            )
-            .await?;
+            let assistant2_panel =
+                agent::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
+                    .await?;
 
             (None, Some(assistant2_panel))
         } else {
@@ -497,16 +496,16 @@ fn initialize_panels(
             // We need to do this here instead of within the individual `init`
             // functions so that we only register the actions once.
             //
-            // Once we ship `assistant2` we can push this back down into `assistant2::assistant_panel::init`.
+            // Once we ship `assistant2` we can push this back down into `agent::assistant_panel::init`.
             if is_assistant2_enabled {
                 <dyn AssistantPanelDelegate>::set_global(
-                    Arc::new(assistant2::ConcreteAssistantPanelDelegate),
+                    Arc::new(agent::ConcreteAssistantPanelDelegate),
                     cx,
                 );
 
                 workspace
-                    .register_action(assistant2::AssistantPanel::toggle_focus)
-                    .register_action(assistant2::InlineAssistant::inline_assist);
+                    .register_action(agent::AssistantPanel::toggle_focus)
+                    .register_action(agent::InlineAssistant::inline_assist);
             } else {
                 <dyn AssistantPanelDelegate>::set_global(
                     Arc::new(assistant::assistant_panel::ConcreteAssistantPanelDelegate),
@@ -939,6 +938,8 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
+            let agent_diff_toolbar = cx.new(|cx| AgentDiffToolbar::new(workspace, cx));
+            toolbar.add_item(agent_diff_toolbar, window, cx);
         })
     });
 }
@@ -1748,15 +1749,15 @@ mod tests {
     use super::*;
     use assets::Assets;
     use collections::HashSet;
-    use editor::{display_map::DisplayRow, scroll::Autoscroll, DisplayPoint, Editor};
+    use editor::{DisplayPoint, Editor, display_map::DisplayRow, scroll::Autoscroll};
     use gpui::{
-        actions, Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,
-        TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle,
+        Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,
+        TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions,
     };
     use language::{LanguageMatcher, LanguageRegistry};
-    use project::{project_settings::ProjectSettings, Project, ProjectPath, WorktreeSettings};
+    use project::{Project, ProjectPath, WorktreeSettings, project_settings::ProjectSettings};
     use serde_json::json;
-    use settings::{watch_config_file, SettingsStore};
+    use settings::{SettingsStore, watch_config_file};
     use std::{
         path::{Path, PathBuf},
         time::Duration,
@@ -1764,9 +1765,10 @@ mod tests {
     use theme::{ThemeRegistry, ThemeSettings};
     use util::{path, separator};
     use workspace::{
+        NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
+        WorkspaceHandle,
         item::{Item, ItemHandle},
-        open_new, open_paths, pane, NewFile, OpenOptions, OpenVisible, SaveIntent, SplitDirection,
-        WorkspaceHandle, SERIALIZATION_THROTTLE_TIME,
+        open_new, open_paths, pane,
     };
 
     #[gpui::test]
@@ -1868,11 +1870,13 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 assert_eq!(workspace.worktrees(cx).count(), 2);
                 assert!(workspace.left_dock().read(cx).is_open());
-                assert!(workspace
-                    .active_pane()
-                    .read(cx)
-                    .focus_handle(cx)
-                    .is_focused(window));
+                assert!(
+                    workspace
+                        .active_pane()
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window)
+                );
             })
             .unwrap();
 
@@ -2871,9 +2875,9 @@ mod tests {
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         assert_eq!(
-                initial_entries, entries,
-                "Workspace entries should not change after opening excluded files and directories paths"
-            );
+            initial_entries, entries,
+            "Workspace entries should not change after opening excluded files and directories paths"
+        );
 
         cx.read(|cx| {
                 let pane = workspace.read(cx).active_pane().read(cx);

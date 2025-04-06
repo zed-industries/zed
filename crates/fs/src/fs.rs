@@ -4,7 +4,7 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
 use gpui::App;
@@ -21,7 +21,7 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
 use async_tar::Archive;
-use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
+use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ use text::LineEnding;
 #[cfg(any(test, feature = "test-support"))]
 mod fake_git_repo;
 #[cfg(any(test, feature = "test-support"))]
-use collections::{btree_map, BTreeMap};
+use collections::{BTreeMap, btree_map};
 #[cfg(any(test, feature = "test-support"))]
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
@@ -430,7 +430,7 @@ impl Fs for RealFs {
 
         unsafe {
             unsafe fn ns_string(string: &str) -> id {
-                NSString::alloc(nil).init_str(string).autorelease()
+                unsafe { NSString::alloc(nil).init_str(string).autorelease() }
             }
 
             let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
@@ -453,7 +453,12 @@ impl Fs for RealFs {
         let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
             Ok(_) => Ok(()),
-            Err(err) => Err(anyhow::Error::new(err)),
+            Err(err) => {
+                log::error!("Failed to trash file: {}", err);
+                // Trashing files can fail if you don't have a trashing dbus service configured.
+                // In that case, delete the file directly instead.
+                return self.remove_file(path, RemoveOptions::default()).await;
+            }
         }
     }
 
@@ -461,8 +466,8 @@ impl Fs for RealFs {
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
         use util::paths::SanitizedPath;
         use windows::{
-            core::HSTRING,
             Storage::{StorageDeleteOption, StorageFile},
+            core::HSTRING,
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
@@ -487,8 +492,8 @@ impl Fs for RealFs {
     async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
         use util::paths::SanitizedPath;
         use windows::{
-            core::HSTRING,
             Storage::{StorageDeleteOption, StorageFolder},
+            core::HSTRING,
         };
 
         // todo(windows)
@@ -586,7 +591,7 @@ impl Fs for RealFs {
                     (io::ErrorKind::NotFound, _) => Ok(None),
                     (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
                     _ => Err(anyhow::Error::new(err)),
-                }
+                };
             }
         };
 
@@ -705,7 +710,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use parking_lot::Mutex;
-        use util::{paths::SanitizedPath, ResultExt as _};
+        use util::{ResultExt as _, paths::SanitizedPath};
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -856,7 +861,7 @@ struct FakeFsState {
     next_inode: u64,
     next_mtime: SystemTime,
     git_event_tx: smol::channel::Sender<PathBuf>,
-    event_txs: Vec<smol::channel::Sender<Vec<PathEvent>>>,
+    event_txs: Vec<(PathBuf, smol::channel::Sender<Vec<PathEvent>>)>,
     events_paused: bool,
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
@@ -1008,7 +1013,7 @@ impl FakeFsState {
     fn flush_events(&mut self, mut count: usize) {
         count = count.min(self.buffered_events.len());
         let events = self.buffered_events.drain(0..count).collect::<Vec<_>>();
-        self.event_txs.retain(|tx| {
+        self.event_txs.retain(|(_, tx)| {
             let _ = tx.try_send(events.clone());
             !tx.is_closed()
         });
@@ -1107,7 +1112,7 @@ impl FakeFs {
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
-        self.write_file_internal(path, content).unwrap()
+        self.write_file_internal(path, content, true).unwrap()
     }
 
     pub async fn insert_symlink(&self, path: impl AsRef<Path>, target: PathBuf) {
@@ -1129,30 +1134,50 @@ impl FakeFs {
         state.emit_event([(path, None)]);
     }
 
-    fn write_file_internal(&self, path: impl AsRef<Path>, content: Vec<u8>) -> Result<()> {
+    fn write_file_internal(
+        &self,
+        path: impl AsRef<Path>,
+        new_content: Vec<u8>,
+        recreate_inode: bool,
+    ) -> Result<()> {
         let mut state = self.state.lock();
-        let file = Arc::new(Mutex::new(FakeFsEntry::File {
-            inode: state.get_and_increment_inode(),
-            mtime: state.get_and_increment_mtime(),
-            len: content.len() as u64,
-            content,
-        }));
+        let new_inode = state.get_and_increment_inode();
+        let new_mtime = state.get_and_increment_mtime();
+        let new_len = new_content.len() as u64;
         let mut kind = None;
-        state.write_path(path.as_ref(), {
-            let kind = &mut kind;
-            move |entry| {
-                match entry {
-                    btree_map::Entry::Vacant(e) => {
-                        *kind = Some(PathEventKind::Created);
-                        e.insert(file);
-                    }
-                    btree_map::Entry::Occupied(mut e) => {
-                        *kind = Some(PathEventKind::Changed);
-                        *e.get_mut() = file;
+        state.write_path(path.as_ref(), |entry| {
+            match entry {
+                btree_map::Entry::Vacant(e) => {
+                    kind = Some(PathEventKind::Created);
+                    e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
+                        inode: new_inode,
+                        mtime: new_mtime,
+                        len: new_len,
+                        content: new_content,
+                    })));
+                }
+                btree_map::Entry::Occupied(mut e) => {
+                    kind = Some(PathEventKind::Changed);
+                    if let FakeFsEntry::File {
+                        inode,
+                        mtime,
+                        len,
+                        content,
+                        ..
+                    } = &mut *e.get_mut().lock()
+                    {
+                        *mtime = new_mtime;
+                        *content = new_content;
+                        *len = new_len;
+                        if recreate_inode {
+                            *inode = new_inode;
+                        }
+                    } else {
+                        anyhow::bail!("not a file")
                     }
                 }
-                Ok(())
             }
+            Ok(())
         })?;
         state.emit_event([(path.as_ref(), kind)]);
         Ok(())
@@ -1584,6 +1609,15 @@ impl FakeFs {
         self.state.lock().read_dir_call_count
     }
 
+    pub fn watched_paths(&self) -> Vec<PathBuf> {
+        let state = self.state.lock();
+        state
+            .event_txs
+            .iter()
+            .filter_map(|(path, tx)| Some(path.clone()).filter(|_| !tx.is_closed()))
+            .collect()
+    }
+
     /// How many `metadata` calls have been issued.
     pub fn metadata_call_count(&self) -> usize {
         self.state.lock().metadata_call_count
@@ -1760,7 +1794,7 @@ impl Fs for FakeFs {
     ) -> Result<()> {
         let mut bytes = Vec::new();
         content.read_to_end(&mut bytes).await?;
-        self.write_file_internal(path, bytes)?;
+        self.write_file_internal(path, bytes, true)?;
         Ok(())
     }
 
@@ -1777,7 +1811,7 @@ impl Fs for FakeFs {
                 let mut bytes = Vec::new();
                 entry.read_to_end(&mut bytes).await?;
                 self.create_dir(path.parent().unwrap()).await?;
-                self.write_file_internal(&path, bytes)?;
+                self.write_file_internal(&path, bytes, true)?;
             }
         }
         Ok(())
@@ -1971,7 +2005,7 @@ impl Fs for FakeFs {
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path.as_path());
-        self.write_file_internal(path, data.into_bytes())?;
+        self.write_file_internal(path, data.into_bytes(), true)?;
         Ok(())
     }
 
@@ -1982,7 +2016,7 @@ impl Fs for FakeFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        self.write_file_internal(path, content.into_bytes())?;
+        self.write_file_internal(path, content.into_bytes(), false)?;
         Ok(())
     }
 
@@ -2102,8 +2136,8 @@ impl Fs for FakeFs {
     ) {
         self.simulate_random_delay().await;
         let (tx, rx) = smol::channel::unbounded();
-        self.state.lock().event_txs.push(tx);
         let path = path.to_path_buf();
+        self.state.lock().event_txs.push((path.clone(), tx));
         let executor = self.executor.clone();
         (
             Box::pin(futures::StreamExt::filter(rx, move |events| {
@@ -2295,7 +2329,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     use windows::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+            BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, GetFileInformationByHandle,
         },
     };
 

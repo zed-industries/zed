@@ -1,39 +1,28 @@
 use adapters::latest_github_release;
-use dap::transport::TcpTransport;
 use gpui::AsyncApp;
 use regex::Regex;
-use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf};
-use sysinfo::{Pid, Process};
-use task::DebugRequestType;
+use std::path::PathBuf;
+use task::{DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
+#[derive(Debug)]
 pub(crate) struct JsDebugAdapter {
-    port: u16,
-    host: Ipv4Addr,
-    timeout: Option<u64>,
+    attach_processes: Regex,
 }
 
+impl Default for JsDebugAdapter {
+    fn default() -> Self {
+        Self {
+            attach_processes: Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)")
+                .expect("Regex compilation to succeed"),
+        }
+    }
+}
 impl JsDebugAdapter {
-    const ADAPTER_NAME: &'static str = "vscode-js-debug";
+    const ADAPTER_NAME: &'static str = "JavaScript";
+    const ADAPTER_NPM_NAME: &'static str = "vscode-js-debug";
     const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
-
-    pub(crate) async fn new(host: TCPHost) -> Result<Self> {
-        Ok(JsDebugAdapter {
-            host: host.host(),
-            timeout: host.timeout,
-            port: TcpTransport::port(&host).await?,
-        })
-    }
-
-    pub fn attach_processes(processes: &HashMap<Pid, Process>) -> Vec<(&Pid, &Process)> {
-        let regex = Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)").unwrap();
-
-        processes
-            .iter()
-            .filter(|(_, process)| regex.is_match(&process.name().to_string_lossy()))
-            .collect::<Vec<_>>()
-    }
 }
 
 #[async_trait(?Send)]
@@ -47,7 +36,7 @@ impl DebugAdapter for JsDebugAdapter {
         delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
-            &format!("{}/{}", "microsoft", Self::ADAPTER_NAME),
+            &format!("{}/{}", "microsoft", Self::ADAPTER_NPM_NAME),
             true,
             false,
             delegate.http_client(),
@@ -78,7 +67,7 @@ impl DebugAdapter for JsDebugAdapter {
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name());
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
 
             let file_name_prefix = format!("{}_", self.name());
 
@@ -89,6 +78,9 @@ impl DebugAdapter for JsDebugAdapter {
             .ok_or_else(|| anyhow!("Couldn't find JavaScript dap directory"))?
         };
 
+        let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
+        let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
+
         Ok(DebugAdapterBinary {
             command: delegate
                 .node_runtime()
@@ -98,15 +90,15 @@ impl DebugAdapter for JsDebugAdapter {
                 .into_owned(),
             arguments: Some(vec![
                 adapter_path.join(Self::ADAPTER_PATH).into(),
-                self.port.to_string().into(),
-                self.host.to_string().into(),
+                port.to_string().into(),
+                host.to_string().into(),
             ]),
-            cwd: config.cwd.clone(),
+            cwd: None,
             envs: None,
             connection: Some(adapters::TcpArguments {
-                host: self.host,
-                port: self.port,
-                timeout: self.timeout,
+                host,
+                port,
+                timeout,
             }),
         })
     }
@@ -127,22 +119,37 @@ impl DebugAdapter for JsDebugAdapter {
         return Ok(());
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        let pid = if let DebugRequestType::Attach(attach_config) = &config.request {
-            attach_config.process_id
-        } else {
-            None
-        };
-
-        json!({
-            "program": config.program,
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        let mut args = json!({
             "type": "pwa-node",
             "request": match config.request {
-                DebugRequestType::Launch => "launch",
+                DebugRequestType::Launch(_) => "launch",
                 DebugRequestType::Attach(_) => "attach",
             },
-            "processId": pid,
-            "cwd": config.cwd,
-        })
+        });
+        let map = args.as_object_mut().unwrap();
+        match &config.request {
+            DebugRequestType::Attach(attach) => {
+                map.insert("processId".into(), attach.process_id.into());
+                map.insert("stopOnEntry".into(), config.stop_on_entry.into());
+            }
+            DebugRequestType::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+                map.insert("args".into(), launch.args.clone().into());
+                map.insert(
+                    "cwd".into(),
+                    launch
+                        .cwd
+                        .as_ref()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .into(),
+                );
+            }
+        }
+        args
+    }
+
+    fn attach_processes_filter(&self) -> Regex {
+        self.attach_processes.clone()
     }
 }

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
@@ -6,8 +6,8 @@ use gpui::AsyncApp;
 use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::{lsp_store::language_server_settings, Fs};
-use serde_json::{json, Value};
+use project::{Fs, lsp_store::language_server_settings};
+use serde_json::{Value, json};
 use smol::fs;
 use std::{
     any::Any,
@@ -15,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 
 #[cfg(target_os = "windows")]
 const SERVER_PATH: &str =

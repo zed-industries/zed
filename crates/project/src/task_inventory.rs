@@ -13,13 +13,13 @@ use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
-use settings::{parse_json_with_comments, InvalidSettingsError, TaskKind};
+use settings::{InvalidSettingsError, TaskKind, parse_json_with_comments};
 use task::{
     DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
     TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{paths::PathExt as _, post_inc, NumericPrefixWithSuffix, ResultExt as _};
+use util::{NumericPrefixWithSuffix, ResultExt as _, paths::PathExt as _, post_inc};
 use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
@@ -125,6 +125,22 @@ impl Inventory {
         cx.new(|_| Self::default())
     }
 
+    pub fn list_debug_tasks(&self) -> Vec<&TaskTemplate> {
+        self.templates_from_settings
+            .worktree
+            .values()
+            .flat_map(|tasks| {
+                tasks.iter().filter_map(|(kind, tasks)| {
+                    if matches!(kind.1, TaskKind::Debug) {
+                        Some(tasks)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .flatten()
+            .collect()
+    }
     /// Pulls its task sources relevant to the worktree and the language given,
     /// returns all task templates with their source kinds, worktree tasks first, language tasks second
     /// and global tasks last. No specific order inside source kinds groups.
@@ -392,7 +408,7 @@ impl Inventory {
                         }
                     },
                     message: format!("Failed to parse tasks file content as a JSON array: {e}"),
-                })
+                });
             }
         };
         let new_templates = raw_tasks

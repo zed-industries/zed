@@ -2,14 +2,14 @@ use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use dap::{ScopePresentationHint, StackFrameId, VariablePresentationHintKind, VariableReference};
 use editor::Editor;
 use gpui::{
-    actions, anchored, deferred, uniform_list, AnyElement, ClickEvent, ClipboardItem, Context,
-    DismissEvent, Entity, FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent, Point,
-    Stateful, Subscription, TextStyleRefinement, UniformListScrollHandle,
+    AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, FocusHandle, Focusable,
+    Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription, TextStyleRefinement,
+    UniformListScrollHandle, actions, anchored, deferred, uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use ui::{prelude::*, ContextMenu, ListItem, Scrollbar, ScrollbarState};
+use ui::{ContextMenu, ListItem, Scrollbar, ScrollbarState, prelude::*};
 use util::{debug_panic, maybe};
 
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
@@ -437,7 +437,9 @@ impl VariableList {
         });
 
         if res.is_none() {
-            log::error!("Couldn't confirm variable edit because variable doesn't have a leaf name or a parent reference id");
+            log::error!(
+                "Couldn't confirm variable edit because variable doesn't have a leaf name or a parent reference id"
+            );
         }
     }
 
@@ -538,8 +540,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn assert_visual_entries(&self, expected: Vec<&str>) {
+    #[cfg(test)]
+    pub(crate) fn assert_visual_entries(&self, expected: Vec<&str>) {
         const INDENT: &'static str = "    ";
 
         let entries = &self.entries;
@@ -567,8 +569,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn scopes(&self) -> Vec<dap::Scope> {
+    #[cfg(test)]
+    pub(crate) fn scopes(&self) -> Vec<dap::Scope> {
         self.entries
             .iter()
             .filter_map(|entry| match &entry.dap_kind {
@@ -580,8 +582,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn variables_per_scope(&self) -> Vec<(dap::Scope, Vec<dap::Variable>)> {
+    #[cfg(test)]
+    pub(crate) fn variables_per_scope(&self) -> Vec<(dap::Scope, Vec<dap::Variable>)> {
         let mut scopes: Vec<(dap::Scope, Vec<_>)> = Vec::new();
         let mut idx = 0;
 
@@ -602,8 +604,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn variables(&self) -> Vec<dap::Variable> {
+    #[cfg(test)]
+    pub(crate) fn variables(&self) -> Vec<dap::Variable> {
         self.entries
             .iter()
             .filter_map(|entry| match &entry.dap_kind {

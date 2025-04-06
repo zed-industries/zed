@@ -23,14 +23,13 @@ menu.workspace = true
 picker.workspace = true
 project.workspace = true
 task.workspace = true
-schemars.workspace = true
 serde.workspace = true
-settings.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 language.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

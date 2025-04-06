@@ -1,15 +1,15 @@
 use crate::branch_picker::{self, BranchList};
-use crate::git_panel::{commit_message_editor, GitPanel};
+use crate::git_panel::{GitPanel, commit_message_editor};
 use git::{Commit, GenerateCommitMessage};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
-use ui::{prelude::*, KeybindingHint, PopoverMenu, PopoverMenuHandle, Tooltip};
+use ui::{KeybindingHint, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 
 use editor::{Editor, EditorElement};
 use gpui::*;
 use util::ResultExt;
 use workspace::{
-    dock::{Dock, PanelHandle},
     ModalView, Workspace,
+    dock::{Dock, PanelHandle},
 };
 
 // nate: It is a pain to get editors to size correctly and not overflow.
@@ -102,7 +102,7 @@ impl CommitModal {
         });
     }
 
-    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<'_, Workspace>) {
+    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
             return;
         };
@@ -234,7 +234,7 @@ impl CommitModal {
 
         let branch = active_repo
             .as_ref()
-            .and_then(|repo| repo.read(cx).repository_entry.branch())
+            .and_then(|repo| repo.read(cx).branch.as_ref())
             .map(|b| b.name.clone())
             .unwrap_or_else(|| "<no branch>".into());
 
@@ -349,7 +349,7 @@ impl CommitModal {
 }
 
 impl Render for CommitModal {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let properties = self.properties;
         let width = px(properties.modal_width);
         let container_padding = px(properties.container_padding);

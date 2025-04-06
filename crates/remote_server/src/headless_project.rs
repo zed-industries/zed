@@ -1,13 +1,15 @@
 use ::proto::{FromProto, ToProto};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
 use http_client::HttpClient;
-use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
+use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
@@ -15,19 +17,18 @@ use project::{
     search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
 use rpc::{
-    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
+    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
 };
 
 use settings::initial_server_settings_content;
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
 };
 use util::ResultExt;
 use worktree::Worktree;
@@ -52,6 +53,7 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
+    pub debug_adapters: Arc<DapRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
@@ -69,6 +71,7 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
+            debug_adapters,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut Context<Self>,
@@ -108,6 +111,7 @@ impl HeadlessProject {
                 node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
+                debug_adapters.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 breakpoint_store.clone(),
@@ -367,8 +371,10 @@ impl HeadlessProject {
                     parent = util::paths::home_dir();
                 }
                 let parent = fs.canonicalize(parent).await.map_err(|_| {
-                    anyhow!(proto::ErrorCode::DevServerProjectPathDoesNotExist
-                        .with_tag("path", &path.to_string_lossy().as_ref()))
+                    anyhow!(
+                        proto::ErrorCode::DevServerProjectPathDoesNotExist
+                            .with_tag("path", &path.to_string_lossy().as_ref())
+                    )
                 })?;
                 parent.join(path.file_name().unwrap())
             }

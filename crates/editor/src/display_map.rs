@@ -29,7 +29,7 @@ mod token_map;
 mod wrap_map;
 
 use crate::{
-    hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
+    EditorStyle, InlayId, RowExt, hover_links::InlayHighlight, movement::TextLayoutDetails,
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
@@ -39,7 +39,7 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
+pub use fold_map::{ChunkRenderer, ChunkRendererContext, Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 pub use inlay_map::Inlay;
@@ -47,8 +47,7 @@ use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 use language::{
-    language_settings::language_settings, ChunkRenderer, OffsetUtf16, Point,
-    Subscription as BufferSubscription,
+    OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -70,7 +69,7 @@ use tab_map::{TabMap, TabSnapshot};
 use text::{BufferId, LineIndent};
 pub use token_map::Token;
 use token_map::{TokenMap, TokenPoint, TokenSnapshot};
-use ui::{px, SharedString};
+use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -267,7 +266,7 @@ impl DisplayMap {
                     BlockProperties {
                         placement: BlockPlacement::Replace(start..=end),
                         render,
-                        height,
+                        height: Some(height),
                         style,
                         priority,
                     }
@@ -332,6 +331,20 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
         block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
+    }
+
+    pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.disable_header_for_buffer(buffer_id)
     }
 
     pub fn fold_buffers(
@@ -522,6 +535,33 @@ impl DisplayMap {
 
     pub(crate) fn current_tokens(&self) -> impl Iterator<Item = &Token> {
         self.token_map.current_tokens()
+    }
+  
+    pub fn update_fold_widths(
+        &mut self,
+        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
+
+        let (snapshot, edits) = fold_map.update_fold_widths(widths);
+        let widths_changed = !edits.is_empty();
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
+
+        widths_changed
     }
 
     pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
@@ -812,27 +852,11 @@ impl DisplaySnapshot {
 
     // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
-        let max_row = self.buffer_snapshot.max_row().0;
-        let new_start = if range.start.row == 0 {
-            MultiBufferPoint::new(0, 0)
-        } else if range.start.row == max_row || (range.end.column > 0 && range.end.row == max_row) {
-            MultiBufferPoint::new(
-                range.start.row - 1,
-                self.buffer_snapshot
-                    .line_len(MultiBufferRow(range.start.row - 1)),
-            )
-        } else {
-            self.prev_line_boundary(range.start).0
-        };
-
-        let new_end = if range.end.column == 0 {
-            range.end
-        } else if range.end.row < max_row {
-            self.buffer_snapshot
-                .clip_point(MultiBufferPoint::new(range.end.row + 1, 0), Bias::Left)
-        } else {
-            self.buffer_snapshot.max_point()
-        };
+        let new_start = MultiBufferPoint::new(range.start.row, 0);
+        let new_end = MultiBufferPoint::new(
+            range.end.row,
+            self.buffer_snapshot.line_len(MultiBufferRow(range.end.row)),
+        );
 
         new_start..new_end
     }
@@ -1381,7 +1405,7 @@ impl Add for DisplayPoint {
     type Output = Self;
 
     fn add(self, other: Self) -> Self::Output {
-        DisplayPoint(BlockPoint(self.0 .0 + other.0 .0))
+        DisplayPoint(BlockPoint(self.0.0 + other.0.0))
     }
 }
 
@@ -1389,7 +1413,7 @@ impl Sub for DisplayPoint {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self::Output {
-        DisplayPoint(BlockPoint(self.0 .0 - other.0 .0))
+        DisplayPoint(BlockPoint(self.0.0 - other.0.0))
     }
 }
 
@@ -1504,18 +1528,19 @@ pub mod tests {
         movement,
         test::{marked_display_snapshot, test_font},
     };
+    use Bias::*;
     use block_map::BlockPlacement;
     use gpui::{
-        div, font, observe, px, App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba,
+        App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba, div, font, observe, px,
     };
     use language::{
-        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
         Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
         LanguageMatcher,
+        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
     };
     use lsp::LanguageServerId;
     use project::Project;
-    use rand::{prelude::*, Rng};
+    use rand::{Rng, prelude::*};
     use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
@@ -1523,7 +1548,6 @@ pub mod tests {
     use theme::{LoadThemes, SyntaxTheme};
     use unindent::Unindent as _;
     use util::test::{marked_text_ranges, sample_text};
-    use Bias::*;
 
     #[gpui::test(iterations = 100)]
     async fn test_random_display_map(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
@@ -1551,7 +1575,7 @@ pub mod tests {
         });
 
         let buffer = cx.update(|cx| {
-            if rng.gen() {
+            if rng.r#gen() {
                 let len = rng.gen_range(0..10);
                 let text = util::RandomCharIter::new(&mut rng)
                     .take(len)
@@ -1613,7 +1637,7 @@ pub mod tests {
                 }
                 30..=44 => {
                     map.update(cx, |map, cx| {
-                        if rng.gen() || blocks.is_empty() {
+                        if rng.r#gen() || blocks.is_empty() {
                             let buffer = map.snapshot(cx).buffer_snapshot;
                             let block_properties = (0..rng.gen_range(1..=1))
                                 .map(|_| {
@@ -1623,7 +1647,7 @@ pub mod tests {
                                             Bias::Left,
                                         ));
 
-                                    let placement = if rng.gen() {
+                                    let placement = if rng.r#gen() {
                                         BlockPlacement::Above(position)
                                     } else {
                                         BlockPlacement::Below(position)
@@ -1638,7 +1662,7 @@ pub mod tests {
                                     BlockProperties {
                                         placement,
                                         style: BlockStyle::Fixed,
-                                        height,
+                                        height: Some(height),
                                         render: Arc::new(|_| div().into_any()),
                                         priority,
                                     }
@@ -1667,7 +1691,7 @@ pub mod tests {
                         });
                     }
 
-                    if rng.gen() && fold_count > 0 {
+                    if rng.r#gen() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
                             map.unfold_intersecting(ranges, true, cx);
@@ -2000,7 +2024,7 @@ pub mod tests {
                     placement: BlockPlacement::Above(
                         buffer_snapshot.anchor_before(Point::new(0, 0)),
                     ),
-                    height: 2,
+                    height: Some(2),
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
@@ -2195,7 +2219,7 @@ pub mod tests {
                         placement: BlockPlacement::Below(
                             buffer_snapshot.anchor_before(Point::new(1, 0)),
                         ),
-                        height: 1,
+                        height: Some(1),
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
@@ -2204,7 +2228,7 @@ pub mod tests {
                         placement: BlockPlacement::Below(
                             buffer_snapshot.anchor_before(Point::new(2, 0)),
                         ),
-                        height: 0,
+                        height: None,
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
@@ -2309,7 +2333,7 @@ pub mod tests {
                     placement: BlockPlacement::Below(
                         buffer_snapshot.anchor_before(Point::new(1, 0)),
                     ),
-                    height: 1,
+                    height: Some(1),
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
@@ -2383,7 +2407,7 @@ pub mod tests {
                         buffer_snapshot.anchor_before(Point::new(1, 2))
                             ..=buffer_snapshot.anchor_after(Point::new(2, 3)),
                     ),
-                    height: 4,
+                    height: Some(4),
                     style: BlockStyle::Fixed,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,

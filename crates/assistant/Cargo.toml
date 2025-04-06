@@ -48,7 +48,6 @@ lsp.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 parking_lot.workspace = true
-paths.workspace = true
 project.workspace = true
 prompt_library.workspace = true
 prompt_store.workspace = true
@@ -56,7 +55,6 @@ proto.workspace = true
 rope.workspace = true
 schemars.workspace = true
 search.workspace = true
-semantic_index.workspace = true
 serde.workspace = true
 settings.workspace = true
 smol.workspace = true
@@ -71,6 +69,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

@@ -6,18 +6,18 @@ use futures::StreamExt as _;
 use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Task};
 use lsp::LanguageServerName;
 use paths::{
-    local_debug_file_relative_path, local_settings_file_relative_path,
-    local_tasks_file_relative_path, local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
+    EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path, local_vscode_tasks_file_relative_path,
 };
 use rpc::{
-    proto::{self, FromProto, ToProto},
     AnyProtoClient, TypedEnvelope,
+    proto::{self, FromProto, ToProto},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    parse_json_with_comments, watch_config_file, InvalidSettingsError, LocalSettingsKind, Settings,
-    SettingsLocation, SettingsSources, SettingsStore, TaskKind,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
+    SettingsStore, TaskKind, parse_json_with_comments, watch_config_file,
 };
 use std::{
     path::{Path, PathBuf},
@@ -725,7 +725,7 @@ impl SettingsObserver {
         fs: Arc<dyn Fs>,
         task_kind: TaskKind,
         file_path: PathBuf,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(&cx.background_executor(), fs, file_path.clone());

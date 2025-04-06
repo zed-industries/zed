@@ -4,6 +4,7 @@ use clap::Parser;
 use client::{Client, UserStore};
 use clock::RealSystemClock;
 use collections::BTreeMap;
+use dap::DapRegistry;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Entity};
 use http_client::{HttpClient, Method};
@@ -17,19 +18,19 @@ use semantic_index::{
 };
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
+use smol::Timer;
 use smol::channel::bounded;
 use smol::io::AsyncReadExt;
-use smol::Timer;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::{
     fs,
     path::Path,
-    process::{exit, Stdio},
+    process::{Stdio, exit},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 
@@ -302,6 +303,7 @@ async fn run_evaluation(
     ));
 
     let language_registry = Arc::new(LanguageRegistry::new(executor.clone()));
+    let debug_adapters = Arc::new(DapRegistry::default());
     cx.update(|cx| languages::init(language_registry.clone(), node_runtime.clone(), cx))
         .unwrap();
 
@@ -346,6 +348,7 @@ async fn run_evaluation(
                     node_runtime.clone(),
                     user_store.clone(),
                     language_registry.clone(),
+                    debug_adapters.clone(),
                     fs.clone(),
                     None,
                     cx,
@@ -480,8 +483,8 @@ async fn run_eval_project(
             for (ix, result) in results.iter().enumerate() {
                 if result.path.as_ref() == Path::new(&expected_result.file) {
                     file_matched = true;
-                    let start_matched = result.row_range.contains(&expected_result.lines.start());
-                    let end_matched = result.row_range.contains(&expected_result.lines.end());
+                    let start_matched = result.row_range.contains(expected_result.lines.start());
+                    let end_matched = result.row_range.contains(expected_result.lines.end());
 
                     if start_matched || end_matched {
                         range_overlapped = true;

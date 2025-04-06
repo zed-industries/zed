@@ -2,22 +2,22 @@ use crate::components::KernelListItem;
 use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
+    KernelStatus,
     kernels::{Kernel, KernelSpecification, NativeRunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
-    KernelStatus,
 };
 use collections::{HashMap, HashSet};
 use editor::{
+    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
     display_map::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
         RenderBlock,
     },
     scroll::Autoscroll,
-    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
 };
 use futures::FutureExt as _;
 use gpui::{
-    div, prelude::*, Context, Entity, EventEmitter, Render, Subscription, Task, WeakEntity, Window,
+    Context, Entity, EventEmitter, Render, Subscription, Task, WeakEntity, Window, div, prelude::*,
 };
 use language::Point;
 use project::Fs;
@@ -27,7 +27,7 @@ use runtimelib::{
 };
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{IconButtonShape, Tooltip, prelude::*};
 use util::ResultExt as _;
 
 pub struct Session {
@@ -89,7 +89,7 @@ impl EditorBlock {
             let block = BlockProperties {
                 placement: BlockPlacement::Below(code_range.end),
                 // Take up at least one height for status, allow the editor to determine the real height based on the content from render
-                height: 1,
+                height: Some(1),
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 priority: 0,

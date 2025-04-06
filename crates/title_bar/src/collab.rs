@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, User};
-use gpui::{actions, App, Task, Window};
-use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
+use client::{User, proto::PeerId};
+use gpui::{AnyElement, Hsla, IntoElement, MouseButton, Path, Styled, canvas, point};
+use gpui::{App, Task, Window, actions};
 use rpc::proto::{self};
 use theme::ActiveTheme;
-use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip};
+use ui::{Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip, prelude::*};
 use workspace::notifications::DetachAndPromptErr;
 
 use crate::TitleBar;
@@ -323,9 +323,9 @@ impl TitleBar {
                 .label_size(LabelSize::Small)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if is_shared {
-                        this.unshare_project(&Default::default(), window, cx);
+                        this.unshare_project(window, cx);
                     } else {
-                        this.share_project(&Default::default(), cx);
+                        this.share_project(cx);
                     }
                 }))
                 .into_any_element(),

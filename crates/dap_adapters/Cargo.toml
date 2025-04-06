@@ -30,9 +30,9 @@ paths.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sysinfo.workspace = true
 task.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }

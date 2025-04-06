@@ -383,13 +383,10 @@ left and right padding of the central pane from the workspace when the centered 
   `direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
   It also allows for those environment variables to be used in tasks.
 - Setting: `load_direnv`
-- Default:
-
-```json
-"load_direnv": "direct"
-```
+- Default: `"direct"`
 
 **Options**
+
 There are two options to choose from:
 
 1. `shell_hook`: Use the shell hook to load direnv. This relies on direnv to activate upon entering the directory. Supports POSIX shells and fish.
@@ -409,6 +406,7 @@ There are two options to choose from:
       "**/*.key",
       "**/*.cert",
       "**/*.crt",
+      "**/.dev.vars",
       "**/secrets.yml"
     ]
   }
@@ -420,7 +418,7 @@ There are two options to choose from:
 
 - Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
 - Setting: `disabled_globs`
-- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]`
+- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"]`
 
 **Options**
 
@@ -553,11 +551,11 @@ List of `string` values
 "cursor_shape": "hollow"
 ```
 
-## Hide Mouse While Typing
+## Hide Mouse
 
-- Description: Determines whether the mouse cursor should be hidden while typing in an editor or input box.
-- Setting: `hide_mouse_while_typing`
-- Default: `true`
+- Description: Determines when the mouse cursor should be hidden in an editor or input box.
+- Setting: `hide_mouse`
+- Default: `on_typing_and_movement`
 
 **Options**
 
@@ -814,7 +812,8 @@ List of `string` values
   "file_icons": false,
   "git_status": false,
   "activate_on_close": "history",
-  "show_close_button": "hover"
+  "show_close_button": "hover",
+  "show_diagnostics": "off"
 },
 ```
 
@@ -918,6 +917,38 @@ List of `string` values
 }
 ```
 
+### Show Diagnostics
+
+- Description: Whether to show diagnostics indicators in tabs. This setting only works when file icons are active and controls which files with diagnostic issues to mark.
+- Setting: `show_diagnostics`
+- Default: `off`
+
+**Options**
+
+1. Do not mark any files:
+
+```json
+{
+  "show_diagnostics": "off"
+}
+```
+
+2. Only mark files with errors:
+
+```json
+{
+  "show_diagnostics": "errors"
+}
+```
+
+3. Mark files with errors and warnings:
+
+```json
+{
+  "show_diagnostics": "all"
+}
+```
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
@@ -927,7 +958,8 @@ List of `string` values
 ```json
 "toolbar": {
   "breadcrumbs": true,
-  "quick_actions": true
+  "quick_actions": true,
+  "selections_menu": true
 },
 ```
 
@@ -1244,7 +1276,14 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
 
 - Setting: `file_types`
 - Description: Configure how Zed selects a language for a file based on its filename or extension. Supports glob entries.
-- Default: `{}`
+- Default:
+
+```json
+"file_types": {
+  "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
+  "Shell Script": [".env.*"]
+}
+```
 
 **Examples**
 
@@ -1990,18 +2029,17 @@ Or to set a `socks5` proxy:
 
 - Description: When enabled, automatically adjusts search case sensitivity based on your query. If your search query contains any uppercase letters, the search becomes case-sensitive; if it contains only lowercase letters, the search becomes case-insensitive. \
   This applies to both in-file searches and project-wide searches.
-
-  Examples:
-
-  - Searching for "function" would match "function", "Function", "FUNCTION", etc.
-  - Searching for "Function" would only match "Function", not "function" or "FUNCTION"
-
 - Setting: `use_smartcase_search`
 - Default: `false`
 
 **Options**
 
 `boolean` values
+
+Examples:
+
+- Searching for "function" would match "function", "Function", "FUNCTION", etc.
+- Searching for "Function" would only match "Function", not "function" or "FUNCTION"
 
 ## Show Call Status Icon
 
@@ -2012,6 +2050,68 @@ Or to set a `socks5` proxy:
 **Options**
 
 `boolean` values
+
+## Completions
+
+- Description: Controls how completions are processed for this language.
+- Setting: `completions`
+- Default:
+
+```json
+{
+  "completions": {
+    "words": "fallback",
+    "lsp": true,
+    "lsp_fetch_timeout_ms": 0,
+    "lsp_insert_mode": "replace_suffix"
+  }
+}
+```
+
+### Words
+
+- Description: Controls how words are completed. For large documents, not all words may be fetched for completion.
+- Setting: `words`
+- Default: `fallback`
+
+**Options**
+
+1. `enabled` - Always fetch document's words for completions along with LSP completions
+2. `fallback` - Only if LSP response errors or times out, use document's words to show completions
+3. `disabled` - Never fetch or complete document's words for completions (word-based completions can still be queried via a separate action)
+
+### LSP
+
+- Description: Whether to fetch LSP completions or not.
+- Setting: `lsp`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### LSP Fetch Timeout (ms)
+
+- Description: When fetching LSP completions, determines how long to wait for a response of a particular server. When set to 0, waits indefinitely.
+- Setting: `lsp_fetch_timeout_ms`
+- Default: `0`
+
+**Options**
+
+`integer` values representing milliseconds
+
+### LSP Insert Mode
+
+- Description: Controls what range to replace when accepting LSP completions.
+- Setting: `lsp_insert_mode`
+- Default: `replace_suffix`
+
+**Options**
+
+1. `insert` - Replaces text before the cursor, using the `insert` range described in the LSP specification
+2. `replace` - Replaces text before and after the cursor, using the `replace` range described in the LSP specification
+3. `replace_subsequence` - Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text, and like `"insert"` otherwise
+4. `replace_suffix` - Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like `"insert"` otherwise
 
 ## Show Completions On Input
 
@@ -2134,10 +2234,12 @@ List of `integer` column numbers
 ```json
 {
   "terminal": {
-    "alternate_scroll": "on",
+    "alternate_scroll": "off",
     "blinking": "terminal_controlled",
     "copy_on_select": false,
     "dock": "bottom",
+    "default_width": 640,
+    "default_height": 320,
     "detect_venv": {
       "on": {
         "directories": [".env", "env", ".venv", "venv"],
@@ -2150,8 +2252,8 @@ List of `integer` column numbers
     "font_size": null,
     "line_height": "comfortable",
     "option_as_meta": false,
-    "button": false,
-    "shell": {},
+    "button": true,
+    "shell": "system",
     "toolbar": {
       "breadcrumbs": true
     },
@@ -2177,26 +2279,26 @@ List of `integer` column numbers
 
 - Description: Set whether Alternate Scroll mode (DECSET code: `?1007`) is active by default. Alternate Scroll mode converts mouse scroll events into up / down key presses when in the alternate screen (e.g. when running applications like vim or less). The terminal can still set and unset this mode with ANSI escape codes.
 - Setting: `alternate_scroll`
-- Default: `on`
+- Default: `off`
 
 **Options**
 
-1. Default alternate scroll mode to on
-
-```json
-{
-  "terminal": {
-    "alternate_scroll": "on"
-  }
-}
-```
-
-2. Default alternate scroll mode to off
+1. Default alternate scroll mode to off
 
 ```json
 {
   "terminal": {
     "alternate_scroll": "off"
+  }
+}
+```
+
+2. Default alternate scroll mode to on
+
+```json
+{
+  "terminal": {
+    "alternate_scroll": "on"
   }
 }
 ```
@@ -2453,7 +2555,7 @@ See Buffer Font Features
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [".venv", "venv"],
+        "directories": [".env", "env", ".venv", "venv"],
         // Can also be `csh`, `fish`, and `nushell`
         "activate_script": "default"
       }
@@ -2668,6 +2770,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "scrollbar": {
       "show": null
     },
+    "show_diagnostics": "all",
     "indent_guides": {
       "show": "always"
     }
@@ -2751,11 +2854,11 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 - Description: Customize default width taken by project panel
 - Setting: `default_width`
-- Default: N/A width in pixels (eg: 420)
+- Default: `240`
 
 **Options**
 
-`boolean` values
+`float` values
 
 ### Auto Reveal Entries
 
@@ -2813,8 +2916,9 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ### Indent Guides: Show
 
-- Description: Whether to show indent guides in the project panel. Possible values: "always", "never".
+- Description: Whether to show indent guides in the project panel.
 - Setting: `indent_guides`
+- Default:
 
 ```json
 "indent_guides": {
@@ -2886,14 +2990,21 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 "assistant": {
+  "version": "2",
   "enabled": true,
   "button": true,
   "dock": "right",
   "default_width": 640,
   "default_height": 320,
-  "provider": "openai",
-  "version": "1",
-},
+  "default_model": {
+    "provider": "zed.dev",
+    "model": "claude-3-5-sonnet-latest"
+  },
+  "editor_model": {
+    "provider": "zed.dev",
+    "model": "claude-3-5-sonnet-latest"
+  }
+}
 ```
 
 ## Outline Panel
@@ -2905,7 +3016,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ```json
 "outline_panel": {
   "button": true,
-  "default_width": 240,
+  "default_width": 300,
   "dock": "left",
   "file_icons": true,
   "folder_icons": true,
@@ -2972,7 +3083,14 @@ The name of any font family installed on the system.
 
 - Description: The OpenType features to enable for text in the UI.
 - Setting: `ui_font_features`
-- Default: `null`
+- Default:
+
+```json
+"ui_font_features": {
+  "calt": false
+}
+```
+
 - Platform: macOS and Windows.
 
 **Options**

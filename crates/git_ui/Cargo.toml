@@ -21,6 +21,7 @@ anyhow.workspace = true
 askpass.workspace = true
 assistant_settings.workspace = true
 buffer_diff.workspace = true
+chrono.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 component.workspace = true
@@ -36,6 +37,7 @@ language_model.workspace = true
 linkify.workspace = true
 linkme.workspace = true
 log.workspace = true
+markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 notifications.workspace = true
@@ -57,6 +59,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

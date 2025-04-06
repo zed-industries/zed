@@ -1,7 +1,9 @@
-use anyhow::{anyhow, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
+use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -28,7 +30,7 @@ pub struct CreateDirectoryTool;
 
 impl Tool for CreateDirectoryTool {
     fn name(&self) -> String {
-        "create-directory".into()
+        "create_directory".into()
     }
 
     fn needs_confirmation(&self) -> bool {
@@ -43,9 +45,8 @@ impl Tool for CreateDirectoryTool {
         IconName::Folder
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(CreateDirectoryToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<CreateDirectoryToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

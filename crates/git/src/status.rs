@@ -1,5 +1,5 @@
 use crate::repository::RepoPath;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, str::FromStr, sync::Arc};
 use util::ResultExt;
@@ -462,7 +462,7 @@ impl FromStr for GitStatus {
                 if path.ends_with('/') {
                     return None;
                 }
-                let status = entry[0..2].as_bytes().try_into().unwrap();
+                let status = entry.as_bytes()[0..2].try_into().unwrap();
                 let status = FileStatus::from_bytes(status).log_err()?;
                 let path = RepoPath(Path::new(path).into());
                 Some((path, status))

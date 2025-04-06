@@ -1,27 +1,34 @@
 use crate::{
     rpc::RECONNECT_TIMEOUT,
-    tests::{rust_lang, TestServer},
+    tests::{TestServer, rust_lang},
 };
 use call::ActiveCall;
 use editor::{
-    actions::{
-        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
-        ToggleCodeActions, Undo,
-    },
-    test::editor_test_context::{AssertionContextManager, EditorTestContext},
     Editor, RowInfo,
+    actions::{
+        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
+        ExpandMacroRecursively, Redo, Rename, ToggleCodeActions, Undo,
+    },
+    test::{
+        editor_test_context::{AssertionContextManager, EditorTestContext},
+        expand_macro_recursively,
+    },
 };
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
-    language_settings::{AllLanguageSettings, InlayHintSettings},
     FakeLspAdapter,
+    language_settings::{AllLanguageSettings, InlayHintSettings},
 };
 use project::{
-    project_settings::{InlineBlameSettings, ProjectSettings},
     ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    lsp_store::{
+        lsp_ext_command::{ExpandedMacro, LspExpandMacro},
+        rust_analyzer_ext::RUST_ANALYZER_NAME,
+    },
+    project_settings::{InlineBlameSettings, ProjectSettings},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
@@ -31,8 +38,8 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool, AtomicUsize},
         Arc,
+        atomic::{self, AtomicBool, AtomicUsize},
     },
 };
 use text::Point;
@@ -2617,6 +2624,147 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     assert_eq!(0, breakpoints_a.len());
     assert_eq!(breakpoints_a, breakpoints_b);
+}
+
+#[gpui::test]
+async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a.language_registry().add(rust_lang());
+    client_b.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: RUST_ANALYZER_NAME,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() {}",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    let editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+
+    // host
+    let mut expand_request_a =
+        fake_language_server.set_request_handler::<LspExpandMacro, _, _>(|params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+            );
+            assert_eq!(params.position, lsp::Position::new(0, 0),);
+            Ok(Some(ExpandedMacro {
+                name: "test_macro_name".to_string(),
+                expansion: "test_macro_expansion on the host".to_string(),
+            }))
+        });
+
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        expand_macro_recursively(editor, &ExpandMacroRecursively, window, cx)
+    });
+    expand_request_a.next().await.unwrap();
+    cx_a.run_until_parked();
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            assert_eq!(
+                pane.items_len(),
+                2,
+                "Should have added a macro expansion to the host's pane"
+            );
+            let new_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+            new_editor.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "test_macro_expansion on the host");
+            });
+        })
+    });
+
+    // client
+    let mut expand_request_b =
+        fake_language_server.set_request_handler::<LspExpandMacro, _, _>(|params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+            );
+            assert_eq!(params.position, lsp::Position::new(0, 0),);
+            Ok(Some(ExpandedMacro {
+                name: "test_macro_name".to_string(),
+                expansion: "test_macro_expansion on the client".to_string(),
+            }))
+        });
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        expand_macro_recursively(editor, &ExpandMacroRecursively, window, cx)
+    });
+    expand_request_b.next().await.unwrap();
+    cx_b.run_until_parked();
+
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            assert_eq!(
+                pane.items_len(),
+                2,
+                "Should have added a macro expansion to the client's pane"
+            );
+            let new_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+            new_editor.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "test_macro_expansion on the client");
+            });
+        })
+    });
 }
 
 #[track_caller]

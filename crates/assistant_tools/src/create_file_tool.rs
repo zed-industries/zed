@@ -1,7 +1,9 @@
-use anyhow::{anyhow, Result};
+use crate::schema::json_schema_for;
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
+use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -35,11 +37,11 @@ pub struct CreateFileTool;
 
 impl Tool for CreateFileTool {
     fn name(&self) -> String {
-        "create-file".into()
+        "create_file".into()
     }
 
     fn needs_confirmation(&self) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
@@ -50,9 +52,8 @@ impl Tool for CreateFileTool {
         IconName::FileCreate
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(CreateFileToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<CreateFileToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
@@ -70,7 +71,7 @@ impl Tool for CreateFileTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
+        action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<CreateFileToolInput>(input) {
@@ -85,24 +86,21 @@ impl Tool for CreateFileTool {
         let destination_path: Arc<str> = input.path.as_str().into();
 
         cx.spawn(async move |cx| {
-            project
-                .update(cx, |project, cx| {
-                    project.create_entry(project_path.clone(), false, cx)
-                })?
-                .await
-                .map_err(|err| anyhow!("Unable to create {destination_path}: {err}"))?;
             let buffer = project
                 .update(cx, |project, cx| {
                     project.open_buffer(project_path.clone(), cx)
                 })?
                 .await
                 .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_text(contents, cx);
+            cx.update(|cx| {
+                buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
+                action_log.update(cx, |action_log, cx| {
+                    action_log.will_create_buffer(buffer.clone(), cx)
+                });
             })?;
 
             project
-                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
                 .await
                 .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
 

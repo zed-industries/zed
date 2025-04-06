@@ -1,39 +1,39 @@
 use crate::{AssistantPanel, AssistantPanelEvent, DEFAULT_CONTEXT_LINES};
 use anyhow::{Context as _, Result};
-use assistant_context_editor::{humanize_token_count, RequestType};
+use assistant_context_editor::{RequestType, humanize_token_count};
 use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{
-    actions::{MoveDown, MoveUp, SelectAll},
     Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
+    actions::{MoveDown, MoveUp, SelectAll},
 };
 use fs::Fs;
-use futures::{channel::mpsc, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, Subscription, Task,
     TextStyle, UpdateGlobal, WeakEntity,
 };
 use language::Buffer;
 use language_model::{
-    report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    Role, report_assistant_event,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use prompt_store::PromptBuilder;
-use settings::{update_settings_file, Settings};
+use settings::{Settings, update_settings_file};
 use std::{
     cmp,
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{prelude::*, text_for_action, IconButtonShape, Tooltip};
+use ui::{IconButtonShape, Tooltip, prelude::*, text_for_action};
 use util::ResultExt;
-use workspace::{notifications::NotificationId, Toast, Workspace};
+use workspace::{Toast, Workspace, notifications::NotificationId};
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -318,11 +318,13 @@ impl TerminalInlineAssistant {
                 })
                 .log_err();
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            if let Some(ConfiguredModel { model, .. }) =
+                LanguageModelRegistry::read_global(cx).inline_assistant_model()
+            {
                 let codegen = assist.codegen.read(cx);
                 let executor = cx.background_executor().clone();
                 report_assistant_event(
-                    AssistantEvent {
+                    AssistantEventData {
                         conversation_id: None,
                         kind: AssistantKind::InlineTerminal,
                         message_id: codegen.message_id.clone(),
@@ -652,8 +654,8 @@ impl Render for PromptEditor {
                                 format!(
                                     "Using {}",
                                     LanguageModelRegistry::read_global(cx)
-                                        .active_model()
-                                        .map(|model| model.name().0)
+                                        .inline_assistant_model()
+                                        .map(|inline_assistant| inline_assistant.model.name().0)
                                         .unwrap_or_else(|| "No model selected".into()),
                                 ),
                                 None,
@@ -822,7 +824,9 @@ impl PromptEditor {
 
     fn count_tokens(&mut self, cx: &mut Context<Self>) {
         let assist_id = self.id;
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        else {
             return;
         };
         self.pending_token_count = cx.spawn(async move |this, cx| {
@@ -980,7 +984,9 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let model = LanguageModelRegistry::read_global(cx)
+            .inline_assistant_model()?
+            .model;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -1131,7 +1137,9 @@ impl Codegen {
     }
 
     pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut Context<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        else {
             return;
         };
 
@@ -1175,7 +1183,7 @@ impl Codegen {
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
                         report_assistant_event(
-                            AssistantEvent {
+                            AssistantEventData {
                                 conversation_id: None,
                                 kind: AssistantKind::InlineTerminal,
                                 message_id,

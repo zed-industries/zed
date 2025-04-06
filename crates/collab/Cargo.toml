@@ -76,6 +76,7 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "registry", "tracing-log"] } # workaround for https://github.com/tokio-rs/tracing/issues/2927
 util.workspace = true
 uuid.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 assistant = { workspace = true, features = ["test-support"] }
@@ -100,13 +101,15 @@ extension.workspace = true
 file_finder.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
-git_ui = { workspace = true, features = ["test-support"] }
 git_hosting_providers.workspace = true
+git_ui = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+gpui_tokio.workspace = true
 hyper.workspace = true
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
+livekit_client =  { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 menu.workspace = true
 multi_buffer = { workspace = true, features = ["test-support"] }
@@ -130,12 +133,6 @@ unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
-
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-livekit_client_macos = { workspace = true, features = ["test-support"] }
-
-[target.'cfg(not(target_os = "macos"))'.dev-dependencies]
-livekit_client =  { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-machete]
 ignored = ["async-stripe"]

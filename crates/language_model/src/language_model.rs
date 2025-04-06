@@ -11,16 +11,16 @@ pub mod fake_provider;
 use anyhow::Result;
 use client::Client;
 use futures::FutureExt;
-use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
+use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
 use icons::IconName;
 use parking_lot::Mutex;
 use proto::Plan;
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
 use std::ops::{Add, Sub};
-use std::{future::Future, sync::Arc};
+use std::sync::Arc;
 use thiserror::Error;
 use util::serde::is_default;
 
@@ -66,6 +66,15 @@ pub enum LanguageModelCompletionEvent {
     UsageUpdate(TokenUsage),
 }
 
+/// Indicates the format used to define the input schema for a language model tool.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LanguageModelToolSchemaFormat {
+    /// A JSON schema, see https://json-schema.org
+    JsonSchema,
+    /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
+    JsonSchemaSubset,
+}
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
@@ -84,6 +93,12 @@ pub struct TokenUsage {
     pub cache_creation_input_tokens: u32,
     #[serde(default, skip_serializing_if = "is_default")]
     pub cache_read_input_tokens: u32,
+}
+
+impl TokenUsage {
+    pub fn total_tokens(&self) -> u32 {
+        self.input_tokens + self.output_tokens
+    }
 }
 
 impl Add<TokenUsage> for TokenUsage {
@@ -176,6 +191,13 @@ pub trait LanguageModel: Send + Sync {
         LanguageModelAvailability::Public
     }
 
+    /// Whether this model supports tools.
+    fn supports_tools(&self) -> bool;
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        LanguageModelToolSchemaFormat::JsonSchema
+    }
+
     fn max_token_count(&self) -> usize;
     fn max_output_tokens(&self) -> Option<u32> {
         None
@@ -250,15 +272,6 @@ pub trait LanguageModel: Send + Sync {
         .boxed()
     }
 
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        name: String,
-        description: String,
-        schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
-
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         None
     }
@@ -266,33 +279,6 @@ pub trait LanguageModel: Send + Sync {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &fake_provider::FakeLanguageModel {
         unimplemented!()
-    }
-}
-
-impl dyn LanguageModel {
-    pub fn use_tool<T: LanguageModelTool>(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> impl 'static + Future<Output = Result<T>> {
-        let schema = schemars::schema_for!(T);
-        let schema_json = serde_json::to_value(&schema).unwrap();
-        let stream = self.use_any_tool(request, T::name(), T::description(), schema_json, cx);
-        async move {
-            let stream = stream.await?;
-            let response = stream.try_collect::<String>().await?;
-            Ok(serde_json::from_str(&response)?)
-        }
-    }
-
-    pub fn use_tool_stream<T: LanguageModelTool>(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let schema = schemars::schema_for!(T);
-        let schema_json = serde_json::to_value(&schema).unwrap();
-        self.use_any_tool(request, T::name(), T::description(), schema_json, cx)
     }
 }
 
@@ -337,7 +323,10 @@ pub trait LanguageModelProvider: 'static {
 
 #[derive(PartialEq, Eq)]
 pub enum LanguageModelProviderTosView {
-    ThreadEmptyState,
+    /// When there are some past interactions in the Agent Panel.
+    ThreadtEmptyState,
+    /// When there are no past interactions in the Agent Panel.
+    ThreadFreshStart,
     PromptEditorPopup,
     Configuration,
 }

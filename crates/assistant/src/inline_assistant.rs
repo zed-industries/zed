@@ -1,39 +1,41 @@
 use crate::{
-    AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist, CyclePreviousInlineAssist,
+    Assistant, AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist,
+    CyclePreviousInlineAssist,
 };
-use anyhow::{anyhow, Context as _, Result};
-use assistant_context_editor::{humanize_token_count, RequestType};
+use anyhow::{Context as _, Result, anyhow};
+use assistant_context_editor::{RequestType, humanize_token_count};
 use assistant_settings::AssistantSettings;
-use client::{telemetry::Telemetry, ErrorExt};
-use collections::{hash_map, HashMap, HashSet, VecDeque};
+use client::{ErrorExt, telemetry::Telemetry};
+use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::{
+    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
+    EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
+    ToOffset as _, ToPoint,
     actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
         BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
-    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
-    ToOffset as _, ToPoint,
 };
 use feature_flags::{
     Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedPro,
 };
 use fs::Fs;
 use futures::{
+    SinkExt, Stream, StreamExt,
     channel::mpsc,
     future::{BoxFuture, LocalBoxFuture},
-    join, SinkExt, Stream, StreamExt,
+    join,
 };
 use gpui::{
-    anchored, deferred, point, AnyElement, App, ClickEvent, Context, CursorStyle, Entity,
-    EventEmitter, FocusHandle, Focusable, FontWeight, Global, HighlightStyle, Subscription, Task,
-    TextStyle, UpdateGlobal, WeakEntity, Window,
+    AnyElement, App, ClickEvent, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
+    Focusable, FontWeight, Global, HighlightStyle, Subscription, Task, TextStyle, UpdateGlobal,
+    WeakEntity, Window, anchored, deferred, point,
 };
-use language::{line_diff, Buffer, IndentKind, Point, Selection, TransactionId};
+use language::{Buffer, IndentKind, Point, Selection, TransactionId, line_diff};
 use language_model::{
-    report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelTextStream, Role,
+    ConfiguredModel, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelTextStream, Role, report_assistant_event,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use multi_buffer::MultiBufferRow;
@@ -41,7 +43,7 @@ use parking_lot::Mutex;
 use project::{CodeAction, LspAction, ProjectTransaction};
 use prompt_store::PromptBuilder;
 use rope::Rope;
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use smol::future::FutureExt;
 use std::{
     cmp,
@@ -55,15 +57,15 @@ use std::{
     time::{Duration, Instant},
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip,
+    CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip, prelude::*, text_for_action,
 };
 use util::{RangeExt, ResultExt};
-use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
+use workspace::{ItemHandle, Toast, Workspace, notifications::NotificationId};
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -310,8 +312,10 @@ impl InlineAssistant {
                 start..end,
             ));
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                self.telemetry.report_assistant_event(AssistantEvent {
+            if let Some(ConfiguredModel { model, .. }) =
+                LanguageModelRegistry::read_global(cx).default_model()
+            {
+                self.telemetry.report_assistant_event(AssistantEventData {
                     conversation_id: None,
                     kind: AssistantKind::Inline,
                     phase: AssistantPhase::Invoked,
@@ -523,14 +527,14 @@ impl InlineAssistant {
             BlockProperties {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Above(range.start),
-                height: prompt_editor_height,
+                height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Below(range.end),
-                height: 0,
+                height: None,
                 render: Arc::new(|cx| {
                     v_flex()
                         .h_full()
@@ -875,7 +879,9 @@ impl InlineAssistant {
             let active_alternative = assist.codegen.read(cx).active_alternative().clone();
             let message_id = active_alternative.read(cx).message_id.clone();
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            if let Some(ConfiguredModel { model, .. }) =
+                LanguageModelRegistry::read_global(cx).default_model()
+            {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
                     let multibuffer_snapshot = multibuffer.snapshot(cx);
@@ -886,7 +892,7 @@ impl InlineAssistant {
                         .map(|language| language.name())
                 });
                 report_assistant_event(
-                    AssistantEvent {
+                    AssistantEventData {
                         conversation_id: None,
                         kind: AssistantKind::Inline,
                         message_id,
@@ -1268,10 +1274,7 @@ impl InlineAssistant {
                     multi_buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.push_excerpts(
                             old_buffer.clone(),
-                            Some(ExcerptRange {
-                                context: buffer_start..buffer_end,
-                                primary: None,
-                            }),
+                            Some(ExcerptRange::new(buffer_start..buffer_end)),
                             cx,
                         );
                     });
@@ -1298,7 +1301,7 @@ impl InlineAssistant {
                     deleted_lines_editor.update(cx, |editor, cx| editor.max_point(cx).row().0 + 1);
                 new_blocks.push(BlockProperties {
                     placement: BlockPlacement::Above(new_row),
-                    height,
+                    height: Some(height),
                     style: BlockStyle::Flex,
                     render: Arc::new(move |cx| {
                         div()
@@ -1630,8 +1633,8 @@ impl Render for PromptEditor {
                                 format!(
                                     "Using {}",
                                     LanguageModelRegistry::read_global(cx)
-                                        .active_model()
-                                        .map(|model| model.name().0)
+                                        .default_model()
+                                        .map(|default| default.model.name().0)
                                         .unwrap_or_else(|| "No model selected".into()),
                                 ),
                                 None,
@@ -2078,7 +2081,7 @@ impl PromptEditor {
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let default_model = model_registry.active_model();
+        let default_model = model_registry.default_model().map(|default| default.model);
         let alternative_models = model_registry.inline_alternative_models();
 
         let get_model_name = |index: usize| -> String {
@@ -2184,7 +2187,9 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let model = LanguageModelRegistry::read_global(cx)
+            .default_model()?
+            .model;
         let token_counts = self.token_counts?;
         let max_token_count = model.max_token_count();
 
@@ -2639,8 +2644,9 @@ impl Codegen {
         }
 
         let primary_model = LanguageModelRegistry::read_global(cx)
-            .active_model()
-            .context("no active model")?;
+            .default_model()
+            .context("no active model")?
+            .model;
 
         for (model, alternative) in iter::once(primary_model)
             .chain(alternative_models)
@@ -2864,7 +2870,9 @@ impl CodegenAlternative {
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &App,
     ) -> BoxFuture<'static, Result<TokenCounts>> {
-        if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+        if let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        {
             let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
             match request {
                 Ok(request) => {
@@ -3140,7 +3148,7 @@ impl CodegenAlternative {
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
                         report_assistant_event(
-                            AssistantEvent {
+                            AssistantEventData {
                                 conversation_id: None,
                                 message_id,
                                 kind: AssistantKind::Inline,
@@ -3555,7 +3563,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         _: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
-        if !AssistantSettings::get_global(cx).enabled {
+        if !Assistant::enabled(cx) {
             return Task::ready(Ok(Vec::new()));
         }
 
@@ -3709,8 +3717,8 @@ mod tests {
     use gpui::TestAppContext;
     use indoc::indoc;
     use language::{
-        language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, LanguageMatcher,
-        Point,
+        Buffer, Language, LanguageConfig, LanguageMatcher, Point, language_settings,
+        tree_sitter_rust,
     };
     use language_model::{LanguageModelRegistry, TokenUsage};
     use rand::prelude::*;

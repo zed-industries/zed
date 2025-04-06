@@ -147,10 +147,6 @@
       "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
-      "cmd-alt-z": "git::Restore",
-      "cmd-alt-y": "git::ToggleStaged",
-      "cmd-y": "git::StageAndNext",
-      "cmd-shift-y": "git::UnstageAndNext",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "editor::ToggleGitBlame",
@@ -232,6 +228,24 @@
     }
   },
   {
+    "context": "Editor && !agent_diff",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-alt-z": "git::Restore",
+      "cmd-alt-y": "git::ToggleStaged",
+      "cmd-y": "git::StageAndNext",
+      "cmd-shift-y": "git::UnstageAndNext"
+    }
+  },
+  {
+    "context": "AgentDiff",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-y": "agent::Keep",
+      "cmd-alt-z": "agent::Reject"
+    }
+  },
+  {
     "context": "AssistantPanel",
     "use_key_equivalents": true,
     "bindings": {
@@ -263,33 +277,35 @@
     }
   },
   {
-    "context": "AssistantPanel2",
+    "context": "AgentPanel",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "assistant2::NewThread",
-      "cmd-alt-p": "assistant2::NewPromptEditor",
-      "cmd-shift-h": "assistant2::OpenHistory",
+      "cmd-n": "agent::NewThread",
+      "cmd-alt-n": "agent::NewPromptEditor",
+      "cmd-shift-h": "agent::OpenHistory",
+      "cmd-alt-c": "agent::OpenConfiguration",
+      "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
-      "cmd-shift-a": "assistant2::ToggleContextPicker",
-      "cmd-e": "assistant2::ChatMode",
-      "cmd-alt-e": "assistant2::RemoveAllContext"
+      "cmd-shift-a": "agent::ToggleContextPicker",
+      "cmd-e": "agent::ChatMode",
+      "cmd-alt-e": "agent::RemoveAllContext"
     }
   },
   {
-    "context": "AssistantPanel2 && prompt_editor",
+    "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "assistant2::NewPromptEditor",
-      "cmd-alt-t": "assistant2::NewThread"
+      "cmd-n": "agent::NewPromptEditor",
+      "cmd-alt-t": "agent::NewThread"
     }
   },
   {
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "enter": "assistant2::Chat",
-      "cmd-g d": "git::Diff",
-      "shift-escape": "git::ExpandCommitEditor"
+      "enter": "agent::Chat",
+      "cmd-i": "agent::ToggleProfileSelector",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
     }
   },
   {
@@ -302,21 +318,30 @@
     }
   },
   {
-    "context": "ContextStrip",
+    "context": "AgentFeedbackMessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "up": "assistant2::FocusUp",
-      "right": "assistant2::FocusRight",
-      "left": "assistant2::FocusLeft",
-      "down": "assistant2::FocusDown",
-      "backspace": "assistant2::RemoveFocusedContext",
-      "enter": "assistant2::AcceptSuggestedContext"
+      "escape": "menu::Cancel",
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline"
     }
   },
   {
-    "context": "ThreadHistory",
+    "context": "ContextStrip",
+    "use_key_equivalents": true,
     "bindings": {
-      "backspace": "assistant2::RemoveSelectedThread"
+      "up": "agent::FocusUp",
+      "right": "agent::FocusRight",
+      "left": "agent::FocusLeft",
+      "down": "agent::FocusDown",
+      "backspace": "agent::RemoveFocusedContext",
+      "enter": "agent::AcceptSuggestedContext"
+    }
+  },
+  {
+    "context": "ThreadHistory > Editor",
+    "bindings": {
+      "shift-backspace": "agent::RemoveSelectedThread"
     }
   },
   {
@@ -405,7 +430,8 @@
       "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
       "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "cmd-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
-      "cmd-k cmd-w": ["pane::CloseAllItems", { "close_pinned": false }],
+      "cmd-k w": ["pane::CloseAllItems", { "close_pinned": false }],
+      "cmd-k cmd-w": "workspace::CloseAllItemsAndPanes",
       "cmd-f": "project_search::ToggleFocus",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPreviousMatch",
@@ -582,6 +608,8 @@
       "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
+      // or by tag:
+      // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
     }
   },
   // Bindings from Sublime Text
@@ -689,20 +717,12 @@
     }
   },
   {
-    "context": "ProposedChangesEditor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-shift-y": "editor::ApplyDiffHunk",
-      "cmd-shift-a": "editor::ApplyAllDiffHunks"
-    }
-  },
-  {
     "context": "PromptEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-alt-/": "assistant::ToggleModelSelector",
-      "cmd-alt-e": "assistant2::RemoveAllContext",
+      "cmd-alt-e": "agent::RemoveAllContext",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist"
     }

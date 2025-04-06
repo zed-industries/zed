@@ -11,8 +11,8 @@ use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel};
 use menu::Confirm;
 use project::{
-    debugger::session::{CompletionsQuery, OutputToken, Session},
     Completion,
+    debugger::session::{CompletionsQuery, OutputToken, Session},
 };
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc, usize};
@@ -85,14 +85,9 @@ impl Console {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn editor(&self) -> &Entity<Editor> {
+    #[cfg(test)]
+    pub(crate) fn editor(&self) -> &Entity<Editor> {
         &self.console
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn query_bar(&self) -> &Entity<Editor> {
-        &self.query_bar
     }
 
     fn is_local(&self, cx: &Context<Self>) -> bool {

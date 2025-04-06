@@ -118,15 +118,17 @@ util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"
 lyon = "1.0"
+workspace-hack.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
 cocoa.workspace = true
 core-foundation.workspace = true
-core-foundation-sys = "0.8"
-core-graphics = "0.23"
-core-text = "20.1"
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", optional = true }
+core-foundation-sys.workspace = true
+core-graphics = "0.24"
+core-video.workspace = true
+core-text = "21"
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5474cfad4b719a72ec8ed2cb7327b2b01fd10568", optional = true }
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
@@ -154,9 +156,10 @@ blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
 cosmic-text = { version = "0.13.2", optional = true }
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", features = [
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5474cfad4b719a72ec8ed2cb7327b2b01fd10568", features = [
     "source-fontconfig-dlopen",
 ], optional = true }
+
 calloop = { version = "0.13.0" }
 filedescriptor = { version = "0.8.2", optional = true }
 open = { version = "5.2.0", optional = true }
@@ -224,7 +227,7 @@ embed-resource = "3.0"
 naga.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.70.0"
+bindgen = "0.71"
 cbindgen = { version = "0.28.0", default-features = false }
 naga.workspace = true
 

@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{io::BufReader, StreamExt};
+use futures::{StreamExt, io::BufReader};
 use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
-use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, SemanticTokenModifier, SemanticTokenType};
 use regex::Regex;
@@ -17,8 +17,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
-use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use task::{TaskTemplate, TaskTemplates, TaskType, TaskVariables, VariableName};
+use util::{ResultExt, fs::remove_matching, maybe};
 
 use crate::language_settings::language_settings;
 
@@ -641,10 +641,15 @@ impl ContextProvider for RustContextProvider {
             .variables
             .get(CUSTOM_TARGET_DIR)
             .cloned();
-        let run_task_args = if let Some(package_to_run) = package_to_run {
+        let run_task_args = if let Some(package_to_run) = package_to_run.clone() {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
+        };
+        let debug_task_args = if let Some(package_to_run) = package_to_run {
+            vec!["build".into(), "-p".into(), package_to_run]
+        } else {
+            vec!["build".into()]
         };
         let mut task_templates = vec![
             TaskTemplate {
@@ -682,6 +687,32 @@ impl ContextProvider for RustContextProvider {
                     RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
+                ],
+                tags: vec!["rust-test".to_owned()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "Debug Test '{}' (package: {})",
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
+                task_type: TaskType::Debug(task::DebugArgs {
+                    adapter: "LLDB".to_owned(),
+                    request: task::DebugArgsRequest::Launch,
+                    locator: Some("cargo".into()),
+                    tcp_connection: None,
+                    initialize_args: None,
+                    stop_on_entry: None,
+                }),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
+                    "--no-run".into(),
                 ],
                 tags: vec!["rust-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -762,6 +793,27 @@ impl ContextProvider for RustContextProvider {
                 command: "cargo".into(),
                 args: run_task_args,
                 cwd: Some("$ZED_DIRNAME".to_owned()),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "Debug {} {} (package: {})",
+                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
+                    RUST_BIN_NAME_TASK_VARIABLE.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
+                cwd: Some("$ZED_DIRNAME".to_owned()),
+                command: "cargo".into(),
+                task_type: TaskType::Debug(task::DebugArgs {
+                    request: task::DebugArgsRequest::Launch,
+                    adapter: "LLDB".to_owned(),
+                    initialize_args: None,
+                    locator: Some("cargo".into()),
+                    tcp_connection: None,
+                    stop_on_entry: None,
+                }),
+                args: debug_task_args,
+                tags: vec!["rust-main".to_owned()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {

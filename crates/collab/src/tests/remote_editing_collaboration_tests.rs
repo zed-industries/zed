@@ -1,6 +1,7 @@
 use crate::tests::TestServer;
 use call::ActiveCall;
 use collections::{HashMap, HashSet};
+use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
@@ -9,17 +10,17 @@ use gpui::{
 };
 use http_client::BlockedHttpClient;
 use language::{
+    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
     language_settings::{
-        language_settings, AllLanguageSettings, Formatter, FormatterList, PrettierSettings,
-        SelectedFormatter,
+        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
+        language_settings,
     },
-    tree_sitter_typescript, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
-    LanguageRegistry,
+    tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
 use project::{
-    lsp_store::{FormatTrigger, LspFormatTarget},
     ProjectPath,
+    lsp_store::{FormatTrigger, LspFormatTarget},
 };
 use remote::SshRemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};
@@ -85,6 +86,7 @@ async fn test_sharing_an_ssh_remote_project(
                 http_client: remote_http_client,
                 node_runtime: node,
                 languages,
+                debug_adapters: Arc::new(DapRegistry::fake()),
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
@@ -252,6 +254,7 @@ async fn test_ssh_collaboration_git_branches(
                 http_client: remote_http_client,
                 node_runtime: node,
                 languages,
+                debug_adapters: Arc::new(DapRegistry::fake()),
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
@@ -310,7 +313,8 @@ async fn test_ssh_collaboration_git_branches(
                     .next()
                     .unwrap()
                     .read(cx)
-                    .current_branch()
+                    .branch
+                    .as_ref()
                     .unwrap()
                     .clone()
             })
@@ -349,7 +353,8 @@ async fn test_ssh_collaboration_git_branches(
                     .next()
                     .unwrap()
                     .read(cx)
-                    .current_branch()
+                    .branch
+                    .as_ref()
                     .unwrap()
                     .clone()
             })
@@ -451,6 +456,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                 http_client: remote_http_client,
                 node_runtime: NodeRuntime::unavailable(),
                 languages,
+                debug_adapters: Arc::new(DapRegistry::fake()),
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,

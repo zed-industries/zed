@@ -1,7 +1,7 @@
 use language::{BufferSnapshot, Diff, Point, ToOffset};
 use project::search::SearchQuery;
 use std::iter;
-use util::{paths::PathMatcher, ResultExt as _};
+use util::{ResultExt as _, paths::PathMatcher};
 
 /// Performs an exact string replacement in a buffer, requiring precise character-for-character matching.
 /// Uses the search functionality to locate the first occurrence of the exact string.
@@ -151,8 +151,8 @@ fn lines_with_min_indent(input: &str) -> (Vec<&str>, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::prelude::*;
     use gpui::TestAppContext;
+    use gpui::prelude::*;
     use unindent::Unindent;
 
     #[gpui::test]
