@@ -23,9 +23,12 @@ impl SignatureHelp {
             return None;
         }
         let active_signature = help.active_signature.unwrap_or(0) as usize;
-        let active_parameter = help.active_parameter.unwrap_or(0) as usize;
         let mut signatures = Vec::<SignatureHelpData>::with_capacity(help.signatures.capacity());
         for signature in &help.signatures {
+            let active_parameter = signature.active_parameter.map_or_else(
+                || help.active_signature.unwrap_or(0) as usize,
+                |active_parameter| active_parameter as usize,
+            );
             let str_for_join = ", ";
             let mut highlights = Vec::new();
             let mut highlight_start = 0;
