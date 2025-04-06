@@ -7,7 +7,7 @@ use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::LanguageServerBinary;
+use lsp::{InitializeParams, LanguageServerBinary, SemanticTokenModifier, SemanticTokenType};
 use regex::Regex;
 use smol::fs::{self};
 use std::fmt::Display;
@@ -103,6 +103,73 @@ impl LspAdapter for RustLspAdapter {
 
     fn manifest_name(&self) -> Option<ManifestName> {
         Some(SharedString::new_static("Cargo.toml").into())
+    }
+
+    fn prepare_initialize_params(
+        &self,
+        mut original: InitializeParams,
+    ) -> Result<InitializeParams> {
+        if let Some(ref mut text_document) = original.capabilities.text_document {
+            if let Some(ref mut semantic_tokens) = text_document.semantic_tokens {
+                semantic_tokens.token_types.extend([
+                    SemanticTokenType::new("angle"),
+                    SemanticTokenType::new("arithmetic"),
+                    SemanticTokenType::new("attributeBracket"),
+                    SemanticTokenType::new("attribute"),
+                    SemanticTokenType::new("bitwise"),
+                    SemanticTokenType::new("boolean"),
+                    SemanticTokenType::new("brace"),
+                    SemanticTokenType::new("bracket"),
+                    SemanticTokenType::new("builtinAttribute"),
+                    SemanticTokenType::new("builtinType"),
+                    SemanticTokenType::new("character"),
+                    SemanticTokenType::new("colon"),
+                    SemanticTokenType::new("comma"),
+                    SemanticTokenType::new("comparison"),
+                    SemanticTokenType::new("constParameter"),
+                    SemanticTokenType::new("const"),
+                    SemanticTokenType::new("deriveHelper"),
+                    SemanticTokenType::new("derive"),
+                    SemanticTokenType::new("dot"),
+                    SemanticTokenType::new("escapeSequence"),
+                    SemanticTokenType::new("formatSpecifier"),
+                    SemanticTokenType::new("generic"),
+                    SemanticTokenType::new("invalidEscapeSequence"),
+                    SemanticTokenType::new("label"),
+                    SemanticTokenType::new("lifetime"),
+                    SemanticTokenType::new("logical"),
+                    SemanticTokenType::new("macroBang"),
+                    SemanticTokenType::new("parenthesis"),
+                    SemanticTokenType::new("selfKeyword"),
+                    SemanticTokenType::new("selfTypeKeyword"),
+                    SemanticTokenType::new("semicolon"),
+                    SemanticTokenType::new("static"),
+                    SemanticTokenType::new("toolModule"),
+                    SemanticTokenType::new("typeAlias"),
+                    SemanticTokenType::new("union"),
+                    SemanticTokenType::new("unresolvedReference"),
+                ]);
+                semantic_tokens.token_modifiers.extend([
+                    SemanticTokenModifier::new("associated"),
+                    SemanticTokenModifier::new("attribute"),
+                    SemanticTokenModifier::new("callable"),
+                    SemanticTokenModifier::new("consuming"),
+                    SemanticTokenModifier::new("controlFlow"),
+                    SemanticTokenModifier::new("crateRoot"),
+                    SemanticTokenModifier::new("injected"),
+                    SemanticTokenModifier::new("intraDocLink"),
+                    SemanticTokenModifier::new("library"),
+                    SemanticTokenModifier::new("macro"),
+                    SemanticTokenModifier::new("mutable"),
+                    SemanticTokenModifier::new("procMacro"),
+                    SemanticTokenModifier::new("public"),
+                    SemanticTokenModifier::new("reference"),
+                    SemanticTokenModifier::new("trait"),
+                    SemanticTokenModifier::new("unsafe"),
+                ]);
+            }
+        }
+        Ok(original)
     }
 
     async fn check_if_user_installed(

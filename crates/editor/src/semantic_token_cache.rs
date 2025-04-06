@@ -743,7 +743,7 @@ fn apply_token_update(
             splice.to_insert.push(Token::new(
                 new_token_id,
                 new_start..new_end,
-                token_highlight,
+                token_highlight.style,
                 text,
             ));
         }
