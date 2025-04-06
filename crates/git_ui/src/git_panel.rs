@@ -2847,7 +2847,7 @@ impl GitPanel {
         window.defer(cx, move |window, cx| {
             workspace
                 .update(cx, |workspace, cx| {
-                    CommitModal::toggle(workspace, window, cx)
+                    CommitModal::toggle(None, workspace, window, cx)
                 })
                 .ok();
         })

@@ -1,6 +1,5 @@
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{GitPanel, commit_message_editor};
-use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
 use ui::{KeybindingHint, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
