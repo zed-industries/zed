@@ -25,7 +25,7 @@ use git::repository::{
     RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::status::StageStatus;
-use git::{Commit, ToggleStaged, repository::RepoPath, status::FileStatus};
+use git::{Amend, Commit, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::{
     Action, Animation, AnimationExt as _, Axis, ClickEvent, Corner, DismissEvent, Entity,
@@ -168,7 +168,7 @@ pub fn register(workspace: &mut Workspace) {
         workspace.toggle_panel_focus::<GitPanel>(window, cx);
     });
     workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
-        CommitModal::toggle(workspace, window, cx)
+        CommitModal::toggle(None, workspace, window, cx)
     });
 }
 
@@ -1426,14 +1426,8 @@ impl GitPanel {
             .contains_focused(window, cx)
         {
             telemetry::event!("Git Committed", source = "Git Panel");
-            self.commit_changes(
-                CommitOptions {
-                    amend: self.amend_commit,
-                    ..Default::default()
-                },
-                window,
-                cx,
-            )
+            self.set_amend_commit(false);
+            self.commit_changes(window, cx)
         } else {
             cx.propagate();
         }
@@ -1446,14 +1440,8 @@ impl GitPanel {
             .contains_focused(window, cx)
         {
             telemetry::event!("Git Amended", source = "Git Panel");
-            self.commit_changes(
-                CommitOptions {
-                    amend: self.amend_commit,
-                    ..Default::default()
-                },
-                window,
-                cx,
-            );
+            self.set_amend_commit(true);
+            self.commit_changes(window, cx);
         } else {
             cx.propagate();
         }
@@ -1470,12 +1458,7 @@ impl GitPanel {
             .filter(|message| !message.trim().is_empty())
     }
 
-    pub(crate) fn commit_changes(
-        &mut self,
-        options: CommitOptions,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn commit_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
@@ -1506,6 +1489,10 @@ impl GitPanel {
         if self.add_coauthors {
             self.fill_co_authors(&mut message, cx);
         }
+
+        let options = CommitOptions {
+            amend: self.amend_commit(),
+        };
 
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
@@ -2856,12 +2843,11 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let amend = self.amend_commit;
         let workspace = self.workspace.clone();
         window.defer(cx, move |window, cx| {
             workspace
                 .update(cx, |workspace, cx| {
-                    CommitModal::toggle(workspace, window, amend, cx)
+                    CommitModal::toggle(workspace, window, cx)
                 })
                 .ok();
         })
@@ -2964,8 +2950,9 @@ impl GitPanel {
         let panel_editor_style = panel_editor_style(true, window, cx);
 
         let enable_coauthors = self.render_co_authors(cx);
-        let enable_ammend = self.render_amend_button(cx);
         let title = self.commit_button_title();
+        let amend_button = self.render_amend_button(cx);
+        let amend_commit = self.amend_commit;
 
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
         let commit_tooltip_focus_handle = editor_focus_handle.clone();
@@ -3029,18 +3016,28 @@ impl GitPanel {
                                 h_flex()
                                     .gap_0p5()
                                     .children(enable_coauthors)
-                                    .children(enable_ammend)
+                                    .children(amend_button)
                                     .child(
                                         panel_filled_button(title)
                                             .tooltip(move |window, cx| {
                                                 if can_commit {
-                                                    Tooltip::for_action_in(
-                                                        tooltip,
-                                                        &Commit,
-                                                        &commit_tooltip_focus_handle,
-                                                        window,
-                                                        cx,
-                                                    )
+                                                    if amend_commit {
+                                                        Tooltip::for_action_in(
+                                                            tooltip,
+                                                            &Amend,
+                                                            &commit_tooltip_focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    } else {
+                                                        Tooltip::for_action_in(
+                                                            tooltip,
+                                                            &Commit,
+                                                            &commit_tooltip_focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    }
                                                 } else {
                                                     Tooltip::simple(tooltip, cx)
                                                 }
@@ -3049,18 +3046,18 @@ impl GitPanel {
                                             .on_click({
                                                 cx.listener(
                                                     move |this, _: &ClickEvent, window, cx| {
-                                                        telemetry::event!(
-                                                            "Git Committed",
-                                                            source = "Git Panel"
-                                                        );
-                                                        this.commit_changes(
-                                                            CommitOptions {
-                                                                amend: this.amend_commit,
-                                                                ..Default::default()
-                                                            },
-                                                            window,
-                                                            cx,
-                                                        )
+                                                        if amend_commit {
+                                                            telemetry::event!(
+                                                                "Git Amended",
+                                                                source = "Git Panel"
+                                                            );
+                                                        } else {
+                                                            telemetry::event!(
+                                                                "Git Committed",
+                                                                source = "Git Panel"
+                                                            );
+                                                        }
+                                                        this.commit_changes(window, cx)
                                                     },
                                                 )
                                             }),
@@ -3886,11 +3883,11 @@ impl GitPanel {
         !self.project.read(cx).is_read_only(cx)
     }
 
-    pub fn commit_being_amended(&self) -> bool {
+    pub fn amend_commit(&self) -> bool {
         self.amend_commit
     }
 
-    pub fn set_commit_being_amended(&mut self, commit_being_amended: bool) {
+    pub fn set_amend_commit(&mut self, commit_being_amended: bool) {
         self.amend_commit = commit_being_amended;
     }
 }

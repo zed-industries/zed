@@ -1,7 +1,7 @@
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{GitPanel, commit_message_editor};
 use git::repository::CommitOptions;
-use git::{Commit, GenerateCommitMessage};
+use git::{Amend, Commit, GenerateCommitMessage};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
 use ui::{KeybindingHint, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 
@@ -99,14 +99,17 @@ struct RestoreDock {
 impl CommitModal {
     pub fn register(workspace: &mut Workspace) {
         workspace.register_action(|workspace, _: &Commit, window, cx| {
-            CommitModal::toggle(workspace, window, false, cx);
+            CommitModal::toggle(Some(false), workspace, window, cx);
+        });
+        workspace.register_action(|workspace, _: &Amend, window, cx| {
+            CommitModal::toggle(Some(true), workspace, window, cx);
         });
     }
 
     pub fn toggle(
+        amend: Option<bool>,
         workspace: &mut Workspace,
         window: &mut Window,
-        amend: bool,
         cx: &mut Context<Workspace>,
     ) {
         let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
@@ -115,6 +118,9 @@ impl CommitModal {
 
         git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);
+            if let Some(amend) = amend {
+                git_panel.set_amend_commit(amend);
+            }
         });
 
         let dock = workspace.dock_at_position(git_panel.position(window, cx));
@@ -129,14 +135,13 @@ impl CommitModal {
 
         workspace.open_panel::<GitPanel>(window, cx);
         workspace.toggle_modal(window, cx, move |window, cx| {
-            CommitModal::new(git_panel, restore_dock_position, amend, window, cx)
+            CommitModal::new(git_panel, restore_dock_position, window, cx)
         })
     }
 
     fn new(
         git_panel: Entity<GitPanel>,
         restore_dock: RestoreDock,
-        amend: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -148,8 +153,6 @@ impl CommitModal {
             let buffer = git_panel.commit_message_buffer(cx).clone();
             let panel_editor = git_panel.commit_editor.clone();
             let project = git_panel.project.clone();
-
-            git_panel.set_commit_being_amended(amend);
 
             cx.new(|cx| {
                 let mut editor =
@@ -224,22 +227,31 @@ impl CommitModal {
     }
 
     pub fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (can_commit, tooltip, commit_label, co_authors, generate_commit_message, active_repo) =
-            self.git_panel.update(cx, |git_panel, cx| {
-                let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
-                let title = git_panel.commit_button_title();
-                let co_authors = git_panel.render_co_authors(cx);
-                let generate_commit_message = git_panel.render_generate_commit_message_button(cx);
-                let active_repo = git_panel.active_repository.clone();
-                (
-                    can_commit,
-                    tooltip,
-                    title,
-                    co_authors,
-                    generate_commit_message,
-                    active_repo,
-                )
-            });
+        let (
+            can_commit,
+            tooltip,
+            commit_label,
+            co_authors,
+            amend_commit,
+            generate_commit_message,
+            active_repo,
+        ) = self.git_panel.update(cx, |git_panel, cx| {
+            let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
+            let title = git_panel.commit_button_title();
+            let co_authors = git_panel.render_co_authors(cx);
+            let amend_commit = git_panel.amend_commit();
+            let generate_commit_message = git_panel.render_generate_commit_message_button(cx);
+            let active_repo = git_panel.active_repository.clone();
+            (
+                can_commit,
+                tooltip,
+                title,
+                co_authors,
+                amend_commit,
+                generate_commit_message,
+                active_repo,
+            )
+        });
 
         let branch = active_repo
             .as_ref()
@@ -290,20 +302,34 @@ impl CommitModal {
             .tooltip({
                 let panel_editor_focus_handle = focus_handle.clone();
                 move |window, cx| {
-                    Tooltip::for_action_in(tooltip, &Commit, &panel_editor_focus_handle, window, cx)
+                    if amend_commit {
+                        Tooltip::for_action_in(
+                            tooltip,
+                            &Amend,
+                            &panel_editor_focus_handle,
+                            window,
+                            cx,
+                        )
+                    } else {
+                        Tooltip::for_action_in(
+                            tooltip,
+                            &Commit,
+                            &panel_editor_focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
                 }
             })
             .disabled(!can_commit)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                telemetry::event!("Git Committed", source = "Git Modal");
                 this.git_panel.update(cx, |git_panel, cx| {
-                    git_panel.commit_changes(
-                        CommitOptions {
-                            amend: git_panel.commit_being_amended(),
-                        },
-                        window,
-                        cx,
-                    )
+                    if git_panel.amend_commit() {
+                        telemetry::event!("Git Amended", source = "Git Modal");
+                    } else {
+                        telemetry::event!("Git Committed", source = "Git Modal");
+                    }
+                    git_panel.commit_changes(window, cx)
                 });
                 cx.emit(DismissEvent);
             }))
@@ -352,7 +378,17 @@ impl CommitModal {
     fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
         telemetry::event!("Git Committed", source = "Git Modal");
         self.git_panel.update(cx, |git_panel, cx| {
-            git_panel.commit_changes(Default::default(), window, cx)
+            git_panel.set_amend_commit(false);
+            git_panel.commit_changes(window, cx)
+        });
+        cx.emit(DismissEvent);
+    }
+
+    fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+        telemetry::event!("Git Amended", source = "Git Modal");
+        self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.set_amend_commit(true);
+            git_panel.commit_changes(window, cx)
         });
         cx.emit(DismissEvent);
     }
@@ -379,6 +415,7 @@ impl Render for CommitModal {
             .key_context("GitCommit")
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::commit))
+            .on_action(cx.listener(Self::amend))
             .on_action(cx.listener(|this, _: &GenerateCommitMessage, _, cx| {
                 this.git_panel.update(cx, |panel, cx| {
                     panel.generate_commit_message(cx);
