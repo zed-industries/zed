@@ -246,34 +246,3 @@ pub fn authenticate_model_provider(
     let model_provider = model_registry.provider(&provider_id).unwrap();
     model_provider.authenticate(cx)
 }
-
-pub async fn send_language_model_request(
-    model: Arc<dyn LanguageModel>,
-    request: LanguageModelRequest,
-    cx: &mut AsyncApp,
-) -> anyhow::Result<String> {
-    match model.stream_completion_text(request, &cx).await {
-        Ok(mut stream) => {
-            let mut full_response = String::new();
-
-            // Process the response stream
-            while let Some(chunk_result) = stream.stream.next().await {
-                match chunk_result {
-                    Ok(chunk_str) => {
-                        full_response.push_str(&chunk_str);
-                    }
-                    Err(err) => {
-                        return Err(anyhow!(
-                            "Error receiving response from language model: {err}"
-                        ));
-                    }
-                }
-            }
-
-            Ok(full_response)
-        }
-        Err(err) => Err(anyhow!(
-            "Failed to get response from language model. Error was: {err}"
-        )),
-    }
-}
