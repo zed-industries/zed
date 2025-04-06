@@ -405,7 +405,7 @@ impl TokenMap {
                 // Apply the rest of the edit.
                 let new_start = TokenOffset(new_transforms.summary().output.len);
                 let transform_start = new_transforms.summary().input.len;
-                if transform_start < buffer_edit.new.end {
+                if transform_start <= buffer_edit.new.end {
                     push_isomorphic(
                         &mut new_transforms,
                         buffer_snapshot
