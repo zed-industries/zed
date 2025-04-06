@@ -1011,6 +1011,7 @@ impl Vim {
     }
 
     pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
+        let vim_settings = VimSettings::get_global(cx);
         match self.mode {
             Mode::Normal => {
                 if let Some(operator) = self.operator_stack.last() {
@@ -1028,18 +1029,13 @@ impl Vim {
                         _ => CursorShape::Underline,
                     }
                 } else {
-                    // No operator active -> Block cursor
-                    CursorShape::Block
+                    vim_settings.cursor_shape.normal
                 }
             }
-            Mode::Replace => CursorShape::Underline,
-            Mode::HelixNormal | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                CursorShape::Block
-            }
-            Mode::Insert => {
-                let editor_settings = EditorSettings::get_global(cx);
-                editor_settings.cursor_shape.unwrap_or_default()
-            }
+            Mode::Replace => vim_settings.cursor_shape.replace,
+            Mode::HelixNormal => vim_settings.cursor_shape.normal,
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => vim_settings.cursor_shape.visual,
+            Mode::Insert => vim_settings.cursor_shape.insert,
         }
     }
 
@@ -1680,6 +1676,19 @@ pub enum UseSystemClipboard {
     OnYank,
 }
 
+/// The settings for cursor shape.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+struct CursorShapeSettings {
+    /// Cursor shape for the normal mode.
+    pub normal: CursorShape,
+    /// Cursor shape for the insert mode.
+    pub insert: CursorShape,
+    /// Cursor shape for the replace mode.
+    pub replace: CursorShape,
+    /// Cursor shape for the visual mode.
+    pub visual: CursorShape,
+}
+
 #[derive(Deserialize)]
 struct VimSettings {
     pub default_mode: Mode,
@@ -1689,6 +1698,7 @@ struct VimSettings {
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
+    pub cursor_shape: CursorShapeSettings,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1700,6 +1710,7 @@ struct VimSettingsContent {
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
+    pub cursor_shape: Option<CursorShapeSettings>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1758,6 +1769,7 @@ impl Settings for VimSettings {
             highlight_on_yank_duration: settings
                 .highlight_on_yank_duration
                 .ok_or_else(Self::missing_default)?,
+            cursor_shape: settings.cursor_shape.ok_or_else(Self::missing_default)?,
         })
     }
 }
