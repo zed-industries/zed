@@ -705,12 +705,10 @@ fn apply_token_update(
     let mut splice = TokenSplice::default();
     splice.to_remove.extend(new_update.remove_from_visible);
     for new_token in new_update.add_to_cache {
-        log::error!("{}", new_token.r#type.as_str());
         let Some(mut token_highlight) = cx.theme().tokens().get(new_token.r#type.as_str()) else {
             continue;
         };
         for r#mod in new_token.modifiers.iter() {
-            log::error!("+ {}", r#mod.as_str());
             let Some(r#mod) = token_highlight.get(r#mod.as_str()) else {
                 continue;
             };
