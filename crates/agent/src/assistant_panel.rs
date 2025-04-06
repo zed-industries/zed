@@ -170,6 +170,7 @@ pub struct AssistantPanel {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<ActiveThread>,
+    _thread_subscription: Subscription,
     message_editor: Entity<MessageEditor>,
     context_store: Entity<assistant_context_editor::ContextStore>,
     context_editor: Option<Entity<ContextEditor>>,
@@ -253,6 +254,12 @@ impl AssistantPanel {
             cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
 
         let active_view = ActiveView::thread(thread.clone(), window, cx);
+        let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
+            if let ThreadEvent::MessageAdded(_) = &event {
+                // needed to leave empty state
+                cx.notify();
+            }
+        });
         let thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
@@ -273,6 +280,7 @@ impl AssistantPanel {
             language_registry,
             thread_store: thread_store.clone(),
             thread,
+            _thread_subscription: thread_subscription,
             message_editor,
             context_store,
             context_editor: None,
@@ -367,6 +375,14 @@ impl AssistantPanel {
                 cx,
             )
         });
+
+        self._thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
+            if let ThreadEvent::MessageAdded(_) = &event {
+                // needed to leave empty state
+                cx.notify();
+            }
+        });
+
         self.message_editor = cx.new(|cx| {
             MessageEditor::new(
                 self.fs.clone(),
