@@ -152,7 +152,7 @@ impl SemanticTokensCache {
             None
         } else {
             Some(TokenSplice {
-                to_remove: vec![],
+                to_remove: invalidated_tokens,
                 to_insert: Vec::new(),
             })
         }
@@ -811,7 +811,7 @@ mod tests {
     use languages::FakeLspAdapter;
     use lsp::{
         FakeLanguageServer, SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions,
-        SemanticTokensLegend, SemanticTokensRangeResult, SemanticTokensServerCapabilities,
+        SemanticTokensLegend, SemanticTokensServerCapabilities,
     };
     use project::Project;
     use serde_json::json;
@@ -830,7 +830,6 @@ mod tests {
             settings.defaults.semantic_tokens = Some(SemanticTokensSettings {
                 enabled: true,
                 edit_debounce_ms: 0,
-                fetch_debounce_ms: 0,
                 scroll_debounce_ms: 0,
             });
         });
@@ -848,7 +847,7 @@ mod tests {
                                 lsp::Url::from_file_path(file_with_semantic_tokens).unwrap(),
                             );
 
-                            Ok(Some(SemanticTokensRangeResult::Tokens(
+                            Ok(Some(lsp::SemanticTokensRangeResult::Tokens(
                                 lsp::SemanticTokens {
                                     result_id: None,
                                     data: vec![
