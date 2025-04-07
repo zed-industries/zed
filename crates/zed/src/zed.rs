@@ -230,7 +230,6 @@ pub fn initialize_workspace(
             window,
             cx,
         );
-
         let active_buffer_language =
             cx.new(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =

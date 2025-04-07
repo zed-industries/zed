@@ -1642,7 +1642,7 @@ impl Thread {
                     repo.read_with(cx, |repo, _| {
                         let current_branch =
                             repo.branch.as_ref().map(|branch| branch.name.to_string());
-                        repo.send_job(|state, _| async move {
+                        repo.send_job(None, |state, _| async move {
                             let RepositoryState::Local { backend, .. } = state else {
                                 return GitState {
                                     remote_url: None,

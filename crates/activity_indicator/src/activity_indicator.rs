@@ -3,18 +3,23 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
-    Animation, AnimationExt as _, App, AsyncApp, Context, CursorStyle, Entity, EventEmitter,
-    Global, InteractiveElement as _, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Transformation, WeakEntity, Window, actions,
-    percentage,
+    Animation, AnimationExt as _, App, Context, CursorStyle, Entity, EventEmitter,
+    InteractiveElement as _, ParentElement as _, Render, SharedString, StatefulInteractiveElement,
+    Styled, Transformation, Window, actions, percentage,
 };
 use language::{BinaryStatus, LanguageRegistry, LanguageServerId};
 use project::{
     EnvironmentErrorMessage, LanguageServerProgress, LspStoreEvent, Project,
-    ProjectEnvironmentEvent,
+    ProjectEnvironmentEvent, git_store::Repository,
 };
 use smallvec::SmallVec;
-use std::{cmp::Reverse, fmt::Write, path::Path, sync::Arc, time::Duration};
+use std::{
+    cmp::Reverse,
+    fmt::Write,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
@@ -33,15 +38,7 @@ pub struct ActivityIndicator {
     project: Entity<Project>,
     auto_updater: Option<Entity<AutoUpdater>>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
-    other_statuses: Vec<StatusItem>,
 }
-
-struct StatusItem {
-    message: SharedString,
-    id: usize,
-}
-
-pub struct StatusGuard(Box<dyn FnOnce()>);
 
 struct ServerStatus {
     name: SharedString,
@@ -60,9 +57,6 @@ struct Content {
     on_click:
         Option<Arc<dyn Fn(&mut ActivityIndicator, &mut Window, &mut Context<ActivityIndicator>)>>,
 }
-
-struct GlobalActivityIndicator(Entity<ActivityIndicator>);
-impl Global for GlobalActivityIndicator {}
 
 impl ActivityIndicator {
     pub fn new(
@@ -121,8 +115,6 @@ impl ActivityIndicator {
                 cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
             }
 
-            cx.set_global(GlobalActivityIndicator(cx.entity()));
-
             Self {
                 statuses: Default::default(),
                 project: project.clone(),
@@ -169,10 +161,6 @@ impl ActivityIndicator {
         })
         .detach();
         this
-    }
-
-    fn get(workspace: &Workspace, cx: &App) -> Option<Entity<Self>> {
-        workspace.status_bar().read(cx).item_of_type::<Self>()
     }
 
     fn show_error_message(&mut self, _: &ShowErrorMessage, _: &mut Window, cx: &mut Context<Self>) {
@@ -304,8 +292,32 @@ impl ActivityIndicator {
         }
 
         // Show any long-running git command
-        // TODO: use git_panel.pending_commit()?
-        // TODO: need to track "pending_checkout state somehow"
+        if let Some((command, start)) = self
+            .project
+            .read(cx)
+            .active_repository(cx)
+            .map(|r| r.read(cx))
+            .and_then(Repository::status)
+        {
+            if Instant::now() - start >= Duration::from_millis(100) {
+                return Some(Content {
+                    icon: Some(
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::Small)
+                            .with_animation(
+                                "arrow-circle",
+                                Animation::new(Duration::from_secs(2)).repeat(),
+                                |icon, delta| {
+                                    icon.transform(Transformation::rotate(percentage(delta)))
+                                },
+                            )
+                            .into_any_element(),
+                    ),
+                    message: command.into(),
+                    on_click: None,
+                });
+            }
+        }
 
         // Show any language server installation info.
         let mut downloading = SmallVec::<[_; 3]>::new();
@@ -508,55 +520,6 @@ impl ActivityIndicator {
         cx: &mut Context<Self>,
     ) {
         self.context_menu_handle.toggle(window, cx);
-    }
-
-    // TODO: Fix this name
-    fn show_statuses<T: EventEmitter<StatusEvent>>(
-        entity: Entity<T>,
-        cx: &mut App,
-    ) -> Entity<ActivityIndicator> {
-        struct StatusGuard(Box<dyn FnOnce()>);
-
-        fn status_guard<T: EventEmitter<StatusEvent> + 'static>(
-            entity: Entity<T>,
-            cx: &mut App,
-            status_id: StatusId,
-        ) -> StatusGuard {
-            let async_cx = cx.to_async();
-            StatusGuard(Box::new(move || {
-                entity
-                    .update(&mut async_cx, |_, cx| {
-                        cx.emit(StatusEvent::Remove(status_id));
-                    })
-                    .ok();
-            }))
-        }
-
-        struct GitPanel {
-            activity_indicator: Entity<ActivityIndicator>,
-        }
-        impl GitPanel {
-            fn new(cx: &mut Context<Self>) -> Self {
-                let activity_indicator = ActivityIndicator::global(cx);
-                Self { activity_indicator }
-            }
-
-            fn push(&self, cx: &mut Context<Self>) {
-                let guard = self
-                    .activity_indicator
-                    .update(cx, |activity_indicator, cx| {
-                        activity_indicator.show_status("messsage") // Allocate ID, create status guard, that's it
-                    });
-
-                // Do whatever, move into futures, etc. etc.
-                drop(guard);
-            }
-        }
-        impl EventEmitter<StatusEvent> for GitPanel {}
-
-        // cx.
-
-        // cx.subscribe(entity, on_event)
     }
 }
 

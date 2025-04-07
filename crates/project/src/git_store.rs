@@ -51,8 +51,10 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{
-        atomic::{self, AtomicU64}, Arc
-    }, time::Instant,
+        Arc,
+        atomic::{self, AtomicU64},
+    },
+    time::Instant,
 };
 use sum_tree::{Edit, SumTree, TreeSet};
 use text::{Bias, BufferId};
@@ -231,6 +233,7 @@ pub struct Repository {
     // and that should be examined during the next status scan.
     paths_needing_status_update: BTreeSet<RepoPath>,
     job_sender: mpsc::UnboundedSender<GitJob>,
+    current_job: Arc<Mutex<Option<(SharedString, Instant)>>>,
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
 }
@@ -273,11 +276,9 @@ pub enum GitStoreEvent {
 impl EventEmitter<RepositoryEvent> for Repository {}
 impl EventEmitter<GitStoreEvent> for GitStore {}
 
-struct GitJob {
+pub struct GitJob {
     job: Box<dyn FnOnce(RepositoryState, &mut AsyncApp) -> Task<()>>,
     key: Option<GitJobKey>,
-    status: Option<SharedString>,
-    start: Instant,
 }
 
 #[derive(PartialEq, Eq)]
@@ -2625,6 +2626,7 @@ impl Repository {
                 fs,
                 cx,
             ),
+            current_job: Default::default(),
         }
     }
 
@@ -2645,6 +2647,7 @@ impl Repository {
             job_sender: Self::spawn_remote_git_worker(project_id, client, cx),
             askpass_delegates: Default::default(),
             latest_askpass_id: 0,
+            current_job: Default::default(),
         }
     }
 
@@ -2652,11 +2655,7 @@ impl Repository {
         self.git_store.upgrade()
     }
 
-    pub fn send_job<F, Fut, R>(
-        &self,
-        status: Option<SharedString>,
-        job: F,
-    ) -> oneshot::Receiver<R>
+    pub fn send_job<F, Fut, R>(&self, status: Option<SharedString>, job: F) -> oneshot::Receiver<R>
     where
         F: FnOnce(RepositoryState, AsyncApp) -> Fut + 'static,
         Fut: Future<Output = R> + 'static,
@@ -2677,15 +2676,27 @@ impl Repository {
         R: Send + 'static,
     {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        let current_job = self.current_job.clone();
         self.job_sender
             .unbounded_send(GitJob {
                 key,
-                status,
-                start: Instant::now(),
                 job: Box::new(|state, cx: &mut AsyncApp| {
                     let job = job(state, cx.clone());
                     cx.spawn(async move |_| {
+                        if let Some(s) = status.clone() {
+                            let mut current = current_job.lock();
+                            *current = Some((s.clone(), Instant::now()));
+                        }
                         let result = job.await;
+                        if let Some(s) = status {
+                            let mut current = current_job.lock();
+                            let old = current.take();
+                            debug_assert_eq!(
+                                Some(s),
+                                old.map(|old| old.0),
+                                "the job that finished should be the same one that we started"
+                            );
+                        }
                         result_tx.send(result).ok();
                     })
                 }),
@@ -3199,59 +3210,65 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
 
-        let args = options.map(|option| {
-            match option {
+        let args = options
+            .map(|option| match option {
                 PushOptions::SetUpstream => " --set-upstream",
                 PushOptions::Force => " --force",
-            }
-        }).unwrap_or("");
+            })
+            .unwrap_or("");
 
-        self.send_job(Some(format!("git push{} {} {}", args, branch, remote).into()), move |git_repo, cx| async move {
-            match git_repo {
-                RepositoryState::Local {
-                    backend,
-                    environment,
-                    ..
-                } => {
-                    backend
-                        .push(
-                            branch.to_string(),
-                            remote.to_string(),
-                            options,
-                            askpass,
-                            environment.clone(),
-                            cx,
-                        )
-                        .await
-                }
-                RepositoryState::Remote { project_id, client } => {
-                    askpass_delegates.lock().insert(askpass_id, askpass);
-                    let _defer = util::defer(|| {
-                        let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                        debug_assert!(askpass_delegate.is_some());
-                    });
-                    let response = client
-                        .request(proto::Push {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            askpass_id,
-                            branch_name: branch.to_string(),
-                            remote_name: remote.to_string(),
-                            options: options.map(|options| match options {
-                                PushOptions::Force => proto::push::PushOptions::Force,
-                                PushOptions::SetUpstream => proto::push::PushOptions::SetUpstream,
-                            } as i32),
+        self.send_job(
+            Some(format!("git push{} {} {}", args, branch, remote).into()),
+            move |git_repo, cx| async move {
+                match git_repo {
+                    RepositoryState::Local {
+                        backend,
+                        environment,
+                        ..
+                    } => {
+                        backend
+                            .push(
+                                branch.to_string(),
+                                remote.to_string(),
+                                options,
+                                askpass,
+                                environment.clone(),
+                                cx,
+                            )
+                            .await
+                    }
+                    RepositoryState::Remote { project_id, client } => {
+                        askpass_delegates.lock().insert(askpass_id, askpass);
+                        let _defer = util::defer(|| {
+                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
+                            debug_assert!(askpass_delegate.is_some());
+                        });
+                        let response = client
+                            .request(proto::Push {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                askpass_id,
+                                branch_name: branch.to_string(),
+                                remote_name: remote.to_string(),
+                                options: options.map(|options| match options {
+                                    PushOptions::Force => proto::push::PushOptions::Force,
+                                    PushOptions::SetUpstream => {
+                                        proto::push::PushOptions::SetUpstream
+                                    }
+                                }
+                                    as i32),
+                            })
+                            .await
+                            .context("sending push request")?;
+
+                        Ok(RemoteCommandOutput {
+                            stdout: response.stdout,
+                            stderr: response.stderr,
                         })
-                        .await
-                        .context("sending push request")?;
-
-                    Ok(RemoteCommandOutput {
-                        stdout: response.stdout,
-                        stderr: response.stderr,
-                    })
+                    }
                 }
-            }
-        })
+            },
+        )
     }
 
     pub fn pull(
@@ -3268,46 +3285,47 @@ impl Repository {
         self.send_job(
             Some(format!("git pull {} {}", remote, branch).into()),
             move |git_repo, cx| async move {
-            match git_repo {
-                RepositoryState::Local {
-                    backend,
-                    environment,
-                    ..
-                } => {
-                    backend
-                        .pull(
-                            branch.to_string(),
-                            remote.to_string(),
-                            askpass,
-                            environment.clone(),
-                            cx,
-                        )
-                        .await
-                }
-                RepositoryState::Remote { project_id, client } => {
-                    askpass_delegates.lock().insert(askpass_id, askpass);
-                    let _defer = util::defer(|| {
-                        let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                        debug_assert!(askpass_delegate.is_some());
-                    });
-                    let response = client
-                        .request(proto::Pull {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            askpass_id,
-                            branch_name: branch.to_string(),
-                            remote_name: remote.to_string(),
-                        })
-                        .await
-                        .context("sending pull request")?;
+                match git_repo {
+                    RepositoryState::Local {
+                        backend,
+                        environment,
+                        ..
+                    } => {
+                        backend
+                            .pull(
+                                branch.to_string(),
+                                remote.to_string(),
+                                askpass,
+                                environment.clone(),
+                                cx,
+                            )
+                            .await
+                    }
+                    RepositoryState::Remote { project_id, client } => {
+                        askpass_delegates.lock().insert(askpass_id, askpass);
+                        let _defer = util::defer(|| {
+                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
+                            debug_assert!(askpass_delegate.is_some());
+                        });
+                        let response = client
+                            .request(proto::Pull {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                askpass_id,
+                                branch_name: branch.to_string(),
+                                remote_name: remote.to_string(),
+                            })
+                            .await
+                            .context("sending pull request")?;
 
-                    Ok(RemoteCommandOutput {
-                        stdout: response.stdout,
-                        stderr: response.stderr,
-                    })
+                        Ok(RemoteCommandOutput {
+                            stdout: response.stdout,
+                            stderr: response.stderr,
+                        })
+                    }
                 }
-            }
-        })
+            },
+        )
     }
 
     fn spawn_set_index_text_job(
@@ -3437,42 +3455,52 @@ impl Repository {
 
     pub fn create_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-        self.send_job(move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local { backend, .. } => backend.create_branch(branch_name).await,
-                RepositoryState::Remote { project_id, client } => {
-                    client
-                        .request(proto::GitCreateBranch {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            branch_name,
-                        })
-                        .await?;
+        self.send_job(
+            Some(format!("git switch -c {branch_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => {
+                        backend.create_branch(branch_name).await
+                    }
+                    RepositoryState::Remote { project_id, client } => {
+                        client
+                            .request(proto::GitCreateBranch {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                branch_name,
+                            })
+                            .await?;
 
-                    Ok(())
+                        Ok(())
+                    }
                 }
-            }
-        })
+            },
+        )
     }
 
     pub fn change_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-        self.send_job(move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local { backend, .. } => backend.change_branch(branch_name).await,
-                RepositoryState::Remote { project_id, client } => {
-                    client
-                        .request(proto::GitChangeBranch {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            branch_name,
-                        })
-                        .await?;
+        self.send_job(
+            Some(format!("git switch {branch_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => {
+                        backend.change_branch(branch_name).await
+                    }
+                    RepositoryState::Remote { project_id, client } => {
+                        client
+                            .request(proto::GitChangeBranch {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                branch_name,
+                            })
+                            .await?;
 
-                    Ok(())
+                        Ok(())
+                    }
                 }
-            }
-        })
+            },
+        )
     }
 
     pub fn check_for_pushed_commits(&self) -> oneshot::Receiver<Result<Vec<SharedString>>> {
@@ -3497,7 +3525,7 @@ impl Repository {
     }
 
     pub fn checkpoint(&self) -> oneshot::Receiver<Result<GitRepositoryCheckpoint>> {
-        self.send_job(|repo, _cx| async move {
+        self.send_job(None, |repo, _cx| async move {
             match repo {
                 RepositoryState::Local { backend, .. } => backend.checkpoint().await,
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
@@ -3509,7 +3537,7 @@ impl Repository {
         &self,
         checkpoint: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(move |repo, _cx| async move {
+        self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local { backend, .. } => {
                     backend.restore_checkpoint(checkpoint).await
@@ -3559,7 +3587,7 @@ impl Repository {
         left: GitRepositoryCheckpoint,
         right: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<bool>> {
-        self.send_job(move |repo, _cx| async move {
+        self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local { backend, .. } => {
                     backend.compare_checkpoints(left, right).await
@@ -3573,7 +3601,7 @@ impl Repository {
         &self,
         checkpoint: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(move |repo, _cx| async move {
+        self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local { backend, .. } => {
                     backend.delete_checkpoint(checkpoint).await
@@ -3588,7 +3616,7 @@ impl Repository {
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<String>> {
-        self.send_job(move |repo, _cx| async move {
+        self.send_job(Some("git diff".into()), move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local { backend, .. } => {
                     backend
@@ -3614,6 +3642,7 @@ impl Repository {
         let this = cx.weak_entity();
         let _ = self.send_keyed_job(
             Some(GitJobKey::ReloadGitState),
+            None,
             |state, mut cx| async move {
                 let Some(this) = this.upgrade() else {
                     return Ok(());
@@ -3761,7 +3790,7 @@ impl Repository {
         repo_path: RepoPath,
         cx: &App,
     ) -> Task<Result<Option<String>>> {
-        let rx = self.send_job(move |state, _| async move {
+        let rx = self.send_job(None, move |state, _| async move {
             match state {
                 RepositoryState::Local { backend, .. } => {
                     anyhow::Ok(backend.load_index_text(repo_path).await)
@@ -3786,7 +3815,7 @@ impl Repository {
         repo_path: RepoPath,
         cx: &App,
     ) -> Task<Result<DiffBasesChange>> {
-        let rx = self.send_job(move |state, _| async move {
+        let rx = self.send_job(None, move |state, _| async move {
             match state {
                 RepositoryState::Local { backend, .. } => {
                     let committed_text = backend.load_committed_text(repo_path.clone()).await;
@@ -3838,6 +3867,7 @@ impl Repository {
         let this = cx.weak_entity();
         let _ = self.send_keyed_job(
             Some(GitJobKey::RefreshStatuses),
+            None,
             |state, mut cx| async move {
                 let (prev_snapshot, mut changed_paths) = this.update(&mut cx, |this, _| {
                     (
@@ -3899,6 +3929,11 @@ impl Repository {
                 })
             },
         );
+    }
+
+    /// currently running git command and when it started
+    pub fn status(&self) -> Option<(SharedString, Instant)> {
+        self.current_job.lock().clone()
     }
 }
 
