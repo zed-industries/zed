@@ -22,7 +22,7 @@ use gpui::{
     Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
     Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions,
-    anchored, deferred, div, impl_actions, point, px, size, uniform_list,
+    anchored, deferred, div, impl_actions, point, px, size, transparent_black, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
@@ -3687,16 +3687,27 @@ impl ProjectPanel {
             item_colors.hover
         };
 
+        let validation_error =
+            show_editor && self.edit_state.as_ref().is_some_and(|e| e.validation_error);
+
         let border_color =
             if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
-                item_colors.focused
+                if validation_error {
+                    Color::Error.color(cx)
+                } else {
+                    item_colors.focused
+                }
             } else {
                 bg_color
             };
 
         let border_hover_color =
             if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
-                item_colors.focused
+                if validation_error {
+                    Color::Error.color(cx)
+                } else {
+                    item_colors.focused
+                }
             } else {
                 bg_hover_color
             };
@@ -4003,31 +4014,6 @@ impl ProjectPanel {
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
-                                .when(self.edit_state.as_ref().is_some_and(|edit_state| edit_state.validation_error), |el| {
-                                    el
-                                        .relative()
-                                        .child(
-                                            deferred(
-                                                div()
-                                                    .occlude()
-                                                    .absolute()
-                                                    .mt_2()
-                                                    .top_full()
-                                                    .left_0()
-                                                    .right_auto()
-                                                    .py_1()
-                                                    .px_2()
-                                                    .shadow_sm()
-                                                    .rounded_md()
-                                                    .bg(cx.theme().colors().background)
-                                                    .child(
-                                                        Label::new(format!("{} already exists", editor.read(cx).text(cx)))
-                                                            .color(Color::Error)
-                                                            .size(LabelSize::Small)
-                                                    )
-                                            )
-                                    )
-                                })
                         } else {
                             h_flex().h_6().map(|mut this| {
                                 if let Some(folded_ancestors) = self.ancestors.get(&entry_id) {
@@ -4190,6 +4176,40 @@ impl ProjectPanel {
                         },
                     ))
                     .overflow_x(),
+            )
+            .when(
+
+                validation_error, |el| {
+                el
+                    .relative()
+                    .child(
+                            deferred(
+                                // Wizardry of highest order to make error border align with entry border
+                                div()
+                                    .occlude()
+                                    .absolute()
+                                    .top_full()
+                                    .left_neg_0p5()
+                                    .right_neg_1()
+                                    .border_x_1()
+                                    .border_color(transparent_black())
+                                    .child(
+                                        div()
+                                            .py_1()
+                                            .px_2()
+                                            .border_1()
+                                            .border_color(Color::Error.color(cx))
+                                            .bg(cx.theme().colors().background)
+                                            .child(
+                                                Label::new(format!("{} already exists", self.filename_editor.read(cx).text(cx)))
+                                                    .color(Color::Error)
+                                                    .size(LabelSize::Small)
+                                            )
+                                    )
+
+                            )
+                    )
+                }
             )
     }
 
