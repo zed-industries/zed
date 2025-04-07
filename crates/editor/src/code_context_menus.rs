@@ -624,16 +624,15 @@ impl CompletionsMenu {
                             .map(|l| l.name().to_proto());
                         Markdown::new(SharedString::default(), languages, language, cx)
                             .copy_code_block_buttons(false)
-                            .open_url(open_markdown_url)
                     })
                 });
                 markdown.update(cx, |markdown, cx| {
                     markdown.reset(parsed.clone(), cx);
                 });
-                div().child(MarkdownElement::new(
-                    markdown.clone(),
-                    hover_markdown_style(window, cx),
-                ))
+                div().child(
+                    MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
+                        .on_url_click(open_markdown_url),
+                )
             }
             CompletionDocumentation::MultiLineMarkdown(_) => return None,
             CompletionDocumentation::SingleLine(_) => return None,

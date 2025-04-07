@@ -336,7 +336,7 @@ fn show_hover(
                             }
                         };
 
-                        Markdown::new_text(SharedString::new(text), cx).open_url(open_markdown_url)
+                        Markdown::new_text(SharedString::new(text), cx)
                     })
                     .ok();
 
@@ -547,7 +547,6 @@ async fn parse_blocks(
                 cx,
             )
             .copy_code_block_buttons(false)
-            .open_url(open_markdown_url)
         })
         .ok();
 
@@ -783,10 +782,13 @@ impl InfoPopover {
                         .max_h(max_size.height)
                         .p_2()
                         .track_scroll(&self.scroll_handle)
-                        .child(MarkdownElement::new(
-                            markdown.clone(),
-                            hover_markdown_style(window, cx),
-                        )),
+                        .child(
+                            MarkdownElement::new(
+                                markdown.clone(),
+                                hover_markdown_style(window, cx),
+                            )
+                            .on_url_click(open_markdown_url),
+                        ),
                 )
                 .child(self.render_vertical_scrollbar(cx));
         }
@@ -881,8 +883,10 @@ impl DiagnosticPopover {
                 ..Default::default()
             };
 
-            markdown_div =
-                markdown_div.child(MarkdownElement::new(markdown.clone(), markdown_style));
+            markdown_div = markdown_div.child(
+                MarkdownElement::new(markdown.clone(), markdown_style)
+                    .on_url_click(open_markdown_url),
+            );
         }
 
         if let Some(background_color) = &self.background_color {

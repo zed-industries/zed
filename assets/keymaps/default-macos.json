@@ -292,6 +292,13 @@
     }
   },
   {
+    "context": "AgentPanel > Markdown",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-c": "markdown::CopyAsMarkdown"
+    }
+  },
+  {
     "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -336,6 +343,24 @@
       "down": "agent::FocusDown",
       "backspace": "agent::RemoveFocusedContext",
       "enter": "agent::AcceptSuggestedContext"
+    }
+  },
+  {
+    "context": "AgentConfiguration",
+    "bindings": {
+      "ctrl--": "pane::GoBack"
+    }
+  },
+  {
+    "context": "ThreadHistory",
+    "bindings": {
+      "ctrl--": "pane::GoBack"
+    }
+  },
+  {
+    "context": "ThreadHistory",
+    "bindings": {
+      "ctrl--": "pane::GoBack"
     }
   },
   {
