@@ -9445,7 +9445,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
 
     let apply_additional_edits = cx.update_editor(|editor, window, cx| {
         editor
-            .confirm_completion_replace(&ConfirmCompletionReplace::default(), window, cx)
+            .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
             .unwrap()
     });
     cx.assert_editor_state(&expected_with_replace_mode);
@@ -9479,7 +9479,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
 
     let apply_additional_edits = cx.update_editor(|editor, window, cx| {
         editor
-            .confirm_completion_insert(&ConfirmCompletionInsert::default(), window, cx)
+            .confirm_completion_insert(&ConfirmCompletionInsert, window, cx)
             .unwrap()
     });
     cx.assert_editor_state(&expected_with_insert_mode);
