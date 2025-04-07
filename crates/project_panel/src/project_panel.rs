@@ -120,6 +120,13 @@ struct FoldedDirectoryDragTarget {
 }
 
 #[derive(Clone, Debug)]
+enum ValidationState {
+    None,
+    Warning(String),
+    Error(String),
+}
+
+#[derive(Clone, Debug)]
 struct EditState {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
@@ -128,7 +135,7 @@ struct EditState {
     depth: usize,
     processing_filename: Option<String>,
     previously_focused: Option<SelectedEntry>,
-    validation_error: bool,
+    validation_state: ValidationState,
 }
 
 impl EditState {
@@ -1143,7 +1150,9 @@ impl ProjectPanel {
             Some(state) => state,
             None => return,
         };
+
         let filename = self.filename_editor.read(cx).text(cx);
+
         if !filename.is_empty() {
             if let Some(worktree) = self
                 .project
@@ -1158,7 +1167,10 @@ impl ProjectPanel {
                             .entry_for_path(new_path.as_path())
                             .is_some()
                         {
-                            edit_state.validation_error = true;
+                            edit_state.validation_state = ValidationState::Error(format!(
+                                "File or directory '{}' already exists at location. Please choose a different name.",
+                                filename
+                            ));
                             cx.notify();
                             return;
                         }
@@ -1171,7 +1183,9 @@ impl ProjectPanel {
                         if let Some(existing) = worktree.read(cx).entry_for_path(new_path.as_path())
                         {
                             if existing.id != entry.id {
-                                edit_state.validation_error = true;
+                                edit_state.validation_state = ValidationState::Error(
+                                    "File or directory already exists".to_string(),
+                                );
                                 cx.notify();
                                 return;
                             }
@@ -1179,8 +1193,17 @@ impl ProjectPanel {
                     };
                 }
             }
+
+            if filename.trim() != filename {
+                edit_state.validation_state = ValidationState::Warning(
+                    "File or directory name contains leading or trailing whitespace.".to_string(),
+                );
+                cx.notify();
+                return;
+            }
         }
-        edit_state.validation_error = false;
+
+        edit_state.validation_state = ValidationState::None;
         cx.notify();
     }
 
@@ -1403,7 +1426,7 @@ impl ProjectPanel {
                 processing_filename: None,
                 previously_focused: self.selection,
                 depth: 0,
-                validation_error: false,
+                validation_state: ValidationState::None,
             });
             self.filename_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
@@ -1453,7 +1476,7 @@ impl ProjectPanel {
                         processing_filename: None,
                         previously_focused: None,
                         depth: 0,
-                        validation_error: false,
+                        validation_state: ValidationState::None,
                     });
                     let file_name = entry
                         .path
@@ -3687,15 +3710,25 @@ impl ProjectPanel {
             item_colors.hover
         };
 
-        let validation_error =
-            show_editor && self.edit_state.as_ref().is_some_and(|e| e.validation_error);
+        let validation_color_and_message = if show_editor {
+            match self
+                .edit_state
+                .as_ref()
+                .map_or(ValidationState::None, |e| e.validation_state.clone())
+            {
+                ValidationState::Error(msg) => Some((Color::Error.color(cx), msg.clone())),
+                ValidationState::Warning(msg) => Some((Color::Warning.color(cx), msg.clone())),
+                ValidationState::None => None,
+            }
+        } else {
+            None
+        };
 
         let border_color =
             if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
-                if validation_error {
-                    Color::Error.color(cx)
-                } else {
-                    item_colors.focused
+                match validation_color_and_message {
+                    Some((color, _)) => color,
+                    None => item_colors.focused,
                 }
             } else {
                 bg_color
@@ -3703,10 +3736,9 @@ impl ProjectPanel {
 
         let border_hover_color =
             if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
-                if validation_error {
-                    Color::Error.color(cx)
-                } else {
-                    item_colors.focused
+                match validation_color_and_message {
+                    Some((color, _)) => color,
+                    None => item_colors.focused,
                 }
             } else {
                 bg_hover_color
@@ -4177,9 +4209,10 @@ impl ProjectPanel {
                     ))
                     .overflow_x(),
             )
-            .when(
-                validation_error, |this| {
-                this
+            .when_some(
+                validation_color_and_message,
+                |this, (color, message)| {
+                    this
                     .relative()
                     .child(
                         deferred(
@@ -4192,13 +4225,12 @@ impl ProjectPanel {
                             .py_1()
                             .px_2()
                             .border_1()
-                            .border_color(Color::Error.color(cx))
+                            .border_color(color)
                             .bg(cx.theme().colors().background)
                             .child(
-                                Label::new(format!("{} already exists", self.filename_editor.read(cx).text(cx)))
-                                .color(Color::Error)
+                                Label::new(message)
+                                .color(Color::from(color))
                                 .size(LabelSize::Small)
-                                .truncate()
                             )
                         )
                     )
