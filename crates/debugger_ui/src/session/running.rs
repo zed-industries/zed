@@ -122,25 +122,78 @@ fn new_debugger_pane(
     cx: &mut Context<RunningState>,
 ) -> Entity<Pane> {
     let weak_running = cx.weak_entity();
-    let custom_drop_handle =
-        |pane: &mut Pane, any: &dyn Any, window: &mut Window, cx: &mut Context<Pane>| {
+    let custom_drop_handle = {
+        let workspace = workspace.clone();
+        let project = project.downgrade();
+        let weak_running = weak_running.clone();
+        move |pane: &mut Pane, any: &dyn Any, window: &mut Window, cx: &mut Context<Pane>| {
             let Some(tab) = any.downcast_ref::<DraggedTab>() else {
                 return ControlFlow::Break(());
             };
+            let Some(project) = project.upgrade() else {
+                return ControlFlow::Break(());
+            };
+            let this_pane = cx.entity().clone();
+            let item = if tab.pane == this_pane {
+                pane.item_for_index(tab.ix)
+            } else {
+                tab.pane.read(cx).item_for_index(tab.ix)
+            };
+            let Some(item) = item.filter(|item| item.downcast::<SubView>().is_some()) else {
+                return ControlFlow::Break(());
+            };
 
-            if cx.entity_id() != tab.pane.entity_id() {
-                let source_pane = tab.pane.clone();
-                let target_pane = cx.entity();
-                let target_ix = pane.items_len();
+            let source = tab.pane.clone();
+            let item_id_to_move = item.item_id();
 
-                let item_id = tab.item.item_id();
+            let Ok(new_split_pane) = pane
+                .drag_split_direction()
+                .map(|split_direction| {
+                    weak_running.update(cx, |running, cx| {
+                        let new_pane =
+                            new_debugger_pane(workspace.clone(), project.clone(), window, cx);
 
-                window.defer(cx, move |window, cx| {
-                    move_item(&source_pane, &target_pane, item_id, target_ix, window, cx);
-                });
-            }
+                        running
+                            .panes
+                            .split(&this_pane, &new_pane, split_direction)?;
+                        anyhow::Ok(new_pane)
+                    })
+                })
+                .transpose()
+            else {
+                return ControlFlow::Break(());
+            };
+
+            match new_split_pane.transpose() {
+                // Source pane may be the one currently updated, so defer the move.
+                Ok(Some(new_pane)) => cx
+                    .spawn_in(window, async move |_, cx| {
+                        cx.update(|window, cx| {
+                            move_item(
+                                &source,
+                                &new_pane,
+                                item_id_to_move,
+                                new_pane.read(cx).active_item_index(),
+                                window,
+                                cx,
+                            );
+                        })
+                        .ok();
+                    })
+                    .detach(),
+                // If we drop into existing pane or current pane,
+                // regular pane drop handler will take care of it,
+                // using the right tab index for the operation.
+                Ok(None) => return ControlFlow::Continue(()),
+                err @ Err(_) => {
+                    err.log_err();
+                    return ControlFlow::Break(());
+                }
+            };
+
             ControlFlow::Break(())
-        };
+        }
+    };
 
     cx.new(move |cx| {
         let mut pane = Pane::new(
