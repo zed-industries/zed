@@ -19013,7 +19013,7 @@ impl SemanticsProvider for Entity<Project> {
             if has_range {
                 Some(this.semantic_tokens_range(buffer_handle, range, cx))
             } else {
-                Some(this.semantic_tokens_full(buffer_handle, cx))
+                Some(this.semantic_tokens_full(buffer_handle, range, cx))
             }
         })
     }

@@ -5644,6 +5644,7 @@ impl LspStore {
     pub fn semantic_tokens_full(
         &mut self,
         buffer_handle: Entity<Buffer>,
+        range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<SemanticToken>>> {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -5696,7 +5697,9 @@ impl LspStore {
                 );
                 return cx.spawn(async move |_, cx| {
                     buffer_handle
-                        .update(cx, |buffer, _| buffer.wait_for_edits(vec![]))?
+                        .update(cx, |buffer, _| {
+                            buffer.wait_for_edits(vec![range.start.timestamp, range.end.timestamp])
+                        })?
                         .await
                         .context("waiting for semantic token request range edits")?;
                     lsp_request_task.await.context("semantic token LSP request")
@@ -5709,7 +5712,9 @@ impl LspStore {
             }));
             cx.spawn(async move |_, cx| {
                 buffer_handle
-                    .update(cx, |buffer, _| buffer.wait_for_edits(vec![]))?
+                    .update(cx, |buffer, _| {
+                        buffer.wait_for_edits(vec![range.start.timestamp, range.end.timestamp])
+                    })?
                     .await
                     .context("waiting for semantic token range edits")?;
                 request

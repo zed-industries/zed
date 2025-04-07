@@ -3552,10 +3552,11 @@ impl Project {
     pub fn semantic_tokens_full(
         &mut self,
         buffer_handle: Entity<Buffer>,
+        range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<SemanticToken>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.semantic_tokens_full(buffer_handle, cx)
+            lsp_store.semantic_tokens_full(buffer_handle, range, cx)
         })
     }
 
