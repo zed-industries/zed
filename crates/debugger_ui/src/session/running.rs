@@ -114,6 +114,29 @@ impl Render for SubView {
         v_flex().size_full().child(self.inner.clone())
     }
 }
+
+fn new_debugger_pane(
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Pane> {
+    cx.new(|cx| {
+        let mut pane = Pane::new(
+            workspace.clone(),
+            project.clone(),
+            Default::default(),
+            None,
+            NoAction.boxed_clone(),
+            window,
+            cx,
+        );
+        pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
+        pane.display_nav_history_buttons(None);
+        pane.set_custom_drop_handle(cx, RunningState::custom_drop_handler);
+        pane
+    })
+}
 impl RunningState {
     pub fn new(
         session: Entity<Session>,
@@ -172,20 +195,7 @@ impl RunningState {
             }),
         ];
 
-        let root = cx.new(|cx| {
-            let mut r = Pane::new(
-                workspace.clone(),
-                project.clone(),
-                Default::default(),
-                None,
-                NoAction.boxed_clone(),
-                window,
-                cx,
-            );
-            r.display_nav_history_buttons(None);
-            r.set_can_split(Some(Arc::new(|_, _, _, _| true)));
-            r
-        });
+        let root = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
 
         let mut panes = PaneGroup::new(root.clone());
         root.update(cx, |this, cx| {
@@ -202,22 +212,8 @@ impl RunningState {
                 window,
                 cx,
             );
-            this.set_custom_drop_handle(cx, Self::custom_drop_handler);
         });
-        let second = cx.new(|cx| {
-            let mut r = Pane::new(
-                workspace.clone(),
-                project.clone(),
-                Default::default(),
-                None,
-                NoAction.boxed_clone(),
-                window,
-                cx,
-            );
-            r.set_can_split(Some(Arc::new(|_, _, _, _| true)));
-            r.display_nav_history_buttons(None);
-            r
-        });
+        let second = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         second.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
@@ -250,20 +246,7 @@ impl RunningState {
         panes
             .split(&root, &second.clone(), workspace::SplitDirection::Right)
             .log_err();
-        let third_column = cx.new(|cx| {
-            let mut r = Pane::new(
-                workspace.clone(),
-                project.clone(),
-                Default::default(),
-                None,
-                NoAction.boxed_clone(),
-                window,
-                cx,
-            );
-            r.set_can_split(Some(Arc::new(|_, _, _, _| true)));
-            r.display_nav_history_buttons(None);
-            r
-        });
+        let third_column = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         third_column.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
@@ -278,7 +261,6 @@ impl RunningState {
                 window,
                 cx,
             );
-            this.set_custom_drop_handle(cx, Self::custom_drop_handler);
         });
         panes
             .split(
