@@ -1450,21 +1450,17 @@ impl GitPanel {
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
-            if !self.amend_pending && self.commit_editor.read(cx).is_empty(cx) {
+            if !self.amend_pending {
                 self.amend_pending = true;
                 cx.notify();
-
                 let detail_task = self.load_commit_details(recent_sha, cx);
                 cx.spawn(async move |this, cx| {
                     if let Ok(message) = detail_task.await.map(|detail| detail.message) {
                         this.update(cx, |this, cx| {
                             this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                let insert_position = buffer.anchor_before(buffer.len());
-                                buffer.edit(
-                                    [(insert_position..insert_position, message)],
-                                    None,
-                                    cx,
-                                );
+                                let start = buffer.anchor_before(0);
+                                let end = buffer.anchor_after(buffer.len());
+                                buffer.edit([(start..end, message)], None, cx);
                             });
                         })
                         .log_err();
@@ -1479,6 +1475,11 @@ impl GitPanel {
         } else {
             cx.propagate();
         }
+    }
+
+    fn cancel(&mut self, _: &git::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        self.amend_pending = false;
+        cx.notify();
     }
 
     fn custom_or_suggested_commit_message(&self, cx: &mut Context<Self>) -> Option<String> {
@@ -2803,7 +2804,7 @@ impl GitPanel {
                         .when_some(keybinding_target.clone(), |el, keybinding_target| {
                             el.context(keybinding_target.clone())
                         })
-                        .action("Amend", Amend.boxed_clone())
+                        .action("Amend...", Amend.boxed_clone())
                 }))
             })
             .anchor(Corner::TopRight)
@@ -3144,6 +3145,38 @@ impl GitPanel {
             );
 
         Some(footer)
+    }
+
+    fn render_pending_amend(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .items_center()
+            .py_2()
+            .px(px(8.))
+            .border_color(cx.theme().colors().border)
+            .gap_1p5()
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Label::new("Your changes will modify your most recent commit.")
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        div()
+                            .on_action(|_: &git::Cancel, _window, app| {
+                                app.dispatch_action(&git::Cancel);
+                            })
+                            .child(
+                                Label::new("Stop amending")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Hint),
+                            ),
+                    )
+                    .child(
+                        Label::new("to make these changes as a new commit.").size(LabelSize::Small),
+                    ),
+            )
     }
 
     fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -4013,7 +4046,12 @@ impl Render for GitPanel {
                         }
                     })
                     .children(self.render_footer(window, cx))
-                    .children(self.render_previous_commit(cx))
+                    .when(self.amend_pending, |this| {
+                        this.child(self.render_pending_amend(cx))
+                    })
+                    .when(!self.amend_pending, |this| {
+                        this.children(self.render_previous_commit(cx))
+                    })
                     .into_any_element(),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {

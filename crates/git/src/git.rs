@@ -51,6 +51,7 @@ actions!(
         Fetch,
         Commit,
         Amend,
+        Cancel,
         ExpandCommitEditor,
         GenerateCommitMessage,
         Init,
