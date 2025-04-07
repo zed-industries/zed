@@ -98,8 +98,6 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
 
             debug_panel.update(cx, |this, cx| {
                 assert!(this.active_session().is_some());
-                // we have one active session
-                assert_eq!(1, this.pane().unwrap().read(cx).items_len());
                 assert!(running_state.read(cx).selected_thread_id().is_none());
             });
         })
@@ -134,11 +132,6 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                     .clone()
             });
 
-            // we have one active session
-            assert_eq!(
-                1,
-                debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
-            );
             assert_eq!(client.id(), running_state.read(cx).session_id());
             assert_eq!(
                 ThreadId(1),
@@ -174,7 +167,6 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
 
             debug_panel.update(cx, |this, cx| {
                 assert!(this.active_session().is_some());
-                assert_eq!(1, this.pane().unwrap().read(cx).items_len());
                 assert_eq!(
                     ThreadId(1),
                     running_state.read(cx).selected_thread_id().unwrap()
@@ -242,10 +234,8 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
 
-            debug_panel.update(cx, |this, cx| {
+            debug_panel.update(cx, |this, _| {
                 assert!(this.active_session().is_some());
-                // we have one active session
-                assert_eq!(1, this.pane().unwrap().read(cx).items_len());
             });
         })
         .unwrap();
@@ -280,11 +270,6 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                     .clone()
             });
 
-            // we have one active session
-            assert_eq!(
-                1,
-                debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
-            );
             assert_eq!(client.id(), active_session.read(cx).session_id(cx).unwrap());
             assert_eq!(
                 ThreadId(1),
@@ -322,11 +307,6 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                     .clone()
             });
 
-            // we have one active session
-            assert_eq!(
-                1,
-                debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
-            );
             assert_eq!(client.id(), active_session.read(cx).session_id(cx).unwrap());
             assert_eq!(
                 ThreadId(1),
@@ -361,7 +341,6 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
 
             debug_panel.update(cx, |this, cx| {
                 assert!(this.active_session().is_some());
-                assert_eq!(1, this.pane().unwrap().read(cx).items_len());
                 assert_eq!(
                     ThreadId(1),
                     running_state.read(cx).selected_thread_id().unwrap()

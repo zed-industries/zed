@@ -221,7 +221,7 @@ impl RunningState {
         second.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
-                    this.focus_handle(cx),
+                    variable_list.focus_handle(cx),
                     variable_list.clone().into(),
                     SharedString::new_static("Variables"),
                     cx,
@@ -357,6 +357,23 @@ impl RunningState {
         &self._module_list
     }
 
+    #[cfg(test)]
+    pub(crate) fn activate_variable_list(&self, window: &mut Window, cx: &mut App) {
+        let (variable_list_position, pane) = self
+            .panes
+            .panes()
+            .into_iter()
+            .find_map(|pane| {
+                pane.read(cx)
+                    .items_of_type::<SubView>()
+                    .position(|view| view.read(cx).tab_name == SharedString::from("Variables"))
+                    .map(|view| (view, pane))
+            })
+            .unwrap();
+        pane.update(cx, |this, cx| {
+            this.activate_item(variable_list_position, true, true, window, cx);
+        })
+    }
     #[cfg(test)]
     pub(crate) fn variable_list(&self) -> &Entity<VariableList> {
         &self.variable_list
