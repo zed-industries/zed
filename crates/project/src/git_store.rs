@@ -1656,11 +1656,7 @@ impl GitStore {
         let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
-        let options = envelope
-            .payload
-            .options
-            .map(proto::commit::CommitOptions::from)
-            .unwrap_or_default();
+        let options = envelope.payload.options.unwrap_or_default();
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
