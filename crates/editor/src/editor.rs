@@ -12479,9 +12479,9 @@ impl Editor {
                     }
                 })
                     .await;
-            let Ok(lsp_tasks) = project.update(cx, |project, cx| {
-                crate::lsp_tasks(project, &task_sources, cx)
-            }) else {
+            let Ok(lsp_tasks) =
+                cx.update(|_, cx| crate::lsp_tasks(project.clone(), &task_sources, cx))
+            else {
                 return;
             };
             let lsp_tasks = lsp_tasks.await;

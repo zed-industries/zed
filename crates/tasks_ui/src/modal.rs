@@ -224,27 +224,22 @@ impl PickerDelegate for TasksModalDelegate {
         let candidates = match &self.candidates {
             Some(candidates) => Task::ready(string_match_candidates(candidates, task_type)),
             None => {
-                let project = self
-                    .workspace
-                    .update(cx, |workspace, _| workspace.project().clone())
-                    .ok();
-                if let Some((task_inventory, project)) = self
-                    .task_store
-                    .read(cx)
-                    .task_inventory()
-                    .cloned()
-                    .zip(project)
-                {
-                    let lsp_tasks = project.update(cx, |project, cx| {
-                        editor::lsp_tasks(project, &self.task_contexts.lsp_task_sources, cx)
-                    });
-
+                if let Some(task_inventory) = self.task_store.read(cx).task_inventory().cloned() {
                     let (used, current) = task_inventory
                         .read(cx)
                         .used_and_current_resolved_tasks(&self.task_contexts, cx);
+                    let workspace = self.workspace.clone();
+                    let lsp_task_sources = self.task_contexts.lsp_task_sources.clone();
 
                     cx.spawn(async move |picker, cx| {
+                        let Ok(lsp_tasks) = workspace.update(cx, |workspace, cx| {
+                            editor::lsp_tasks(workspace.project().clone(), &lsp_task_sources, cx)
+                        }) else {
+                            return Vec::new();
+                        };
+
                         let lsp_tasks = lsp_tasks.await;
+                        dbg!(lsp_tasks);
                         picker
                             .update(cx, |picker, _| {
                                 picker.delegate.last_used_candidate_index = if used.is_empty() {
