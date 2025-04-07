@@ -757,7 +757,9 @@ impl Element for MarkdownElement {
                                         ),
                                         CodeBlockKind::FencedSrc(path_range) => {
                                             path_range.path.file_name().map(|file_name| {
-                                                if let Some(parent) = path_range.path.parent() {
+                                                let content = if let Some(parent) =
+                                                    path_range.path.parent()
+                                                {
                                                     h_flex()
                                                         .gap_1()
                                                         .child(
@@ -787,7 +789,60 @@ impl Element for MarkdownElement {
                                                     )
                                                     .size(LabelSize::Small)
                                                     .into_any_element()
-                                                }
+                                                };
+
+                                                let project_path = window
+                                                    .root::<Workspace>()
+                                                    .flatten()
+                                                    .and_then(|workspace| {
+                                                        workspace
+                                                            .read(cx)
+                                                            .project()
+                                                            .read(cx)
+                                                            .find_project_path(&path_range.path, cx)
+                                                            .map(|path| (workspace, path))
+                                                    });
+
+                                                div()
+                                                    .id(("code-block-header-label", index))
+                                                    .px_1()
+                                                    .child(content)
+                                                    .when_some(
+                                                        project_path,
+                                                        |this, (workspace, project_path)| {
+                                                            this.cursor_pointer()
+                                                                .rounded_sm()
+                                                                .hover(|item| {
+                                                                    item.bg(cx
+                                                                        .theme()
+                                                                        .colors()
+                                                                        .editor_background)
+                                                                })
+                                                                .tooltip(Tooltip::text(
+                                                                    "Jump to file",
+                                                                ))
+                                                                .on_click(move |_, window, cx| {
+                                                                    workspace.update(cx, {
+                                                                        let project_path =
+                                                                            project_path.clone();
+                                                                        |workspace, cx| {
+                                                                            workspace
+                                                                                .open_path(
+                                                                                    project_path,
+                                                                                    None,
+                                                                                    true,
+                                                                                    window,
+                                                                                    cx,
+                                                                                )
+                                                                                .detach_and_log_err(
+                                                                                    cx,
+                                                                                );
+                                                                        }
+                                                                    });
+                                                                })
+                                                        },
+                                                    )
+                                                    .into_any_element()
                                             })
                                         }
                                     };
