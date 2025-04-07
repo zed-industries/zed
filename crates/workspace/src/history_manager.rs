@@ -87,6 +87,17 @@ impl HistoryManager {
             .map(|entry| entry.path.clone())
             .collect::<Vec<_>>();
         let user_removed = cx.update_jump_list(entries);
+        self.remove_user_removed_workspaces(user_removed, cx);
+    }
+
+    pub fn remove_user_removed_workspaces(
+        &mut self,
+        user_removed: Vec<SmallVec<[PathBuf; 2]>>,
+        cx: &App,
+    ) {
+        if user_removed.is_empty() {
+            return;
+        }
         let mut deleted_ids = Vec::new();
         for idx in (0..self.history.len()).rev() {
             if let Some(entry) = self.history.get(idx) {
@@ -96,14 +107,12 @@ impl HistoryManager {
                 }
             }
         }
-        if !user_removed.is_empty() {
-            cx.spawn(async move |_| {
-                for id in deleted_ids.iter() {
-                    WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
-                }
-            })
-            .detach();
-        }
+        cx.spawn(async move |_| {
+            for id in deleted_ids.iter() {
+                WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
+            }
+        })
+        .detach();
     }
 }
 

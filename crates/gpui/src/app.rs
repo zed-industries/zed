@@ -1430,8 +1430,8 @@ impl App {
     }
 
     /// Sets the right click menu for the app icon in the dock
-    pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
-        self.platform.set_dock_menu(menus, &self.keymap.borrow());
+    pub fn set_dock_menu(&self, menus: Vec<MenuItem>) -> Vec<SmallVec<[PathBuf; 2]>> {
+        self.platform.set_dock_menu(menus, &self.keymap.borrow())
     }
 
     /// Performs the action associated with the given dock menu item, only used on Windows for now.

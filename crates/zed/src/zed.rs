@@ -71,7 +71,7 @@ use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
-use workspace::{CloseIntent, RestoreBanner};
+use workspace::{CloseIntent, HistoryManager, RestoreBanner};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
@@ -1419,7 +1419,13 @@ fn reload_keymaps(cx: &mut App, user_key_bindings: Vec<KeyBinding>) {
     load_default_keymap(cx);
     cx.bind_keys(user_key_bindings);
     cx.set_menus(app_menus());
-    cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)]);
+    let removed_workspaces =
+        cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)]);
+    if let Some(manager) = HistoryManager::global(cx) {
+        manager.update(cx, |manager, cx| {
+            manager.remove_user_removed_workspaces(removed_workspaces, cx);
+        });
+    }
 }
 
 pub fn load_default_keymap(cx: &mut App) {
