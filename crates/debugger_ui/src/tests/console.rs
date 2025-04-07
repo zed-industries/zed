@@ -147,7 +147,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         .await;
 
     cx.run_until_parked();
-    running_state.update(cx, |state, cx| {
+    running_state.update(cx, |_, cx| {
         cx.refresh_windows();
     });
     cx.run_until_parked();

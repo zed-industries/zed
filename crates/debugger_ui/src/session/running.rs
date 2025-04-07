@@ -40,6 +40,8 @@ pub struct RunningState {
     variable_list: Entity<variable_list::VariableList>,
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<stack_frame_list::StackFrameList>,
+    _module_list: Entity<module_list::ModuleList>,
+    _console: Entity<Console>,
     panes: PaneGroup,
 }
 
@@ -297,6 +299,8 @@ impl RunningState {
             stack_frame_list,
             session_id,
             panes,
+            _module_list: module_list,
+            _console: console,
         }
     }
 
@@ -339,12 +343,6 @@ impl RunningState {
     }
 
     #[cfg(test)]
-    pub fn set_thread_item(&mut self, thread_item: ThreadItem, cx: &mut Context<Self>) {
-        self.active_thread_item = thread_item;
-        cx.notify()
-    }
-
-    #[cfg(test)]
     pub fn stack_frame_list(&self) -> &Entity<StackFrameList> {
         &self.stack_frame_list
     }
@@ -356,7 +354,7 @@ impl RunningState {
 
     #[cfg(test)]
     pub(crate) fn module_list(&self) -> &Entity<ModuleList> {
-        &self.module_list
+        &self._module_list
     }
 
     #[cfg(test)]

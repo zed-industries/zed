@@ -144,7 +144,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         "Request Modules shouldn't be called before it's needed"
     );
 
-    running_state.update(cx, |state, cx| {
+    running_state.update(cx, |_, cx| {
         cx.refresh_windows();
     });
 
