@@ -8,7 +8,7 @@ use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point,
+    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::Buffer;
 use language_model::{ConfiguredModel, LanguageModelRegistry};
@@ -18,12 +18,8 @@ use project::Project;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{
-    ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
-    prelude::*,
-};
+use ui::{Disclosure, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
-use vim_mode_setting::VimModeSetting;
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
@@ -354,24 +350,6 @@ impl Render for MessageEditor {
         let total_token_usage = thread.total_token_usage(cx);
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
-        let needs_confirmation =
-            thread.has_pending_tool_uses() && thread.tools_needing_confirmation().next().is_some();
-
-        let submit_label_color = if is_editor_empty {
-            Color::Muted
-        } else {
-            Color::Default
-        };
-
-        let vim_mode_enabled = VimModeSetting::get_global(cx).0;
-        let platform = PlatformStyle::platform();
-        let linux = platform == PlatformStyle::Linux;
-        let windows = platform == PlatformStyle::Windows;
-        let button_width = if linux || windows || vim_mode_enabled {
-            px(82.)
-        } else {
-            px(52.)
-        };
 
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
@@ -696,7 +674,7 @@ impl Render for MessageEditor {
                                             .map(|parent| {
                                                 if is_generating {
                                                     parent.child(
-                                                        IconButton::new("stop-generation", IconName::Stop)
+                                                        IconButton::new("stop-generation", IconName::StopFilled)
                                                             .icon_color(Color::Error)
                                                             .style(ButtonStyle::Tinted(ui::TintColor::Error))
                                                             .tooltip(move |window, cx| {
@@ -713,16 +691,20 @@ impl Render for MessageEditor {
                                                                     window,
                                                                     cx,
                                                                 );
-                                                            }),
+                                                            })
+                                                            .with_animation(
+                                                                "pulsating-label",
+                                                                Animation::new(Duration::from_secs(2))
+                                                                    .repeat()
+                                                                    .with_easing(pulsating_between(0.4, 1.0)),
+                                                                |icon_button, delta| icon_button.alpha(delta),
+                                                            ),
                                                     )
                                                 } else {
                                                     parent.child(
-                                                        Button::new("submit-message", "Send")
+                                                        IconButton::new("stop-generation", IconName::Send)
+                                                            .icon_color(Color::Accent)
                                                             .style(ButtonStyle::Filled)
-                                                            .label_size(LabelSize::Small)
-                                                            .icon(IconName::Send)
-                                                            .icon_size(IconSize::XSmall)
-                                                            .icon_position(IconPosition::End)
                                                             .disabled(
                                                                 is_editor_empty
                                                                     || !is_model_selected

@@ -213,6 +213,7 @@ pub enum IconName {
     Star,
     StarFilled,
     Stop,
+    StopFilled,
     Strikethrough,
     Supermaven,
     SupermavenDisabled,
