@@ -18,6 +18,8 @@ pub use crate::action_log::*;
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
 
+pub const TOOL_OUTPUT_LIMIT: usize = 4096;
+
 pub fn init(cx: &mut App) {
     ToolRegistry::default_global(cx);
 }

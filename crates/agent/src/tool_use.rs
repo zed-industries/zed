@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{Tool, ToolWorkingSet};
+use assistant_tool::{TOOL_OUTPUT_LIMIT, Tool, ToolWorkingSet};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
@@ -11,6 +11,7 @@ use language_model::{
     LanguageModelToolUseId, MessageContent, Role,
 };
 use ui::IconName;
+use util::truncate_lines_to_byte_limit;
 
 use crate::thread::MessageId;
 use crate::thread_store::SerializedMessage;
@@ -334,6 +335,19 @@ impl ToolUseState {
     ) -> Option<PendingToolUse> {
         match output {
             Ok(tool_result) => {
+                let tool_result = if tool_result.len() <= TOOL_OUTPUT_LIMIT {
+                    tool_result
+                } else {
+                    let truncated = truncate_lines_to_byte_limit(&tool_result, TOOL_OUTPUT_LIMIT);
+
+                    format!(
+                        "Tool result too long. The first {} bytes:\n\n{}",
+                        truncated.len(),
+                        truncated
+                    )
+                    .into()
+                };
+
                 self.tool_results.insert(
                     tool_use_id.clone(),
                     LanguageModelToolResult {
