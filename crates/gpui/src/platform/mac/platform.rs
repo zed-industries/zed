@@ -865,7 +865,7 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) -> Vec<SmallVec<[PathBuf; 2]>> {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
@@ -875,6 +875,7 @@ impl Platform for MacPlatform {
                 CFRelease(old as _)
             }
         }
+        Vec::new()
     }
 
     fn add_recent_document(&self, path: &Path) {
