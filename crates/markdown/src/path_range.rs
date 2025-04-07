@@ -46,7 +46,7 @@ impl PathRange {
             Some((path, after_hash)) => {
                 // Be tolerant to the model omitting the "L" prefix, lowercasing it,
                 // or including it more than once.
-                let after_hash = after_hash.replace('L', "").replace('l', "");
+                let after_hash = after_hash.replace(['L', 'l'], "");
 
                 let range = {
                     let mut iter = after_hash.split('-').flat_map(LineCol::new);
