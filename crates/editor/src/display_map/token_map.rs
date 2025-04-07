@@ -497,6 +497,57 @@ impl TokenMap {
     pub fn current_tokens(&self) -> impl Iterator<Item = &Token> {
         self.tokens.iter()
     }
+
+    #[cfg(test)]
+    pub(crate) fn randomly_mutate(
+        &mut self,
+        next_token_id: &mut usize,
+        rng: &mut rand::rngs::StdRng,
+    ) -> (TokenSnapshot, Vec<TokenEdit>) {
+        use gpui::Hsla;
+        use rand::prelude::*;
+        use util::post_inc;
+
+        let mut to_remove = Vec::new();
+        let mut to_insert = Vec::new();
+        let snapshot = &mut self.snapshot;
+
+        for _ in 0..rng.gen_range(1..=5) {
+            if self.tokens.is_empty() || rng.r#gen() {
+                let position = snapshot.buffer.random_byte_range(0, rng);
+                let style = HighlightStyle::color(Hsla {
+                    h: rng.gen_range(0.0..1.0), // hue
+                    s: rng.gen_range(0.5..1.0), // saturation
+                    l: rng.gen_range(0.5..0.9), // lightness
+                    a: 1.0,                     // alpha
+                });
+                let text = util::RandomCharIter::new(&mut *rng)
+                    .filter(|ch| *ch != '\r')
+                    .take(position.end - position.start)
+                    .collect::<String>();
+
+                to_insert.push(Token::new(
+                    post_inc(next_token_id),
+                    snapshot.buffer.anchor_before(position.start)
+                        ..snapshot.buffer.anchor_after(position.end),
+                    style,
+                    text,
+                ));
+            } else {
+                let token_id = self
+                    .tokens
+                    .iter()
+                    .choose(rng)
+                    .map(|token| token.id)
+                    .unwrap();
+                to_remove.push(token_id);
+            }
+        }
+        log::info!("removing tokens: {:?}", to_remove);
+
+        let (snapshot, edits) = self.splice(&to_remove, to_insert);
+        (snapshot, edits)
+    }
 }
 
 impl TokenSnapshot {
@@ -869,12 +920,14 @@ fn push_semantic_tokens(
             break;
         }
 
-        if acc != token.range.start.to_offset(buffer_snapshot) {
+        if acc < token.range.start.to_offset(buffer_snapshot) {
             push_isomorphic(
                 sum_tree,
                 buffer_snapshot
                     .text_summary_for_range(acc..token.range.start.to_offset(buffer_snapshot)),
             );
+        } else {
+            break;
         }
 
         let prefix_start = sum_tree.summary().input.len;
@@ -920,6 +973,7 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 mod tests {
     use gpui::Hsla;
     use multi_buffer::MultiBuffer;
+    use rand::{Rng as _, rngs::StdRng};
     use ui::App;
     use util::post_inc;
 
@@ -1131,7 +1185,155 @@ mod tests {
                 .row_infos(0)
                 .map(|info| info.buffer_row)
                 .collect::<Vec<_>>(),
-            vec![Some(0), None, Some(1), None, None, Some(2)]
+            vec![Some(0), Some(1), Some(2)]
         );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_random_tokens(cx: &mut App, mut rng: StdRng) {
+        init_test(cx);
+
+        let operations = std::env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let len = rng.gen_range(0..30);
+        let buffer = if rng.r#gen() {
+            let text = util::RandomCharIter::new(&mut rng)
+                .take(len)
+                .collect::<String>();
+            MultiBuffer::build_simple(&text, cx)
+        } else {
+            MultiBuffer::build_random(&mut rng, cx)
+        };
+        let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let mut next_token_id = 0;
+        log::info!("buffer text: {:?}", buffer_snapshot.text());
+        let (mut token_map, _) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        for _ in 0..operations {
+            let mut buffer_edits = Vec::new();
+            match rng.gen_range(0..=100) {
+                0..=50 => {
+                    let (snapshot, _) = token_map.randomly_mutate(&mut next_token_id, &mut rng);
+                    log::info!("mutated text: {:?}", snapshot.text());
+                }
+                _ => buffer.update(cx, |buffer, cx| {
+                    let subscription = buffer.subscribe();
+                    let edit_count = rng.gen_range(1..=5);
+                    buffer.randomly_mutate(&mut rng, edit_count, cx);
+                    buffer_snapshot = buffer.snapshot(cx);
+                    let edits = subscription.consume().into_inner();
+                    log::info!("editing {:?}", edits);
+                    buffer_edits.extend(edits);
+                }),
+            };
+
+            let (new_token_snapshot, _) = token_map.sync(buffer_snapshot.clone(), buffer_edits);
+
+            log::info!("buffer text: {:?}", buffer_snapshot.text());
+            log::info!("token text: {:?}", new_token_snapshot.text());
+
+            // Verify the token text matches the buffer text (without highlighting)
+            assert_eq!(new_token_snapshot.text(), buffer_snapshot.text());
+
+            let expected_buffer_rows = new_token_snapshot.row_infos(0).collect::<Vec<_>>();
+            assert_eq!(
+                expected_buffer_rows.len() as u32,
+                buffer_snapshot.max_point().row + 1
+            );
+            for row_start in 0..expected_buffer_rows.len() {
+                assert_eq!(
+                    new_token_snapshot
+                        .row_infos(row_start as u32)
+                        .collect::<Vec<_>>(),
+                    &expected_buffer_rows[row_start..],
+                    "incorrect buffer rows starting at {}",
+                    row_start
+                );
+            }
+
+            for _ in 0..5 {
+                let mut end = rng.gen_range(0..=buffer_snapshot.text().len());
+                end = buffer_snapshot.clip_offset(end, Bias::Right);
+                let mut start = rng.gen_range(0..=end);
+                start = buffer_snapshot.clip_offset(start, Bias::Right);
+
+                let range = TokenOffset(start)..TokenOffset(end);
+                log::info!("calling token_snapshot.chunks({range:?})");
+                let actual_text = new_token_snapshot
+                    .chunks(
+                        range,
+                        false,
+                        Highlights {
+                            text_highlights: None,
+                            ..Highlights::default()
+                        },
+                    )
+                    .map(|chunk| chunk.text)
+                    .collect::<String>();
+                assert_eq!(
+                    actual_text,
+                    buffer_snapshot
+                        .text_for_range(start..end)
+                        .collect::<String>(),
+                    "incorrect text in range {:?}",
+                    start..end
+                );
+
+                assert_eq!(
+                    new_token_snapshot.text_summary_for_range(TokenOffset(start)..TokenOffset(end)),
+                    buffer_snapshot.text_summary_for_range(start..end)
+                );
+            }
+
+            let mut buffer_point = Point::default();
+            let mut token_point = new_token_snapshot.to_token_point(buffer_point);
+            let mut buffer_chars = buffer_snapshot.chars_at(0);
+            loop {
+                // Ensure conversion from buffer coordinates to token coordinates
+                // is consistent.
+                let buffer_offset = buffer_snapshot.point_to_offset(buffer_point);
+                assert_eq!(
+                    new_token_snapshot.to_point(new_token_snapshot.to_token_offset(buffer_offset)),
+                    token_point
+                );
+
+                // No matter which bias we clip a token point with, it doesn't move
+                // because it was constructed from a buffer point.
+                assert_eq!(
+                    new_token_snapshot.clip_point(token_point, Bias::Left),
+                    token_point,
+                    "invalid token point for buffer point {:?} when clipped left",
+                    buffer_point
+                );
+                assert_eq!(
+                    new_token_snapshot.clip_point(token_point, Bias::Right),
+                    token_point,
+                    "invalid token point for buffer point {:?} when clipped right",
+                    buffer_point
+                );
+
+                if let Some(ch) = buffer_chars.next() {
+                    if ch == '\n' {
+                        buffer_point += Point::new(1, 0);
+                    } else {
+                        buffer_point += Point::new(0, ch.len_utf8() as u32);
+                    }
+
+                    // Ensure that moving forward in the buffer moves the token point forward as well.
+                    let new_token_point = new_token_snapshot.to_token_point(buffer_point);
+                    assert!(new_token_point >= token_point);
+                    token_point = new_token_point;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn init_test(cx: &mut App) {
+        let store = settings::SettingsStore::test(cx);
+        cx.set_global(store);
+        theme::init(theme::LoadThemes::JustBase, cx);
     }
 }
