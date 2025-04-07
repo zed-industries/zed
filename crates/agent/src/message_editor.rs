@@ -702,7 +702,7 @@ impl Render for MessageEditor {
                                                     )
                                                 } else {
                                                     parent.child(
-                                                        IconButton::new("stop-generation", IconName::Send)
+                                                        IconButton::new("send-message", IconName::Send)
                                                             .icon_color(Color::Accent)
                                                             .style(ButtonStyle::Filled)
                                                             .disabled(
