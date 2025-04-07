@@ -101,10 +101,6 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
                 .clone()
         });
 
-    running_state.update(cx, |state, cx| {
-        state.set_thread_item(session::ThreadItem::Console, cx);
-        cx.refresh_windows();
-    });
     cx.run_until_parked();
 
     // assert we have output from before the thread stopped
@@ -152,7 +148,6 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
 
     cx.run_until_parked();
     running_state.update(cx, |state, cx| {
-        state.set_thread_item(session::ThreadItem::Console, cx);
         cx.refresh_windows();
     });
     cx.run_until_parked();

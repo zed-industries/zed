@@ -1548,9 +1548,6 @@ async fn test_variable_list_only_sends_requests_when_rendering(
             .expect("Session should be running by this point")
             .clone();
 
-        state.update(cx, |state, cx| {
-            state.set_thread_item(crate::session::ThreadItem::Modules, cx)
-        });
         state
     });
 
@@ -1577,7 +1574,6 @@ async fn test_variable_list_only_sends_requests_when_rendering(
         assert!(!made_scopes_request.load(Ordering::SeqCst));
 
         cx.focus_self(window);
-        running_state.set_thread_item(crate::session::ThreadItem::Variables, cx);
     });
 
     cx.run_until_parked();

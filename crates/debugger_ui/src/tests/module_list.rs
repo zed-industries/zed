@@ -145,7 +145,6 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     );
 
     running_state.update(cx, |state, cx| {
-        state.set_thread_item(ThreadItem::Modules, cx);
         cx.refresh_windows();
     });
 
@@ -157,9 +156,6 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     );
 
     active_debug_session_panel(workspace, cx).update(cx, |_, cx| {
-        running_state.update(cx, |state, cx| {
-            state.set_thread_item(ThreadItem::Modules, cx)
-        });
         let actual_modules = running_state.update(cx, |state, cx| {
             state.module_list().update(cx, |list, cx| list.modules(cx))
         });

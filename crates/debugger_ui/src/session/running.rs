@@ -6,7 +6,7 @@ pub mod variable_list;
 
 use std::{any::Any, ops::ControlFlow, sync::Arc};
 
-use super::{DebugPanelItemEvent, ThreadItem};
+use super::DebugPanelItemEvent;
 use console::Console;
 use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
 use gpui::{
@@ -23,9 +23,8 @@ use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use ui::{
-    ActiveTheme, AnyElement, App, Button, Context, ContextMenu, DropdownMenu, FluentBuilder,
-    Indicator, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, h_flex, v_flex,
+    App, Context, ContextMenu, DropdownMenu, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, Styled, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -34,18 +33,13 @@ use workspace::{ActivePaneDecorator, DraggedTab, Item, Pane, PaneGroup, Workspac
 pub struct RunningState {
     session: Entity<Session>,
     thread_id: Option<ThreadId>,
-    console: Entity<console::Console>,
     focus_handle: FocusHandle,
     _remote_id: Option<ViewId>,
-    show_console_indicator: bool,
-    module_list: Entity<module_list::ModuleList>,
-    active_thread_item: ThreadItem,
     workspace: WeakEntity<Workspace>,
     session_id: SessionId,
     variable_list: Entity<variable_list::VariableList>,
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<stack_frame_list::StackFrameList>,
-    loaded_source_list: Entity<loaded_source_list::LoadedSourceList>,
     panes: PaneGroup,
 }
 
@@ -77,85 +71,6 @@ impl Render for RunningState {
             .key_context("DebugSessionItem")
             .track_focus(&self.focus_handle(cx))
             .child(h_flex().flex_1().child(x))
-
-        // let threads = self.session.update(cx, |this, cx| this.threads(cx));
-        // self.select_current_thread(&threads, cx);
-
-        // let active_thread_item = &self.active_thread_item;
-
-        // let capabilities = self.capabilities(cx);
-        // h_flex()
-        //     .key_context("DebugPanelItem")
-        //     .track_focus(&self.focus_handle(cx))
-        //     .size_full()
-        //     .items_start()
-        //     .child(
-        //         v_flex().size_full().items_start().child(
-        //             h_flex()
-        //                 .size_full()
-        //                 .items_start()
-        //                 .p_1()
-        //                 .gap_4()
-        //                 .child(self.stack_frame_list.clone()),
-        //         ),
-        //     )
-        //     .child(
-        //         v_flex()
-        //             .border_l_1()
-        //             .border_color(cx.theme().colors().border_variant)
-        //             .size_full()
-        //             .items_start()
-        //             .child(
-        //                 h_flex()
-        //                     .border_b_1()
-        //                     .w_full()
-        //                     .border_color(cx.theme().colors().border_variant)
-        //                     .child(self.render_entry_button(
-        //                         &SharedString::from("Variables"),
-        //                         ThreadItem::Variables,
-        //                         cx,
-        //                     ))
-        //                     .when(
-        //                         capabilities.supports_modules_request.unwrap_or_default(),
-        //                         |this| {
-        //                             this.child(self.render_entry_button(
-        //                                 &SharedString::from("Modules"),
-        //                                 ThreadItem::Modules,
-        //                                 cx,
-        //                             ))
-        //                         },
-        //                     )
-        //                     .when(
-        //                         capabilities
-        //                             .supports_loaded_sources_request
-        //                             .unwrap_or_default(),
-        //                         |this| {
-        //                             this.child(self.render_entry_button(
-        //                                 &SharedString::from("Loaded Sources"),
-        //                                 ThreadItem::LoadedSource,
-        //                                 cx,
-        //                             ))
-        //                         },
-        //                     )
-        //                     .child(self.render_entry_button(
-        //                         &SharedString::from("Console"),
-        //                         ThreadItem::Console,
-        //                         cx,
-        //                     )),
-        //             )
-        //             .when(*active_thread_item == ThreadItem::Variables, |this| {
-        //                 this.child(self.variable_list.clone())
-        //             })
-        //             .when(*active_thread_item == ThreadItem::Modules, |this| {
-        //                 this.size_full().child(self.module_list.clone())
-        //             })
-        //             .when(*active_thread_item == ThreadItem::LoadedSource, |this| {
-        //                 this.size_full().child(self.loaded_source_list.clone())
-        //             })
-        //             .when(*active_thread_item == ThreadItem::Console, |this| {
-        //                 this.child(self.console.clone())
-        //             }),
-        //     )
     }
 }
 
@@ -379,19 +294,14 @@ impl RunningState {
 
         Self {
             session,
-            console,
             workspace,
-            module_list,
             focus_handle,
             variable_list,
             _subscriptions,
             thread_id: None,
             _remote_id: None,
             stack_frame_list,
-            loaded_source_list,
             session_id,
-            show_console_indicator: false,
-            active_thread_item: ThreadItem::Variables,
             panes,
         }
     }
@@ -503,41 +413,6 @@ impl RunningState {
         self.stack_frame_list
             .update(cx, |list, cx| list.refresh(cx));
         cx.notify();
-    }
-
-    fn render_entry_button(
-        &self,
-        label: &SharedString,
-        thread_item: ThreadItem,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let has_indicator =
-            matches!(thread_item, ThreadItem::Console) && self.show_console_indicator;
-
-        div()
-            .id(label.clone())
-            .px_2()
-            .py_1()
-            .cursor_pointer()
-            .border_b_2()
-            .when(self.active_thread_item == thread_item, |this| {
-                this.border_color(cx.theme().colors().border)
-            })
-            .child(
-                h_flex()
-                    .child(Button::new(label.clone(), label.clone()))
-                    .when(has_indicator, |this| this.child(Indicator::dot())),
-            )
-            .on_click(cx.listener(move |this, _, _window, cx| {
-                this.active_thread_item = thread_item;
-
-                if matches!(this.active_thread_item, ThreadItem::Console) {
-                    this.show_console_indicator = false;
-                }
-
-                cx.notify();
-            }))
-            .into_any_element()
     }
 
     pub fn continue_thread(&mut self, cx: &mut Context<Self>) {
