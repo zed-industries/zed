@@ -8333,7 +8333,6 @@ dependencies = [
  "anyhow",
  "assets",
  "env_logger 0.11.8",
- "file_icons",
  "gpui",
  "language",
  "languages",
@@ -8342,10 +8341,10 @@ dependencies = [
  "node_runtime",
  "pulldown-cmark 0.12.2",
  "settings",
+ "sum_tree",
  "theme",
  "ui",
  "util",
- "workspace",
  "workspace-hack",
 ]
 

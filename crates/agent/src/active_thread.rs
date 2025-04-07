@@ -10,21 +10,24 @@ use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
 use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength,
-    EdgesRefinement, Empty, Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton,
-    PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription, Task,
+    AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardItem,
+    DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Hsla, ListAlignment, ListState,
+    MouseButton, PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription, Task,
     TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role};
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::parser::CodeBlockKind;
+use markdown::{Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown, without_fences};
 use project::ProjectItem as _;
 use settings::{Settings as _, update_settings_file};
+use std::ops::Range;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,6 +58,7 @@ pub struct ActiveThread {
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
     notifications: Vec<WindowHandle<AgentNotification>>,
+    copied_code_block_ids: HashSet<usize>,
     _subscriptions: Vec<Subscription>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     feedback_message_editor: Option<Entity<Editor>>,
@@ -100,7 +104,7 @@ impl RenderedMessage {
             scroll_handle.scroll_to_bottom();
         } else {
             self.segments.push(RenderedMessageSegment::Thinking {
-                content: render_markdown(text.into(), self.language_registry.clone(), cx),
+                content: parse_markdown(text.into(), self.language_registry.clone(), cx),
                 scroll_handle: ScrollHandle::default(),
             });
         }
@@ -111,7 +115,7 @@ impl RenderedMessage {
             markdown.update(cx, |markdown, cx| markdown.append(text, cx));
         } else {
             self.segments
-                .push(RenderedMessageSegment::Text(render_markdown(
+                .push(RenderedMessageSegment::Text(parse_markdown(
                     SharedString::from(text),
                     self.language_registry.clone(),
                     cx,
@@ -122,10 +126,10 @@ impl RenderedMessage {
     fn push_segment(&mut self, segment: &MessageSegment, cx: &mut App) {
         let rendered_segment = match segment {
             MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking {
-                content: render_markdown(text.into(), self.language_registry.clone(), cx),
+                content: parse_markdown(text.into(), self.language_registry.clone(), cx),
                 scroll_handle: ScrollHandle::default(),
             },
-            MessageSegment::Text(text) => RenderedMessageSegment::Text(render_markdown(
+            MessageSegment::Text(text) => RenderedMessageSegment::Text(parse_markdown(
                 text.into(),
                 self.language_registry.clone(),
                 cx,
@@ -143,7 +147,7 @@ enum RenderedMessageSegment {
     Text(Entity<Markdown>),
 }
 
-fn render_markdown(
+fn parse_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
     cx: &mut App,
@@ -174,12 +178,6 @@ fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         code_block_overflow_x_scroll: true,
         table_overflow_x_scroll: true,
         code_block: StyleRefinement {
-            margin: EdgesRefinement {
-                top: Some(Length::Definite(rems(0.).into())),
-                left: Some(Length::Definite(rems(0.).into())),
-                right: Some(Length::Definite(rems(0.).into())),
-                bottom: Some(Length::Definite(rems(0.5).into())),
-            },
             padding: EdgesRefinement {
                 top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                 left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
@@ -187,13 +185,6 @@ fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
                 bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
             },
             background: Some(colors.editor_background.into()),
-            border_color: Some(colors.border_variant),
-            border_widths: EdgesRefinement {
-                top: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                left: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                right: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
-            },
             text: Some(TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
@@ -295,6 +286,197 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
         },
         ..Default::default()
     }
+}
+
+fn render_markdown_code_block(
+    id: usize,
+    kind: &CodeBlockKind,
+    parsed_markdown: &ParsedMarkdown,
+    codeblock_range: Range<usize>,
+    active_thread: Entity<ActiveThread>,
+    workspace: WeakEntity<Workspace>,
+    _window: &mut Window,
+    cx: &App,
+) -> Div {
+    let label = match kind {
+        CodeBlockKind::Indented => None,
+        CodeBlockKind::Fenced => Some(
+            h_flex()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::Code)
+                        .color(Color::Muted)
+                        .size(IconSize::XSmall),
+                )
+                .child(Label::new("untitled").size(LabelSize::Small))
+                .into_any_element(),
+        ),
+        CodeBlockKind::FencedLang(raw_language_name) => Some(
+            h_flex()
+                .gap_1()
+                .children(
+                    parsed_markdown
+                        .languages_by_name
+                        .get(raw_language_name)
+                        .and_then(|language| {
+                            language
+                                .config()
+                                .matcher
+                                .path_suffixes
+                                .iter()
+                                .find_map(|extension| {
+                                    file_icons::FileIcons::get_icon(Path::new(extension), cx)
+                                })
+                                .map(Icon::from_path)
+                                .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+                        }),
+                )
+                .child(
+                    Label::new(
+                        parsed_markdown
+                            .languages_by_name
+                            .get(raw_language_name)
+                            .map(|language| language.name().into())
+                            .clone()
+                            .unwrap_or_else(|| raw_language_name.clone()),
+                    )
+                    .size(LabelSize::Small),
+                )
+                .into_any_element(),
+        ),
+        CodeBlockKind::FencedSrc(path_range) => path_range.path.file_name().map(|file_name| {
+            let content = if let Some(parent) = path_range.path.parent() {
+                h_flex()
+                    .ml_1()
+                    .gap_1()
+                    .child(
+                        Label::new(file_name.to_string_lossy().to_string()).size(LabelSize::Small),
+                    )
+                    .child(
+                        Label::new(parent.to_string_lossy().to_string())
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element()
+            } else {
+                Label::new(path_range.path.to_string_lossy().to_string())
+                    .size(LabelSize::Small)
+                    .ml_1()
+                    .into_any_element()
+            };
+
+            h_flex()
+                .id(("code-block-header-label", id))
+                .w_full()
+                .max_w_full()
+                .px_1()
+                .gap_0p5()
+                .cursor_pointer()
+                .rounded_sm()
+                .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
+                .tooltip(Tooltip::text("Jump to file"))
+                .children(
+                    file_icons::FileIcons::get_icon(&path_range.path, cx)
+                        .map(Icon::from_path)
+                        .map(|icon| icon.color(Color::Muted).size(IconSize::XSmall)),
+                )
+                .child(content)
+                .child(
+                    Icon::new(IconName::ArrowUpRight)
+                        .size(IconSize::XSmall)
+                        .color(Color::Ignored),
+                )
+                .on_click({
+                    let path_range = path_range.clone();
+                    move |_, window, cx| {
+                        workspace
+                            .update(cx, {
+                                |workspace, cx| {
+                                    if let Some(project_path) = workspace
+                                        .project()
+                                        .read(cx)
+                                        .find_project_path(&path_range.path, cx)
+                                    {
+                                        workspace
+                                            .open_path(project_path, None, true, window, cx)
+                                            .detach_and_log_err(cx);
+                                    }
+                                }
+                            })
+                            .ok();
+                    }
+                })
+                .into_any_element()
+        }),
+    };
+
+    let codeblock_header_bg = cx
+        .theme()
+        .colors()
+        .element_background
+        .blend(cx.theme().colors().editor_foreground.opacity(0.01));
+
+    let codeblock_was_copied = active_thread.read(cx).copied_code_block_ids.contains(&id);
+
+    let codeblock_header = h_flex()
+        .p_1()
+        .gap_1()
+        .justify_between()
+        .border_b_1()
+        .border_color(cx.theme().colors().border_variant)
+        .bg(codeblock_header_bg)
+        .rounded_t_md()
+        .children(label)
+        .child(
+            IconButton::new(
+                ("copy-markdown-code", id),
+                if codeblock_was_copied {
+                    IconName::Check
+                } else {
+                    IconName::Copy
+                },
+            )
+            .icon_color(Color::Muted)
+            .shape(ui::IconButtonShape::Square)
+            .tooltip(Tooltip::text("Copy Code"))
+            .on_click({
+                let active_thread = active_thread.clone();
+                let parsed_markdown = parsed_markdown.clone();
+                move |_event, _window, cx| {
+                    active_thread.update(cx, |this, cx| {
+                        this.copied_code_block_ids.insert(id);
+
+                        let code =
+                            without_fences(&parsed_markdown.source()[codeblock_range.clone()])
+                                .to_string();
+
+                        cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(Duration::from_secs(2)).await;
+
+                            cx.update(|cx| {
+                                this.update(cx, |this, cx| {
+                                    this.copied_code_block_ids.remove(&id);
+                                    cx.notify();
+                                })
+                            })
+                            .ok();
+                        })
+                        .detach();
+                    });
+                }
+            }),
+        );
+
+    v_flex()
+        .mb_2()
+        .relative()
+        .overflow_hidden()
+        .rounded_lg()
+        .border_1()
+        .border_color(cx.theme().colors().border_variant)
+        .child(codeblock_header)
 }
 
 fn open_markdown_link(
@@ -410,6 +592,7 @@ impl ActiveThread {
             hide_scrollbar_task: None,
             editing_message: None,
             last_error: None,
+            copied_code_block_ids: HashSet::default(),
             notifications: Vec::new(),
             _subscriptions: subscriptions,
             notification_subscriptions: HashMap::default(),
@@ -1128,6 +1311,7 @@ impl ActiveThread {
                                         message_id,
                                         rendered_message,
                                         has_tool_uses,
+                                        workspace.clone(),
                                         window,
                                         cx,
                                     ))
@@ -1465,6 +1649,7 @@ impl ActiveThread {
         message_id: MessageId,
         rendered_message: &RenderedMessage,
         has_tool_uses: bool,
+        workspace: WeakEntity<Workspace>,
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -1508,6 +1693,24 @@ impl ActiveThread {
                                     markdown.clone(),
                                     default_markdown_style(window, cx),
                                 )
+                                .code_block_renderer(markdown::CodeBlockRenderer::Custom {
+                                    render: Arc::new({
+                                        let workspace = workspace.clone();
+                                        let active_thread = cx.entity();
+                                        move |id, kind, parsed_markdown, range, window, cx| {
+                                            render_markdown_code_block(
+                                                id,
+                                                kind,
+                                                parsed_markdown,
+                                                range,
+                                                active_thread.clone(),
+                                                workspace.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                        }
+                                    }),
+                                })
                                 .on_url_click({
                                     let workspace = self.workspace.clone();
                                     move |text, window, cx| {
