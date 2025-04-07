@@ -738,30 +738,6 @@ impl LanguageRegistry {
         available_language
     }
 
-    /// If we already have a language loaded for this path, return it immediately.
-    /// If we don't have it available, return Err.
-    /// If we have it available, but it isn't loaded yet, return Ok(Err(Future)) where
-    /// the Future can be run to load it.
-    pub fn loaded_language_for_file_path<'a>(
-        self: &Arc<Self>,
-        path: &'a Path,
-    ) -> Result<std::result::Result<Arc<Language>, impl Future<Output = Result<Arc<Language>>> + 'a>>
-    {
-        if let Some(language) = self.language_for_file_internal(path, None, None) {
-            for loaded_language in self.state.read().languages.iter() {
-                if loaded_language.id == language.id {
-                    return Ok(Ok(loaded_language.clone()));
-                }
-            }
-
-            let this = self.clone();
-
-            Ok(Err(async move { this.load_language(&language).await? }))
-        } else {
-            Err(anyhow!(LanguageNotFound))
-        }
-    }
-
     pub fn load_language(
         self: &Arc<Self>,
         language: &AvailableLanguage,
