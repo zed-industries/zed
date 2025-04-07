@@ -109,8 +109,8 @@ use language::{
     IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
     TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, AllLanguageSettings, InlayHintSettings, LspInsertMode, RewrapBehavior,
-        WordsCompletionMode, all_language_settings, language_settings,
+        self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
+        all_language_settings, language_settings,
     },
     point_from_lsp, text_diff_with_options,
 };
@@ -17992,11 +17992,11 @@ fn choose_completion_range(
         }
     }
 
-    let completion_mode_setting = AllLanguageSettings::get_global(cx)
-        .defaults
-        .completions
-        .lsp_insert_mode;
     let buffer = buffer.read(cx);
+    let completion_mode_setting =
+        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+            .completions
+            .lsp_insert_mode;
 
     if should_replace(completion, intent, completion_mode_setting, buffer) {
         completion.replace_range.to_offset(buffer)
