@@ -62,6 +62,8 @@ impl VsCodeThemeConverter {
                 status: status_colors,
                 players: Vec::new(),
                 syntax: syntax_theme,
+                tokens: Default::default(),
+                modifiers: Default::default(),
             },
         })
     }
