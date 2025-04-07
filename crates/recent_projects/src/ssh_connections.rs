@@ -193,17 +193,14 @@ impl SshPrompt {
             }
         };
 
-        let markdown_style = {
-            let text_style_refinement = text_style_refinement.clone();
-            move |window: &Window, cx: &App| {
-                let mut text_style = window.text_style();
-                text_style.refine(&text_style_refinement(cx));
+        let markdown_style = move |window: &Window, cx: &App| {
+            let mut text_style = window.text_style();
+            text_style.refine(&text_style_refinement(cx));
 
-                MarkdownStyle {
-                    base_text_style: text_style,
-                    selection_background_color: cx.theme().players().local().selection,
-                    ..Default::default()
-                }
+            MarkdownStyle {
+                base_text_style: text_style,
+                selection_background_color: cx.theme().players().local().selection,
+                ..Default::default()
             }
         };
 
