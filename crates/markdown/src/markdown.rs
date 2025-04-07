@@ -730,31 +730,6 @@ impl Element for MarkdownElement {
                             // This is a parent container that we can position the copy button inside.
                             builder.push_div(div().relative().w_full(), range, markdown_end);
 
-                            // If this code block is inside a link, show the URL
-                            if let Some(dest_url) = builder.inside_link.clone() {
-                                builder.flush_text(); // Flush any pending text before adding the link display
-
-                                // Add a UI element to display the link URL
-                                builder.modify_current_div(|el| {
-                                    el.child(
-                                        div()
-                                            .mb_1()
-                                            .flex()
-                                            .items_center()
-                                            .gap_1()
-                                            .child(
-                                                Icon::new(IconName::Link)
-                                                    .size(IconSize::Small)
-                                                    .color(Color::Muted),
-                                            )
-                                            .child(
-                                                Label::new(format!("Link: {}", dest_url))
-                                                    .color(Color::Muted),
-                                            ),
-                                    )
-                                });
-                            }
-
                             let mut code_block = div()
                                 .id(("code-block", range.start))
                                 .rounded_lg()
