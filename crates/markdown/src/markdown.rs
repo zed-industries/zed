@@ -229,9 +229,9 @@ impl Markdown {
             if let Some(registry) = language_registry.as_ref() {
                 for name in language_names {
                     let language = if !name.is_empty() {
-                        registry.language_for_name(&name)
+                        registry.language_for_name_or_extension(&name)
                     } else if let Some(fallback) = &fallback {
-                        registry.language_for_name(fallback)
+                        registry.language_for_name_or_extension(fallback)
                     } else {
                         continue;
                     };
