@@ -706,5 +706,10 @@ message LspExtRunnables {
 }
 
 message LspExtRunnablesResponse {
-    bytes task_templates = 1;
+    repeated LspRunnable runnables = 1;
+}
+
+message LspRunnable {
+    bytes task_template = 1;
+    optional LocationLink location = 2;
 }

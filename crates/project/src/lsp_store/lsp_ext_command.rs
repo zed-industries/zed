@@ -1,4 +1,11 @@
-use crate::{lsp_command::LspCommand, lsp_store::LspStore, make_text_document_identifier};
+use crate::{
+    LocationLink,
+    lsp_command::{
+        LspCommand, location_link_from_lsp, location_link_from_proto, location_link_to_proto,
+    },
+    lsp_store::LspStore,
+    make_text_document_identifier,
+};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -11,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates};
+use task::TaskTemplate;
 use text::{BufferId, PointUtf16, ToPointUtf16};
 
 pub enum LspExpandMacro {}
@@ -438,13 +445,18 @@ pub struct ShellRunnableArgs {
 }
 
 #[derive(Debug)]
-pub struct LspRunnables {
+pub struct GetLspRunnables {
     pub buffer_id: BufferId,
 }
 
+#[derive(Debug, Default)]
+pub struct LspRunnables {
+    pub runnables: Vec<(Option<LocationLink>, TaskTemplate)>,
+}
+
 #[async_trait(?Send)]
-impl LspCommand for LspRunnables {
-    type Response = TaskTemplates;
+impl LspCommand for GetLspRunnables {
+    type Response = LspRunnables;
     type LspRequest = Runnables;
     type ProtoRequest = proto::LspExtRunnables;
 
@@ -472,58 +484,62 @@ impl LspCommand for LspRunnables {
     async fn response_from_lsp(
         self,
         lsp_runnables: Vec<Runnable>,
-        _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: LanguageServerId,
-        _: AsyncApp,
-    ) -> Result<TaskTemplates> {
-        let templates = lsp_runnables
-            .into_iter()
-            .map(|runnable| {
-                // TODO kb need to return this too
-                let location = runnable.location;
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncApp,
+    ) -> Result<LspRunnables> {
+        let mut runnables = Vec::with_capacity(lsp_runnables.len());
 
-                let mut task_template = TaskTemplate::default();
-                task_template.label = runnable.label;
-                match runnable.args {
-                    RunnableArgs::Cargo(cargo) => {
-                        match cargo.override_cargo {
-                            Some(override_cargo) => {
-                                let mut override_parts =
-                                    override_cargo.split(" ").map(|s| s.to_string());
-                                task_template.command = override_parts
-                                    .next()
-                                    .unwrap_or_else(|| override_cargo.clone());
-                                task_template.args.extend(override_parts);
-                            }
-                            None => task_template.command = "cargo".to_string(),
-                        };
-                        task_template.env = cargo.environment;
-                        task_template.cwd = Some(
-                            cargo
-                                .workspace_root
-                                .unwrap_or(cargo.cwd)
-                                .to_string_lossy()
-                                .to_string(),
-                        );
-                        task_template.args.extend(cargo.cargo_args);
-                        if !cargo.executable_args.is_empty() {
-                            task_template.args.push("--".to_string());
-                            task_template.args.extend(cargo.executable_args);
+        for runnable in lsp_runnables {
+            let location = match runnable.location {
+                Some(location) => Some(
+                    location_link_from_lsp(location, &lsp_store, &buffer, server_id, &mut cx)
+                        .await?,
+                ),
+                None => None,
+            };
+            let mut task_template = TaskTemplate::default();
+            task_template.label = runnable.label;
+            match runnable.args {
+                RunnableArgs::Cargo(cargo) => {
+                    match cargo.override_cargo {
+                        Some(override_cargo) => {
+                            let mut override_parts =
+                                override_cargo.split(" ").map(|s| s.to_string());
+                            task_template.command = override_parts
+                                .next()
+                                .unwrap_or_else(|| override_cargo.clone());
+                            task_template.args.extend(override_parts);
                         }
-                    }
-                    RunnableArgs::Shell(shell) => {
-                        task_template.command = shell.program;
-                        task_template.args = shell.args;
-                        task_template.env = shell.environment;
-                        task_template.cwd = Some(shell.cwd.to_string_lossy().to_string());
+                        None => task_template.command = "cargo".to_string(),
+                    };
+                    task_template.env = cargo.environment;
+                    task_template.cwd = Some(
+                        cargo
+                            .workspace_root
+                            .unwrap_or(cargo.cwd)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
+                    task_template.args.extend(cargo.cargo_args);
+                    if !cargo.executable_args.is_empty() {
+                        task_template.args.push("--".to_string());
+                        task_template.args.extend(cargo.executable_args);
                     }
                 }
+                RunnableArgs::Shell(shell) => {
+                    task_template.command = shell.program;
+                    task_template.args = shell.args;
+                    task_template.env = shell.environment;
+                    task_template.cwd = Some(shell.cwd.to_string_lossy().to_string());
+                }
+            }
 
-                task_template
-            })
-            .collect();
-        Ok(TaskTemplates(templates))
+            runnables.push((location, task_template));
+        }
+
+        Ok(LspRunnables { runnables })
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtRunnables {
@@ -544,26 +560,49 @@ impl LspCommand for LspRunnables {
     }
 
     fn response_to_proto(
-        response: TaskTemplates,
-        _: &mut LspStore,
-        _: PeerId,
+        response: LspRunnables,
+        lsp_store: &mut LspStore,
+        peer_id: PeerId,
         _: &clock::Global,
-        _: &mut App,
+        cx: &mut App,
     ) -> proto::LspExtRunnablesResponse {
         proto::LspExtRunnablesResponse {
-            task_templates: serde_json::to_vec(&response).unwrap(),
+            runnables: response
+                .runnables
+                .into_iter()
+                .map(|(location, task_template)| proto::LspRunnable {
+                    location: location
+                        .map(|location| location_link_to_proto(location, lsp_store, peer_id, cx)),
+                    task_template: serde_json::to_vec(&task_template).unwrap(),
+                })
+                .collect(),
         }
     }
 
     async fn response_from_proto(
         self,
         message: proto::LspExtRunnablesResponse,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: AsyncApp,
-    ) -> Result<TaskTemplates> {
-        serde_json::from_slice(&message.task_templates)
-            .context("deserializing task templates from proto")
+        mut cx: AsyncApp,
+    ) -> Result<LspRunnables> {
+        let mut runnables = LspRunnables {
+            runnables: Vec::new(),
+        };
+
+        for lsp_runnable in message.runnables {
+            let location = match lsp_runnable.location {
+                Some(location) => {
+                    Some(location_link_from_proto(location, &lsp_store, &mut cx).await?)
+                }
+                None => None,
+            };
+            let task_template = serde_json::from_slice(&lsp_runnable.task_template)
+                .context("deserializing task template from proto")?;
+            runnables.runnables.push((location, task_template));
+        }
+
+        Ok(runnables)
     }
 
     fn buffer_id_from_proto(message: &proto::LspExtRunnables) -> Result<BufferId> {

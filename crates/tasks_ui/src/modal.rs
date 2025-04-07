@@ -244,7 +244,6 @@ impl PickerDelegate for TasksModalDelegate {
                         .used_and_current_resolved_tasks(&self.task_contexts, cx);
 
                     cx.spawn(async move |picker, cx| {
-                        let lsp_task_context = TaskContext::default();
                         let lsp_tasks = lsp_tasks.await;
                         picker
                             .update(cx, |picker, _| {
