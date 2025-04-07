@@ -8367,7 +8367,6 @@ dependencies = [
  "theme",
  "ui",
  "util",
- "workspace",
  "workspace-hack",
 ]
 
