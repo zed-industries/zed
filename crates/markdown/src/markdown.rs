@@ -92,9 +92,11 @@ pub enum CodeBlockVariant {
         copy_button: bool,
     },
     Card {
-        open_path_callback: Option<Arc<dyn Fn(&PathRange, &mut Window, &mut App)>>,
+        open_path_callback: Option<OpenPathCallback>,
     },
 }
+
+pub type OpenPathCallback = Arc<dyn Fn(&PathRange, &mut Window, &mut App)>;
 
 actions!(markdown, [Copy]);
 
@@ -671,158 +673,13 @@ impl Element for MarkdownElement {
                                     builder.push_div(code_block, range, markdown_end);
                                 }
                                 (CodeBlockVariant::Card { open_path_callback }, _) => {
-                                    let icon = match kind {
-                                        CodeBlockKind::Indented => None,
-                                        CodeBlockKind::Fenced => Some(
-                                            Icon::new(IconName::Code)
-                                                .color(Color::Muted)
-                                                .size(IconSize::XSmall)
-                                                .into_any_element(),
-                                        ),
-                                        CodeBlockKind::FencedLang(language_name) => parsed_markdown
-                                            .languages_by_name
-                                            .get(language_name)
-                                            .and_then(|language| {
-                                                language
-                                                    .config()
-                                                    .matcher
-                                                    .path_suffixes
-                                                    .iter()
-                                                    .find_map(|extension| {
-                                                        file_icons::FileIcons::get_icon(
-                                                            Path::new(extension),
-                                                            cx,
-                                                        )
-                                                    })
-                                                    .map(Icon::from_path)
-                                                    .map(|icon| {
-                                                        icon.color(Color::Muted)
-                                                            .size(IconSize::Small)
-                                                            .into_any_element()
-                                                    })
-                                            }),
-                                        CodeBlockKind::FencedSrc(path_range) => {
-                                            file_icons::FileIcons::get_icon(&path_range.path, cx)
-                                                .map(Icon::from_path)
-                                                .map(|icon| {
-                                                    icon.color(Color::Muted)
-                                                        .size(IconSize::XSmall)
-                                                        .into_any_element()
-                                                })
-                                        }
-                                    };
-
-                                    let label = match kind {
-                                        CodeBlockKind::Indented => None,
-                                        CodeBlockKind::Fenced => Some(
-                                            h_flex()
-                                                .gap_1()
-                                                .children(icon)
-                                                .child(
-                                                    Label::new("untitled").size(LabelSize::Small),
-                                                )
-                                                .into_any_element(),
-                                        ),
-                                        CodeBlockKind::FencedLang(raw_language_name) => Some(
-                                            h_flex()
-                                                .gap_1()
-                                                .children(icon)
-                                                .child(
-                                                    Label::new(
-                                                        parsed_markdown
-                                                            .languages_by_name
-                                                            .get(raw_language_name)
-                                                            .map(|language| language.name().into())
-                                                            .clone()
-                                                            .unwrap_or_else(|| {
-                                                                raw_language_name.clone()
-                                                            }),
-                                                    )
-                                                    .size(LabelSize::Small),
-                                                )
-                                                .into_any_element(),
-                                        ),
-                                        CodeBlockKind::FencedSrc(path_range) => {
-                                            path_range.path.file_name().map(|file_name| {
-                                                let content = if let Some(parent) =
-                                                    path_range.path.parent()
-                                                {
-                                                    h_flex()
-                                                        .ml_1()
-                                                        .gap_1()
-                                                        .child(
-                                                            Label::new(
-                                                                file_name
-                                                                    .to_string_lossy()
-                                                                    .to_string(),
-                                                            )
-                                                            .size(LabelSize::Small),
-                                                        )
-                                                        .child(
-                                                            Label::new(
-                                                                parent
-                                                                    .to_string_lossy()
-                                                                    .to_string(),
-                                                            )
-                                                            .color(Color::Muted)
-                                                            .size(LabelSize::Small),
-                                                        )
-                                                        .into_any_element()
-                                                } else {
-                                                    Label::new(
-                                                        path_range
-                                                            .path
-                                                            .to_string_lossy()
-                                                            .to_string(),
-                                                    )
-                                                    .size(LabelSize::Small)
-                                                    .ml_1()
-                                                    .into_any_element()
-                                                };
-
-                                                let mut label = h_flex()
-                                                    .id(("code-block-header-label", index))
-                                                    .w_full()
-                                                    .max_w_full()
-                                                    .px_1()
-                                                    .gap_0p5()
-                                                    .children(icon)
-                                                    .child(content);
-
-                                                if let Some(open_path_callback) =
-                                                    open_path_callback.clone()
-                                                {
-                                                    label = label
-                                                        .cursor_pointer()
-                                                        .rounded_sm()
-                                                        .hover(|item| {
-                                                            item.bg(cx
-                                                                .theme()
-                                                                .colors()
-                                                                .element_hover
-                                                                .opacity(0.5))
-                                                        })
-                                                        .tooltip(Tooltip::text("Jump to file"))
-                                                        .child(
-                                                            Icon::new(IconName::ArrowUpRight)
-                                                                .size(IconSize::XSmall)
-                                                                .color(Color::Ignored),
-                                                        )
-                                                        .on_click({
-                                                            let path_range = path_range.clone();
-                                                            move |_, window, cx| {
-                                                                open_path_callback(
-                                                                    &path_range,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                            }
-                                                        });
-                                                }
-                                                label.into_any_element()
-                                            })
-                                        }
-                                    };
+                                    let label = render_code_block_card_label(
+                                        kind,
+                                        index,
+                                        &parsed_markdown.languages_by_name,
+                                        open_path_callback.clone(),
+                                        cx,
+                                    );
 
                                     let code_block_header_bg =
                                         cx.theme().colors().element_background.blend(
@@ -1157,6 +1014,112 @@ impl Element for MarkdownElement {
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
         self.paint_selection(bounds, &rendered_markdown.text, window, cx);
+    }
+}
+
+fn render_code_block_card_label(
+    kind: &CodeBlockKind,
+    id: usize,
+    languages_by_name: &HashMap<SharedString, Arc<Language>>,
+    open_path_callback: Option<OpenPathCallback>,
+    cx: &App,
+) -> Option<AnyElement> {
+    match kind {
+        CodeBlockKind::Indented => None,
+        CodeBlockKind::Fenced => Some(
+            h_flex()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::Code)
+                        .color(Color::Muted)
+                        .size(IconSize::XSmall),
+                )
+                .child(Label::new("untitled").size(LabelSize::Small))
+                .into_any_element(),
+        ),
+        CodeBlockKind::FencedLang(raw_language_name) => Some(
+            h_flex()
+                .gap_1()
+                .children(
+                    languages_by_name
+                        .get(raw_language_name)
+                        .and_then(|language| {
+                            language
+                                .config()
+                                .matcher
+                                .path_suffixes
+                                .iter()
+                                .find_map(|extension| {
+                                    file_icons::FileIcons::get_icon(Path::new(extension), cx)
+                                })
+                                .map(Icon::from_path)
+                                .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+                        }),
+                )
+                .child(
+                    Label::new(
+                        languages_by_name
+                            .get(raw_language_name)
+                            .map(|language| language.name().into())
+                            .clone()
+                            .unwrap_or_else(|| raw_language_name.clone()),
+                    )
+                    .size(LabelSize::Small),
+                )
+                .into_any_element(),
+        ),
+        CodeBlockKind::FencedSrc(path_range) => path_range.path.file_name().map(|file_name| {
+            let content = if let Some(parent) = path_range.path.parent() {
+                h_flex()
+                    .ml_1()
+                    .gap_1()
+                    .child(
+                        Label::new(file_name.to_string_lossy().to_string()).size(LabelSize::Small),
+                    )
+                    .child(
+                        Label::new(parent.to_string_lossy().to_string())
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element()
+            } else {
+                Label::new(path_range.path.to_string_lossy().to_string())
+                    .size(LabelSize::Small)
+                    .ml_1()
+                    .into_any_element()
+            };
+
+            let mut label = h_flex()
+                .id(("code-block-header-label", id))
+                .w_full()
+                .max_w_full()
+                .px_1()
+                .gap_0p5()
+                .children(
+                    file_icons::FileIcons::get_icon(&path_range.path, cx)
+                        .map(Icon::from_path)
+                        .map(|icon| icon.color(Color::Muted).size(IconSize::XSmall)),
+                )
+                .child(content);
+
+            if let Some(open_path_callback) = open_path_callback {
+                label = label
+                    .cursor_pointer()
+                    .rounded_sm()
+                    .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
+                    .tooltip(Tooltip::text("Jump to file"))
+                    .child(
+                        Icon::new(IconName::ArrowUpRight)
+                            .size(IconSize::XSmall)
+                            .color(Color::Ignored),
+                    )
+                    .on_click({
+                        let path_range = path_range.clone();
+                        move |_, window, cx| open_path_callback(&path_range, window, cx)
+                    });
+            }
+            label.into_any_element()
+        }),
     }
 }
 
