@@ -208,7 +208,7 @@ impl DebugPanel {
             .read(cx)
             .items()
             .filter_map(|item| item.downcast::<DebugSession>())
-            .filter(|item| item.read(cx).session_id(cx) == Some(*client_id))
+            .filter(|item| item.read(cx).session_id(cx) == *client_id)
             .map(|item| item.clone())
             .collect()
     }
@@ -225,7 +225,7 @@ impl DebugPanel {
             .find(|item| {
                 let item = item.read(cx);
 
-                item.session_id(cx) == Some(client_id)
+                item.session_id(cx) == client_id
             })
     }
 
@@ -250,7 +250,7 @@ impl DebugPanel {
 
                 if self.pane.read_with(cx, |pane, cx| {
                     pane.items_of_type::<DebugSession>()
-                        .any(|item| item.read(cx).session_id(cx) == Some(*session_id))
+                        .any(|item| item.read(cx).session_id(cx) == *session_id)
                 }) {
                     // We already have an item for this session.
                     return;
@@ -676,7 +676,48 @@ impl DebugPanel {
                                         cx,
                                     )
                                 }),
-                        ),
+                        )
+                        .when(active_session.is_some(), |this| {
+                            this.child(
+                                IconButton::new("close-focused-debug-session", IconName::Close)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        if this.pane.update(cx, |pane, cx| {
+                                            if let Some(active_item) = pane.active_item() {
+                                                let Some(session_id) = active_item
+                                                    .downcast::<DebugSession>()
+                                                    .map(|session| session.read(cx).session_id(cx))
+                                                else {
+                                                    return false;
+                                                };
+
+                                                let _ = this.project.update(cx, |project, cx| {
+                                                    project
+                                                        .dap_store()
+                                                        .update(cx, |dap_store, cx| {
+                                                            dap_store
+                                                                .shutdown_session(session_id, cx)
+                                                        })
+                                                        .detach_and_log_err(cx);
+                                                });
+
+                                                pane.remove_item(
+                                                    active_item.item_id(),
+                                                    false,
+                                                    true,
+                                                    window,
+                                                    cx,
+                                                );
+                                                false
+                                            } else {
+                                                true
+                                            }
+                                        }) {
+                                            cx.emit(PanelEvent::Close);
+                                        }
+                                    })),
+                            )
+                        }),
                 ),
         )
     }

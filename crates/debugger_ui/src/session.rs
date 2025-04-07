@@ -75,9 +75,9 @@ impl DebugSession {
         })
     }
 
-    pub(crate) fn session_id(&self, cx: &App) -> Option<SessionId> {
+    pub(crate) fn session_id(&self, cx: &App) -> SessionId {
         match &self.mode {
-            DebugSessionState::Running(entity) => Some(entity.read(cx).session_id()),
+            DebugSessionState::Running(entity) => entity.read(cx).session_id(),
         }
     }
 
