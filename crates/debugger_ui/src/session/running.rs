@@ -349,7 +349,7 @@ impl RunningState {
 
     #[cfg(test)]
     pub fn console(&self) -> &Entity<Console> {
-        &self.console
+        &self._console
     }
 
     #[cfg(test)]
