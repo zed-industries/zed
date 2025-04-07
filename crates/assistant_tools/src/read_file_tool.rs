@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::code_symbols_tool::file_outline;
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, TOOL_OUTPUT_LIMIT, Tool};
 use gpui::{App, Entity, Task};
 use itertools::Itertools;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -12,11 +12,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
 use util::markdown::MarkdownString;
-
-/// If the model requests to read a file whose size exceeds this, then
-/// the tool will return an error along with the model's symbol outline,
-/// and suggest trying again using line ranges from the outline.
-const MAX_FILE_SIZE_TO_READ: usize = 4096;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
@@ -130,7 +125,7 @@ impl Tool for ReadFileTool {
                 // No line ranges specified, so check file size to see if it's too big.
                 let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
 
-                if file_size <= MAX_FILE_SIZE_TO_READ {
+                if file_size <= TOOL_OUTPUT_LIMIT {
                     // File is small enough, so return its contents.
                     let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
