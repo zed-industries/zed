@@ -162,7 +162,7 @@ pub async fn post_crash(
                 "backtrace": summary,
             });
             SnowflakeRow::new(
-                "Crash Report",
+                "Crash Reported",
                 None,
                 false,
                 Some(installation_id),
@@ -365,7 +365,7 @@ pub async fn post_panic(
                 "backtrace": backtrace,
             });
             SnowflakeRow::new(
-                "Panic Report",
+                "Panic Reported",
                 None,
                 false,
                 panic.installation_id.clone(),
