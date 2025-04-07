@@ -15,7 +15,7 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength,
-    EdgesRefinement, Empty, Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton,
+    EdgesRefinement, Empty, Entity, Focusable, Hsla, ListAlignment, ListState, MouseButton,
     PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription, Task,
     TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
@@ -208,12 +208,6 @@ fn render_markdown(
         code_block_overflow_x_scroll: true,
         table_overflow_x_scroll: true,
         code_block: StyleRefinement {
-            margin: EdgesRefinement {
-                top: Some(Length::Definite(rems(0.).into())),
-                left: Some(Length::Definite(rems(0.).into())),
-                right: Some(Length::Definite(rems(0.).into())),
-                bottom: Some(Length::Definite(rems(0.5).into())),
-            },
             padding: EdgesRefinement {
                 top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                 left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
@@ -221,13 +215,6 @@ fn render_markdown(
                 bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
             },
             background: Some(colors.editor_background.into()),
-            border_color: Some(colors.border_variant),
-            border_widths: EdgesRefinement {
-                top: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                left: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                right: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
-            },
             text: Some(TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
@@ -269,11 +256,11 @@ fn render_markdown(
     };
 
     cx.new(|cx| {
-        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
-            move |text, window, cx| {
+        Markdown::new(text, markdown_style, Some(language_registry), None, cx)
+            .code_block_variant(markdown::CodeBlockVariant::Card)
+            .open_url(move |text, window, cx| {
                 open_markdown_link(text, workspace.clone(), window, cx);
-            },
-        )
+            })
     })
 }
 

@@ -1,12 +1,11 @@
 pub mod parser;
 mod path_range;
 
-use file_icons::FileIcons;
 use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::mem;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,11 +17,11 @@ use gpui::{
     StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, actions, point, quad,
 };
-use language::{Language, LanguageRegistry, Rope};
+use language::{Language, LanguageName, LanguageRegistry, Rope};
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
 use theme::SyntaxTheme;
-use ui::{ButtonLike, Tooltip, prelude::*};
+use ui::{Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
 use workspace::Workspace;
 
@@ -89,7 +88,13 @@ pub struct Markdown {
 #[derive(Debug)]
 struct Options {
     parse_links_only: bool,
-    copy_code_block_buttons: bool,
+    code_block_variant: CodeBlockVariant,
+}
+
+#[derive(Debug)]
+pub enum CodeBlockVariant {
+    Default { copy_button: bool },
+    Card,
 }
 
 actions!(markdown, [Copy]);
@@ -117,7 +122,7 @@ impl Markdown {
             fallback_code_block_language,
             options: Options {
                 parse_links_only: false,
-                copy_code_block_buttons: true,
+                code_block_variant: CodeBlockVariant::Default { copy_button: true },
             },
             open_url: None,
             copied_code_blocks: HashSet::new(),
@@ -152,7 +157,7 @@ impl Markdown {
             fallback_code_block_language: None,
             options: Options {
                 parse_links_only: true,
-                copy_code_block_buttons: true,
+                code_block_variant: CodeBlockVariant::Default { copy_button: true },
             },
             open_url: None,
             copied_code_blocks: HashSet::new(),
@@ -269,8 +274,8 @@ impl Markdown {
         }));
     }
 
-    pub fn copy_code_block_buttons(mut self, should_copy: bool) -> Self {
-        self.options.copy_code_block_buttons = should_copy;
+    pub fn code_block_variant(mut self, variant: CodeBlockVariant) -> Self {
+        self.options.code_block_variant = variant;
         self
     }
 }
@@ -583,13 +588,13 @@ impl Element for MarkdownElement {
             self.style.syntax.clone(),
         );
         let parsed_markdown = &self.markdown.read(cx).parsed_markdown;
+        let code_block_variant = &self.markdown.read(cx).options.code_block_variant;
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
             0
         };
 
-        let code_citation_id = SharedString::from("code-citation-link");
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             match event {
                 MarkdownEvent::Start(tag) => {
@@ -634,119 +639,209 @@ impl Element for MarkdownElement {
                                 CodeBlockKind::FencedLang(language) => {
                                     parsed_markdown.languages_by_name.get(language).cloned()
                                 }
-                                CodeBlockKind::FencedSrc(path_range) => {
-                                    // If the path actually exists in the project, render a link to it.
-                                    if let Some(project_path) =
-                                        window.root::<Workspace>().flatten().and_then(|workspace| {
-                                            workspace
-                                                .read(cx)
-                                                .project()
-                                                .read(cx)
-                                                .find_project_path(&path_range.path, cx)
-                                        })
-                                    {
-                                        builder.flush_text();
-
-                                        builder.push_div(
-                                            div().relative().w_full(),
-                                            range,
-                                            markdown_end,
-                                        );
-
-                                        builder.modify_current_div(|el| {
-                                            let file_icon =
-                                                FileIcons::get_icon(&project_path.path, cx)
-                                                    .map(|path| {
-                                                        Icon::from_path(path)
-                                                            .color(Color::Muted)
-                                                            .into_any_element()
-                                                    })
-                                                    .unwrap_or_else(|| {
-                                                        IconButton::new(
-                                                            "file-path-icon",
-                                                            IconName::File,
-                                                        )
-                                                        .shape(ui::IconButtonShape::Square)
-                                                        .into_any_element()
-                                                    });
-
-                                            el.child(
-                                                ButtonLike::new(ElementId::NamedInteger(
-                                                    code_citation_id.clone(),
-                                                    index,
-                                                ))
-                                                .child(
-                                                    div()
-                                                        .mb_1()
-                                                        .flex()
-                                                        .items_center()
-                                                        .gap_1()
-                                                        .child(file_icon)
-                                                        .child(
-                                                            Label::new(
-                                                                project_path
-                                                                    .path
-                                                                    .display()
-                                                                    .to_string(),
-                                                            )
-                                                            .color(Color::Muted)
-                                                            .underline(),
-                                                        ),
-                                                )
-                                                .on_click({
-                                                    let click_path = project_path.clone();
-                                                    move |_, window, cx| {
-                                                        if let Some(workspace) =
-                                                            window.root::<Workspace>().flatten()
-                                                        {
-                                                            workspace.update(cx, |workspace, cx| {
-                                                                workspace
-                                                                    .open_path(
-                                                                        click_path.clone(),
-                                                                        None,
-                                                                        true,
-                                                                        window,
-                                                                        cx,
-                                                                    )
-                                                                    .detach_and_log_err(cx);
-                                                            })
-                                                        }
-                                                    }
-                                                }),
-                                            )
-                                        });
-
-                                        builder.pop_div();
-                                    }
-
-                                    parsed_markdown
-                                        .languages_by_path
-                                        .get(&path_range.path)
-                                        .cloned()
-                                }
+                                CodeBlockKind::FencedSrc(path_range) => parsed_markdown
+                                    .languages_by_path
+                                    .get(&path_range.path)
+                                    .cloned(),
                                 _ => None,
                             };
 
-                            // This is a parent container that we can position the copy button inside.
-                            builder.push_div(div().relative().w_full(), range, markdown_end);
+                            let is_indented = matches!(kind, CodeBlockKind::Indented);
 
-                            let mut code_block = div()
-                                .id(("code-block", range.start))
-                                .rounded_lg()
-                                .map(|mut code_block| {
-                                    if self.style.code_block_overflow_x_scroll {
-                                        code_block.style().restrict_scroll_to_axis = Some(true);
-                                        code_block.flex().overflow_x_scroll()
-                                    } else {
-                                        code_block.w_full()
+                            match (code_block_variant, is_indented) {
+                                (CodeBlockVariant::Default { .. }, _) | (_, true) => {
+                                    // This is a parent container that we can position the copy button inside.
+                                    builder.push_div(
+                                        div().relative().w_full(),
+                                        range,
+                                        markdown_end,
+                                    );
+
+                                    let mut code_block = div()
+                                        .id(("code-block", range.start))
+                                        .rounded_lg()
+                                        .map(|mut code_block| {
+                                            if self.style.code_block_overflow_x_scroll {
+                                                code_block.style().restrict_scroll_to_axis =
+                                                    Some(true);
+                                                code_block.flex().overflow_x_scroll()
+                                            } else {
+                                                code_block.w_full()
+                                            }
+                                        });
+                                    code_block.style().refine(&self.style.code_block);
+                                    if let Some(code_block_text_style) = &self.style.code_block.text
+                                    {
+                                        builder.push_text_style(code_block_text_style.to_owned());
                                     }
-                                });
-                            code_block.style().refine(&self.style.code_block);
-                            if let Some(code_block_text_style) = &self.style.code_block.text {
-                                builder.push_text_style(code_block_text_style.to_owned());
+                                    builder.push_code_block(language);
+                                    builder.push_div(code_block, range, markdown_end);
+                                }
+                                (CodeBlockVariant::Card, _) => {
+                                    let icon = match kind {
+                                        CodeBlockKind::Indented => None,
+                                        CodeBlockKind::Fenced => Some(
+                                            Icon::new(IconName::Code)
+                                                .color(Color::Muted)
+                                                .size(IconSize::XSmall)
+                                                .into_any_element(),
+                                        ),
+                                        CodeBlockKind::FencedLang(language_name) => parsed_markdown
+                                            .languages_by_name
+                                            .get(language_name)
+                                            .and_then(|language| {
+                                                language
+                                                    .config()
+                                                    .matcher
+                                                    .path_suffixes
+                                                    .iter()
+                                                    .find_map(|extension| {
+                                                        file_icons::FileIcons::get_icon(
+                                                            Path::new(extension),
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .map(Icon::from_path)
+                                                    .map(|icon| {
+                                                        icon.color(Color::Muted)
+                                                            .size(IconSize::Small)
+                                                            .into_any_element()
+                                                    })
+                                            }),
+                                        CodeBlockKind::FencedSrc(path_range) => {
+                                            if let Some(project_path) = window
+                                                .root::<Workspace>()
+                                                .flatten()
+                                                .and_then(|workspace| {
+                                                    dbg!("Got workspace");
+                                                    workspace
+                                                        .read(cx)
+                                                        .project()
+                                                        .read(cx)
+                                                        .find_project_path(&path_range.path, cx)
+                                                })
+                                            {
+                                                file_icons::FileIcons::get_icon(
+                                                    &project_path.path,
+                                                    cx,
+                                                )
+                                                .map(Icon::from_path)
+                                                .map(|icon| {
+                                                    icon.color(Color::Muted)
+                                                        .size(IconSize::XSmall)
+                                                        .into_any_element()
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                    };
+
+                                    let label = match kind {
+                                        CodeBlockKind::Indented => None,
+                                        CodeBlockKind::Fenced => Some(
+                                            Label::new("Untitled")
+                                                .size(LabelSize::Small)
+                                                .into_any_element(),
+                                        ),
+                                        CodeBlockKind::FencedLang(shared_string) => Some(
+                                            Label::new(shared_string.clone())
+                                                .size(LabelSize::Small)
+                                                .into_any_element(),
+                                        ),
+                                        CodeBlockKind::FencedSrc(path_range) => {
+                                            path_range.path.file_name().map(|file_name| {
+                                                if let Some(parent) = path_range.path.parent() {
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .child(
+                                                            Label::new(
+                                                                file_name
+                                                                    .to_string_lossy()
+                                                                    .to_string(),
+                                                            )
+                                                            .size(LabelSize::Small),
+                                                        )
+                                                        .child(
+                                                            Label::new(
+                                                                parent
+                                                                    .to_string_lossy()
+                                                                    .to_string(),
+                                                            )
+                                                            .color(Color::Muted)
+                                                            .size(LabelSize::Small),
+                                                        )
+                                                        .into_any_element()
+                                                } else {
+                                                    Label::new(
+                                                        path_range
+                                                            .path
+                                                            .to_string_lossy()
+                                                            .to_string(),
+                                                    )
+                                                    .size(LabelSize::Small)
+                                                    .into_any_element()
+                                                }
+                                            })
+                                        }
+                                    };
+
+                                    let code_block_header_bg =
+                                        cx.theme().colors().element_background.blend(
+                                            cx.theme().colors().editor_foreground.opacity(0.025),
+                                        );
+
+                                    let codeblock_header = h_flex()
+                                        .py_0p5()
+                                        .pl_1()
+                                        .pr_0p5()
+                                        .justify_between()
+                                        .border_b_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .bg(code_block_header_bg)
+                                        .rounded_t_md()
+                                        .child(h_flex().gap_1p5().children(icon).children(label))
+                                        .child(
+                                            IconButton::new("copy-code", IconName::Copy)
+                                                .icon_size(IconSize::Small)
+                                                .tooltip(Tooltip::text("Copy Code")),
+                                        );
+
+                                    let parent_container = v_flex()
+                                        .mb_2()
+                                        .relative()
+                                        .overflow_hidden()
+                                        .rounded_lg()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .child(codeblock_header);
+
+                                    builder.push_div(parent_container, range, markdown_end);
+
+                                    let mut code_block = div()
+                                        .id(("code-block", range.start))
+                                        .rounded_b_lg()
+                                        .map(|mut code_block| {
+                                            if self.style.code_block_overflow_x_scroll {
+                                                code_block.style().restrict_scroll_to_axis =
+                                                    Some(true);
+                                                code_block.flex().overflow_x_scroll()
+                                            } else {
+                                                code_block.w_full()
+                                            }
+                                        });
+
+                                    code_block.style().refine(&self.style.code_block);
+
+                                    if let Some(code_block_text_style) = &self.style.code_block.text
+                                    {
+                                        builder.push_text_style(code_block_text_style.to_owned());
+                                    }
+
+                                    builder.push_code_block(language);
+                                    builder.push_div(code_block, range, markdown_end);
+                                }
                             }
-                            builder.push_code_block(language);
-                            builder.push_div(code_block, range, markdown_end);
                         }
                         MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
                         MarkdownTag::List(bullet_index) => {
@@ -881,7 +976,10 @@ impl Element for MarkdownElement {
                             builder.pop_text_style();
                         }
 
-                        if self.markdown.read(cx).options.copy_code_block_buttons {
+                        if matches!(
+                            self.markdown.read(cx).options.code_block_variant,
+                            CodeBlockVariant::Default { copy_button: true }
+                        ) {
                             builder.flush_text();
                             builder.modify_current_div(|el| {
                                 let id =

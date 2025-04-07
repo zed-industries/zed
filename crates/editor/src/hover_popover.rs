@@ -571,7 +571,7 @@ async fn parse_blocks(
                 fallback_language_name,
                 cx,
             )
-            .copy_code_block_buttons(false)
+            .code_block_variant(markdown::CodeBlockVariant::Default { copy_button: false })
             .open_url(open_markdown_url)
         })
         .ok();
