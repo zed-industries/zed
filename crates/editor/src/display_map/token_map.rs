@@ -921,6 +921,7 @@ mod tests {
     use gpui::Hsla;
     use multi_buffer::MultiBuffer;
     use ui::App;
+    use util::post_inc;
 
     use super::*;
 
@@ -1088,6 +1089,49 @@ mod tests {
                 .map(|info| info.buffer_row)
                 .collect::<Vec<_>>(),
             vec![Some(0), Some(1)]
+        );
+    }
+
+    #[gpui::test]
+    fn test_token_buffer_rows(cx: &mut App) {
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        assert_eq!(token_snapshot.text(), "abc\ndef\nghi");
+        let mut next_token_id = 0;
+
+        let (token_snapshot, _) = token_map.splice(
+            &[],
+            vec![
+                Token::new(
+                    post_inc(&mut next_token_id),
+                    buffer.read(cx).snapshot(cx).anchor_at(0, Bias::Left)
+                        ..buffer.read(cx).snapshot(cx).anchor_at(3, Bias::Right),
+                    HighlightStyle::color(Hsla::green()),
+                    "|123|\n",
+                ),
+                Token::new(
+                    post_inc(&mut next_token_id),
+                    buffer.read(cx).snapshot(cx).anchor_at(4, Bias::Left)
+                        ..buffer.read(cx).snapshot(cx).anchor_at(7, Bias::Right),
+                    HighlightStyle::color(Hsla::green()),
+                    "|456|",
+                ),
+                Token::new(
+                    post_inc(&mut next_token_id),
+                    buffer.read(cx).snapshot(cx).anchor_at(7, Bias::Left)
+                        ..buffer.read(cx).snapshot(cx).anchor_at(10, Bias::Right),
+                    HighlightStyle::color(Hsla::green()),
+                    "\n|678|\n",
+                ),
+            ],
+        );
+        assert_eq!(token_snapshot.text(), "abc\ndef\nghi");
+        assert_eq!(
+            token_snapshot
+                .row_infos(0)
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
+            vec![Some(0), None, Some(1), None, None, Some(2)]
         );
     }
 }
