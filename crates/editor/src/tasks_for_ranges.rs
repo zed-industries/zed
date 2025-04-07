@@ -216,13 +216,6 @@ impl QueryRanges {
         sorted_ranges.extend(self.after_visible);
         sorted_ranges
     }
-
-    pub fn visible_range(self) -> Option<Range<text::Anchor>> {
-        let mut iter = self.visible.into_iter();
-        let first = iter.next()?;
-        let last = iter.next_back().unwrap_or(first.clone());
-        Some(first.start..last.end)
-    }
 }
 
 pub fn determine_query_ranges(

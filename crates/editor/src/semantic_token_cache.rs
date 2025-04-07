@@ -332,26 +332,27 @@ fn new_update_task(
     cx: &mut Context<Editor>,
 ) -> Task<()> {
     cx.spawn(async move |editor: WeakEntity<Editor>, cx| {
-        let Some(visible_range) = query_ranges.clone().visible_range() else {
-            log::error!("trying to update semantic tokens without visible tokens");
-            return;
-        };
-        let visible_range_update_result = editor
-            .update(cx, |_, cx| {
-                fetch_and_update_tokens(
-                    excerpt_buffer.clone(),
-                    query,
-                    visible_range.clone(),
-                    query.invalidate.should_invalidate(),
-                    cx,
-                )
-            })
-            .log_err();
+        let visible_range_update_results = future::join_all(
+            query_ranges
+                .visible
+                .into_iter()
+                .filter_map(|visible_range| {
+                    let fetch_task = editor
+                        .update(cx, |_, cx| {
+                            fetch_and_update_tokens(
+                                excerpt_buffer.clone(),
+                                query,
+                                visible_range.clone(),
+                                query.invalidate.should_invalidate(),
+                                cx,
+                            )
+                        })
+                        .log_err()?;
+                    Some(async move { (visible_range, fetch_task.await) })
+                }),
+        )
+        .await;
 
-        let result = match visible_range_update_result {
-            Some(task) => Some(task.await),
-            None => None,
-        };
         let token_delay = cx.background_executor().timer(Duration::from_millis(
             INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS,
         ));
@@ -373,8 +374,10 @@ fn new_update_task(
                     .ok()
             };
 
-        if let Some(Err(e)) = result {
-            query_range_failed(&visible_range, e, cx);
+        for (range, result) in visible_range_update_results {
+            if let Err(e) = result {
+                query_range_failed(&range, e, cx);
+            }
         }
 
         token_delay.await;
