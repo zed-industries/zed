@@ -188,6 +188,10 @@ fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) 
 
 /// Copied from alacritty/src/display/hint.rs:
 /// Iterate over all visible regex matches.
+// TODO(davewa): I don't (yet?) understand why we do this? Shouldn't this only search the line of the cell that was
+// clicked on? That would also perform better, especially for terminals with a lot of lines: tiny font vertical
+// montior people I'm looking at you ;), which could easily be multiple 100s of lines, then we always add another
+// 200 beyond that--why not always only search the one line?
 fn visible_regex_match_iter<'a, T>(
     term: &'a Term<T>,
     regex: &'a mut RegexSearch,
@@ -301,8 +305,6 @@ mod tests {
     #[derive(Debug)]
     struct ExpectedHyperlink {
         hovered_grid_point: AlacPoint,
-        // It is only used in derive(Debug)
-        #[allow(dead_code)]
         hovered_grid_char: char,
         hyperlink_match: RangeInclusive<AlacPoint>,
         // It is only used in derive(Debug)
@@ -311,19 +313,11 @@ mod tests {
         path_with_position: PathWithPosition,
     }
 
-    fn build_term_from_test_lines<'a, 'b: 'a>(
-        test_lines: impl IntoIterator<Item = &'a &'b str> + Copy,
+    fn build_term_from_test_lines<'a>(
+        term_size: TermSize,
+        test_lines: &(impl IntoIterator<Item = &'a str> + Clone),
     ) -> (Term<VoidListener>, ExpectedHyperlink) {
-        let longest_line_chars = test_lines
-            .into_iter()
-            .fold(0, |state, line| cmp::max(state, line.chars().count()));
-        let columns = longest_line_chars;
-        let screen_lines = longest_line_chars / 2;
-        let mut term = Term::new(
-            Config::default(),
-            &TermSize::new(columns, screen_lines),
-            VoidListener,
-        );
+        let mut term = Term::new(Config::default(), &term_size, VoidListener);
 
         enum MatchState {
             MatchScan,
@@ -347,10 +341,14 @@ mod tests {
         let mut path_with_position = PathWithPosition::from_path(PathBuf::new());
         let mut match_state = MatchState::MatchScan;
         let mut captures_state = CapturesState::PathScan;
-        for text in test_lines {
+        let mut last_input_point = AlacPoint::new(Line(0), Column(0));
+        for text in test_lines.clone().into_iter() {
             let text = text.chars().collect_vec();
 
-            let parse_u32 = |index: &mut usize, term: Option<&mut Term<VoidListener>>| -> u32 {
+            let parse_u32 = |index: &mut usize,
+                             last_input_point: &mut AlacPoint,
+                             term: Option<&mut Term<VoidListener>>|
+             -> u32 {
                 *index += 1;
                 let mut number = String::new();
                 for c in &text[*index..] {
@@ -363,6 +361,14 @@ mod tests {
                 *index += number.len();
                 if let Some(term) = term {
                     for c in number.chars() {
+                        if !term.grid().cursor.input_needs_wrap {
+                            *last_input_point = term.grid().cursor.point;
+                        } else {
+                            *last_input_point = AlacPoint::new(
+                                Line(term.grid().cursor.point.line.0 + 1),
+                                Column(0),
+                            );
+                        }
                         term.input(c)
                     }
                 }
@@ -375,17 +381,25 @@ mod tests {
                     '«' | '»' => {
                         captures_state = match captures_state {
                             CapturesState::PathScan => {
-                                let hovered_grid_offset = parse_u32(&mut index, None) as usize;
+                                let hovered_grid_offset =
+                                    parse_u32(&mut index, &mut last_input_point, None) as usize;
                                 hovered_grid_point = term.grid().cursor.point.add(
                                     &term,
                                     Boundary::Grid,
                                     hovered_grid_offset,
                                 );
-                                CapturesState::Path(term.grid().cursor.point)
+                                let next_input_point = if !term.grid().cursor.input_needs_wrap {
+                                    term.grid().cursor.point
+                                } else {
+                                    AlacPoint::new(
+                                        Line(term.grid().cursor.point.line.0 + 1),
+                                        Column(0),
+                                    )
+                                };
+                                CapturesState::Path(next_input_point)
                             }
                             CapturesState::Path(start_point) => {
-                                path_capture_group = start_point
-                                    ..=term.grid().cursor.point.sub(&term, Boundary::Grid, 1);
+                                path_capture_group = start_point..=last_input_point;
                                 path_with_position = PathWithPosition::from_path(PathBuf::from(
                                     &term.bounds_to_string(
                                         path_capture_group.start().clone(),
@@ -396,14 +410,20 @@ mod tests {
                                 CapturesState::RowScan
                             }
                             CapturesState::RowScan => {
-                                path_with_position.row =
-                                    Some(parse_u32(&mut index, Some(&mut term)));
+                                path_with_position.row = Some(parse_u32(
+                                    &mut index,
+                                    &mut last_input_point,
+                                    Some(&mut term),
+                                ));
                                 index += 1;
                                 CapturesState::ColumnScan
                             }
                             CapturesState::ColumnScan => {
-                                path_with_position.column =
-                                    Some(parse_u32(&mut index, Some(&mut term)));
+                                path_with_position.column = Some(parse_u32(
+                                    &mut index,
+                                    &mut last_input_point,
+                                    Some(&mut term),
+                                ));
                                 index += 1;
                                 CapturesState::Done
                             }
@@ -416,11 +436,18 @@ mod tests {
                         match_state = match match_state {
                             MatchState::MatchScan => {
                                 index += 1;
-                                MatchState::Match(term.grid().cursor.point)
+                                let next_input_point = if !term.grid().cursor.input_needs_wrap {
+                                    term.grid().cursor.point
+                                } else {
+                                    AlacPoint::new(
+                                        Line(term.grid().cursor.point.line.0 + 1),
+                                        Column(0),
+                                    )
+                                };
+                                MatchState::Match(next_input_point)
                             }
                             MatchState::Match(start_point) => {
-                                hyperlink_match = start_point
-                                    ..=term.grid().cursor.point.sub(&term, Boundary::Grid, 1);
+                                hyperlink_match = start_point..=last_input_point;
                                 index += 1;
                                 MatchState::Done
                             }
@@ -430,11 +457,20 @@ mod tests {
                         }
                     }
                     _ => {
+                        if !term.grid().cursor.input_needs_wrap {
+                            last_input_point = term.grid().cursor.point;
+                        } else {
+                            last_input_point = AlacPoint::new(
+                                Line(term.grid().cursor.point.line.0 + 1),
+                                Column(0),
+                            );
+                        }
                         term.input(text[index]);
                         index += 1
                     }
                 }
             }
+            term.input('\n');
         }
 
         let hovered_grid_char = term.grid().index(hovered_grid_point).c;
@@ -472,6 +508,24 @@ mod tests {
         println!("\n{}", header);
     }
 
+    fn print_hyperlink_and_match(path_with_position: &PathWithPosition, path_match: &Match) {
+        print!("Path «{}»", &path_with_position.path.to_string_lossy());
+        if let Some(row) = path_with_position.row {
+            print!(", line = {row}");
+            if let Some(column) = path_with_position.column {
+                print!(", column = {column}");
+            }
+        }
+
+        println!(
+            ", at grid cells ({}, {})..=({}, {})",
+            path_match.start().line.0,
+            path_match.start().column.0,
+            path_match.end().line.0,
+            path_match.end().column.0,
+        )
+    }
+
     /// **`‹›`** := **hyperlink** match
     ///
     /// **`«NNaaaaa»`** := **path** capture group
@@ -480,24 +534,45 @@ mod tests {
     ///
     /// **`«NN»`** := **row** or **column** capture group
     macro_rules! test_hyperlink {
-        ($line:literal) => {{
-            const TEST: [&str; 1] = [$line];
-            let (mut term, expected_hyperlink) = build_term_from_test_lines(&TEST);
-            print_renderable_content(&term);
-            println!("{expected_hyperlink:#?}");
-            let mut hyperlink_finder = HyperlinkFinder::new();
-            if let Some((
-                MaybeNavigationTarget::PathLike(PathLikeTarget { maybe_path, .. }),
-                hyperlink_match,
-            )) = hyperlink_finder
-                .find_from_grid_point(expected_hyperlink.hovered_grid_point, &mut term)
-            {
-                println!("Found hyperlink: {maybe_path:?}, {hyperlink_match:?}");
-                let path_with_position = PathWithPosition::parse_str(&maybe_path);
-                assert_eq!(path_with_position, expected_hyperlink.path_with_position);
-                assert_eq!(hyperlink_match, expected_hyperlink.hyperlink_match);
-            } else {
-                assert!(false, "No hyperlink found")
+        ($($line:literal),+) => {
+            test_hyperlink!(2 @ $($line),+)
+        };
+        ($mininum_columns:literal @ $($line:literal),+) => {{
+            let test_lines = vec![$($line),+];
+            let (total_chars, longest_line_chars) = test_lines
+                .iter()
+                .fold((0, 0), |state, line| {
+                    let line_chars = line.chars().filter(|c| "‹«»›".find(*c).is_none()).count();
+                    (state.0 + line_chars, cmp::max(state.1, line_chars))
+                });
+            for columns in $mininum_columns..longest_line_chars + 1 {
+                println!("\n\nTesting with {columns} terminal columns:");
+                let screen_lines = total_chars / columns + 2;
+                let (mut term, expected_hyperlink) = build_term_from_test_lines(
+                    TermSize::new(columns, screen_lines), &test_lines);
+                print_renderable_content(&term);
+                println!("Hovered at ({}, {}) ({})",
+                    expected_hyperlink.hovered_grid_point.line.0,
+                    expected_hyperlink.hovered_grid_point.column.0,
+                    expected_hyperlink.hovered_grid_char
+                );
+                print!("Expected: ");
+                print_hyperlink_and_match(&expected_hyperlink.path_with_position, &expected_hyperlink.hyperlink_match);
+                let mut hyperlink_finder = HyperlinkFinder::new();
+                if let Some((
+                    MaybeNavigationTarget::PathLike(PathLikeTarget { maybe_path, .. }),
+                    hyperlink_match,
+                )) = hyperlink_finder
+                    .find_from_grid_point(expected_hyperlink.hovered_grid_point, &mut term)
+                {
+                    print!("Actual  : ");
+                    let path_with_position = PathWithPosition::parse_str(&maybe_path);
+                    print_hyperlink_and_match(&path_with_position, &hyperlink_match);
+                    assert_eq!(path_with_position, expected_hyperlink.path_with_position);
+                    assert_eq!(hyperlink_match, expected_hyperlink.hyperlink_match);
+                } else {
+                    assert!(false, "No hyperlink found")
+                }
             }
         }};
     }
@@ -508,32 +583,103 @@ mod tests {
     // - [ ] Windows paths
 
     #[test]
-    fn simple_hyperlinks() {
+    fn simple() {
         // Rust paths
-        test_hyperlink!("‹«1/例/cool.rs»›"); // Hovered on: '例' (WIDE_CHAR cell)
-        test_hyperlink!("‹«2/例/cool.rs»›"); // Hovered on: '例' (WIDE_CHAR_SPACER cell)
-        test_hyperlink!("‹«1/例/cool.rs»:«4»›");
-        test_hyperlink!("‹«1/例/cool.rs»:«4»:«2»›");
+        test_hyperlink!("‹«1/test/cool.rs»›");
+        test_hyperlink!("‹«1/test/cool.rs»›");
+        test_hyperlink!("‹«1/test/cool.rs»:«4»›");
+        test_hyperlink!("‹«1/test/cool.rs»:«4»:«2»›");
 
         // TODO: Not yet supported, should be enabled by the fix for #12338
-        // test_hyperlink!("‹«4/🏃/🦀.rs»›"); // Hovered on: '🦀' (WIDE_CHAR cell)
-        // test_hyperlink!("‹«5/🏃/🦀.rs»›"); // Hovered on: '🦀' (WIDE_CHAR_SPACER cell)
+        // test_hyperlink!("‹«4/🏃/🦀.rs»›");
+        // test_hyperlink!("‹«5/🏃/🦀.rs»›");
         // test_hyperlink!("‹«4/🏃/🦀.rs»:«4»›");
         // test_hyperlink!("‹«4/🏃/🦀.rs»:«4»:«2»›");
 
         // Cargo output
-        test_hyperlink!("    Compiling Cool (‹«1/例/Cool»›)"); // Hovered on: '例' (WIDE_CHAR cell)
-        test_hyperlink!("    Compiling Cool (‹«2/例/Cool»›)"); // Hovered on: '例' (WIDE_CHAR_SPACER cell)
+        test_hyperlink!("    Compiling Cool (‹«1/test/Cool»›)");
+        test_hyperlink!("    Compiling Cool (‹«2/test/Cool»›)");
 
         // Python
-        test_hyperlink!("‹«3awesome.py»›");
-        // TODO: Do we really want the hyperlink under `File `?
+        test_hyperlink!(3 @ "‹«3awesome.py»›");
+        // TODO(davewa): Do we really want the hyperlink under `File `?
         test_hyperlink!("    ‹File \"«4/awesome.py»\", line «42»›: Wat?"); // Hovered on: 's'
     }
 
+    #[test]
+    // TODO(davewa): We use higher minimum columns in this test because basically any wide char at a line
+    // wrap is buggy in alacritty. I feel like this really needs fixing, even if a lot of people haven't
+    // reported it. It is most likely in the category of people experiencing failures, but somewhat
+    // randomly and not really understanding what situation is causing it to work or not work, which
+    // isn't a great experience, even though it might not have been reported as an actual issue with
+    // a clear repro case.
+    fn wide_chars() {
+        // Rust paths
+        test_hyperlink!(4 @ "‹«1/例/cool.rs»›");
+        test_hyperlink!(4 @ "‹«1/例/cool.rs»›");
+        test_hyperlink!(4 @ "‹«1/例/cool.rs»:«4»›");
+        test_hyperlink!(4 @ "‹«1/例/cool.rs»:«4»:«2»›");
+
+        // TODO: Not yet supported, should be enabled by the fix for #12338
+        // test_hyperlink!("‹«4/🏃/🦀.rs»›");
+        // test_hyperlink!("‹«5/🏃/🦀.rs»›");
+        // test_hyperlink!("‹«4/🏃/🦀.rs»:«4»›");
+        // test_hyperlink!("‹«4/🏃/🦀.rs»:«4»:«2»›");
+
+        // Cargo output
+        test_hyperlink!(25 @ "    Compiling Cool (‹«1/例/Cool»›)");
+        test_hyperlink!(25 @ "    Compiling Cool (‹«2/例/Cool»›)");
+
+        // Python
+        test_hyperlink!(4 @ "‹«3例wesome.py»›");
+        // TODO(davewa): Do we really want the hyperlink under `File `?
+        test_hyperlink!(15 @ "    ‹File \"«4/例wesome.py»\", line «42»›: Wat?"); // Hovered on: 's'
+    }
+
+    #[test]
+    // TOOD(davewa): Possible alacritty_terminal bugs with matching content at the end of the grid, even just
+    // plain ascii?
+    #[should_panic(expected = "assertion `left == right` failed")]
+    fn issue_alacritty_bugs_with_few_columns() {
+        // Python
+        test_hyperlink!("‹«3awesome.py»›");
+    }
+
+    #[test]
+    // TOOD(davewa): Possible alacritty_terminal bugs with wide chars and fewer than 4 columns?
+    #[should_panic(expected = "assertion `left == right` failed")]
+    fn issue_alacritty_bugs_with_wide_char_at_line_wrap() {
+        // Rust paths
+        test_hyperlink!("‹«1/test/cool.rs»›");
+        test_hyperlink!("‹«1/例/cool.rs»›");
+        test_hyperlink!("‹«1/例/cool.rs»:«4»›");
+        test_hyperlink!("‹«1/例/cool.rs»:«4»:«2»›");
+
+        // Cargo output
+        test_hyperlink!("    Compiling Cool (‹«1/例/Cool»›)");
+        test_hyperlink!("    Compiling Cool (‹«2/例/Cool»›)");
+
+        // Python
+        test_hyperlink!("‹«3例wesome.py»›");
+        // TODO(davewa): Do we really want the hyperlink under `File `?
+        test_hyperlink!("    ‹File \"«4/例wesome.py»\", line «42»›: Wat?"); // Hovered on: 's'
+    }
+
+    #[test]
+    // TODO(davewa): See comment on `wide_chars` test above.
+    fn mojo() {
+        // Mojo diagnostic message
+        // TODO(davewa): Do we really want the hyperlink under `File `?
+        // TODO(davewa): I haven't ever run Mojo, this is assuming it uses the same format as Python.
+        test_hyperlink!(25 @ "    ‹File \"«4/awesome.🔥»\", line «42»›: Wat?"); // Hovered on: 's'
+        test_hyperlink!(25 @ "    ‹File \"«8/awesome.🔥»\", line «42»›: Wat?"); // Hovered on: '.'
+        test_hyperlink!(25 @ "    ‹File \"«9/awesome.🔥»\", line «42»›: Wat?"); // Hovered on: '🔥' (WIDE_CHAR cell)
+        test_hyperlink!(25 @ "    ‹File \"«10/awesome.🔥»\", line «42»›: Wat?"); // Hovered on: '🔥' (WIDE_CHAR_SPACER cell)
+    }
+
+    #[test]
     // TODO: Fix <https://github.com/zed-industries/zed/issues/12338>
-    // #[test]
-    #[allow(dead_code)]
+    #[should_panic(expected = "No hyperlink found")]
     fn issue_12338() {
         test_hyperlink!(".rw-r--r--     0     staff 05-27 14:03 ‹«4test、2.txt»›");
         test_hyperlink!(".rw-r--r--     0     staff 05-27 14:03 ‹«5test、2.txt»›");
@@ -541,17 +687,10 @@ mod tests {
         test_hyperlink!(".rw-r--r--     0     staff 05-27 14:03 ‹«5test。3.txt»›");
     }
 
-    // TODO: Fix <need to find/file issue that Mojo doesn't work currently>
-    // Should be enabled by the fix for #12338
-    // #[test]
-    #[allow(dead_code)]
+    #[test]
+    // TODO: Mojo should also be fixed by the fix for <https://github.com/zed-industries/zed/issues/12338>
+    #[should_panic(expected = "assertion `left == right` failed")]
     fn issue_broken_mojo() {
-        // Mojo diagnostic message
-        test_hyperlink!("    ‹File \"«4/awesome.🔥»\", line «42»›: Wat?"); // Hovered on: 's'
-        test_hyperlink!("    ‹File \"«8/awesome.🔥»\", line «42»›: Wat?"); // Hovered on: '.'
-        test_hyperlink!("    ‹File \"«9/awesome.🔥»\", line «42»›: Wat?"); // Hovered on: '🔥' (WIDE_CHAR cell)
-        test_hyperlink!("    ‹File \"«10/awesome.🔥»\", line «42»›: Wat?"); // Hovered on: '🔥' (WIDE_CHAR_SPACER cell)
-
         // Match ends on a wide char
         test_hyperlink!("‹«4/awesome.🔥»› is some good Mojo!"); // Hovered on: 's'
         test_hyperlink!("‹«8/awesome.🔥»› is some good Mojo!"); // Hovered on: '.'
