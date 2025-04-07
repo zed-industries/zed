@@ -185,7 +185,7 @@ impl DebugPanel {
     ) -> Vec<Entity<DebugSession>> {
         self.sessions
             .iter()
-            .filter(|item| item.read(cx).session_id(cx) == Some(*client_id))
+            .filter(|item| item.read(cx).session_id(cx) == *client_id)
             .map(|item| item.clone())
             .collect()
     }
@@ -200,7 +200,7 @@ impl DebugPanel {
             .find(|item| {
                 let item = item.read(cx);
 
-                item.session_id(cx) == Some(client_id)
+                item.session_id(cx) == client_id
             })
             .cloned()
     }
@@ -227,7 +227,7 @@ impl DebugPanel {
                 if self
                     .sessions
                     .iter()
-                    .any(|item| item.read(cx).session_id(cx) == Some(*session_id))
+                    .any(|item| item.read(cx).session_id(cx) == *session_id)
                 {
                     // We already have an item for this session.
                     return;

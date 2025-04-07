@@ -131,19 +131,20 @@ impl DebugAdapter for JsDebugAdapter {
         match &config.request {
             DebugRequestType::Attach(attach) => {
                 map.insert("processId".into(), attach.process_id.into());
-                map.insert("stopOnEntry".into(), config.stop_on_entry.into());
             }
             DebugRequestType::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
-                map.insert("args".into(), launch.args.clone().into());
-                map.insert(
-                    "cwd".into(),
-                    launch
-                        .cwd
-                        .as_ref()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .into(),
-                );
+
+                if !launch.args.is_empty() {
+                    map.insert("args".into(), launch.args.clone().into());
+                }
+
+                if let Some(stop_on_entry) = config.stop_on_entry {
+                    map.insert("stopOnEntry".into(), stop_on_entry.into());
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
             }
         }
         args

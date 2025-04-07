@@ -843,12 +843,17 @@ fn create_new_session(
             cx.notify();
         })?;
 
-        match session
-            .update(cx, |session, cx| {
-                session.initialize_sequence(initialized_rx, cx)
-            })?
-            .await
-        {
+        match {
+            session
+                .update(cx, |session, cx| session.request_initialize(cx))?
+                .await?;
+
+            session
+                .update(cx, |session, cx| {
+                    session.initialize_sequence(initialized_rx, cx)
+                })?
+                .await
+        } {
             Ok(_) => {}
             Err(error) => {
                 this.update(cx, |this, cx| {
