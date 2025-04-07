@@ -163,7 +163,6 @@ impl CommitTooltip {
                     .as_ref()
                     .map(|message| message.message.clone())
                     .unwrap_or_default(),
-                style,
                 None,
                 None,
                 cx,

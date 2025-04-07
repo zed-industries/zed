@@ -22,7 +22,7 @@ use gpui::{
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role};
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use project::ProjectItem as _;
 use settings::{Settings as _, update_settings_file};
 use std::rc::Rc;
@@ -108,11 +108,10 @@ impl RenderedMessage {
             scroll_handle.scroll_to_bottom();
         } else {
             self.segments.push(RenderedMessageSegment::Thinking {
-                content: render_markdown(
+                content: Markdown::new(
                     text.into(),
-                    self.language_registry.clone(),
+                    Some(self.language_registry.clone()),
                     workspace,
-                    window,
                     cx,
                 ),
                 scroll_handle: ScrollHandle::default(),
@@ -131,11 +130,10 @@ impl RenderedMessage {
             markdown.update(cx, |markdown, cx| markdown.append(text, cx));
         } else {
             self.segments
-                .push(RenderedMessageSegment::Text(render_markdown(
+                .push(RenderedMessageSegment::Text(Markdown::new(
                     SharedString::from(text),
-                    self.language_registry.clone(),
-                    workspace,
-                    window,
+                    Some(self.language_registry.clone()),
+                    None,
                     cx,
                 )));
         }
@@ -150,20 +148,18 @@ impl RenderedMessage {
     ) {
         let rendered_segment = match segment {
             MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking {
-                content: render_markdown(
+                content: Markdown::new(
                     text.into(),
-                    self.language_registry.clone(),
+                    Some(self.language_registry.clone()),
                     workspace,
-                    window,
                     cx,
                 ),
                 scroll_handle: ScrollHandle::default(),
             },
-            MessageSegment::Text(text) => RenderedMessageSegment::Text(render_markdown(
+            MessageSegment::Text(text) => RenderedMessageSegment::Text(Markdown::new(
                 text.into(),
-                self.language_registry.clone(),
+                Some(self.language_registry.clone()),
                 workspace,
-                window,
                 cx,
             )),
         };
@@ -179,13 +175,7 @@ enum RenderedMessageSegment {
     Text(Entity<Markdown>),
 }
 
-fn render_markdown(
-    text: SharedString,
-    language_registry: Arc<LanguageRegistry>,
-    workspace: WeakEntity<Workspace>,
-    window: &Window,
-    cx: &mut App,
-) -> Entity<Markdown> {
+fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
     let ui_font_size = TextSize::Default.rems(cx);
@@ -201,7 +191,7 @@ fn render_markdown(
         ..Default::default()
     });
 
-    let markdown_style = MarkdownStyle {
+    MarkdownStyle {
         base_text_style: text_style,
         syntax: cx.theme().syntax().clone(),
         selection_background_color: cx.theme().players().local().selection,
@@ -266,24 +256,10 @@ fn render_markdown(
             }
         })),
         ..Default::default()
-    };
-
-    cx.new(|cx| {
-        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
-            move |text, window, cx| {
-                open_markdown_link(text, workspace.clone(), window, cx);
-            },
-        )
-    })
+    }
 }
 
-fn render_tool_use_markdown(
-    text: SharedString,
-    language_registry: Arc<LanguageRegistry>,
-    workspace: WeakEntity<Workspace>,
-    window: &Window,
-    cx: &mut App,
-) -> Entity<Markdown> {
+fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
     let ui_font_size = TextSize::Default.rems(cx);
@@ -299,7 +275,7 @@ fn render_tool_use_markdown(
         ..Default::default()
     });
 
-    let markdown_style = MarkdownStyle {
+    MarkdownStyle {
         base_text_style: text_style,
         syntax: cx.theme().syntax().clone(),
         selection_background_color: cx.theme().players().local().selection,
@@ -334,15 +310,7 @@ fn render_tool_use_markdown(
             ..Default::default()
         },
         ..Default::default()
-    };
-
-    cx.new(|cx| {
-        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
-            move |text, window, cx| {
-                open_markdown_link(text, workspace.clone(), window, cx);
-            },
-        )
-    })
+    }
 }
 
 fn open_markdown_link(
@@ -573,29 +541,26 @@ impl ActiveThread {
         cx: &mut Context<Self>,
     ) {
         let rendered = RenderedToolUse {
-            label: render_tool_use_markdown(
+            label: Markdown::new(
                 tool_label.into(),
-                self.language_registry.clone(),
+                Some(self.language_registry.clone()),
                 self.workspace.clone(),
-                window,
                 cx,
             ),
-            input: render_tool_use_markdown(
+            input: Markdown::new(
                 format!(
                     "```json\n{}\n```",
                     serde_json::to_string_pretty(tool_input).unwrap_or_default()
                 )
                 .into(),
-                self.language_registry.clone(),
+                Some(self.language_registry.clone()),
                 self.workspace.clone(),
-                window,
                 cx,
             ),
-            output: render_tool_use_markdown(
+            output: Markdown::new(
                 tool_output,
-                self.language_registry.clone(),
+                Some(self.language_registry.clone()),
                 self.workspace.clone(),
-                window,
                 cx,
             ),
         };
@@ -1204,6 +1169,7 @@ impl ActiveThread {
                                         message_id,
                                         rendered_message,
                                         has_tool_uses,
+                                        window,
                                         cx,
                                     ))
                                     .into_any()
@@ -1540,6 +1506,7 @@ impl ActiveThread {
         message_id: MessageId,
         rendered_message: &RenderedMessage,
         has_tool_uses: bool,
+        window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_last_message = self.messages.last() == Some(&message_id);
@@ -1575,9 +1542,12 @@ impl ActiveThread {
                                 cx,
                             )
                             .into_any_element(),
-                        RenderedMessageSegment::Text(markdown) => {
-                            div().child(markdown.clone()).into_any_element()
-                        }
+                        RenderedMessageSegment::Text(markdown) => div()
+                            .child(MarkdownElement::new(
+                                markdown.clone(),
+                                default_markdown_style(window, cx),
+                            ))
+                            .into_any_element(),
                     },
                 ),
             )
