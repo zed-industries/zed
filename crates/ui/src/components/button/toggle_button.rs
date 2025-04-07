@@ -71,6 +71,18 @@ impl SelectableButton for ToggleButton {
     }
 }
 
+impl FixedWidth for ToggleButton {
+    fn width(mut self, width: DefiniteLength) -> Self {
+        self.base.width = Some(width);
+        self
+    }
+
+    fn full_width(mut self) -> Self {
+        self.base.width = Some(relative(1.));
+        self
+    }
+}
+
 impl Disableable for ToggleButton {
     fn disabled(mut self, disabled: bool) -> Self {
         self.base = self.base.disabled(disabled);

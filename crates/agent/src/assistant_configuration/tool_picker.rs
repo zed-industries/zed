@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use assistant_settings::{
-    AgentProfile, AgentProfileContent, AssistantSettings, AssistantSettingsContent,
+    AgentProfile, AgentProfileContent, AgentProfileId, AssistantSettings, AssistantSettingsContent,
     ContextServerPresetContent, VersionedAssistantSettingsContent,
 };
 use assistant_tool::{ToolSource, ToolWorkingSet};
@@ -51,7 +51,7 @@ pub struct ToolPickerDelegate {
     thread_store: WeakEntity<ThreadStore>,
     fs: Arc<dyn Fs>,
     tools: Vec<ToolEntry>,
-    profile_id: Arc<str>,
+    profile_id: AgentProfileId,
     profile: AgentProfile,
     matches: Vec<StringMatch>,
     selected_index: usize,
@@ -62,7 +62,7 @@ impl ToolPickerDelegate {
         fs: Arc<dyn Fs>,
         tool_set: Arc<ToolWorkingSet>,
         thread_store: WeakEntity<ThreadStore>,
-        profile_id: Arc<str>,
+        profile_id: AgentProfileId,
         profile: AgentProfile,
         cx: &mut Context<ToolPicker>,
     ) -> Self {
@@ -202,43 +202,43 @@ impl PickerDelegate for ToolPickerDelegate {
             let default_profile = self.profile.clone();
             let tool = tool.clone();
             move |settings, _cx| match settings {
-                AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(
-                    settings,
-                )) => {
-                    let profiles = settings.profiles.get_or_insert_default();
-                    let profile =
-                        profiles
-                            .entry(profile_id)
-                            .or_insert_with(|| AgentProfileContent {
-                                name: default_profile.name.into(),
-                                tools: default_profile.tools,
-                                enable_all_context_servers: Some(
-                                    default_profile.enable_all_context_servers,
-                                ),
-                                context_servers: default_profile
-                                    .context_servers
-                                    .into_iter()
-                                    .map(|(server_id, preset)| {
-                                        (
-                                            server_id,
-                                            ContextServerPresetContent {
-                                                tools: preset.tools,
-                                            },
-                                        )
-                                    })
-                                    .collect(),
-                            });
+                AssistantSettingsContent::Versioned(boxed) => {
+                    if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
+                        let profiles = settings.profiles.get_or_insert_default();
+                        let profile =
+                            profiles
+                                .entry(profile_id)
+                                .or_insert_with(|| AgentProfileContent {
+                                    name: default_profile.name.into(),
+                                    tools: default_profile.tools,
+                                    enable_all_context_servers: Some(
+                                        default_profile.enable_all_context_servers,
+                                    ),
+                                    context_servers: default_profile
+                                        .context_servers
+                                        .into_iter()
+                                        .map(|(server_id, preset)| {
+                                            (
+                                                server_id,
+                                                ContextServerPresetContent {
+                                                    tools: preset.tools,
+                                                },
+                                            )
+                                        })
+                                        .collect(),
+                                });
 
-                    match tool.source {
-                        ToolSource::Native => {
-                            *profile.tools.entry(tool.name).or_default() = is_enabled;
-                        }
-                        ToolSource::ContextServer { id } => {
-                            let preset = profile
-                                .context_servers
-                                .entry(id.clone().into())
-                                .or_default();
-                            *preset.tools.entry(tool.name.clone()).or_default() = is_enabled;
+                        match tool.source {
+                            ToolSource::Native => {
+                                *profile.tools.entry(tool.name).or_default() = is_enabled;
+                            }
+                            ToolSource::ContextServer { id } => {
+                                let preset = profile
+                                    .context_servers
+                                    .entry(id.clone().into())
+                                    .or_default();
+                                *preset.tools.entry(tool.name.clone()).or_default() = is_enabled;
+                            }
                         }
                     }
                 }

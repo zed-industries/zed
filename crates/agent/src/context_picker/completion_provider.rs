@@ -232,8 +232,8 @@ impl ContextPickerCompletionProvider {
                                 url_to_fetch.to_string(),
                             ))
                             .await?;
-                        context_store.update(cx, |context_store, _| {
-                            context_store.add_fetched_url(url_to_fetch.to_string(), content)
+                        context_store.update(cx, |context_store, cx| {
+                            context_store.add_fetched_url(url_to_fetch.to_string(), content, cx)
                         })
                     })
                     .detach_and_log_err(cx);
@@ -890,10 +890,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
+                    "editor dir/",
                     "seven.txt dir/b/",
                     "six.txt dir/b/",
                     "five.txt dir/b/",
-                    "four.txt dir/a/",
                     "Files & Directories",
                     "Symbols",
                     "Fetch"
@@ -932,22 +932,22 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](file:dir/a/one.txt)",);
+            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt)",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 36)]
+                vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
 
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](file:dir/a/one.txt) ",);
+            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt) ",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 36)]
+                vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
 
@@ -956,12 +956,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](file:dir/a/one.txt) Ipsum ",
+                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum ",
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 36)]
+                vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
 
@@ -970,12 +970,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](file:dir/a/one.txt) Ipsum @file ",
+                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum @file ",
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 36)]
+                vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
 
@@ -988,14 +988,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](file:dir/a/one.txt) Ipsum [@seven.txt](file:dir/b/seven.txt)"
+                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@editor](@file:dir/editor)"
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 36),
-                    Point::new(0, 43)..Point::new(0, 77)
+                    Point::new(0, 6)..Point::new(0, 37),
+                    Point::new(0, 44)..Point::new(0, 71)
                 ]
             );
         });
@@ -1005,14 +1005,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](file:dir/a/one.txt) Ipsum [@seven.txt](file:dir/b/seven.txt)\n@"
+                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@editor](@file:dir/editor)\n@"
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 36),
-                    Point::new(0, 43)..Point::new(0, 77)
+                    Point::new(0, 6)..Point::new(0, 37),
+                    Point::new(0, 44)..Point::new(0, 71)
                 ]
             );
         });
@@ -1026,15 +1026,15 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](file:dir/a/one.txt) Ipsum [@seven.txt](file:dir/b/seven.txt)\n[@six.txt](file:dir/b/six.txt)"
+                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@editor](@file:dir/editor)\n[@seven.txt](@file:dir/b/seven.txt)"
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
                 vec![
-                    Point::new(0, 6)..Point::new(0, 36),
-                    Point::new(0, 43)..Point::new(0, 77),
-                    Point::new(1, 0)..Point::new(1, 30)
+                    Point::new(0, 6)..Point::new(0, 37),
+                    Point::new(0, 44)..Point::new(0, 71),
+                    Point::new(1, 0)..Point::new(1, 35)
                 ]
             );
         });

@@ -1,0 +1,45 @@
+syntax = "proto3";
+package zed.messages;
+
+message ListToolchains {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string language_name = 3;
+    optional string path = 4;
+}
+
+message Toolchain {
+    string name = 1;
+    string path = 2;
+    string raw_json = 3;
+}
+
+message ToolchainGroup {
+    uint64 start_index = 1;
+    string name = 2;
+}
+
+message ListToolchainsResponse {
+    repeated Toolchain toolchains = 1;
+    bool has_values = 2;
+    repeated ToolchainGroup groups = 3;
+}
+
+message ActivateToolchain {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    Toolchain toolchain = 3;
+    string language_name = 4;
+    optional string path = 5;
+}
+
+message ActiveToolchain {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string language_name = 3;
+    optional string path = 4;
+}
+
+message ActiveToolchainResponse {
+    optional Toolchain toolchain = 1;
+}

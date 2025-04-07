@@ -540,8 +540,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn assert_visual_entries(&self, expected: Vec<&str>) {
+    #[cfg(test)]
+    pub(crate) fn assert_visual_entries(&self, expected: Vec<&str>) {
         const INDENT: &'static str = "    ";
 
         let entries = &self.entries;
@@ -569,8 +569,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn scopes(&self) -> Vec<dap::Scope> {
+    #[cfg(test)]
+    pub(crate) fn scopes(&self) -> Vec<dap::Scope> {
         self.entries
             .iter()
             .filter_map(|entry| match &entry.dap_kind {
@@ -582,8 +582,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn variables_per_scope(&self) -> Vec<(dap::Scope, Vec<dap::Variable>)> {
+    #[cfg(test)]
+    pub(crate) fn variables_per_scope(&self) -> Vec<(dap::Scope, Vec<dap::Variable>)> {
         let mut scopes: Vec<(dap::Scope, Vec<_>)> = Vec::new();
         let mut idx = 0;
 
@@ -604,8 +604,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn variables(&self) -> Vec<dap::Variable> {
+    #[cfg(test)]
+    pub(crate) fn variables(&self) -> Vec<dap::Variable> {
         self.entries
             .iter()
             .filter_map(|entry| match &entry.dap_kind {

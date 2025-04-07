@@ -37,11 +37,11 @@ pub struct CreateFileTool;
 
 impl Tool for CreateFileTool {
     fn name(&self) -> String {
-        "create-file".into()
+        "create_file".into()
     }
 
     fn needs_confirmation(&self) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {

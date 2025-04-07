@@ -183,12 +183,24 @@ pub mod icon_theme_selector {
     impl_actions!(icon_theme_selector, [Toggle]);
 }
 
+pub mod agent {
+    use gpui::actions;
+
+    actions!(agent, [OpenConfiguration]);
+}
+
 pub mod assistant {
-    use gpui::{actions, impl_actions};
+    use gpui::{action_with_deprecated_aliases, actions, impl_actions};
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    actions!(assistant, [ToggleFocus, OpenPromptLibrary]);
+    actions!(assistant, [ToggleFocus, ShowConfiguration]);
+
+    action_with_deprecated_aliases!(
+        assistant,
+        OpenPromptLibrary,
+        ["assistant::DeployPromptLibrary"]
+    );
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -227,6 +239,12 @@ pub enum Spawn {
     /// Spawns a task by the name given.
     ByName {
         task_name: String,
+        #[serde(default)]
+        reveal_target: Option<RevealTarget>,
+    },
+    /// Spawns a task by the name given.
+    ByTag {
+        task_tag: String,
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },

@@ -18,3 +18,4 @@ serde.workspace = true
 settings.workspace = true
 theme.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
