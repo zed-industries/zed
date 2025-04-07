@@ -46,12 +46,13 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
-        cx.open_window(WindowOptions::default(), |_, cx| {
+        cx.open_window(WindowOptions::default(), |window, cx| {
             cx.new(|cx| {
                 MarkdownExample::new(
                     MARKDOWN_EXAMPLE.into(),
                     markdown_style,
                     language_registry,
+                    window,
                     cx,
                 )
             })
@@ -111,6 +112,7 @@ impl MarkdownExample {
         text: SharedString,
         style: impl Fn(&Window, &App) -> MarkdownStyle + 'static,
         language_registry: Arc<LanguageRegistry>,
+        window: &Window,
         cx: &mut App,
     ) -> Self {
         let markdown = cx.new(|cx| {
@@ -119,6 +121,7 @@ impl MarkdownExample {
                 style,
                 Some(language_registry),
                 Some("TypeScript".to_string()),
+                window,
                 cx,
             )
         });

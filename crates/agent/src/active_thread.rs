@@ -183,7 +183,7 @@ fn render_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
     workspace: WeakEntity<Workspace>,
-    _window: &Window,
+    window: &Window,
     cx: &mut App,
 ) -> Entity<Markdown> {
     fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
@@ -262,11 +262,17 @@ fn render_markdown(
     }
 
     cx.new(|cx| {
-        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
-            move |text, window, cx| {
-                open_markdown_link(text, workspace.clone(), window, cx);
-            },
+        Markdown::new(
+            text,
+            markdown_style,
+            Some(language_registry),
+            None,
+            window,
+            cx,
         )
+        .open_url(move |text, window, cx| {
+            open_markdown_link(text, workspace.clone(), window, cx);
+        })
     })
 }
 
@@ -274,7 +280,7 @@ fn render_tool_use_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
     workspace: WeakEntity<Workspace>,
-    _window: &Window,
+    window: &Window,
     cx: &mut App,
 ) -> Entity<Markdown> {
     fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
@@ -332,11 +338,17 @@ fn render_tool_use_markdown(
     }
 
     cx.new(|cx| {
-        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
-            move |text, window, cx| {
-                open_markdown_link(text, workspace.clone(), window, cx);
-            },
+        Markdown::new(
+            text,
+            markdown_style,
+            Some(language_registry),
+            None,
+            window,
+            cx,
         )
+        .open_url(move |text, window, cx| {
+            open_markdown_link(text, workspace.clone(), window, cx);
+        })
     })
 }
 

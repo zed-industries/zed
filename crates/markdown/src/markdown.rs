@@ -12,12 +12,13 @@ use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, KeyContext,
     Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Render, Stateful,
-    StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun, TextStyle,
-    TextStyleRefinement, actions, point, quad,
+    StrikethroughStyle, StyleRefinement, StyledText, Subscription, Task, TextLayout, TextRun,
+    TextStyle, TextStyleRefinement, actions, point, quad,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
+use settings::SettingsStore;
 use theme::SyntaxTheme;
 use ui::{Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
@@ -70,7 +71,9 @@ pub struct Markdown {
     selection: Selection,
     pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
-    style: Box<dyn Fn(&Window, &App) -> MarkdownStyle>,
+    style: MarkdownStyle,
+    style_theme_id: String,
+    _settings_subscription: Subscription,
     parsed_markdown: ParsedMarkdown,
     should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
@@ -93,18 +96,36 @@ actions!(markdown, [Copy]);
 impl Markdown {
     pub fn new(
         source: SharedString,
-        style: impl Fn(&Window, &App) -> MarkdownStyle + 'static,
+        to_style: impl Fn(&Window, &App) -> MarkdownStyle + 'static,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+
+        let initial_style = to_style(window, cx);
+        let initial_theme_id = cx.theme().id.clone();
+
+        let settings_subscription =
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+                let current_theme_id = cx.theme().id.clone();
+
+                if current_theme_id != this.style_theme_id {
+                    this.style = to_style(window, cx);
+                    this.style_theme_id = current_theme_id;
+                    cx.notify();
+                }
+            });
+
         let mut this = Self {
             source,
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
-            style: Box::new(style),
+            style: initial_style,
+            style_theme_id: initial_theme_id,
+            _settings_subscription: settings_subscription,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
@@ -134,16 +155,34 @@ impl Markdown {
 
     pub fn new_text(
         source: SharedString,
-        style: impl Fn(&Window, &App) -> MarkdownStyle + 'static,
+        to_style: impl Fn(&Window, &App) -> MarkdownStyle + 'static,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+
+        let initial_style = to_style(window, cx);
+        let initial_theme_id = cx.theme().id.clone();
+
+        let settings_subscription =
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+                let current_theme_id = cx.theme().id.clone();
+
+                if current_theme_id != this.style_theme_id {
+                    this.style = to_style(window, cx);
+                    this.style_theme_id = current_theme_id;
+                    cx.notify();
+                }
+            });
+
         let mut this = Self {
             source,
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
-            style: Box::new(style),
+            style: initial_style,
+            style_theme_id: initial_theme_id,
+            _settings_subscription: settings_subscription,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
@@ -267,12 +306,8 @@ impl Markdown {
 }
 
 impl Render for Markdown {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        MarkdownElement::new(
-            cx.entity().clone(),
-            // TODO: cache?
-            (self.style)(window, cx),
-        )
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        MarkdownElement::new(cx.entity().clone(), self.style.clone())
     }
 }
 

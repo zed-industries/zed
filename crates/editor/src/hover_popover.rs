@@ -310,7 +310,7 @@ fn show_hover(
                 let mut background_color: Option<Hsla> = None;
 
                 let parsed_content = cx
-                    .new_window_entity(|_window, cx| {
+                    .new_window_entity(|window, cx| {
                         let status_colors = cx.theme().status();
 
                         match local_diagnostic.diagnostic.severity {
@@ -365,7 +365,7 @@ fn show_hover(
                             }
                         }
 
-                        Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
+                        Markdown::new_text(SharedString::new(text), markdown_style, window, cx)
                             .open_url(open_markdown_url)
                     })
                     .ok();
@@ -569,12 +569,13 @@ async fn parse_blocks(
         .join("\n\n");
 
     let rendered_block = cx
-        .new_window_entity(|_window, cx| {
+        .new_window_entity(|window, cx| {
             Markdown::new(
                 combined_text.into(),
                 hover_markdown_style,
                 Some(language_registry.clone()),
                 fallback_language_name,
+                window,
                 cx,
             )
             .copy_code_block_buttons(false)

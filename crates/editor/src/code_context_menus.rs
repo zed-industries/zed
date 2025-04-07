@@ -597,7 +597,7 @@ impl CompletionsMenu {
         &mut self,
         editor: &Editor,
         max_size: Size<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         if !self.show_completion_documentation {
@@ -626,6 +626,7 @@ impl CompletionsMenu {
                             hover_markdown_style,
                             languages,
                             language,
+                            window,
                             cx,
                         )
                         .copy_code_block_buttons(false)

@@ -35,10 +35,17 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
-        let _ = cx.open_window(WindowOptions::default(), |_, cx| {
+        let _ = cx.open_window(WindowOptions::default(), |window, cx| {
             cx.new(|cx| {
                 let markdown = cx.new(|cx| {
-                    Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, cx)
+                    Markdown::new(
+                        MARKDOWN_EXAMPLE.into(),
+                        markdown_style,
+                        None,
+                        None,
+                        window,
+                        cx,
+                    )
                 });
 
                 HelloWorld { markdown }

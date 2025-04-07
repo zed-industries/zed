@@ -226,7 +226,7 @@ impl SshPrompt {
             editor.set_text_style_refinement(refinement);
             editor.set_cursor_shape(CursorShape::Block, cx);
         });
-        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, cx));
+        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, window, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx));

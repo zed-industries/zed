@@ -149,7 +149,7 @@ impl CommitTooltip {
         commit: CommitDetails,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
@@ -170,6 +170,7 @@ impl CommitTooltip {
                 markdown_style,
                 None,
                 None,
+                window,
                 cx,
             )
         });

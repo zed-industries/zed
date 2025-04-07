@@ -64,7 +64,15 @@ fn zed_prompt_renderer(
                             ..Default::default()
                         }
                     };
-                    Markdown::new(SharedString::new(text), markdown_style, None, None, cx)
+
+                    Markdown::new(
+                        SharedString::new(text),
+                        markdown_style,
+                        None,
+                        None,
+                        window,
+                        cx,
+                    )
                 })
             }),
         }
