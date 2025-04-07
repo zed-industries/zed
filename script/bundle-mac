@@ -197,7 +197,7 @@ function prepare_binaries() {
         cat target/dsymutil.log
         exit 1
     fi
-    uuid=$(dwarfdump --uuid "${exe_path}")
+    uuid=$(dwarfdump --uuid "${exe_path}" | cut -d ' ' -f 2 | tr 'A-F' 'a-f')
     version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
     if [ "$channel" == "nightly" ]; then
         version="$version-$(git rev-parse --short HEAD)"
