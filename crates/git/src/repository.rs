@@ -606,7 +606,7 @@ impl GitRepository for RealGitRepository {
                     };
 
                     let content = repo.find_blob(oid)?.content().to_owned();
-                    Ok(Some(String::from_utf8(content)?))
+                    Ok(String::from_utf8(content).ok())
                 }
 
                 match logic(&repo.lock(), &path) {
