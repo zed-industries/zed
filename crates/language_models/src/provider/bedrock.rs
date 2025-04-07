@@ -480,6 +480,7 @@ impl BedrockModel {
     fn stream_completion(
         &self,
         request: bedrock::Request,
+        handle: tokio::runtime::Handle,
         cx: &AsyncApp,
     ) -> Result<
         BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
@@ -488,10 +489,9 @@ impl BedrockModel {
             .get_or_init_client(cx)
             .cloned()
             .context("Bedrock client not initialized")?;
-        let owned_handle = self.handler.clone();
 
         Ok(async move {
-            let request = bedrock::stream_completion(runtime_client, request, owned_handle);
+            let request = bedrock::stream_completion(runtime_client, request, handle);
             request.await.unwrap_or_else(|e| {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
             })
@@ -579,7 +579,7 @@ impl LanguageModel for BedrockModel {
 
         let owned_handle = self.handler.clone();
 
-        let request = self.stream_completion(request, cx);
+        let request = self.stream_completion(request, owned_handle.clone(), cx);
         let future = self.request_limiter.stream(async move {
             let response = request.map_err(|err| anyhow!(err))?.await;
             Ok(map_to_language_model_completion_events(
