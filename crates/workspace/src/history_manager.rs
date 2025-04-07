@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use gpui::{AppContext, Entity, Global};
 use smallvec::SmallVec;
 use ui::App;
-use util::{paths::PathExt, ResultExt};
+use util::{ResultExt, paths::PathExt};
 
-use crate::{SerializedWorkspaceLocation, WorkspaceId, WORKSPACE_DB};
+use crate::{SerializedWorkspaceLocation, WORKSPACE_DB, WorkspaceId};
 
 pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
@@ -84,9 +84,9 @@ impl HistoryManager {
             .history
             .iter()
             .rev()
-            .map(|entry| &entry.path)
+            .map(|entry| entry.path.clone())
             .collect::<Vec<_>>();
-        let user_removed = cx.update_jump_list(entries.as_slice());
+        let user_removed = cx.update_jump_list(entries);
         let mut deleted_ids = Vec::new();
         for idx in (0..self.history.len()).rev() {
             if let Some(entry) = self.history.get(idx) {
