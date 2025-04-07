@@ -581,7 +581,16 @@ impl Matches {
             let filename_str = filename.to_string_lossy();
 
             if let Some(filename_pos) = path_str.rfind(&*filename_str) {
-                return panel_match.0.positions[0] >= filename_pos;
+                if panel_match.0.positions[0] >= filename_pos {
+                    let mut prev_position = panel_match.0.positions[0];
+                    for p in &panel_match.0.positions[1..] {
+                        if *p != prev_position + 1 {
+                            return false;
+                        }
+                        prev_position = *p;
+                    }
+                    return true;
+                }
             }
         }
 

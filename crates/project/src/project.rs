@@ -3015,6 +3015,16 @@ impl Project {
         })
     }
 
+    pub fn stop_language_servers_for_buffers(
+        &mut self,
+        buffers: Vec<Entity<Buffer>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.stop_language_servers_for_buffers(buffers, cx)
+        })
+    }
+
     pub fn cancel_language_server_work_for_buffers(
         &mut self,
         buffers: impl IntoIterator<Item = Entity<Buffer>>,
@@ -4732,6 +4742,20 @@ impl Project {
                 buffer_id: buffer.remote_id().to_proto(),
                 name: name.to_string(),
             });
+            cx.background_spawn(async move {
+                let response = request.await.log_err()?;
+                response.server_id.map(LanguageServerId::from_proto)
+            })
+        } else if let Some(ssh_client) = self.ssh_client.as_ref() {
+            let request =
+                ssh_client
+                    .read(cx)
+                    .proto_client()
+                    .request(proto::LanguageServerIdForName {
+                        project_id: SSH_PROJECT_ID,
+                        buffer_id: buffer.remote_id().to_proto(),
+                        name: name.to_string(),
+                    });
             cx.background_spawn(async move {
                 let response = request.await.log_err()?;
                 response.server_id.map(LanguageServerId::from_proto)

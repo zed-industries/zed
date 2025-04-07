@@ -37,9 +37,6 @@ struct Args {
     /// Name of the model (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model_name: String,
-    /// Name of the editor model (default: value of `--model_name`).
-    #[arg(long)]
-    editor_model_name: Option<String>,
     /// Name of the judge model (default: value of `--model_name`).
     #[arg(long)]
     judge_model_name: Option<String>,
@@ -79,11 +76,6 @@ fn main() {
         let app_state = headless_assistant::init(cx);
 
         let model = find_model(&args.model_name, cx).unwrap();
-        let editor_model = if let Some(model_name) = &args.editor_model_name {
-            find_model(model_name, cx).unwrap()
-        } else {
-            model.clone()
-        };
         let judge_model = if let Some(model_name) = &args.judge_model_name {
             find_model(model_name, cx).unwrap()
         } else {
@@ -91,12 +83,10 @@ fn main() {
         };
 
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry.set_active_model(Some(model.clone()), cx);
-            registry.set_editor_model(Some(editor_model.clone()), cx);
+            registry.set_default_model(Some(model.clone()), cx);
         });
 
         let model_provider_id = model.provider_id();
-        let editor_model_provider_id = editor_model.provider_id();
         let judge_model_provider_id = judge_model.provider_id();
 
         let framework_path_clone = framework_path.clone();
@@ -107,10 +97,6 @@ fn main() {
         cx.spawn(async move |cx| {
             // Authenticate all model providers first
             cx.update(|cx| authenticate_model_provider(model_provider_id.clone(), cx))
-                .unwrap()
-                .await
-                .unwrap();
-            cx.update(|cx| authenticate_model_provider(editor_model_provider_id.clone(), cx))
                 .unwrap()
                 .await
                 .unwrap();

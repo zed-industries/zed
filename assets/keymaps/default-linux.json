@@ -311,6 +311,7 @@
       "ctrl-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "ctrl-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
       "ctrl-k w": ["pane::CloseAllItems", { "close_pinned": false }],
+      "ctrl-k ctrl-w": "workspace::CloseAllItemsAndPanes",
       "back": "pane::GoBack",
       "ctrl-alt--": "pane::GoBack",
       "ctrl-alt-_": "pane::GoForward",
@@ -481,6 +482,8 @@
       "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
+      // or by tag:
+      // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
     }
   },
   {

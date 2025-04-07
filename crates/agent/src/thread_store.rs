@@ -174,8 +174,9 @@ impl ThreadStore {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.delete_thread(id.clone()).await?;
 
-            this.update(cx, |this, _cx| {
-                this.threads.retain(|thread| thread.id != id)
+            this.update(cx, |this, cx| {
+                this.threads.retain(|thread| thread.id != id);
+                cx.notify();
             })
         })
     }
@@ -374,6 +375,8 @@ pub struct SerializedMessage {
     pub tool_uses: Vec<SerializedToolUse>,
     #[serde(default)]
     pub tool_results: Vec<SerializedToolResult>,
+    #[serde(default)]
+    pub context: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -441,6 +444,7 @@ impl LegacySerializedMessage {
             segments: vec![SerializedMessageSegment::Text { text: self.text }],
             tool_uses: self.tool_uses,
             tool_results: self.tool_results,
+            context: String::new(),
         }
     }
 }
