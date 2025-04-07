@@ -1,8 +1,8 @@
-name: Agent Beta
-description: There is a bug related to new Agent Panel in Zed
+name: Edit Predictions Bug Report
+description: There is a bug related to Edit Predictions in Zed
 type: "Bug"
-labels: [agent, ai]
-title: "Agent Beta: <a short description of the Agent Panel bug>"
+labels: ["ai", "inline completion", "zeta"]
+title: "Edit Predictions: <a short description of the Edit Prediction bug>"
 body:
   - type: textarea
     attributes:

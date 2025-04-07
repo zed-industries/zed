@@ -315,6 +315,7 @@ impl MessageEditor {
                     icon_path: None,
                     confirm: None,
                     documentation: None,
+                    insert_text_mode: None,
                     source: CompletionSource::Custom,
                 }
             })

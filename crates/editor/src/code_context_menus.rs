@@ -7,7 +7,7 @@ use gpui::{
 };
 use language::Buffer;
 use language::CodeLabel;
-use markdown::Markdown;
+use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::CompletionSource;
@@ -240,6 +240,7 @@ impl CompletionsMenu {
                 icon_path: None,
                 documentation: None,
                 confirm: None,
+                insert_text_mode: None,
                 source: CompletionSource::Custom,
             })
             .collect();
@@ -621,23 +622,20 @@ impl CompletionsMenu {
                         let language = editor
                             .language_at(self.initial_position, cx)
                             .map(|l| l.name().to_proto());
-                        Markdown::new(
-                            SharedString::default(),
-                            hover_markdown_style(window, cx),
-                            languages,
-                            language,
-                            cx,
-                        )
-                        .code_block_variant(markdown::CodeBlockVariant::Default {
-                            copy_button: false,
-                        })
-                        .open_url(open_markdown_url)
+                        Markdown::new(SharedString::default(), languages, language, cx)
+                            .code_block_variant(markdown::CodeBlockVariant::Default {
+                                copy_button: false,
+                            })
+                            .open_url(open_markdown_url)
                     })
                 });
                 markdown.update(cx, |markdown, cx| {
                     markdown.reset(parsed.clone(), cx);
                 });
-                div().child(markdown.clone())
+                div().child(MarkdownElement::new(
+                    markdown.clone(),
+                    hover_markdown_style(window, cx),
+                ))
             }
             CompletionDocumentation::MultiLineMarkdown(_) => return None,
             CompletionDocumentation::SingleLine(_) => return None,
