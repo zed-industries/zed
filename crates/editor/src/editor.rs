@@ -4610,14 +4610,17 @@ impl Editor {
         let lookahead = old_range
             .end
             .saturating_sub(newest_selection.end.text_anchor.to_offset(buffer));
-        let mut common_prefix_len = old_text
-            .bytes()
-            .zip(new_text.bytes())
-            .take_while(|(a, b)| a == b)
-            .count();
+        let mut common_prefix_len = 0;
+        for (a, b) in old_text.chars().zip(new_text.chars()) {
+            if a == b {
+                common_prefix_len += a.len_utf8();
+            } else {
+                break;
+            }
+        }
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let mut range_to_replace: Option<Range<isize>> = None;
+        let mut range_to_replace: Option<Range<usize>> = None;
         let mut ranges = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
         for selection in &selections {
@@ -4625,10 +4628,7 @@ impl Editor {
                 let start = selection.start.saturating_sub(lookbehind);
                 let end = selection.end + lookahead;
                 if selection.id == newest_selection.id {
-                    range_to_replace = Some(
-                        ((start + common_prefix_len) as isize - selection.start as isize)
-                            ..(end as isize - selection.start as isize),
-                    );
+                    range_to_replace = Some(start + common_prefix_len..end);
                 }
                 ranges.push(start + common_prefix_len..end);
             } else {
@@ -4636,12 +4636,7 @@ impl Editor {
                 ranges.clear();
                 ranges.extend(selections.iter().map(|s| {
                     if s.id == newest_selection.id {
-                        range_to_replace = Some(
-                            old_range.start.to_offset_utf16(&snapshot).0 as isize
-                                - selection.start as isize
-                                ..old_range.end.to_offset_utf16(&snapshot).0 as isize
-                                    - selection.start as isize,
-                        );
+                        range_to_replace = Some(old_range.clone());
                         old_range.clone()
                     } else {
                         s.start..s.end
@@ -4667,8 +4662,15 @@ impl Editor {
         }
         let text = &new_text[common_prefix_len..];
 
+        let utf16_range_to_replace = range_to_replace.map(|range| {
+            let newest_selection = self.selections.newest::<OffsetUtf16>(cx).range();
+            let selection_start_utf16 = newest_selection.start.0 as isize;
+
+            range.start.to_offset_utf16(&snapshot).0 as isize - selection_start_utf16
+                ..range.end.to_offset_utf16(&snapshot).0 as isize - selection_start_utf16
+        });
         cx.emit(EditorEvent::InputHandled {
-            utf16_range_to_replace: range_to_replace,
+            utf16_range_to_replace,
             text: text.into(),
         });
 
