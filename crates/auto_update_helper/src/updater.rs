@@ -156,12 +156,12 @@ mod test {
         assert!(perform_update(app_dir, None).is_ok());
 
         // Simulate a timeout
-        std::env::set_var("ZED_AUTO_UPDATE", "inf");
+        unsafe { std::env::set_var("ZED_AUTO_UPDATE", "inf") };
         let ret = perform_update(app_dir, None);
         assert!(ret.is_err_and(|e| e.to_string().as_str() == "Update timed out"));
 
         // Simulate a test error
-        std::env::set_var("ZED_AUTO_UPDATE", "err");
+        unsafe { std::env::set_var("ZED_AUTO_UPDATE", "err") };
         let ret = perform_update(app_dir, None);
         assert!(ret.is_err_and(|e| e.to_string().as_str() == "Test error"));
     }

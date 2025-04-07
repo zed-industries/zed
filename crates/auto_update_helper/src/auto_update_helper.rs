@@ -24,14 +24,14 @@ mod windows_impl {
     use super::updater::perform_update;
     use anyhow::{Context, Result};
     use windows::{
-        core::HSTRING,
         Win32::{
             Foundation::{HWND, LPARAM, WPARAM},
             UI::WindowsAndMessaging::{
-                DispatchMessageW, GetMessageW, MessageBoxW, PostMessageW, MB_ICONERROR,
-                MB_SYSTEMMODAL, MSG, WM_USER,
+                DispatchMessageW, GetMessageW, MB_ICONERROR, MB_SYSTEMMODAL, MSG, MessageBoxW,
+                PostMessageW, WM_USER,
             },
         },
+        core::HSTRING,
     };
 
     pub(crate) const WM_JOB_UPDATED: u32 = WM_USER + 1;

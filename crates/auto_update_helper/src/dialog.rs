@@ -2,33 +2,33 @@ use std::{cell::RefCell, sync::mpsc::Receiver};
 
 use anyhow::{Context as _, Result};
 use windows::{
-    core::HSTRING,
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::{
-            BeginPaint, CreateFontW, DeleteObject, EndPaint, ReleaseDC, SelectObject, TextOutW,
-            CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, FW_NORMAL, LOGFONTW,
-            OUT_TT_ONLY_PRECIS, PAINTSTRUCT,
+            BeginPaint, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateFontW, DEFAULT_CHARSET,
+            DeleteObject, EndPaint, FW_NORMAL, LOGFONTW, OUT_TT_ONLY_PRECIS, PAINTSTRUCT,
+            ReleaseDC, SelectObject, TextOutW,
         },
         System::LibraryLoader::GetModuleHandleW,
         UI::{
             Controls::{PBM_SETRANGE, PBM_SETSTEP, PBM_STEPIT, PROGRESS_CLASS},
             WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, GetDesktopWindow, GetWindowLongPtrW,
-                GetWindowRect, LoadImageW, PostQuitMessage, RegisterClassW, SendMessageW,
-                SetWindowLongPtrW, SystemParametersInfoW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
-                GWLP_USERDATA, HICON, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED,
-                SPI_GETICONTITLELOGFONT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE,
-                WM_CLOSE, WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_CAPTION,
-                WS_CHILD, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+                CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW,
+                GWLP_USERDATA, GetDesktopWindow, GetWindowLongPtrW, GetWindowRect, HICON,
+                IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED, LoadImageW, PostQuitMessage, RegisterClassW,
+                SPI_GETICONTITLELOGFONT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SendMessageW,
+                SetWindowLongPtrW, SystemParametersInfoW, WINDOW_EX_STYLE, WM_CLOSE, WM_CREATE,
+                WM_DESTROY, WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_TOPMOST,
+                WS_POPUP, WS_VISIBLE,
             },
         },
     },
+    core::HSTRING,
 };
 
 use crate::{
     updater::JOBS_COUNT,
-    windows_impl::{show_error, WM_JOB_UPDATED, WM_TERMINATE},
+    windows_impl::{WM_JOB_UPDATED, WM_TERMINATE, show_error},
 };
 
 #[repr(C)]
@@ -112,14 +112,14 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_NCCREATE => {
+        WM_NCCREATE => unsafe {
             let create_struct = lparam.0 as *const CREATESTRUCTW;
             let info = (*create_struct).lpCreateParams as *mut RefCell<DialogInfo>;
             let info = Box::from_raw(info);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(info) as _);
             DefWindowProcW(hwnd, msg, wparam, lparam)
-        }
-        WM_CREATE => {
+        },
+        WM_CREATE => unsafe {
             // Create progress bar
             let mut rect = RECT::default();
             return_if_failed!(GetWindowRect(hwnd, &mut rect));
@@ -148,8 +148,8 @@ unsafe extern "system" fn wnd_proc(
                 data.borrow_mut().progress_bar = progress_bar.0 as isize
             });
             LRESULT(0)
-        }
-        WM_PAINT => {
+        },
+        WM_PAINT => unsafe {
             let mut ps = PAINTSTRUCT::default();
             let hdc = BeginPaint(hwnd, &mut ps);
 
@@ -179,10 +179,10 @@ unsafe extern "system" fn wnd_proc(
             ReleaseDC(Some(hwnd), hdc);
 
             LRESULT(0)
-        }
+        },
         WM_JOB_UPDATED => with_dialog_data(hwnd, |data| {
             let progress_bar = data.borrow().progress_bar;
-            SendMessageW(HWND(progress_bar as _), PBM_STEPIT, None, None)
+            unsafe { SendMessageW(HWND(progress_bar as _), PBM_STEPIT, None, None) }
         }),
         WM_TERMINATE => {
             with_dialog_data(hwnd, |data| {
@@ -193,15 +193,15 @@ unsafe extern "system" fn wnd_proc(
                     }
                 }
             });
-            PostQuitMessage(0);
+            unsafe { PostQuitMessage(0) };
             LRESULT(0)
         }
         WM_CLOSE => LRESULT(0), // Prevent user occasionally closing the window
         WM_DESTROY => {
-            PostQuitMessage(0);
+            unsafe { PostQuitMessage(0) };
             LRESULT(0)
         }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
 }
 
