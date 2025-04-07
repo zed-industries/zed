@@ -79,14 +79,12 @@ pub struct Markdown {
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
     fallback_code_block_language: Option<String>,
-    open_url: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
 }
 
 struct Options {
     parse_links_only: bool,
-    code_block_variant: CodeBlockVariant,
 }
 
 pub enum CodeBlockVariant {
@@ -121,23 +119,11 @@ impl Markdown {
             fallback_code_block_language,
             options: Options {
                 parse_links_only: false,
-                code_block_variant: CodeBlockVariant::Default { copy_button: true },
             },
-            open_url: None,
             copied_code_blocks: HashSet::new(),
         };
         this.parse(cx);
         this
-    }
-
-    pub fn open_url(
-        self,
-        open_url: impl Fn(SharedString, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        Self {
-            open_url: Some(Box::new(open_url)),
-            ..self
-        }
     }
 
     pub fn new_text(source: SharedString, cx: &mut Context<Self>) -> Self {
@@ -155,9 +141,7 @@ impl Markdown {
             fallback_code_block_language: None,
             options: Options {
                 parse_links_only: true,
-                code_block_variant: CodeBlockVariant::Default { copy_button: true },
             },
-            open_url: None,
             copied_code_blocks: HashSet::new(),
         };
         this.parse(cx);
@@ -271,11 +255,6 @@ impl Markdown {
             .await
         }));
     }
-
-    pub fn code_block_variant(mut self, variant: CodeBlockVariant) -> Self {
-        self.options.code_block_variant = variant;
-        self
-    }
 }
 
 impl Focusable for Markdown {
@@ -335,11 +314,31 @@ impl ParsedMarkdown {
 pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
+    code_block_variant: CodeBlockVariant,
+    on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
 }
 
 impl MarkdownElement {
     pub fn new(markdown: Entity<Markdown>, style: MarkdownStyle) -> Self {
-        Self { markdown, style }
+        Self {
+            markdown,
+            style,
+            code_block_variant: CodeBlockVariant::Default { copy_button: true },
+            on_url_click: None,
+        }
+    }
+
+    pub fn code_block_variant(mut self, variant: CodeBlockVariant) -> Self {
+        self.code_block_variant = variant;
+        self
+    }
+
+    pub fn on_url_click(
+        mut self,
+        handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_url_click = Some(Box::new(handler));
+        self
     }
 
     fn paint_selection(
@@ -411,7 +410,7 @@ impl MarkdownElement {
     }
 
     fn paint_mouse_listeners(
-        &self,
+        &mut self,
         hitbox: &Hitbox,
         rendered_text: &RenderedText,
         window: &mut Window,
@@ -428,6 +427,8 @@ impl MarkdownElement {
         } else {
             window.set_cursor_style(CursorStyle::IBeam, Some(hitbox));
         }
+
+        let on_open_url = self.on_url_click.take();
 
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
@@ -500,7 +501,7 @@ impl MarkdownElement {
                 if phase.bubble() {
                     if let Some(pressed_link) = markdown.pressed_link.take() {
                         if Some(&pressed_link) == rendered_text.link_for_position(event.position) {
-                            if let Some(open_url) = markdown.open_url.as_mut() {
+                            if let Some(open_url) = on_open_url.as_ref() {
                                 open_url(pressed_link.destination_url, window, cx);
                             } else {
                                 cx.open_url(&pressed_link.destination_url);
@@ -580,7 +581,7 @@ impl Element for MarkdownElement {
             self.style.syntax.clone(),
         );
         let parsed_markdown = &self.markdown.read(cx).parsed_markdown;
-        let code_block_variant = &self.markdown.read(cx).options.code_block_variant;
+        let code_block_variant = &self.code_block_variant;
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
@@ -1019,7 +1020,7 @@ impl Element for MarkdownElement {
                         }
 
                         if matches!(
-                            self.markdown.read(cx).options.code_block_variant,
+                            &self.code_block_variant,
                             CodeBlockVariant::Default { copy_button: true }
                         ) {
                             builder.flush_text();
