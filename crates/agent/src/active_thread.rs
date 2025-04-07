@@ -22,7 +22,7 @@ use gpui::{
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role};
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use project::ProjectItem as _;
 use settings::{Settings as _, update_settings_file};
 use std::rc::Rc;
@@ -76,8 +76,6 @@ impl RenderedMessage {
     fn from_segments(
         segments: &[MessageSegment],
         language_registry: Arc<LanguageRegistry>,
-        workspace: WeakEntity<Workspace>,
-        window: &Window,
         cx: &mut App,
     ) -> Self {
         let mut this = Self {
@@ -85,18 +83,12 @@ impl RenderedMessage {
             segments: Vec::with_capacity(segments.len()),
         };
         for segment in segments {
-            this.push_segment(segment, workspace.clone(), window, cx);
+            this.push_segment(segment, cx);
         }
         this
     }
 
-    fn append_thinking(
-        &mut self,
-        text: &String,
-        workspace: WeakEntity<Workspace>,
-        window: &Window,
-        cx: &mut App,
-    ) {
+    fn append_thinking(&mut self, text: &String, cx: &mut App) {
         if let Some(RenderedMessageSegment::Thinking {
             content,
             scroll_handle,
@@ -108,25 +100,13 @@ impl RenderedMessage {
             scroll_handle.scroll_to_bottom();
         } else {
             self.segments.push(RenderedMessageSegment::Thinking {
-                content: render_markdown(
-                    text.into(),
-                    self.language_registry.clone(),
-                    workspace,
-                    window,
-                    cx,
-                ),
+                content: render_markdown(text.into(), self.language_registry.clone(), cx),
                 scroll_handle: ScrollHandle::default(),
             });
         }
     }
 
-    fn append_text(
-        &mut self,
-        text: &String,
-        workspace: WeakEntity<Workspace>,
-        window: &Window,
-        cx: &mut App,
-    ) {
+    fn append_text(&mut self, text: &String, cx: &mut App) {
         if let Some(RenderedMessageSegment::Text(markdown)) = self.segments.last_mut() {
             markdown.update(cx, |markdown, cx| markdown.append(text, cx));
         } else {
@@ -134,36 +114,20 @@ impl RenderedMessage {
                 .push(RenderedMessageSegment::Text(render_markdown(
                     SharedString::from(text),
                     self.language_registry.clone(),
-                    workspace,
-                    window,
                     cx,
                 )));
         }
     }
 
-    fn push_segment(
-        &mut self,
-        segment: &MessageSegment,
-        workspace: WeakEntity<Workspace>,
-        window: &Window,
-        cx: &mut App,
-    ) {
+    fn push_segment(&mut self, segment: &MessageSegment, cx: &mut App) {
         let rendered_segment = match segment {
             MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking {
-                content: render_markdown(
-                    text.into(),
-                    self.language_registry.clone(),
-                    workspace,
-                    window,
-                    cx,
-                ),
+                content: render_markdown(text.into(), self.language_registry.clone(), cx),
                 scroll_handle: ScrollHandle::default(),
             },
             MessageSegment::Text(text) => RenderedMessageSegment::Text(render_markdown(
                 text.into(),
                 self.language_registry.clone(),
-                workspace,
-                window,
                 cx,
             )),
         };
@@ -182,10 +146,12 @@ enum RenderedMessageSegment {
 fn render_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
-    workspace: WeakEntity<Workspace>,
-    window: &Window,
     cx: &mut App,
 ) -> Entity<Markdown> {
+    cx.new(|cx| Markdown::new(text, Some(language_registry), None, cx))
+}
+
+fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
     let ui_font_size = TextSize::Default.rems(cx);
@@ -201,7 +167,7 @@ fn render_markdown(
         ..Default::default()
     });
 
-    let markdown_style = MarkdownStyle {
+    MarkdownStyle {
         base_text_style: text_style,
         syntax: cx.theme().syntax().clone(),
         selection_background_color: cx.theme().players().local().selection,
@@ -266,24 +232,18 @@ fn render_markdown(
             }
         })),
         ..Default::default()
-    };
-
-    cx.new(|cx| {
-        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
-            move |text, window, cx| {
-                open_markdown_link(text, workspace.clone(), window, cx);
-            },
-        )
-    })
+    }
 }
 
 fn render_tool_use_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
-    workspace: WeakEntity<Workspace>,
-    window: &Window,
     cx: &mut App,
 ) -> Entity<Markdown> {
+    cx.new(|cx| Markdown::new(text, Some(language_registry), None, cx))
+}
+
+fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
     let ui_font_size = TextSize::Default.rems(cx);
@@ -299,7 +259,7 @@ fn render_tool_use_markdown(
         ..Default::default()
     });
 
-    let markdown_style = MarkdownStyle {
+    MarkdownStyle {
         base_text_style: text_style,
         syntax: cx.theme().syntax().clone(),
         selection_background_color: cx.theme().players().local().selection,
@@ -334,15 +294,7 @@ fn render_tool_use_markdown(
             ..Default::default()
         },
         ..Default::default()
-    };
-
-    cx.new(|cx| {
-        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
-            move |text, window, cx| {
-                open_markdown_link(text, workspace.clone(), window, cx);
-            },
-        )
-    })
+    }
 }
 
 fn open_markdown_link(
@@ -473,7 +425,6 @@ impl ActiveThread {
                     tool_use.ui_text.clone(),
                     &tool_use.input,
                     tool_use.status.text(),
-                    window,
                     cx,
                 );
             }
@@ -516,20 +467,15 @@ impl ActiveThread {
         &mut self,
         id: &MessageId,
         segments: &[MessageSegment],
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let old_len = self.messages.len();
         self.messages.push(*id);
         self.list_state.splice(old_len..old_len, 1);
 
-        let rendered_message = RenderedMessage::from_segments(
-            segments,
-            self.language_registry.clone(),
-            self.workspace.clone(),
-            window,
-            cx,
-        );
+        let rendered_message =
+            RenderedMessage::from_segments(segments, self.language_registry.clone(), cx);
         self.rendered_messages_by_id.insert(*id, rendered_message);
     }
 
@@ -537,20 +483,15 @@ impl ActiveThread {
         &mut self,
         id: &MessageId,
         segments: &[MessageSegment],
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(index) = self.messages.iter().position(|message_id| message_id == id) else {
             return;
         };
         self.list_state.splice(index..index + 1, 1);
-        let rendered_message = RenderedMessage::from_segments(
-            segments,
-            self.language_registry.clone(),
-            self.workspace.clone(),
-            window,
-            cx,
-        );
+        let rendered_message =
+            RenderedMessage::from_segments(segments, self.language_registry.clone(), cx);
         self.rendered_messages_by_id.insert(*id, rendered_message);
     }
 
@@ -569,17 +510,10 @@ impl ActiveThread {
         tool_label: impl Into<SharedString>,
         tool_input: &serde_json::Value,
         tool_output: SharedString,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let rendered = RenderedToolUse {
-            label: render_tool_use_markdown(
-                tool_label.into(),
-                self.language_registry.clone(),
-                self.workspace.clone(),
-                window,
-                cx,
-            ),
+            label: render_tool_use_markdown(tool_label.into(), self.language_registry.clone(), cx),
             input: render_tool_use_markdown(
                 format!(
                     "```json\n{}\n```",
@@ -587,17 +521,9 @@ impl ActiveThread {
                 )
                 .into(),
                 self.language_registry.clone(),
-                self.workspace.clone(),
-                window,
                 cx,
             ),
-            output: render_tool_use_markdown(
-                tool_output,
-                self.language_registry.clone(),
-                self.workspace.clone(),
-                window,
-                cx,
-            ),
+            output: render_tool_use_markdown(tool_output, self.language_registry.clone(), cx),
         };
         self.rendered_tool_uses
             .insert(tool_use_id.clone(), rendered);
@@ -640,12 +566,12 @@ impl ActiveThread {
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    rendered_message.append_text(text, self.workspace.clone(), window, cx);
+                    rendered_message.append_text(text, cx);
                 }
             }
             ThreadEvent::StreamedAssistantThinking(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    rendered_message.append_thinking(text, self.workspace.clone(), window, cx);
+                    rendered_message.append_thinking(text, cx);
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
@@ -690,7 +616,6 @@ impl ActiveThread {
                         tool_use.ui_text.clone(),
                         &tool_use.input,
                         "".into(),
-                        window,
                         cx,
                     );
                 }
@@ -711,7 +636,6 @@ impl ActiveThread {
                             .tool_result(&tool_use.id)
                             .map(|result| result.content.clone().into())
                             .unwrap_or("".into()),
-                        window,
                         cx,
                     );
                 }
@@ -1204,6 +1128,7 @@ impl ActiveThread {
                                         message_id,
                                         rendered_message,
                                         has_tool_uses,
+                                        window,
                                         cx,
                                     ))
                                     .into_any()
@@ -1370,7 +1295,7 @@ impl ActiveThread {
                         div().children(
                             tool_uses
                                 .into_iter()
-                                .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                                .map(|tool_use| self.render_tool_use(tool_use, window, cx)),
                         ),
                     )
                 }),
@@ -1540,6 +1465,7 @@ impl ActiveThread {
         message_id: MessageId,
         rendered_message: &RenderedMessage,
         has_tool_uses: bool,
+        window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_last_message = self.messages.last() == Some(&message_id);
@@ -1572,12 +1498,24 @@ impl ActiveThread {
                                 content.clone(),
                                 &scroll_handle,
                                 Some(index) == pending_thinking_segment_index,
+                                window,
                                 cx,
                             )
                             .into_any_element(),
-                        RenderedMessageSegment::Text(markdown) => {
-                            div().child(markdown.clone()).into_any_element()
-                        }
+                        RenderedMessageSegment::Text(markdown) => div()
+                            .child(
+                                MarkdownElement::new(
+                                    markdown.clone(),
+                                    default_markdown_style(window, cx),
+                                )
+                                .on_url_click({
+                                    let workspace = self.workspace.clone();
+                                    move |text, window, cx| {
+                                        open_markdown_link(text, workspace.clone(), window, cx);
+                                    }
+                                }),
+                            )
+                            .into_any_element(),
                     },
                 ),
             )
@@ -1601,6 +1539,7 @@ impl ActiveThread {
         markdown: Entity<Markdown>,
         scroll_handle: &ScrollHandle,
         pending: bool,
+        window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_open = self
@@ -1734,7 +1673,23 @@ impl ActiveThread {
                                     .h_20()
                                     .track_scroll(scroll_handle)
                                     .text_ui_sm(cx)
-                                    .child(markdown.clone())
+                                    .child(
+                                        MarkdownElement::new(
+                                            markdown.clone(),
+                                            default_markdown_style(window, cx),
+                                        )
+                                        .on_url_click({
+                                            let workspace = self.workspace.clone();
+                                            move |text, window, cx| {
+                                                open_markdown_link(
+                                                    text,
+                                                    workspace.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        }),
+                                    )
                                     .overflow_hidden(),
                             )
                             .child(gradient_overlay),
@@ -1749,7 +1704,18 @@ impl ActiveThread {
                             .rounded_b_lg()
                             .bg(editor_bg)
                             .text_ui_sm(cx)
-                            .child(markdown.clone()),
+                            .child(
+                                MarkdownElement::new(
+                                    markdown.clone(),
+                                    default_markdown_style(window, cx),
+                                )
+                                .on_url_click({
+                                    let workspace = self.workspace.clone();
+                                    move |text, window, cx| {
+                                        open_markdown_link(text, workspace.clone(), window, cx);
+                                    }
+                                }),
+                            ),
                     )
                 }),
         )
@@ -1758,6 +1724,7 @@ impl ActiveThread {
     fn render_tool_use(
         &self,
         tool_use: ToolUse,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let is_open = self
@@ -1815,11 +1782,21 @@ impl ActiveThread {
                             .buffer_font(cx),
                     )
                     .child(
-                        div().w_full().text_ui_sm(cx).children(
-                            rendered_tool_use
-                                .as_ref()
-                                .map(|rendered| rendered.input.clone()),
-                        ),
+                        div()
+                            .w_full()
+                            .text_ui_sm(cx)
+                            .children(rendered_tool_use.as_ref().map(|rendered| {
+                                MarkdownElement::new(
+                                    rendered.input.clone(),
+                                    tool_use_markdown_style(window, cx),
+                                )
+                                .on_url_click({
+                                    let workspace = self.workspace.clone();
+                                    move |text, window, cx| {
+                                        open_markdown_link(text, workspace.clone(), window, cx);
+                                    }
+                                })
+                            })),
                     ),
             )
             .map(|container| match tool_use.status {
@@ -1833,13 +1810,20 @@ impl ActiveThread {
                                 .color(Color::Muted)
                                 .buffer_font(cx),
                         )
-                        .child(
-                            div().w_full().text_ui_sm(cx).children(
-                                rendered_tool_use
-                                    .as_ref()
-                                    .map(|rendered| rendered.output.clone()),
-                            ),
-                        ),
+                        .child(div().w_full().text_ui_sm(cx).children(
+                            rendered_tool_use.as_ref().map(|rendered| {
+                                MarkdownElement::new(
+                                    rendered.output.clone(),
+                                    tool_use_markdown_style(window, cx),
+                                )
+                                .on_url_click({
+                                    let workspace = self.workspace.clone();
+                                    move |text, window, cx| {
+                                        open_markdown_link(text, workspace.clone(), window, cx);
+                                    }
+                                })
+                            }),
+                        )),
                 ),
                 ToolUseStatus::Running => container.child(
                     results_content_container().child(
@@ -1881,11 +1865,20 @@ impl ActiveThread {
                                 .buffer_font(cx),
                         )
                         .child(
-                            div().text_ui_sm(cx).children(
-                                rendered_tool_use
-                                    .as_ref()
-                                    .map(|rendered| rendered.output.clone()),
-                            ),
+                            div()
+                                .text_ui_sm(cx)
+                                .children(rendered_tool_use.as_ref().map(|rendered| {
+                                    MarkdownElement::new(
+                                        rendered.output.clone(),
+                                        tool_use_markdown_style(window, cx),
+                                    )
+                                    .on_url_click({
+                                        let workspace = self.workspace.clone();
+                                        move |text, window, cx| {
+                                            open_markdown_link(text, workspace.clone(), window, cx);
+                                        }
+                                    })
+                                })),
                         ),
                 ),
                 ToolUseStatus::Pending => container,
@@ -1948,7 +1941,9 @@ impl ActiveThread {
                                         )
                                         .child(
                                             h_flex().pr_8().text_ui_sm(cx).children(
-                                                rendered_tool_use.map(|rendered| rendered.label)
+                                                rendered_tool_use.map(|rendered| MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)).on_url_click({let workspace = self.workspace.clone(); move |text, window, cx| {
+                                                    open_markdown_link(text, workspace.clone(), window, cx);
+                                                }}))
                                             ),
                                         ),
                                 )
@@ -2036,7 +2031,9 @@ impl ActiveThread {
                                     )
                                     .child(
                                         h_flex().pr_8().text_ui_sm(cx).children(
-                                            rendered_tool_use.map(|rendered| rendered.label)
+                                            rendered_tool_use.map(|rendered| MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)).on_url_click({let workspace = self.workspace.clone(); move |text, window, cx| {
+                                                open_markdown_link(text, workspace.clone(), window, cx);
+                                            }}))
                                         ),
                                     ),
                             )
