@@ -123,6 +123,14 @@ pub struct CloseAllItems {
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
+pub struct CloseOtherItems {
+    pub save_intent: Option<SaveIntent>,
+    #[serde(default)]
+    pub close_pinned: bool,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CloseCleanItems {
     #[serde(default)]
     pub close_pinned: bool,
@@ -161,6 +169,7 @@ impl_actions!(
     [
         CloseAllItems,
         CloseActiveItem,
+        CloseOtherItems,
         CloseCleanItems,
         CloseItemsToTheLeft,
         CloseItemsToTheRight,
@@ -1337,6 +1346,26 @@ impl Pane {
         ))
     }
 
+    pub fn close_other_items(
+        &mut self,
+        item_id_to_skip: EntityId,
+        action: &CloseOtherItems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.items.is_empty() {
+            return None;
+        }
+
+        let non_closeable_items = self.get_non_closeable_item_ids(action.close_pinned);
+        Some(self.close_items(
+            window,
+            cx,
+            action.save_intent.unwrap_or(SaveIntent::Close),
+            move |item_id| item_id != item_id_to_skip && !non_closeable_items.contains(&item_id),
+        ))
+    }
+
     pub fn close_clean_items(
         &mut self,
         action: &CloseCleanItems,
@@ -2459,16 +2488,23 @@ impl Pane {
                         )
                         .item(ContextMenuItem::Entry(
                             ContextMenuEntry::new("Close Others")
-                                .action(Box::new(CloseInactiveItems {
+                                .action(Box::new(CloseOtherItems {
                                     save_intent: None,
                                     close_pinned: false,
                                 }))
                                 .disabled(total_items == 1)
                                 .handler(window.handler_for(&pane, move |pane, window, cx| {
-                                    pane.close_items(window, cx, SaveIntent::Close, |id| {
-                                        id != item_id
-                                    })
-                                    .detach_and_log_err(cx);
+                                    if let Some(task) = pane.close_other_items(
+                                        item_id,
+                                        &CloseOtherItems {
+                                            save_intent: None,
+                                            close_pinned: false,
+                                        },
+                                        window,
+                                        cx,
+                                    ) {
+                                        task.detach_and_log_err(cx);
+                                    };
                                 })),
                         ))
                         .separator()
@@ -4333,6 +4369,45 @@ mod tests {
         .await
         .unwrap();
         assert_item_labels(&pane, ["C*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_other_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        let second_tab = add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(0, window, cx);
+        });
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(2, true, true, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*", "D"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_other_items(
+                second_tab.entity_id(),
+                &CloseOtherItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A*", "B"], cx);
     }
 
     #[gpui::test]
