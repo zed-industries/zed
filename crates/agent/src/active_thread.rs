@@ -164,14 +164,10 @@ enum RenderedMessageSegment {
 fn render_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
-    workspace: WeakEntity<Workspace>,
+    _workspace: WeakEntity<Workspace>,
     cx: &mut App,
 ) -> Entity<Markdown> {
-    cx.new(|cx| {
-        Markdown::new(text, Some(language_registry), None, cx).open_url(move |text, window, cx| {
-            open_markdown_link(text, workspace.clone(), window, cx);
-        })
-    })
+    cx.new(|cx| Markdown::new(text, Some(language_registry), None, cx))
 }
 
 fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
@@ -261,14 +257,10 @@ fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 fn render_tool_use_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
-    workspace: WeakEntity<Workspace>,
+    _workspace: WeakEntity<Workspace>,
     cx: &mut App,
 ) -> Entity<Markdown> {
-    cx.new(|cx| {
-        Markdown::new(text, Some(language_registry), None, cx).open_url(move |text, window, cx| {
-            open_markdown_link(text, workspace.clone(), window, cx);
-        })
-    })
+    cx.new(|cx| Markdown::new(text, Some(language_registry), None, cx))
 }
 
 fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
@@ -1550,10 +1542,18 @@ impl ActiveThread {
                             )
                             .into_any_element(),
                         RenderedMessageSegment::Text(markdown) => div()
-                            .child(MarkdownElement::new(
-                                markdown.clone(),
-                                default_markdown_style(window, cx),
-                            ))
+                            .child(
+                                MarkdownElement::new(
+                                    markdown.clone(),
+                                    default_markdown_style(window, cx),
+                                )
+                                .on_open_url({
+                                    let workspace = self.workspace.clone();
+                                    move |text, window, cx| {
+                                        open_markdown_link(text, workspace.clone(), window, cx);
+                                    }
+                                }),
+                            )
                             .into_any_element(),
                     },
                 ),
@@ -1712,10 +1712,23 @@ impl ActiveThread {
                                     .h_20()
                                     .track_scroll(scroll_handle)
                                     .text_ui_sm(cx)
-                                    .child(MarkdownElement::new(
-                                        markdown.clone(),
-                                        default_markdown_style(window, cx),
-                                    ))
+                                    .child(
+                                        MarkdownElement::new(
+                                            markdown.clone(),
+                                            default_markdown_style(window, cx),
+                                        )
+                                        .on_open_url({
+                                            let workspace = self.workspace.clone();
+                                            move |text, window, cx| {
+                                                open_markdown_link(
+                                                    text,
+                                                    workspace.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        }),
+                                    )
                                     .overflow_hidden(),
                             )
                             .child(gradient_overlay),
@@ -1730,10 +1743,18 @@ impl ActiveThread {
                             .rounded_b_lg()
                             .bg(editor_bg)
                             .text_ui_sm(cx)
-                            .child(MarkdownElement::new(
-                                markdown.clone(),
-                                default_markdown_style(window, cx),
-                            )),
+                            .child(
+                                MarkdownElement::new(
+                                    markdown.clone(),
+                                    default_markdown_style(window, cx),
+                                )
+                                .on_open_url({
+                                    let workspace = self.workspace.clone();
+                                    move |text, window, cx| {
+                                        open_markdown_link(text, workspace.clone(), window, cx);
+                                    }
+                                }),
+                            ),
                     )
                 }),
         )
@@ -1789,13 +1810,41 @@ impl ActiveThread {
         let rendered_tool_use = self.rendered_tool_uses.get(&tool_use.id).cloned();
         let results_content_container = || v_flex().p_2().gap_0p5();
 
-        let results_content =
-            v_flex()
-                .gap_1()
-                .child(
+        let results_content = v_flex()
+            .gap_1()
+            .child(
+                results_content_container()
+                    .child(
+                        Label::new("Input")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .text_ui_sm(cx)
+                            .children(rendered_tool_use.as_ref().map(|rendered| {
+                                MarkdownElement::new(
+                                    rendered.input.clone(),
+                                    tool_use_markdown_style(window, cx),
+                                )
+                                .on_open_url({
+                                    let workspace = self.workspace.clone();
+                                    move |text, window, cx| {
+                                        open_markdown_link(text, workspace.clone(), window, cx);
+                                    }
+                                })
+                            })),
+                    ),
+            )
+            .map(|container| match tool_use.status {
+                ToolUseStatus::Finished(_) => container.child(
                     results_content_container()
+                        .border_t_1()
+                        .border_color(self.tool_card_border_color(cx))
                         .child(
-                            Label::new("Input")
+                            Label::new("Result")
                                 .size(LabelSize::XSmall)
                                 .color(Color::Muted)
                                 .buffer_font(cx),
@@ -1803,95 +1852,87 @@ impl ActiveThread {
                         .child(div().w_full().text_ui_sm(cx).children(
                             rendered_tool_use.as_ref().map(|rendered| {
                                 MarkdownElement::new(
-                                    rendered.input.clone(),
+                                    rendered.output.clone(),
                                     tool_use_markdown_style(window, cx),
                                 )
+                                .on_open_url({
+                                    let workspace = self.workspace.clone();
+                                    move |text, window, cx| {
+                                        open_markdown_link(text, workspace.clone(), window, cx);
+                                    }
+                                })
                             }),
                         )),
-                )
-                .map(|container| match tool_use.status {
-                    ToolUseStatus::Finished(_) => container.child(
-                        results_content_container()
+                ),
+                ToolUseStatus::Running => container.child(
+                    results_content_container().child(
+                        h_flex()
+                            .gap_1()
+                            .pb_1()
                             .border_t_1()
                             .border_color(self.tool_card_border_color(cx))
                             .child(
-                                Label::new("Result")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted)
-                                    .buffer_font(cx),
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Accent)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
+                                    ),
                             )
-                            .child(div().w_full().text_ui_sm(cx).children(
-                                rendered_tool_use.as_ref().map(|rendered| {
-                                    MarkdownElement::new(
-                                        rendered.output.clone(),
-                                        tool_use_markdown_style(window, cx),
-                                    )
-                                }),
-                            )),
-                    ),
-                    ToolUseStatus::Running => container.child(
-                        results_content_container().child(
-                            h_flex()
-                                .gap_1()
-                                .pb_1()
-                                .border_t_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(
-                                    Icon::new(IconName::ArrowCircle)
-                                        .size(IconSize::Small)
-                                        .color(Color::Accent)
-                                        .with_animation(
-                                            "arrow-circle",
-                                            Animation::new(Duration::from_secs(2)).repeat(),
-                                            |icon, delta| {
-                                                icon.transform(Transformation::rotate(percentage(
-                                                    delta,
-                                                )))
-                                            },
-                                        ),
-                                )
-                                .child(
-                                    Label::new("Running…")
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted)
-                                        .buffer_font(cx),
-                                ),
-                        ),
-                    ),
-                    ToolUseStatus::Error(_) => {
-                        container.child(
-                            results_content_container()
-                                .border_t_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(
-                                    Label::new("Error")
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted)
-                                        .buffer_font(cx),
-                                )
-                                .child(div().text_ui_sm(cx).children(
-                                    rendered_tool_use.as_ref().map(|rendered| {
-                                        MarkdownElement::new(
-                                            rendered.output.clone(),
-                                            tool_use_markdown_style(window, cx),
-                                        )
-                                    }),
-                                )),
-                        )
-                    }
-                    ToolUseStatus::Pending => container,
-                    ToolUseStatus::NeedsConfirmation => container.child(
-                        results_content_container()
-                            .border_t_1()
-                            .border_color(self.tool_card_border_color(cx))
                             .child(
-                                Label::new("Asking Permission")
-                                    .size(LabelSize::Small)
+                                Label::new("Running…")
+                                    .size(LabelSize::XSmall)
                                     .color(Color::Muted)
                                     .buffer_font(cx),
                             ),
                     ),
-                });
+                ),
+                ToolUseStatus::Error(_) => container.child(
+                    results_content_container()
+                        .border_t_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .child(
+                            Label::new("Error")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx),
+                        )
+                        .child(
+                            div()
+                                .text_ui_sm(cx)
+                                .children(rendered_tool_use.as_ref().map(|rendered| {
+                                    MarkdownElement::new(
+                                        rendered.output.clone(),
+                                        tool_use_markdown_style(window, cx),
+                                    )
+                                    .on_open_url({
+                                        let workspace = self.workspace.clone();
+                                        move |text, window, cx| {
+                                            open_markdown_link(text, workspace.clone(), window, cx);
+                                        }
+                                    })
+                                })),
+                        ),
+                ),
+                ToolUseStatus::Pending => container,
+                ToolUseStatus::NeedsConfirmation => container.child(
+                    results_content_container()
+                        .border_t_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .child(
+                            Label::new("Asking Permission")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .buffer_font(cx),
+                        ),
+                ),
+            });
 
         let gradient_overlay = |color: Hsla| {
             div()
@@ -1939,7 +1980,9 @@ impl ActiveThread {
                                         )
                                         .child(
                                             h_flex().pr_8().text_ui_sm(cx).children(
-                                                rendered_tool_use.map(|rendered| MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)))
+                                                rendered_tool_use.map(|rendered| MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)).on_open_url({let workspace = self.workspace.clone(); move |text, window, cx| {
+                                                    open_markdown_link(text, workspace.clone(), window, cx);
+                                                }}))
                                             ),
                                         ),
                                 )
@@ -2027,7 +2070,9 @@ impl ActiveThread {
                                     )
                                     .child(
                                         h_flex().pr_8().text_ui_sm(cx).children(
-                                            rendered_tool_use.map(|rendered| MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)))
+                                            rendered_tool_use.map(|rendered| MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)).on_open_url({let workspace = self.workspace.clone(); move |text, window, cx| {
+                                                open_markdown_link(text, workspace.clone(), window, cx);
+                                            }}))
                                         ),
                                     ),
                             )
