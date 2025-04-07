@@ -793,8 +793,6 @@ impl Element for MarkdownElement {
                         MarkdownTag::Link { dest_url, .. } => {
                             if builder.code_block_stack.is_empty() {
                                 builder.push_link(dest_url.clone(), range.clone());
-                                // Track that we're now inside a link
-                                builder.inside_link = Some(dest_url.clone());
                                 let style = self
                                     .style
                                     .link_callback
@@ -958,10 +956,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
                     MarkdownTagEnd::Link => {
                         if builder.code_block_stack.is_empty() {
-                            builder.pop_text_style();
-                            // Clear the inside_link flag
-                            dbg!(format!("clearing: {:?}", builder.inside_link));
-                            builder.inside_link = None;
+                            builder.pop_text_style()
                         }
                     }
                     MarkdownTagEnd::Table => {
@@ -991,6 +986,9 @@ impl Element for MarkdownElement {
                     builder.push_text_style(self.style.inline_code.clone());
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                     builder.pop_text_style();
+                }
+                MarkdownEvent::Html => {
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                 }
                 MarkdownEvent::InlineHtml => {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
@@ -1127,7 +1125,6 @@ struct MarkdownElementBuilder {
     list_stack: Vec<ListStackEntry>,
     table_alignments: Vec<Alignment>,
     syntax_theme: Arc<SyntaxTheme>,
-    inside_link: Option<SharedString>, // Track if we're inside a link and store its URL
 }
 
 #[derive(Default)]
@@ -1155,7 +1152,6 @@ impl MarkdownElementBuilder {
             list_stack: Vec::new(),
             table_alignments: Vec::new(),
             syntax_theme,
-            inside_link: None,
         }
     }
 
