@@ -1751,7 +1751,9 @@ impl GitPanel {
                 .await??;
 
             let mut remotes: Vec<_> = remotes.into_iter().map(FetchOptions::Remote).collect();
-            remotes.push(FetchOptions::All);
+            if remotes.len() > 1 {
+                remotes.push(FetchOptions::All);
+            }
             let selection = cx
                 .update(|window, cx| {
                     picker_prompt::prompt(
