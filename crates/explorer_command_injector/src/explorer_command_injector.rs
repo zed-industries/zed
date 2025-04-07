@@ -3,11 +3,10 @@
 use std::{os::windows::ffi::OsStringExt, path::PathBuf};
 
 use windows::{
-    core::{implement, Interface, Ref, Result, BOOL, GUID, HRESULT, HSTRING},
     Win32::{
         Foundation::{
-            GetLastError, CLASS_E_CLASSNOTAVAILABLE, ERROR_INSUFFICIENT_BUFFER, E_FAIL,
-            E_INVALIDARG, E_NOTIMPL, HINSTANCE, MAX_PATH,
+            CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_INVALIDARG, E_NOTIMPL, ERROR_INSUFFICIENT_BUFFER,
+            GetLastError, HINSTANCE, MAX_PATH,
         },
         Globalization::u_strlen,
         System::{
@@ -16,15 +15,16 @@ use windows::{
             SystemServices::DLL_PROCESS_ATTACH,
         },
         UI::Shell::{
-            IEnumExplorerCommand, IExplorerCommand, IExplorerCommand_Impl, IShellItemArray,
-            SHStrDupW, ECF_DEFAULT, ECS_ENABLED, SIGDN_FILESYSPATH,
+            ECF_DEFAULT, ECS_ENABLED, IEnumExplorerCommand, IExplorerCommand,
+            IExplorerCommand_Impl, IShellItemArray, SHStrDupW, SIGDN_FILESYSPATH,
         },
     },
+    core::{BOOL, GUID, HRESULT, HSTRING, Interface, Ref, Result, implement},
 };
 
 static mut DLL_INSTANCE: HINSTANCE = HINSTANCE(std::ptr::null_mut());
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "system" fn DllMain(
     hinstdll: HINSTANCE,
     fdwreason: u32,
@@ -138,7 +138,7 @@ const MODULE_ID: GUID = GUID::from_u128(0x266f2cfe_1653_42af_b55c_fe3590c83871);
 #[cfg(all(feature = "nightly", feature = "stable", feature = "preview"))]
 const MODULE_ID: GUID = GUID::from_u128(0x685f4d49_6718_4c55_b271_ebb5c6a48d6f);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "system" fn DllGetClassObject(
     class_id: *const GUID,
     iid: *const GUID,
