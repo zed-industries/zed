@@ -629,8 +629,7 @@ impl GitRepository for RealGitRepository {
                     return None;
                 }
                 let content = repo.find_blob(entry.id()).log_err()?.content().to_owned();
-                let content = String::from_utf8(content).log_err()?;
-                Some(content)
+                String::from_utf8(content).ok()
             })
             .boxed()
     }
