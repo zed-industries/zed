@@ -970,6 +970,26 @@ impl AssistantPanel {
                                     }),
                             )
                             .child(
+                                IconButton::new("open-history", IconName::HistoryRerun)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip({
+                                        let focus_handle = self.focus_handle(cx);
+                                        move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                "History",
+                                                &OpenHistory,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        }
+                                    })
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(OpenHistory.boxed_clone(), cx);
+                                    }),
+                            )
+                            .child(
                                 PopoverMenu::new("assistant-menu")
                                     .trigger_with_tooltip(
                                         IconButton::new("new", IconName::Ellipsis)
@@ -985,12 +1005,6 @@ impl AssistantPanel {
                                             cx,
                                             |menu, _window, _cx| {
                                                 menu.action(
-                                                    "New Thread",
-                                                    Box::new(NewThread {
-                                                        from_thread_id: None,
-                                                    }),
-                                                )
-                                                .action(
                                                     "New Prompt Editor",
                                                     NewPromptEditor.boxed_clone(),
                                                 )
@@ -1003,7 +1017,6 @@ impl AssistantPanel {
                                                     )
                                                 })
                                                 .separator()
-                                                .action("History", OpenHistory.boxed_clone())
                                                 .action("Settings", OpenConfiguration.boxed_clone())
                                             },
                                         ))
