@@ -15,10 +15,6 @@ use parking_lot::RwLock;
 use smallvec::SmallVec;
 use windows::{
     UI::ViewManagement::UISettings,
-    UI::{
-        StartScreen::{JumpList, JumpListItem},
-        ViewManagement::UISettings,
-    },
     Win32::{
         Foundation::*,
         Graphics::{
@@ -29,6 +25,7 @@ use windows::{
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
+    core::*,
 };
 
 use crate::{platform::blade::BladeContext, *};

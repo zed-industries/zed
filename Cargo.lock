@@ -17580,8 +17580,8 @@ dependencies = [
  "ui",
  "util",
  "uuid",
- "workspace-hack",
  "windows 0.61.1",
+ "workspace-hack",
  "zed_actions",
 ]
 
