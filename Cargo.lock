@@ -1240,6 +1240,7 @@ dependencies = [
  "simplelog",
  "windows 0.61.1",
  "winresource",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -17772,6 +17773,8 @@ dependencies = [
  "wasmtime-cranelift",
  "wasmtime-environ",
  "winapi",
+ "windows-core 0.61.0",
+ "windows-numerics",
  "windows-sys 0.48.0",
  "windows-sys 0.52.0",
  "windows-sys 0.59.0",
