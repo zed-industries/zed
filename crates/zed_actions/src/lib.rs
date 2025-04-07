@@ -1,4 +1,6 @@
-use gpui::{actions, impl_actions};
+use gpui::{
+    action_with_deprecated_aliases, actions, impl_action_with_deprecated_aliases, impl_actions,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -213,13 +215,22 @@ pub mod assistant {
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ToggleRecent {
+    #[serde(default)]
+    pub create_new_window: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenRecent {
     #[serde(default)]
     pub create_new_window: bool,
 }
 
-impl_actions!(projects, [OpenRecent]);
-actions!(projects, [OpenRemote]);
+impl_actions!(projects, [ToggleRecent]);
+impl_action_with_deprecated_aliases!(projects, OpenRecent, ["projects::OpenRecent"]);
+actions!(projects, [ToggleRemote]);
+action_with_deprecated_aliases!(projects, OpenRemote, ["projects::OpenRemote"]);
 
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

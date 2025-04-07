@@ -545,9 +545,9 @@
     "use_key_equivalents": true,
     "bindings": {
       // Change the default action on `menu::Confirm` by setting the parameter
-      // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
-      "alt-cmd-o": "projects::OpenRecent",
-      "ctrl-cmd-o": "projects::OpenRemote",
+      // "alt-cmd-o": ["projects::ToggleRecent", {"create_new_window": true }],
+      "alt-cmd-o": "projects::ToggleRecent",
+      "ctrl-cmd-o": "projects::ToggleRemote",
       "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",

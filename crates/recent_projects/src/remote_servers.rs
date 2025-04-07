@@ -36,8 +36,9 @@ use workspace::{
     ModalView, Workspace, notifications::DetachAndPromptErr,
     open_ssh_project_with_existing_connection,
 };
+use zed_actions::OpenRemote;
+use zed_actions::ToggleRemote;
 
-use crate::OpenRemote;
 use crate::ssh_connections::RemoteSettingsContent;
 use crate::ssh_connections::SshConnection;
 use crate::ssh_connections::SshConnectionHeader;
@@ -307,8 +308,11 @@ impl RemoteServerProjects {
         _: &mut Context<Workspace>,
     ) {
         workspace.register_action(|workspace, _: &OpenRemote, window, cx| {
-            let handle = cx.entity().downgrade();
-            workspace.toggle_modal(window, cx, |window, cx| Self::new(window, cx, handle))
+            Self::toggle(workspace, window, cx);
+        });
+
+        workspace.register_action(|workspace, _: &ToggleRemote, window, cx| {
+            Self::toggle(workspace, window, cx);
         });
     }
 
@@ -317,6 +321,11 @@ impl RemoteServerProjects {
             let handle = cx.entity().downgrade();
             workspace.toggle_modal(window, cx, |window, cx| Self::new(window, cx, handle))
         })
+    }
+
+    fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<'_, Workspace>) {
+        let handle = cx.entity().downgrade();
+        workspace.toggle_modal(window, cx, |window, cx| Self::new(window, cx, handle));
     }
 
     pub fn new(

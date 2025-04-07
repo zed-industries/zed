@@ -17,7 +17,7 @@ On your local machine, Zed runs its UI, talks to language models, uses Tree-sitt
 ## Setup
 
 1. Download and install the latest [Zed](https://zed.dev/releases). You need at least Zed v0.159.
-1. Use {#kb projects::OpenRemote} to open the "Remote Projects" dialog.
+1. Use {#kb projects::ToggleRemote} to open the "Remote Projects" dialog.
 1. Click "Connect New Server" and enter the command you use to SSH into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
 1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, Zed will download the server on the remote host and start it.
 1. Once the Zed server is running, you will be prompted to choose a path to open on the remote server.
@@ -35,7 +35,7 @@ The remote machine must be able to run Zed's server. The following platforms sho
 
 ## Configuration
 
-The list of remote servers is stored in your settings file {#kb zed::OpenSettings}. You can edit this list using the Remote Projects dialog {#kb projects::OpenRemote}, which provides some robustness - for example it checks that the connection can be established before writing it to the settings file.
+The list of remote servers is stored in your settings file {#kb zed::OpenSettings}. You can edit this list using the Remote Projects dialog {#kb projects::ToggleRemote}, which provides some robustness - for example it checks that the connection can be established before writing it to the settings file.
 
 ```json
 {
