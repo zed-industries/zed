@@ -119,7 +119,6 @@ dependencies = [
  "ui_input",
  "util",
  "uuid",
- "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
