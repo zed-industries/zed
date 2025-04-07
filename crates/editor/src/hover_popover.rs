@@ -787,7 +787,7 @@ impl InfoPopover {
                                 markdown.clone(),
                                 hover_markdown_style(window, cx),
                             )
-                            .on_open_url(open_markdown_url),
+                            .on_url_click(open_markdown_url),
                         ),
                 )
                 .child(self.render_vertical_scrollbar(cx));
@@ -885,7 +885,7 @@ impl DiagnosticPopover {
 
             markdown_div = markdown_div.child(
                 MarkdownElement::new(markdown.clone(), markdown_style)
-                    .on_open_url(open_markdown_url),
+                    .on_url_click(open_markdown_url),
             );
         }
 

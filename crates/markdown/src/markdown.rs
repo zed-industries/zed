@@ -315,7 +315,7 @@ impl ParsedMarkdown {
 pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
-    on_open_url: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
 }
 
 impl MarkdownElement {
@@ -323,15 +323,15 @@ impl MarkdownElement {
         Self {
             markdown,
             style,
-            on_open_url: None,
+            on_url_click: None,
         }
     }
 
-    pub fn on_open_url(
+    pub fn on_url_click(
         mut self,
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_open_url = Some(Box::new(handler));
+        self.on_url_click = Some(Box::new(handler));
         self
     }
 
@@ -422,7 +422,7 @@ impl MarkdownElement {
             window.set_cursor_style(CursorStyle::IBeam, Some(hitbox));
         }
 
-        let on_open_url = self.on_open_url.take();
+        let on_open_url = self.on_url_click.take();
 
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();

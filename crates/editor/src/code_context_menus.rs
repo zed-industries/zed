@@ -631,7 +631,7 @@ impl CompletionsMenu {
                 });
                 div().child(
                     MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
-                        .on_open_url(open_markdown_url),
+                        .on_url_click(open_markdown_url),
                 )
             }
             CompletionDocumentation::MultiLineMarkdown(_) => return None,
