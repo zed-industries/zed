@@ -37,11 +37,11 @@ use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
 use util::{ResultExt, maybe};
 use workspace::DraggedTab;
 use workspace::{
-    DraggedSelection, Pane, ShowConfiguration, ToggleZoom, Workspace,
+    DraggedSelection, Pane, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     pane,
 };
-use zed_actions::assistant::{InlineAssist, OpenPromptLibrary, ToggleFocus};
+use zed_actions::assistant::{InlineAssist, OpenPromptLibrary, ShowConfiguration, ToggleFocus};
 
 pub fn init(cx: &mut App) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
@@ -54,7 +54,15 @@ pub fn init(cx: &mut App) {
                 .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context)
-                .register_action(AssistantPanel::restart_context_servers);
+                .register_action(AssistantPanel::restart_context_servers)
+                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.deploy_prompt_library(&OpenPromptLibrary, window, cx)
+                        });
+                    }
+                });
         },
     )
     .detach();

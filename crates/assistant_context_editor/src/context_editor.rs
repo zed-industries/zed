@@ -18,6 +18,7 @@ use editor::{
     scroll::Autoscroll,
 };
 use editor::{FoldPlaceholder, display_map::CreaseId};
+use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
@@ -56,8 +57,7 @@ use ui::{
 use util::{ResultExt, maybe};
 use workspace::searchable::{Direction, SearchableItemHandle};
 use workspace::{
-    Save, ShowConfiguration, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    Save, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotificationId,
     pane::{self, SaveIntent},
@@ -1562,7 +1562,7 @@ impl ContextEditor {
                 })
             };
             let create_block_properties = |message: &Message| BlockProperties {
-                height: 2,
+                height: Some(2),
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Above(
                     buffer
@@ -2111,7 +2111,7 @@ impl ContextEditor {
                     let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         placement: BlockPlacement::Above(anchor),
-                        height: MAX_HEIGHT_IN_LINES,
+                        height: Some(MAX_HEIGHT_IN_LINES),
                         style: BlockStyle::Sticky,
                         render: Arc::new(move |cx| {
                             let image_size = size_for_image(
@@ -2359,7 +2359,19 @@ impl ContextEditor {
                             .on_click({
                                 let focus_handle = self.focus_handle(cx).clone();
                                 move |_event, window, cx| {
-                                    focus_handle.dispatch_action(&ShowConfiguration, window, cx);
+                                    if cx.has_flag::<Assistant2FeatureFlag>() {
+                                        focus_handle.dispatch_action(
+                                            &zed_actions::agent::OpenConfiguration,
+                                            window,
+                                            cx,
+                                        );
+                                    } else {
+                                        focus_handle.dispatch_action(
+                                            &zed_actions::assistant::ShowConfiguration,
+                                            window,
+                                            cx,
+                                        );
+                                    };
                                 }
                             }),
                     )

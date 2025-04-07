@@ -1006,40 +1006,16 @@ impl Element for MarkdownElement {
                     }
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
-                MarkdownEvent::Text(parsed) => {
-                    builder.push_text(parsed, range.start);
+                MarkdownEvent::Text => {
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                }
+                MarkdownEvent::SubstitutedText(text) => {
+                    builder.push_text(text, range.start);
                 }
                 MarkdownEvent::Code => {
-                    // If this inline code is inside a link, show the URL
-                    if let Some(dest_url) = builder.inside_link.clone() {
-                        builder.flush_text(); // Flush any pending text before adding the link display
-
-                        // Add a span to display the link URL
-                        let link_display = div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .mb_1()
-                            .child(
-                                Icon::new(IconName::Link)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(Label::new(format!("Link: {}", dest_url)).color(Color::Muted));
-
-                        builder
-                            .div_stack
-                            .last_mut()
-                            .unwrap()
-                            .extend([link_display.into_any()]);
-                    }
-
                     builder.push_text_style(self.style.inline_code.clone());
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                     builder.pop_text_style();
-                }
-                MarkdownEvent::Html => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                 }
                 MarkdownEvent::InlineHtml => {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);

@@ -1,9 +1,11 @@
 #![allow(non_snake_case)]
 
+pub use ::proto::*;
+
 use anyhow::anyhow;
 use async_tungstenite::tungstenite::Message as WebSocketMessage;
 use futures::{SinkExt as _, StreamExt as _};
-pub use proto::{Message as _, *};
+use proto::Message as _;
 use std::time::Instant;
 use std::{fmt::Debug, io};
 
@@ -31,10 +33,6 @@ impl<S> MessageStream<S> {
             stream,
             encoding_buffer: Vec::new(),
         }
-    }
-
-    pub fn inner_mut(&mut self) -> &mut S {
-        &mut self.stream
     }
 }
 

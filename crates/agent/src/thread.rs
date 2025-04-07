@@ -385,14 +385,28 @@ impl Thread {
         self.summary.clone()
     }
 
+    pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
+
     pub fn summary_or_default(&self) -> SharedString {
-        const DEFAULT: SharedString = SharedString::new_static("New Thread");
-        self.summary.clone().unwrap_or(DEFAULT)
+        self.summary.clone().unwrap_or(Self::DEFAULT_SUMMARY)
     }
 
-    pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut Context<Self>) {
-        self.summary = Some(summary.into());
-        cx.emit(ThreadEvent::SummaryChanged);
+    pub fn set_summary(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let Some(current_summary) = &self.summary else {
+            // Don't allow setting summary until generated
+            return;
+        };
+
+        let mut new_summary = new_summary.into();
+
+        if new_summary.is_empty() {
+            new_summary = Self::DEFAULT_SUMMARY;
+        }
+
+        if current_summary != &new_summary {
+            self.summary = Some(new_summary);
+            cx.emit(ThreadEvent::SummaryChanged);
+        }
     }
 
     pub fn latest_detailed_summary_or_text(&self) -> SharedString {
@@ -1293,7 +1307,7 @@ impl Thread {
                         this.summary = Some(new_summary.into());
                     }
 
-                    cx.emit(ThreadEvent::SummaryChanged);
+                    cx.emit(ThreadEvent::SummaryGenerated);
                 })?;
 
                 anyhow::Ok(())
@@ -1847,6 +1861,7 @@ pub enum ThreadEvent {
     MessageAdded(MessageId),
     MessageEdited(MessageId),
     MessageDeleted(MessageId),
+    SummaryGenerated,
     SummaryChanged,
     UsePendingTools,
     ToolFinished {

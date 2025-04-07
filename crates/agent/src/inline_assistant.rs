@@ -31,14 +31,14 @@ use project::LspAction;
 use project::{CodeAction, ProjectTransaction};
 use prompt_store::PromptBuilder;
 use settings::{Settings, SettingsStore};
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{OffsetRangeExt, ToPoint as _};
 use ui::prelude::*;
 use util::RangeExt;
 use util::ResultExt;
-use workspace::{ItemHandle, Toast, Workspace, notifications::NotificationId};
-use workspace::{ShowConfiguration, dock::Panel};
+use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
+use zed_actions::agent::OpenConfiguration;
 
 use crate::AssistantPanel;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
@@ -295,7 +295,7 @@ impl InlineAssistant {
                     if let Some(answer) = answer {
                         if answer == 0 {
                             cx.update(|window, cx| {
-                                window.dispatch_action(Box::new(ShowConfiguration), cx)
+                                window.dispatch_action(Box::new(OpenConfiguration), cx)
                             })
                             .ok();
                         }
@@ -402,7 +402,7 @@ impl InlineAssistant {
             codegen_ranges.push(anchor_range);
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
-                self.telemetry.report_assistant_event(AssistantEvent {
+                self.telemetry.report_assistant_event(AssistantEventData {
                     conversation_id: None,
                     kind: AssistantKind::Inline,
                     phase: AssistantPhase::Invoked,
@@ -621,14 +621,14 @@ impl InlineAssistant {
             BlockProperties {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Above(range.start),
-                height: prompt_editor_height,
+                height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Below(range.end),
-                height: 0,
+                height: None,
                 render: Arc::new(|cx| {
                     v_flex()
                         .h_full()
@@ -987,7 +987,7 @@ impl InlineAssistant {
                         .map(|language| language.name())
                 });
                 report_assistant_event(
-                    AssistantEvent {
+                    AssistantEventData {
                         conversation_id: None,
                         kind: AssistantKind::Inline,
                         message_id,
@@ -1392,7 +1392,7 @@ impl InlineAssistant {
                     deleted_lines_editor.update(cx, |editor, cx| editor.max_point(cx).row().0 + 1);
                 new_blocks.push(BlockProperties {
                     placement: BlockPlacement::Above(new_row),
-                    height,
+                    height: Some(height),
                     style: BlockStyle::Flex,
                     render: Arc::new(move |cx| {
                         div()

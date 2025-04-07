@@ -35,6 +35,18 @@ pub enum ToolUseStatus {
     Error(SharedString),
 }
 
+impl ToolUseStatus {
+    pub fn text(&self) -> SharedString {
+        match self {
+            ToolUseStatus::NeedsConfirmation => "".into(),
+            ToolUseStatus::Pending => "".into(),
+            ToolUseStatus::Running => "".into(),
+            ToolUseStatus::Finished(out) => out.clone(),
+            ToolUseStatus::Error(out) => out.clone(),
+        }
+    }
+}
+
 pub struct ToolUseState {
     tools: Arc<ToolWorkingSet>,
     tool_uses_by_assistant_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,

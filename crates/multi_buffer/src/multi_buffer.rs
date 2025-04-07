@@ -2649,9 +2649,13 @@ impl MultiBuffer {
         self.sync(cx);
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpt_edits = Vec::new();
+        let mut last_hunk_row = None;
         for (range, end_excerpt_id) in ranges {
             for diff_hunk in snapshot.diff_hunks_in_range(range) {
                 if diff_hunk.excerpt_id.cmp(&end_excerpt_id, &snapshot).is_gt() {
+                    continue;
+                }
+                if last_hunk_row.map_or(false, |row| row >= diff_hunk.row_range.start) {
                     continue;
                 }
                 let start = Anchor::in_buffer(
@@ -2666,6 +2670,7 @@ impl MultiBuffer {
                 );
                 let start = snapshot.excerpt_offset_for_anchor(&start);
                 let end = snapshot.excerpt_offset_for_anchor(&end);
+                last_hunk_row = Some(diff_hunk.row_range.start);
                 excerpt_edits.push(text::Edit {
                     old: start..end,
                     new: start..end,
