@@ -119,8 +119,29 @@ fn new_debugger_pane(
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     window: &mut Window,
-    cx: &mut App,
+    cx: &mut Context<RunningState>,
 ) -> Entity<Pane> {
+    let weak_running = cx.weak_entity();
+    let custom_drop_handle =
+        |pane: &mut Pane, any: &dyn Any, window: &mut Window, cx: &mut Context<Pane>| {
+            let Some(tab) = any.downcast_ref::<DraggedTab>() else {
+                return ControlFlow::Break(());
+            };
+
+            if cx.entity_id() != tab.pane.entity_id() {
+                let source_pane = tab.pane.clone();
+                let target_pane = cx.entity();
+                let target_ix = pane.items_len();
+
+                let item_id = tab.item.item_id();
+
+                window.defer(cx, move |window, cx| {
+                    move_item(&source_pane, &target_pane, item_id, target_ix, window, cx);
+                });
+            }
+            ControlFlow::Break(())
+        };
+
     cx.new(|cx| {
         let mut pane = Pane::new(
             workspace.clone(),
@@ -133,7 +154,7 @@ fn new_debugger_pane(
         );
         pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
         pane.display_nav_history_buttons(None);
-        pane.set_custom_drop_handle(cx, RunningState::custom_drop_handler);
+        pane.set_custom_drop_handle(cx, custom_drop_handle);
         pane
     })
 }
@@ -241,7 +262,6 @@ impl RunningState {
                 window,
                 cx,
             );
-            this.set_custom_drop_handle(cx, Self::custom_drop_handler);
         });
         panes
             .split(&root, &second.clone(), workspace::SplitDirection::Right)
@@ -286,29 +306,6 @@ impl RunningState {
         }
     }
 
-    fn custom_drop_handler(
-        pane: &mut Pane,
-        any: &dyn Any,
-        window: &mut Window,
-        cx: &mut Context<Pane>,
-    ) -> ControlFlow<()> {
-        let Some(tab) = any.downcast_ref::<DraggedTab>() else {
-            return ControlFlow::Break(());
-        };
-
-        if cx.entity_id() != tab.pane.entity_id() {
-            let source_pane = tab.pane.clone();
-            let target_pane = cx.entity();
-            let target_ix = pane.items_len();
-
-            let item_id = tab.item.item_id();
-
-            window.defer(cx, move |window, cx| {
-                move_item(&source_pane, &target_pane, item_id, target_ix, window, cx);
-            });
-        }
-        ControlFlow::Break(())
-    }
     pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
