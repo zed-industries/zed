@@ -4231,7 +4231,6 @@ impl ProjectPanel {
                                 Label::new(message)
                                 .color(Color::from(color))
                                 .size(LabelSize::Small)
-                                .truncate()
                             )
                         )
                     )
