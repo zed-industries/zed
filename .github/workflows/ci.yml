@@ -131,13 +131,13 @@ jobs:
       - name: Check workspace-hack Cargo.toml is up-to-date
         run: |
           cargo hakari generate --diff || {
-            echo "To fix, run script/update-workspace-hack";
+            echo "To fix, run script/update-workspace-hack or script/update-workspace-hack.ps1";
             false
           }
       - name: Check all crates depend on workspace-hack
         run: |
           cargo hakari manage-deps --dry-run || {
-            echo "To fix, run script/update-workspace-hack"
+            echo "To fix, run script/update-workspace-hack or script/update-workspace-hack.ps1"
             false
           }
 
