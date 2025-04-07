@@ -635,6 +635,13 @@
     }
   },
   {
+    "context": "AgentPanel > Markdown",
+    "bindings": {
+      "copy": "markdown::CopyAsMarkdown",
+      "ctrl-c": "markdown::CopyAsMarkdown"
+    }
+  },
+  {
     "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
