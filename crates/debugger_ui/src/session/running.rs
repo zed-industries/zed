@@ -142,7 +142,7 @@ fn new_debugger_pane(
             ControlFlow::Break(())
         };
 
-    cx.new(|cx| {
+    cx.new(move |cx| {
         let mut pane = Pane::new(
             workspace.clone(),
             project.clone(),
@@ -152,7 +152,33 @@ fn new_debugger_pane(
             window,
             cx,
         );
-        pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
+        pane.set_can_split(Some(Arc::new(move |pane, dragged_item, _window, cx| {
+            if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
+                let is_current_pane = tab.pane == cx.entity();
+                let Some(can_drag_away) = weak_running
+                    .update(cx, |running_state, _| {
+                        let current_panes = running_state.panes.panes();
+                        !current_panes.contains(&&tab.pane)
+                            || current_panes.len() > 1
+                            || (!is_current_pane || pane.items_len() > 1)
+                    })
+                    .ok()
+                else {
+                    return false;
+                };
+                if can_drag_away {
+                    let item = if is_current_pane {
+                        pane.item_for_index(tab.ix)
+                    } else {
+                        tab.pane.read(cx).item_for_index(tab.ix)
+                    };
+                    if let Some(item) = item {
+                        return item.downcast::<SubView>().is_some();
+                    }
+                }
+            }
+            false
+        })));
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
         pane
