@@ -20,7 +20,7 @@ use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
     channel::oneshot, future::BoxFuture,
 };
-use gpui::{App, AppContext as _, AsyncApp, Entity, Global, Task, WeakEntity, actions};
+use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;

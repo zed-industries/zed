@@ -1,6 +1,5 @@
 //! socks proxy
-use anyhow::{anyhow, Result};
-use futures::io::{AsyncRead, AsyncWrite};
+use anyhow::{Result, anyhow};
 use http_client::Uri;
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 
