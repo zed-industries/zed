@@ -76,14 +76,12 @@ impl Render for RunningState {
 
 struct SubView {
     inner: AnyView,
-    owning_pane: WeakEntity<Pane>,
     pane_focus_handle: FocusHandle,
     tab_name: SharedString,
 }
 
 impl SubView {
     fn new(
-        owning_pane: WeakEntity<Pane>,
         pane_focus_handle: FocusHandle,
         view: AnyView,
         tab_name: SharedString,
@@ -92,7 +90,6 @@ impl SubView {
         cx.new(|_| Self {
             tab_name,
             inner: view,
-            owning_pane,
             pane_focus_handle,
         })
     }
@@ -135,6 +132,7 @@ impl RunningState {
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
+        #[expect(unused)]
         let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), cx));
 
         let console = cx.new(|cx| {
@@ -191,7 +189,6 @@ impl RunningState {
         root.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
-                    root.downgrade(),
                     this.focus_handle(cx),
                     stack_frame_list.clone().into(),
                     SharedString::new_static("Frames"),
@@ -222,7 +219,6 @@ impl RunningState {
         second.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
-                    root.downgrade(),
                     this.focus_handle(cx),
                     variable_list.clone().into(),
                     SharedString::new_static("Variables"),
@@ -236,7 +232,6 @@ impl RunningState {
             );
             this.add_item(
                 Box::new(SubView::new(
-                    root.downgrade(),
                     this.focus_handle(cx),
                     module_list.clone().into(),
                     SharedString::new_static("Modules"),
@@ -270,7 +265,6 @@ impl RunningState {
         third_column.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
-                    root.downgrade(),
                     this.focus_handle(cx),
                     console.clone().into(),
                     SharedString::new_static("Console"),
