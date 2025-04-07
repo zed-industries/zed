@@ -1,11 +1,11 @@
 pub mod parser;
 mod path_range;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::iter;
 use std::mem;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,8 +19,8 @@ use gpui::{
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
-use path_range::PathRange;
 use pulldown_cmark::Alignment;
+use sum_tree::TreeMap;
 use theme::SyntaxTheme;
 use ui::{Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
@@ -87,16 +87,13 @@ struct Options {
     parse_links_only: bool,
 }
 
-pub enum CodeBlockVariant {
-    Default {
-        copy_button: bool,
-    },
-    Card {
-        open_path_callback: Option<OpenPathCallback>,
-    },
+pub enum CodeBlockRenderer {
+    Default { copy_button: bool },
+    Custom { render: CodeBlockRenderFn },
 }
 
-pub type OpenPathCallback = Arc<dyn Fn(&PathRange, &mut Window, &mut App)>;
+pub type CodeBlockRenderFn =
+    Arc<dyn Fn(usize, &CodeBlockKind, &ParsedMarkdown, Range<usize>, &mut Window, &App) -> Div>;
 
 actions!(markdown, [Copy, CopyAsMarkdown]);
 
@@ -211,13 +208,13 @@ impl Markdown {
                 return anyhow::Ok(ParsedMarkdown {
                     events: Arc::from(parse_links_only(source.as_ref())),
                     source,
-                    languages_by_name: HashMap::default(),
-                    languages_by_path: HashMap::default(),
+                    languages_by_name: TreeMap::default(),
+                    languages_by_path: TreeMap::default(),
                 });
             }
             let (events, language_names, paths) = parse_markdown(&source);
-            let mut languages_by_name = HashMap::with_capacity(language_names.len());
-            let mut languages_by_path = HashMap::with_capacity(paths.len());
+            let mut languages_by_name = TreeMap::default();
+            let mut languages_by_path = TreeMap::default();
             if let Some(registry) = language_registry.as_ref() {
                 for name in language_names {
                     let language = if !name.is_empty() {
@@ -303,12 +300,12 @@ impl Selection {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ParsedMarkdown {
-    source: SharedString,
-    events: Arc<[(Range<usize>, MarkdownEvent)]>,
-    languages_by_name: HashMap<SharedString, Arc<Language>>,
-    languages_by_path: HashMap<PathBuf, Arc<Language>>,
+    pub source: SharedString,
+    pub events: Arc<[(Range<usize>, MarkdownEvent)]>,
+    pub languages_by_name: TreeMap<SharedString, Arc<Language>>,
+    pub languages_by_path: TreeMap<Arc<Path>, Arc<Language>>,
 }
 
 impl ParsedMarkdown {
@@ -324,7 +321,7 @@ impl ParsedMarkdown {
 pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
-    code_block_variant: CodeBlockVariant,
+    code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
 }
 
@@ -333,13 +330,13 @@ impl MarkdownElement {
         Self {
             markdown,
             style,
-            code_block_variant: CodeBlockVariant::Default { copy_button: true },
+            code_block_renderer: CodeBlockRenderer::Default { copy_button: true },
             on_url_click: None,
         }
     }
 
-    pub fn code_block_variant(mut self, variant: CodeBlockVariant) -> Self {
-        self.code_block_variant = variant;
+    pub fn code_block_renderer(mut self, variant: CodeBlockRenderer) -> Self {
+        self.code_block_renderer = variant;
         self
     }
 
@@ -591,7 +588,6 @@ impl Element for MarkdownElement {
             self.style.syntax.clone(),
         );
         let parsed_markdown = &self.markdown.read(cx).parsed_markdown;
-        let code_block_variant = &self.code_block_variant;
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
@@ -651,8 +647,8 @@ impl Element for MarkdownElement {
 
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
 
-                            match (code_block_variant, is_indented) {
-                                (CodeBlockVariant::Default { .. }, _) | (_, true) => {
+                            match (&self.code_block_renderer, is_indented) {
+                                (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
                                     // This is a parent container that we can position the copy button inside.
                                     builder.push_div(
                                         div().relative().w_full(),
@@ -680,49 +676,15 @@ impl Element for MarkdownElement {
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
-                                (CodeBlockVariant::Card { open_path_callback }, _) => {
-                                    let label = render_code_block_card_label(
-                                        kind,
+                                (CodeBlockRenderer::Custom { render }, _) => {
+                                    let parent_container = render(
                                         index,
-                                        &parsed_markdown.languages_by_name,
-                                        open_path_callback.clone(),
+                                        kind,
+                                        &parsed_markdown,
+                                        range.clone(),
+                                        window,
                                         cx,
                                     );
-
-                                    let code_block_header_bg =
-                                        cx.theme().colors().element_background.blend(
-                                            cx.theme().colors().editor_foreground.opacity(0.01),
-                                        );
-
-                                    let code = without_fences(
-                                        parsed_markdown.source()[range.clone()].trim(),
-                                    )
-                                    .to_string();
-
-                                    let codeblock_header = h_flex()
-                                        .p_1()
-                                        .gap_1()
-                                        .justify_between()
-                                        .border_b_1()
-                                        .border_color(cx.theme().colors().border_variant)
-                                        .bg(code_block_header_bg)
-                                        .rounded_t_md()
-                                        .children(label)
-                                        .child(render_copy_code_block_button(
-                                            index,
-                                            code,
-                                            self.markdown.clone(),
-                                            cx,
-                                        ));
-
-                                    let parent_container = v_flex()
-                                        .mb_2()
-                                        .relative()
-                                        .overflow_hidden()
-                                        .rounded_lg()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border_variant)
-                                        .child(codeblock_header);
 
                                     builder.push_div(parent_container, range, markdown_end);
 
@@ -885,8 +847,8 @@ impl Element for MarkdownElement {
                         }
 
                         if matches!(
-                            &self.code_block_variant,
-                            CodeBlockVariant::Default { copy_button: true }
+                            &self.code_block_renderer,
+                            CodeBlockRenderer::Default { copy_button: true }
                         ) {
                             builder.flush_text();
                             builder.modify_current_div(|el| {
@@ -1030,112 +992,6 @@ impl Element for MarkdownElement {
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
         self.paint_selection(bounds, &rendered_markdown.text, window, cx);
-    }
-}
-
-fn render_code_block_card_label(
-    kind: &CodeBlockKind,
-    id: usize,
-    languages_by_name: &HashMap<SharedString, Arc<Language>>,
-    open_path_callback: Option<OpenPathCallback>,
-    cx: &App,
-) -> Option<AnyElement> {
-    match kind {
-        CodeBlockKind::Indented => None,
-        CodeBlockKind::Fenced => Some(
-            h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::Code)
-                        .color(Color::Muted)
-                        .size(IconSize::XSmall),
-                )
-                .child(Label::new("untitled").size(LabelSize::Small))
-                .into_any_element(),
-        ),
-        CodeBlockKind::FencedLang(raw_language_name) => Some(
-            h_flex()
-                .gap_1()
-                .children(
-                    languages_by_name
-                        .get(raw_language_name)
-                        .and_then(|language| {
-                            language
-                                .config()
-                                .matcher
-                                .path_suffixes
-                                .iter()
-                                .find_map(|extension| {
-                                    file_icons::FileIcons::get_icon(Path::new(extension), cx)
-                                })
-                                .map(Icon::from_path)
-                                .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
-                        }),
-                )
-                .child(
-                    Label::new(
-                        languages_by_name
-                            .get(raw_language_name)
-                            .map(|language| language.name().into())
-                            .clone()
-                            .unwrap_or_else(|| raw_language_name.clone()),
-                    )
-                    .size(LabelSize::Small),
-                )
-                .into_any_element(),
-        ),
-        CodeBlockKind::FencedSrc(path_range) => path_range.path.file_name().map(|file_name| {
-            let content = if let Some(parent) = path_range.path.parent() {
-                h_flex()
-                    .ml_1()
-                    .gap_1()
-                    .child(
-                        Label::new(file_name.to_string_lossy().to_string()).size(LabelSize::Small),
-                    )
-                    .child(
-                        Label::new(parent.to_string_lossy().to_string())
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
-                    .into_any_element()
-            } else {
-                Label::new(path_range.path.to_string_lossy().to_string())
-                    .size(LabelSize::Small)
-                    .ml_1()
-                    .into_any_element()
-            };
-
-            let mut label = h_flex()
-                .id(("code-block-header-label", id))
-                .w_full()
-                .max_w_full()
-                .px_1()
-                .gap_0p5()
-                .children(
-                    file_icons::FileIcons::get_icon(&path_range.path, cx)
-                        .map(Icon::from_path)
-                        .map(|icon| icon.color(Color::Muted).size(IconSize::XSmall)),
-                )
-                .child(content);
-
-            if let Some(open_path_callback) = open_path_callback {
-                label = label
-                    .cursor_pointer()
-                    .rounded_sm()
-                    .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
-                    .tooltip(Tooltip::text("Jump to file"))
-                    .child(
-                        Icon::new(IconName::ArrowUpRight)
-                            .size(IconSize::XSmall)
-                            .color(Color::Ignored),
-                    )
-                    .on_click({
-                        let path_range = path_range.clone();
-                        move |_, window, cx| open_path_callback(&path_range, window, cx)
-                    });
-            }
-            label.into_any_element()
-        }),
     }
 }
 
@@ -1641,7 +1497,7 @@ impl RenderedText {
 /// Some markdown blocks are indented, and others have e.g. ```rust … ``` around them.
 /// If this block is fenced with backticks, strip them off (and the language name).
 /// We use this when copying code blocks to the clipboard.
-fn without_fences(mut markdown: &str) -> &str {
+pub fn without_fences(mut markdown: &str) -> &str {
     if let Some(opening_backticks) = markdown.find("```") {
         markdown = &markdown[opening_backticks..];
 

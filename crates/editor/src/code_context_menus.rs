@@ -630,7 +630,7 @@ impl CompletionsMenu {
                 });
                 div().child(
                     MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
-                        .code_block_variant(markdown::CodeBlockVariant::Default {
+                        .code_block_renderer(markdown::CodeBlockRenderer::Default {
                             copy_button: false,
                         })
                         .on_url_click(open_markdown_url),

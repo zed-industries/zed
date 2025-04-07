@@ -786,7 +786,7 @@ impl InfoPopover {
                                 markdown.clone(),
                                 hover_markdown_style(window, cx),
                             )
-                            .code_block_variant(markdown::CodeBlockVariant::Default {
+                            .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                 copy_button: false,
                             })
                             .on_url_click(open_markdown_url),
@@ -887,7 +887,9 @@ impl DiagnosticPopover {
 
             markdown_div = markdown_div.child(
                 MarkdownElement::new(markdown.clone(), markdown_style)
-                    .code_block_variant(markdown::CodeBlockVariant::Default { copy_button: false })
+                    .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                        copy_button: false,
+                    })
                     .on_url_click(open_markdown_url),
             );
         }

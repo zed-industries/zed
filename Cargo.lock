@@ -8363,6 +8363,7 @@ dependencies = [
  "node_runtime",
  "pulldown-cmark 0.12.2",
  "settings",
+ "sum_tree",
  "theme",
  "ui",
  "util",
