@@ -1101,7 +1101,7 @@ impl SelectSyntaxNodeHistory {
 
 enum SelectSyntaxNodeScrollBehavior {
     CursorTop,
-    CenterSelection,
+    FitSelection,
     CursorBottom,
 }
 
@@ -12352,17 +12352,15 @@ impl Editor {
         let selection_height = end_row - start_row + 1;
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
 
-        // if fits on screen (considering margin), keep it in the middle, else, scroll to selection head
-        let scroll_behavior = if visible_row_count >= selection_height + scroll_margin_rows * 2 {
-            let middle_row = (end_row + start_row) / 2;
-            let selection_center = middle_row.saturating_sub(visible_row_count / 2);
-            self.set_scroll_top_row(DisplayRow(selection_center), window, cx);
-            SelectSyntaxNodeScrollBehavior::CenterSelection
+        let fits_on_the_screen = visible_row_count >= selection_height + scroll_margin_rows * 2;
+        let scroll_behavior = if fits_on_the_screen {
+            self.request_autoscroll(Autoscroll::fit(), cx);
+            SelectSyntaxNodeScrollBehavior::FitSelection
         } else if is_selection_reversed {
-            self.scroll_cursor_top(&Default::default(), window, cx);
+            self.scroll_cursor_top(&ScrollCursorTop, window, cx);
             SelectSyntaxNodeScrollBehavior::CursorTop
         } else {
-            self.scroll_cursor_bottom(&Default::default(), window, cx);
+            self.scroll_cursor_bottom(&ScrollCursorBottom, window, cx);
             SelectSyntaxNodeScrollBehavior::CursorBottom
         };
 
@@ -12379,17 +12377,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(visible_row_count) = self.visible_row_count() else {
-            return;
-        };
-
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
         if let Some((mut selections, scroll_behavior, is_selection_reversed)) =
             self.select_syntax_node_history.pop()
         {
-            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-
             if let Some(selection) = selections.last_mut() {
                 selection.reversed = is_selection_reversed;
             }
@@ -12400,22 +12392,15 @@ impl Editor {
             });
             self.select_syntax_node_history.disable_clearing = false;
 
-            let newest = self.selections.newest::<usize>(cx);
-            let start_row = newest.start.to_display_point(&display_map).row().0;
-            let end_row = newest.end.to_display_point(&display_map).row().0;
-
             match scroll_behavior {
                 SelectSyntaxNodeScrollBehavior::CursorTop => {
-                    self.scroll_cursor_top(&Default::default(), window, cx);
+                    self.scroll_cursor_top(&ScrollCursorTop, window, cx);
                 }
-                SelectSyntaxNodeScrollBehavior::CenterSelection => {
-                    let middle_row = (end_row + start_row) / 2;
-                    let selection_center = middle_row.saturating_sub(visible_row_count / 2);
-                    // centralize the selection, not the cursor
-                    self.set_scroll_top_row(DisplayRow(selection_center), window, cx);
+                SelectSyntaxNodeScrollBehavior::FitSelection => {
+                    self.request_autoscroll(Autoscroll::fit(), cx);
                 }
                 SelectSyntaxNodeScrollBehavior::CursorBottom => {
-                    self.scroll_cursor_bottom(&Default::default(), window, cx);
+                    self.scroll_cursor_bottom(&ScrollCursorBottom, window, cx);
                 }
             }
         }
