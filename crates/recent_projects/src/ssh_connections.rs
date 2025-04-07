@@ -180,7 +180,7 @@ impl SshPrompt {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+        let markdown_style = |window: &Window, cx: &App| {
             let theme = ThemeSettings::get_global(cx);
 
             let mut text_style = window.text_style();
@@ -200,7 +200,7 @@ impl SshPrompt {
                 selection_background_color: cx.theme().players().local().selection,
                 ..Default::default()
             }
-        }
+        };
 
         // todo! remove duplication
 

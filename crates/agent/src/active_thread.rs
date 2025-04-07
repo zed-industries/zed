@@ -186,7 +186,7 @@ fn render_markdown(
     window: &Window,
     cx: &mut App,
 ) -> Entity<Markdown> {
-    fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let markdown_style = |window: &Window, cx: &App| {
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
         let ui_font_size = TextSize::Default.rems(cx);
@@ -259,7 +259,7 @@ fn render_markdown(
             })),
             ..Default::default()
         }
-    }
+    };
 
     cx.new(|cx| {
         Markdown::new(
@@ -283,7 +283,7 @@ fn render_tool_use_markdown(
     window: &Window,
     cx: &mut App,
 ) -> Entity<Markdown> {
-    fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let markdown_style = |window: &Window, cx: &App| {
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
         let ui_font_size = TextSize::Default.rems(cx);
@@ -335,7 +335,7 @@ fn render_tool_use_markdown(
             },
             ..Default::default()
         }
-    }
+    };
 
     cx.new(|cx| {
         Markdown::new(

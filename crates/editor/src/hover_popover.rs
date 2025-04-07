@@ -336,7 +336,7 @@ fn show_hover(
                             }
                         };
 
-                        fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+                        let markdown_style = |window: &Window, cx: &App| {
                             let settings = ThemeSettings::get_global(cx);
                             let mut base_text_style = window.text_style();
                             base_text_style.refine(&TextStyleRefinement {
@@ -363,7 +363,7 @@ fn show_hover(
                                 },
                                 ..Default::default()
                             }
-                        }
+                        };
 
                         Markdown::new_text(SharedString::new(text), markdown_style, window, cx)
                             .open_url(open_markdown_url)
