@@ -1554,7 +1554,6 @@ impl Thread {
             .default_profile
             .to_string();
 
-        // Get names of all enabled tools
         let enabled_tool_names: Vec<String> = self
             .tools()
             .enabled_tools(cx)
