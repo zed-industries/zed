@@ -3992,7 +3992,7 @@ impl Repository {
 
     /// currently running git command and when it started
     pub fn current_job(&self) -> Option<JobInfo> {
-        self.active_jobs.values().cloned().next()
+        self.active_jobs.values().next().cloned()
     }
 }
 
