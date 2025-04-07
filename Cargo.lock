@@ -8355,6 +8355,7 @@ dependencies = [
  "anyhow",
  "assets",
  "env_logger 0.11.8",
+ "file_icons",
  "gpui",
  "language",
  "languages",
@@ -8366,6 +8367,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
+ "workspace",
  "workspace-hack",
 ]
 
