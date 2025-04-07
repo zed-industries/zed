@@ -17,7 +17,7 @@ use gpui::{
     StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, actions, point, quad,
 };
-use language::{Language, LanguageName, LanguageRegistry, Rope};
+use language::{Language, LanguageRegistry, Rope};
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
 use theme::SyntaxTheme;
@@ -713,7 +713,6 @@ impl Element for MarkdownElement {
                                                 .root::<Workspace>()
                                                 .flatten()
                                                 .and_then(|workspace| {
-                                                    dbg!("Got workspace");
                                                     workspace
                                                         .read(cx)
                                                         .project()
@@ -740,14 +739,21 @@ impl Element for MarkdownElement {
                                     let label = match kind {
                                         CodeBlockKind::Indented => None,
                                         CodeBlockKind::Fenced => Some(
-                                            Label::new("Untitled")
+                                            Label::new("untitled")
                                                 .size(LabelSize::Small)
                                                 .into_any_element(),
                                         ),
-                                        CodeBlockKind::FencedLang(shared_string) => Some(
-                                            Label::new(shared_string.clone())
-                                                .size(LabelSize::Small)
-                                                .into_any_element(),
+                                        CodeBlockKind::FencedLang(raw_language_name) => Some(
+                                            Label::new(
+                                                parsed_markdown
+                                                    .languages_by_name
+                                                    .get(raw_language_name)
+                                                    .map(|language| language.name().into())
+                                                    .clone()
+                                                    .unwrap_or_else(|| raw_language_name.clone()),
+                                            )
+                                            .size(LabelSize::Small)
+                                            .into_any_element(),
                                         ),
                                         CodeBlockKind::FencedSrc(path_range) => {
                                             path_range.path.file_name().map(|file_name| {
@@ -791,21 +797,26 @@ impl Element for MarkdownElement {
                                             cx.theme().colors().editor_foreground.opacity(0.025),
                                         );
 
+                                    let code = without_fences(
+                                        parsed_markdown.source()[range.clone()].trim(),
+                                    )
+                                    .to_string();
+
                                     let codeblock_header = h_flex()
                                         .py_0p5()
-                                        .pl_1()
-                                        .pr_0p5()
+                                        .px_1()
                                         .justify_between()
                                         .border_b_1()
                                         .border_color(cx.theme().colors().border_variant)
                                         .bg(code_block_header_bg)
                                         .rounded_t_md()
                                         .child(h_flex().gap_1p5().children(icon).children(label))
-                                        .child(
-                                            IconButton::new("copy-code", IconName::Copy)
-                                                .icon_size(IconSize::Small)
-                                                .tooltip(Tooltip::text("Copy Code")),
-                                        );
+                                        .child(render_copy_code_block_button(
+                                            index,
+                                            code,
+                                            self.markdown.clone(),
+                                            cx,
+                                        ));
 
                                     let parent_container = v_flex()
                                         .mb_2()
@@ -982,58 +993,16 @@ impl Element for MarkdownElement {
                         ) {
                             builder.flush_text();
                             builder.modify_current_div(|el| {
-                                let id =
-                                    ElementId::NamedInteger("copy-markdown-code".into(), range.end);
-                                let was_copied =
-                                    self.markdown.read(cx).copied_code_blocks.contains(&id);
-                                let copy_button = div().absolute().top_1().right_1().w_5().child(
-                                    IconButton::new(
-                                        id.clone(),
-                                        if was_copied {
-                                            IconName::Check
-                                        } else {
-                                            IconName::Copy
-                                        },
-                                    )
-                                    .icon_color(Color::Muted)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .tooltip(Tooltip::text("Copy Code"))
-                                    .on_click({
-                                        let id = id.clone();
-                                        let markdown = self.markdown.clone();
-                                        let code = without_fences(
-                                            parsed_markdown.source()[range.clone()].trim(),
-                                        )
+                                let code =
+                                    without_fences(parsed_markdown.source()[range.clone()].trim())
                                         .to_string();
-                                        move |_event, _window, cx| {
-                                            let id = id.clone();
-                                            markdown.update(cx, |this, cx| {
-                                                this.copied_code_blocks.insert(id.clone());
-
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    code.clone(),
-                                                ));
-
-                                                cx.spawn(async move |this, cx| {
-                                                    cx.background_executor()
-                                                        .timer(Duration::from_secs(2))
-                                                        .await;
-
-                                                    cx.update(|cx| {
-                                                        this.update(cx, |this, cx| {
-                                                            this.copied_code_blocks.remove(&id);
-                                                            cx.notify();
-                                                        })
-                                                    })
-                                                    .ok();
-                                                })
-                                                .detach();
-                                            });
-                                        }
-                                    }),
+                                let codeblock = render_copy_code_block_button(
+                                    range.end,
+                                    code,
+                                    self.markdown.clone(),
+                                    cx,
                                 );
-
-                                el.child(copy_button)
+                                el.child(div().absolute().top_1().right_1().w_5().child(codeblock))
                             });
                         }
 
@@ -1157,6 +1126,52 @@ impl Element for MarkdownElement {
         rendered_markdown.element.paint(window, cx);
         self.paint_selection(bounds, &rendered_markdown.text, window, cx);
     }
+}
+
+fn render_copy_code_block_button(
+    id: usize,
+    code: String,
+    markdown: Entity<Markdown>,
+    cx: &App,
+) -> impl IntoElement {
+    let id = ElementId::NamedInteger("copy-markdown-code".into(), id);
+    let was_copied = markdown.read(cx).copied_code_blocks.contains(&id);
+    IconButton::new(
+        id.clone(),
+        if was_copied {
+            IconName::Check
+        } else {
+            IconName::Copy
+        },
+    )
+    .icon_color(Color::Muted)
+    .shape(ui::IconButtonShape::Square)
+    .tooltip(Tooltip::text("Copy Code"))
+    .on_click({
+        let id = id.clone();
+        let markdown = markdown.clone();
+        move |_event, _window, cx| {
+            let id = id.clone();
+            markdown.update(cx, |this, cx| {
+                this.copied_code_blocks.insert(id.clone());
+
+                cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(Duration::from_secs(2)).await;
+
+                    cx.update(|cx| {
+                        this.update(cx, |this, cx| {
+                            this.copied_code_blocks.remove(&id);
+                            cx.notify();
+                        })
+                    })
+                    .ok();
+                })
+                .detach();
+            });
+        }
+    })
 }
 
 impl IntoElement for MarkdownElement {
