@@ -121,7 +121,6 @@ impl SlashCommandCompletionProvider {
                                     });
                             Some(project::Completion {
                                 replace_range: name_range.clone(),
-                                insert_range: None,
                                 documentation: Some(CompletionDocumentation::SingleLine(
                                     command.description().into(),
                                 )),
@@ -225,7 +224,6 @@ impl SlashCommandCompletionProvider {
                                 } else {
                                     last_argument_range.clone()
                                 },
-                                insert_range: None,
                                 label: new_argument.label,
                                 icon_path: None,
                                 new_text,

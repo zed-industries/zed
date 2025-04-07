@@ -383,13 +383,11 @@ impl CompletionIntent {
     }
 }
 
-/// A completion provided by a language server
+/// A generic completion that can come from different sources.
 #[derive(Clone)]
 pub struct Completion {
     /// The range of text that will be replaced by this completion.
     pub replace_range: Range<Anchor>,
-    /// TODO: re-do this description: The range of the buffer that will be replaced by a `ConfirmCompletionInsert`.
-    pub insert_range: Option<Range<Anchor>>,
     /// The new text that will be inserted.
     pub new_text: String,
     /// A label for this completion that is shown in the menu.
@@ -412,6 +410,8 @@ pub struct Completion {
 #[derive(Debug, Clone)]
 pub enum CompletionSource {
     Lsp {
+        /// The alternate `insert` range, if provided by the LSP server.
+        insert_range: Option<Range<Anchor>>,
         /// The id of the language server that produced this completion.
         server_id: LanguageServerId,
         /// The raw completion provided by the language server.
@@ -517,7 +517,6 @@ impl std::fmt::Debug for Completion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Completion")
             .field("replace_range", &self.replace_range)
-            .field("insert_range", &self.insert_range)
             .field("new_text", &self.new_text)
             .field("label", &self.label)
             .field("documentation", &self.documentation)
@@ -526,11 +525,9 @@ impl std::fmt::Debug for Completion {
     }
 }
 
-/// A completion provided by a language server
 #[derive(Clone, Debug)]
 pub(crate) struct CoreCompletion {
     replace_range: Range<Anchor>,
-    insert_range: Option<Range<Anchor>>,
     new_text: String,
     source: CompletionSource,
 }

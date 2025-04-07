@@ -357,7 +357,6 @@ impl ConsoleQueryBarCompletionProvider {
 
                         Some(project::Completion {
                             replace_range: buffer_position..buffer_position,
-                            insert_range: None,
                             new_text: string_match.string.clone(),
                             label: CodeLabel {
                                 filter_range: 0..string_match.string.len(),
@@ -433,7 +432,6 @@ impl ConsoleQueryBarCompletionProvider {
 
                         project::Completion {
                             replace_range,
-                            insert_range: None,
                             new_text,
                             label: CodeLabel {
                                 filter_range: 0..completion.label.len(),

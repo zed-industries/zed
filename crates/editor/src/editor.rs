@@ -4462,7 +4462,6 @@ impl Editor {
                 }
                 completions.extend(words.into_iter().map(|(word, word_range)| Completion {
                     replace_range: old_range.clone(),
-                    insert_range: None,
                     new_text: word.clone(),
                     label: CodeLabel::plain(word, None),
                     icon_path: None,
@@ -17949,14 +17948,11 @@ fn choose_completion_range(
 ) -> Range<usize> {
     fn should_replace(
         completion: &Completion,
+        insert_range: &Range<text::Anchor>,
         intent: CompletionIntent,
         completion_mode_setting: LspInsertMode,
         buffer: &Buffer,
     ) -> bool {
-        let Some(insert_range) = &completion.insert_range else {
-            return true;
-        };
-
         // specific actions take precedence over settings
         match intent {
             CompletionIntent::CompleteWithInsert => return false,
@@ -17993,16 +17989,29 @@ fn choose_completion_range(
     }
 
     let buffer = buffer.read(cx);
-    let completion_mode_setting =
-        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-            .completions
-            .lsp_insert_mode;
 
-    if should_replace(completion, intent, completion_mode_setting, buffer) {
-        completion.replace_range.to_offset(buffer)
-    } else {
-        completion.insert_range.as_ref().unwrap().to_offset(buffer)
+    if let CompletionSource::Lsp {
+        insert_range: Some(insert_range),
+        ..
+    } = &completion.source
+    {
+        let completion_mode_setting =
+            language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                .completions
+                .lsp_insert_mode;
+
+        if !should_replace(
+            completion,
+            &insert_range,
+            intent,
+            completion_mode_setting,
+            buffer,
+        ) {
+            return insert_range.to_offset(buffer);
+        }
     }
+
+    completion.replace_range.to_offset(buffer)
 }
 
 fn insert_extra_newline_brackets(
@@ -18727,9 +18736,9 @@ fn snippet_completions(
                 };
                 Some(Completion {
                     replace_range: range,
-                    insert_range: None,
                     new_text: snippet.body.clone(),
                     source: CompletionSource::Lsp {
+                        insert_range: None,
                         server_id: LanguageServerId(usize::MAX),
                         resolved: true,
                         lsp_completion: Box::new(lsp::CompletionItem {

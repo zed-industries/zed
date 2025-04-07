@@ -107,7 +107,6 @@ impl ContextPickerCompletionProvider {
                 .map(|mode| {
                     Completion {
                         replace_range: source_range.clone(),
-                        insert_range: None,
                         new_text: format!("@{} ", mode.mention_prefix()),
                         label: CodeLabel::plain(mode.label().to_string(), None),
                         icon_path: Some(mode.icon().path().into()),
@@ -162,7 +161,6 @@ impl ContextPickerCompletionProvider {
         let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
-            insert_range: None,
             new_text,
             label: CodeLabel::plain(thread_entry.summary.to_string(), None),
             documentation: None,
@@ -208,7 +206,6 @@ impl ContextPickerCompletionProvider {
         let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
-            insert_range: None,
             new_text,
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
@@ -291,7 +288,6 @@ impl ContextPickerCompletionProvider {
         let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
-            insert_range: None,
             new_text,
             label,
             documentation: None,
@@ -355,7 +351,6 @@ impl ContextPickerCompletionProvider {
         let new_text_len = new_text.len();
         Some(Completion {
             replace_range: source_range.clone(),
-            insert_range: None,
             new_text,
             label,
             documentation: None,

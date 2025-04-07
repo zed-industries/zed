@@ -5201,6 +5201,7 @@ impl LspStore {
         };
         let resolved_completion = request.await?;
 
+        let mut updated_insert_range = None;
         if let Some(text_edit) = resolved_completion.text_edit.as_ref() {
             // Technically we don't have to parse the whole `text_edit`, since the only
             // language server we currently use that does update `text_edit` in `completionItem/resolve`
@@ -5216,19 +5217,22 @@ impl LspStore {
 
                 completion.new_text = parsed_edit.new_text;
                 completion.replace_range = parsed_edit.replace_range;
-                completion.insert_range = parsed_edit.insert_range;
+
+                updated_insert_range = parsed_edit.insert_range;
             }
         }
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         if let CompletionSource::Lsp {
+            insert_range,
             lsp_completion,
             resolved,
             server_id: completion_server_id,
             ..
         } = &mut completion.source
         {
+            *insert_range = updated_insert_range;
             if *resolved {
                 return Ok(());
             }
@@ -5370,12 +5374,19 @@ impl LspStore {
         let completion = &mut completions[completion_index];
         completion.documentation = Some(documentation);
         if let CompletionSource::Lsp {
+            insert_range,
             lsp_completion,
             resolved,
             server_id: completion_server_id,
             lsp_defaults: _,
         } = &mut completion.source
         {
+            let completion_insert_range = response
+                .old_insert_start
+                .and_then(deserialize_anchor)
+                .zip(response.old_insert_end.and_then(deserialize_anchor));
+            *insert_range = completion_insert_range.map(|(start, end)| start..end);
+
             if *resolved {
                 return Ok(());
             }
@@ -5395,12 +5406,6 @@ impl LspStore {
             if !response.new_text.is_empty() {
                 completion.new_text = response.new_text;
                 completion.replace_range = old_replace_start..old_replace_end;
-
-                let insert_range = response
-                    .old_insert_start
-                    .and_then(deserialize_anchor)
-                    .zip(response.old_insert_end.and_then(deserialize_anchor));
-                completion.insert_range = insert_range.map(|(start, end)| start..end);
             }
         }
 
@@ -5426,7 +5431,6 @@ impl LspStore {
                         buffer_id: buffer_id.into(),
                         completion: Some(Self::serialize_completion(&CoreCompletion {
                             replace_range: completion.replace_range,
-                            insert_range: None,
                             new_text: completion.new_text,
                             source: completion.source,
                         })),
@@ -8040,7 +8044,6 @@ impl LspStore {
                 buffer,
                 Rc::new(RefCell::new(Box::new([Completion {
                     replace_range: completion.replace_range,
-                    insert_range: None,
                     new_text: completion.new_text,
                     source: completion.source,
                     documentation: None,
@@ -9095,27 +9098,27 @@ impl LspStore {
     }
 
     pub(crate) fn serialize_completion(completion: &CoreCompletion) -> proto::Completion {
-        let (old_insert_start, old_insert_end) = completion
-            .insert_range
-            .as_ref()
-            .map(|range| (serialize_anchor(&range.start), serialize_anchor(&range.end)))
-            .unzip();
-
         let mut serialized_completion = proto::Completion {
             old_replace_start: Some(serialize_anchor(&completion.replace_range.start)),
             old_replace_end: Some(serialize_anchor(&completion.replace_range.end)),
-            old_insert_start,
-            old_insert_end,
             new_text: completion.new_text.clone(),
             ..proto::Completion::default()
         };
         match &completion.source {
             CompletionSource::Lsp {
+                insert_range,
                 server_id,
                 lsp_completion,
                 lsp_defaults,
                 resolved,
             } => {
+                let (old_insert_start, old_insert_end) = insert_range
+                    .as_ref()
+                    .map(|range| (serialize_anchor(&range.start), serialize_anchor(&range.end)))
+                    .unzip();
+
+                serialized_completion.old_insert_start = old_insert_start;
+                serialized_completion.old_insert_end = old_insert_end;
                 serialized_completion.source = proto::completion::Source::Lsp as i32;
                 serialized_completion.server_id = server_id.0 as u64;
                 serialized_completion.lsp_completion = serde_json::to_vec(lsp_completion).unwrap();
@@ -9163,11 +9166,11 @@ impl LspStore {
         };
         Ok(CoreCompletion {
             replace_range: old_replace_start..old_replace_end,
-            insert_range,
             new_text: completion.new_text,
             source: match proto::completion::Source::from_i32(completion.source) {
                 Some(proto::completion::Source::Custom) => CompletionSource::Custom,
                 Some(proto::completion::Source::Lsp) => CompletionSource::Lsp {
+                    insert_range,
                     server_id: LanguageServerId::from_proto(completion.server_id),
                     lsp_completion: serde_json::from_slice(&completion.lsp_completion)?,
                     lsp_defaults: completion
@@ -9357,7 +9360,6 @@ async fn populate_labels_for_completions(
                     label,
                     documentation,
                     replace_range: completion.replace_range,
-                    insert_range: completion.insert_range,
                     new_text: completion.new_text,
                     insert_text_mode: lsp_completion.insert_text_mode,
                     source: completion.source,
@@ -9372,7 +9374,6 @@ async fn populate_labels_for_completions(
                     label,
                     documentation: None,
                     replace_range: completion.replace_range,
-                    insert_range: completion.insert_range,
                     new_text: completion.new_text,
                     source: completion.source,
                     insert_text_mode: None,
