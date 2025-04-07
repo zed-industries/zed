@@ -180,43 +180,35 @@ impl SshPrompt {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let markdown_style = |window: &Window, cx: &App| {
+        let text_style_refinement = |cx: &App| {
             let theme = ThemeSettings::get_global(cx);
 
-            let mut text_style = window.text_style();
-            let refinement = TextStyleRefinement {
+            TextStyleRefinement {
                 font_family: Some(theme.buffer_font.family.clone()),
                 font_features: Some(FontFeatures::disable_ligatures()),
                 font_size: Some(theme.buffer_font_size(cx).into()),
                 color: Some(cx.theme().colors().editor_foreground),
                 background_color: Some(gpui::transparent_black()),
                 ..Default::default()
-            };
-
-            text_style.refine(&refinement);
-
-            MarkdownStyle {
-                base_text_style: text_style,
-                selection_background_color: cx.theme().players().local().selection,
-                ..Default::default()
             }
         };
 
-        // todo! remove duplication
+        let markdown_style = {
+            let text_style_refinement = text_style_refinement.clone();
+            move |window: &Window, cx: &App| {
+                let mut text_style = window.text_style();
+                text_style.refine(&text_style_refinement(cx));
 
-        let theme = ThemeSettings::get_global(cx);
-
-        let mut text_style = window.text_style();
-        let refinement = TextStyleRefinement {
-            font_family: Some(theme.buffer_font.family.clone()),
-            font_features: Some(FontFeatures::disable_ligatures()),
-            font_size: Some(theme.buffer_font_size(cx).into()),
-            color: Some(cx.theme().colors().editor_foreground),
-            background_color: Some(gpui::transparent_black()),
-            ..Default::default()
+                MarkdownStyle {
+                    base_text_style: text_style,
+                    selection_background_color: cx.theme().players().local().selection,
+                    ..Default::default()
+                }
+            }
         };
 
-        text_style.refine(&refinement);
+        let refinement = text_style_refinement(cx);
+
         self.editor.update(cx, |editor, cx| {
             if prompt.contains("yes/no") {
                 editor.set_masked(false, cx);
