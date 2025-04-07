@@ -95,7 +95,10 @@ impl DebugAdapter for GdbDebugAdapter {
                 }
 
                 if let Some(stop_on_entry) = config.stop_on_entry {
-                    map.insert("stopOnEntry".into(), stop_on_entry.into());
+                    map.insert(
+                        "stopAtBeginningOfMainSubprogram".into(),
+                        stop_on_entry.into(),
+                    );
                 }
                 if let Some(cwd) = launch.cwd.as_ref() {
                     map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
