@@ -1550,7 +1550,9 @@ impl Thread {
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
-        let profile_id = AssistantSettings::get_global(cx).default_profile.to_string();
+        let profile_id = AssistantSettings::get_global(cx)
+            .default_profile
+            .to_string();
         self.feedback = Some(feedback);
         cx.notify();
 
