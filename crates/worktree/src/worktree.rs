@@ -45,6 +45,7 @@ use smallvec::{SmallVec, smallvec};
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
+    borrow::Borrow as _,
     cmp::Ordering,
     collections::hash_map,
     convert::TryFrom,
@@ -3263,10 +3264,6 @@ impl language::File for File {
         self.worktree.read(cx).id()
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn to_proto(&self, cx: &App) -> rpc::proto::File {
         rpc::proto::File {
             worktree_id: self.worktree.read(cx).id().to_proto(),
@@ -3359,7 +3356,11 @@ impl File {
     }
 
     pub fn from_dyn(file: Option<&Arc<dyn language::File>>) -> Option<&Self> {
-        file.and_then(|f| f.as_any().downcast_ref())
+        file.and_then(|f| {
+            let f: &dyn language::File = f.borrow();
+            let f: &dyn Any = f;
+            f.downcast_ref()
+        })
     }
 
     pub fn worktree_id(&self, cx: &App) -> WorktreeId {
