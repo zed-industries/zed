@@ -240,14 +240,14 @@ impl MessageEditor {
                         cx.emit(ThreadEvent::ShowError(load_error));
                     }
                 })
-                .ok();
+                .log_err();
 
             thread
                 .update(cx, |thread, cx| {
                     let context = context_store.read(cx).context().clone();
                     thread.insert_user_message(user_message, context, checkpoint, cx);
                 })
-                .ok();
+                .log_err();
 
             if let Some(wait_for_summaries) = context_store
                 .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
@@ -257,7 +257,7 @@ impl MessageEditor {
                     this.waiting_for_summaries_to_send = true;
                     cx.notify();
                 })
-                .ok();
+                .log_err();
 
                 wait_for_summaries.await;
 
@@ -265,7 +265,7 @@ impl MessageEditor {
                     this.waiting_for_summaries_to_send = false;
                     cx.notify();
                 })
-                .ok();
+                .log_err();
             }
 
             // Send to model after summaries are done
@@ -273,7 +273,7 @@ impl MessageEditor {
                 .update(cx, |thread, cx| {
                     thread.send_to_model(model, request_kind, cx);
                 })
-                .ok();
+                .log_err();
         })
         .detach();
     }
