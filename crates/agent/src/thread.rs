@@ -1553,6 +1553,15 @@ impl Thread {
         let profile_id = AssistantSettings::get_global(cx)
             .default_profile
             .to_string();
+
+        // Get names of all enabled tools
+        let enabled_tool_names: Vec<String> = self
+            .tools()
+            .enabled_tools(cx)
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+
         self.feedback = Some(feedback);
         cx.notify();
 
@@ -1571,6 +1580,7 @@ impl Thread {
                 rating,
                 thread_id,
                 profile_id,
+                enabled_tool_names,
                 thread_data,
                 final_project_snapshot
             );
