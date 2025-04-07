@@ -16,6 +16,7 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+askpass.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 derive_more.workspace = true
@@ -31,13 +32,18 @@ serde.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
+thiserror.workspace = true
 time.workspace = true
 url.workspace = true
 util.workspace = true
-tempfile.workspace = true
+uuid.workspace = true
+futures.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
 serde_json.workspace = true
 text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true

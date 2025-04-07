@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageName;
@@ -85,6 +85,61 @@ pub struct ExtensionManifest {
     pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
     #[serde(default)]
     pub snippets: Option<PathBuf>,
+    #[serde(default)]
+    pub capabilities: Vec<ExtensionCapability>,
+}
+
+impl ExtensionManifest {
+    pub fn allow_exec(
+        &self,
+        desired_command: &str,
+        desired_args: &[impl AsRef<str> + std::fmt::Debug],
+    ) -> Result<()> {
+        let is_allowed = self.capabilities.iter().any(|capability| match capability {
+            ExtensionCapability::ProcessExec { command, args } if command == desired_command => {
+                for (ix, arg) in args.iter().enumerate() {
+                    if arg == "**" {
+                        return true;
+                    }
+
+                    if ix >= desired_args.len() {
+                        return false;
+                    }
+
+                    if arg != "*" && arg != desired_args[ix].as_ref() {
+                        return false;
+                    }
+                }
+                if args.len() < desired_args.len() {
+                    return false;
+                }
+                true
+            }
+            _ => false,
+        });
+
+        if !is_allowed {
+            bail!(
+                "capability for process:exec {desired_command} {desired_args:?} was not listed in the extension manifest",
+            );
+        }
+
+        Ok(())
+    }
+}
+
+/// A capability for an extension.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum ExtensionCapability {
+    #[serde(rename = "process:exec")]
+    ProcessExec {
+        /// The command to execute.
+        command: String,
+        /// The arguments to pass to the command. Use `*` for a single wildcard argument.
+        /// If the last element is `**`, then any trailing arguments are allowed.
+        args: Vec<String>,
+    },
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -218,5 +273,110 @@ fn manifest_from_old_manifest(
         slash_commands: BTreeMap::default(),
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,
+        capabilities: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn extension_manifest() -> ExtensionManifest {
+        ExtensionManifest {
+            id: "test".into(),
+            name: "Test".to_string(),
+            version: "1.0.0".into(),
+            schema_version: SchemaVersion::ZERO,
+            description: None,
+            repository: None,
+            authors: vec![],
+            lib: Default::default(),
+            themes: vec![],
+            icon_themes: vec![],
+            languages: vec![],
+            grammars: BTreeMap::default(),
+            language_servers: BTreeMap::default(),
+            context_servers: BTreeMap::default(),
+            slash_commands: BTreeMap::default(),
+            indexed_docs_providers: BTreeMap::default(),
+            snippets: None,
+            capabilities: vec![],
+        }
+    }
+
+    #[test]
+    fn test_allow_exact_match() {
+        let manifest = ExtensionManifest {
+            capabilities: vec![ExtensionCapability::ProcessExec {
+                command: "ls".to_string(),
+                args: vec!["-la".to_string()],
+            }],
+            ..extension_manifest()
+        };
+
+        assert!(manifest.allow_exec("ls", &["-la"]).is_ok());
+        assert!(manifest.allow_exec("ls", &["-l"]).is_err());
+        assert!(manifest.allow_exec("pwd", &[] as &[&str]).is_err());
+    }
+
+    #[test]
+    fn test_allow_wildcard_arg() {
+        let manifest = ExtensionManifest {
+            capabilities: vec![ExtensionCapability::ProcessExec {
+                command: "git".to_string(),
+                args: vec!["*".to_string()],
+            }],
+            ..extension_manifest()
+        };
+
+        assert!(manifest.allow_exec("git", &["status"]).is_ok());
+        assert!(manifest.allow_exec("git", &["commit"]).is_ok());
+        assert!(manifest.allow_exec("git", &["status", "-s"]).is_err()); // too many args
+        assert!(manifest.allow_exec("npm", &["install"]).is_err()); // wrong command
+    }
+
+    #[test]
+    fn test_allow_double_wildcard() {
+        let manifest = ExtensionManifest {
+            capabilities: vec![ExtensionCapability::ProcessExec {
+                command: "cargo".to_string(),
+                args: vec!["test".to_string(), "**".to_string()],
+            }],
+            ..extension_manifest()
+        };
+
+        assert!(manifest.allow_exec("cargo", &["test"]).is_ok());
+        assert!(manifest.allow_exec("cargo", &["test", "--all"]).is_ok());
+        assert!(
+            manifest
+                .allow_exec("cargo", &["test", "--all", "--no-fail-fast"])
+                .is_ok()
+        );
+        assert!(manifest.allow_exec("cargo", &["build"]).is_err()); // wrong first arg
+    }
+
+    #[test]
+    fn test_allow_mixed_wildcards() {
+        let manifest = ExtensionManifest {
+            capabilities: vec![ExtensionCapability::ProcessExec {
+                command: "docker".to_string(),
+                args: vec!["run".to_string(), "*".to_string(), "**".to_string()],
+            }],
+            ..extension_manifest()
+        };
+
+        assert!(manifest.allow_exec("docker", &["run", "nginx"]).is_ok());
+        assert!(manifest.allow_exec("docker", &["run"]).is_err());
+        assert!(
+            manifest
+                .allow_exec("docker", &["run", "ubuntu", "bash"])
+                .is_ok()
+        );
+        assert!(
+            manifest
+                .allow_exec("docker", &["run", "alpine", "sh", "-c", "echo hello"])
+                .is_ok()
+        );
+        assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
     }
 }

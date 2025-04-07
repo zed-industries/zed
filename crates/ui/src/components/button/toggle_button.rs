@@ -1,6 +1,6 @@
 use gpui::{AnyView, ClickEvent};
 
-use crate::{prelude::*, ButtonLike, ButtonLikeRounding, ElevationIndex};
+use crate::{ButtonLike, ButtonLikeRounding, ElevationIndex, prelude::*};
 
 /// The position of a [`ToggleButton`] within a group of buttons.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -16,7 +16,7 @@ pub enum ToggleButtonPosition {
 }
 
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct ToggleButton {
     base: ButtonLike,
     position_in_group: Option<ToggleButtonPosition>,
@@ -67,6 +67,18 @@ impl Toggleable for ToggleButton {
 impl SelectableButton for ToggleButton {
     fn selected_style(mut self, style: ButtonStyle) -> Self {
         self.base.selected_style = Some(style);
+        self
+    }
+}
+
+impl FixedWidth for ToggleButton {
+    fn width(mut self, width: DefiniteLength) -> Self {
+        self.base.width = Some(width);
+        self
+    }
+
+    fn full_width(mut self) -> Self {
+        self.base.width = Some(relative(1.));
         self
     }
 }

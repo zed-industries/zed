@@ -17,13 +17,13 @@ use futures::channel::oneshot::{self, Receiver};
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use windows::{
-    core::*,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
+    core::*,
 };
 
 use crate::platform::blade::{BladeContext, BladeRenderer};
@@ -48,7 +48,7 @@ pub struct WindowsWindowState {
 
     pub click_state: ClickState,
     pub system_settings: WindowsSystemSettings,
-    pub current_cursor: HCURSOR,
+    pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
 
     pub display: WindowsDisplay,
@@ -76,7 +76,7 @@ impl WindowsWindowState {
         hwnd: HWND,
         transparent: bool,
         cs: &CREATESTRUCTW,
-        current_cursor: HCURSOR,
+        current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
         gpu_context: &BladeContext,
     ) -> Result<Self> {
@@ -296,7 +296,7 @@ impl WindowsWindowStatePtr {
                 unsafe {
                     SetWindowPos(
                         state_ptr.hwnd,
-                        HWND::default(),
+                        None,
                         x,
                         y,
                         cx,
@@ -351,7 +351,7 @@ struct WindowCreateContext<'a> {
     transparent: bool,
     is_movable: bool,
     executor: ForegroundExecutor,
-    current_cursor: HCURSOR,
+    current_cursor: Option<HCURSOR>,
     windows_version: WindowsVersion,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
@@ -433,7 +433,7 @@ impl WindowsWindow {
                 CW_USEDEFAULT,
                 None,
                 None,
-                hinstance,
+                Some(hinstance.into()),
                 lpparam,
             )
         };
@@ -518,6 +518,32 @@ impl PlatformWindow for WindowsWindow {
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.0.state.borrow().content_size()
+    }
+
+    fn resize(&mut self, size: Size<Pixels>) {
+        let hwnd = self.0.hwnd;
+        let bounds =
+            crate::bounds(self.bounds().origin, size).to_device_pixels(self.scale_factor());
+        let rect = calculate_window_rect(bounds, self.0.state.borrow().border_offset);
+
+        self.0
+            .executor
+            .spawn(async move {
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        bounds.origin.x.0,
+                        bounds.origin.y.0,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                        SWP_NOMOVE,
+                    )
+                    .context("unable to set window content size")
+                    .log_err();
+                }
+            })
+            .detach();
     }
 
     fn scale_factor(&self) -> f32 {
@@ -650,7 +676,7 @@ impl PlatformWindow for WindowsWindow {
             .spawn(async move {
                 this.set_window_placement().log_err();
                 unsafe { SetActiveWindow(hwnd).log_err() };
-                unsafe { SetFocus(hwnd).log_err() };
+                unsafe { SetFocus(Some(hwnd)).log_err() };
                 // todo(windows)
                 // crate `windows 0.56` reports true as Err
                 unsafe { SetForegroundWindow(hwnd).as_bool() };
@@ -817,16 +843,13 @@ impl WindowsDragDropHandler {
 impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     fn DragEnter(
         &self,
-        pdataobj: Option<&IDataObject>,
+        pdataobj: windows::core::Ref<IDataObject>,
         _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
         unsafe {
-            let Some(idata_obj) = pdataobj else {
-                log::info!("no dragging file or directory detected");
-                return Ok(());
-            };
+            let idata_obj = pdataobj.ok()?;
             let config = FORMATETC {
                 cfFormat: CF_HDROP.0,
                 ptd: std::ptr::null_mut() as _,
@@ -905,7 +928,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
 
     fn Drop(
         &self,
-        _pdataobj: Option<&IDataObject>,
+        _pdataobj: windows::core::Ref<IDataObject>,
         _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         _pdweffect: *mut DROPEFFECT,
@@ -1303,7 +1326,7 @@ mod windows_renderer {
 #[cfg(test)]
 mod tests {
     use super::ClickState;
-    use crate::{point, DevicePixels, MouseButton};
+    use crate::{DevicePixels, MouseButton, point};
     use std::time::Duration;
 
     #[test]

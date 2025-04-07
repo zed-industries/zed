@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
@@ -20,10 +20,10 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, List, Tooltip};
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
 
-use crate::{ui::InstructionListItem, AllLanguageModelSettings};
+use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
 const PROVIDER_ID: &str = "mistral";
 const PROVIDER_NAME: &str = "Mistral";
@@ -68,12 +68,12 @@ impl State {
             .mistral
             .api_url
             .clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(&api_url, &cx)
                 .await
                 .log_err();
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
                 cx.notify();
@@ -87,11 +87,11 @@ impl State {
             .mistral
             .api_url
             .clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
                 .await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 cx.notify();
             })
@@ -108,7 +108,7 @@ impl State {
             .mistral
             .api_url
             .clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(MISTRAL_API_KEY_VAR) {
                 (api_key, true)
             } else {
@@ -121,7 +121,7 @@ impl State {
                     false,
                 )
             };
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 this.api_key_from_env = from_env;
                 cx.notify();
@@ -291,6 +291,10 @@ impl LanguageModel for MistralLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("mistral/{}", self.model.id())
     }
@@ -364,55 +368,6 @@ impl LanguageModel for MistralLanguageModel {
         }
         .boxed()
     }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = into_mistral(request, self.model.id().into(), self.max_output_tokens());
-        request.tools = vec![mistral::ToolDefinition::Function {
-            function: mistral::FunctionDefinition {
-                name: tool_name.clone(),
-                description: Some(tool_description),
-                parameters: Some(schema),
-            },
-        }];
-
-        let response = self.stream_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let stream = response.await?;
-
-                let tool_args_stream = stream
-                    .filter_map(move |response| async move {
-                        match response {
-                            Ok(response) => {
-                                for choice in response.choices {
-                                    if let Some(tool_calls) = choice.delta.tool_calls {
-                                        for tool_call in tool_calls {
-                                            if let Some(function) = tool_call.function {
-                                                if let Some(args) = function.arguments {
-                                                    return Some(Ok(args));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                None
-                            }
-                            Err(e) => Some(Err(e)),
-                        }
-                    })
-                    .boxed();
-
-                Ok(tool_args_stream)
-            })
-            .boxed()
-    }
 }
 
 pub fn into_mistral(
@@ -482,16 +437,16 @@ impl ConfigurationView {
 
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
-            |this, mut cx| async move {
+            async move |this, cx| {
                 if let Some(task) = state
-                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
@@ -513,9 +468,9 @@ impl ConfigurationView {
         }
 
         let state = self.state.clone();
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             state
-                .update(&mut cx, |state, cx| state.set_api_key(api_key, cx))?
+                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
                 .await
         })
         .detach_and_log_err(cx);
@@ -528,10 +483,8 @@ impl ConfigurationView {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
-        cx.spawn_in(window, |_, mut cx| async move {
-            state
-                .update(&mut cx, |state, cx| state.reset_api_key(cx))?
-                .await
+        cx.spawn_in(window, async move |_, cx| {
+            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
         })
         .detach_and_log_err(cx);
 
@@ -602,7 +555,7 @@ impl Render for ConfigurationView {
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .rounded_md()
+                        .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
                 .child(

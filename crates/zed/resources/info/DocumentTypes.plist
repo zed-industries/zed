@@ -9,8 +9,9 @@
         <string>Alternate</string>
         <key>LSItemContentTypes</key>
         <array>
-            <string>public.text</string>
+            <string>public.folder</string>
             <string>public.plain-text</string>
+            <string>public.text</string>
             <string>public.utf8-plain-text</string>
         </array>
     </dict>

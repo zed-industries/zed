@@ -5,36 +5,37 @@ pub mod wasm_host;
 #[cfg(test)]
 mod extension_store_test;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::ExtensionProvides;
-use client::{proto, telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
-use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
-use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
+use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionGrammarProxy, ExtensionHostProxy,
+    ExtensionContextServerProxy, ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy,
     ExtensionIndexedDocsProviderProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
     ExtensionSlashCommandProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::{
+    AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
     channel::{
-        mpsc::{unbounded, UnboundedSender},
+        mpsc::{UnboundedSender, unbounded},
         oneshot,
     },
     io::BufReader,
-    select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
+    select_biased,
 };
 use gpui::{
-    actions, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task,
-    WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, WeakEntity,
+    actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage, Rope,
-    QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
+    QUERY_FILENAME_PREFIXES, Rope,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -54,8 +55,8 @@ use std::{
 use url::Url;
 use util::ResultExt;
 use wasm_host::{
-    wit::{is_supported_wasm_api_version, wasm_api_version_range},
     WasmExtension, WasmHost,
+    wit::{is_supported_wasm_api_version, wasm_api_version_range},
 };
 
 pub use extension::{
@@ -218,7 +219,6 @@ impl ExtensionStore {
         cx.global::<GlobalExtensionStore>().0.clone()
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         extensions_dir: PathBuf,
         build_dir: Option<PathBuf>,
@@ -306,21 +306,20 @@ impl ExtensionStore {
             reload_future = Some(this.reload(None, cx));
         }
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             if let Some(future) = reload_future {
                 future.await;
             }
-            this.update(&mut cx, |this, cx| this.auto_install_extensions(cx))
+            this.update(cx, |this, cx| this.auto_install_extensions(cx))
                 .ok();
-            this.update(&mut cx, |this, cx| this.check_for_updates(cx))
-                .ok();
+            this.update(cx, |this, cx| this.check_for_updates(cx)).ok();
         })
         .detach();
 
         // Perform all extension loading in a single task to ensure that we
         // never attempt to simultaneously load/unload extensions from multiple
         // parallel tasks.
-        this.tasks.push(cx.spawn(|this, mut cx| {
+        this.tasks.push(cx.spawn(async move |this, cx| {
             async move {
                 load_initial_extensions.await;
 
@@ -331,14 +330,14 @@ impl ExtensionStore {
                         _ = debounce_timer => {
                             if index_changed {
                                 let index = this
-                                    .update(&mut cx, |this, cx| this.rebuild_extension_index(cx))?
+                                    .update(cx, |this, cx| this.rebuild_extension_index(cx))?
                                     .await;
-                                this.update(&mut cx, |this, cx| this.extensions_updated(index, cx))?
+                                this.update( cx, |this, cx| this.extensions_updated(index, cx))?
                                     .await;
                                 index_changed = false;
                             }
 
-                            Self::update_ssh_clients(&this, &mut cx).await?;
+                            Self::update_ssh_clients(&this, cx).await?;
                         }
                         _ = connection_registered_rx.next() => {
                             debounce_timer = cx
@@ -348,7 +347,7 @@ impl ExtensionStore {
                         }
                         extension_id = reload_rx.next() => {
                             let Some(extension_id) = extension_id else { break; };
-                            this.update(&mut cx, |this, _| {
+                            this.update( cx, |this, _| {
                                 this.modified_extensions.extend(extension_id);
                             })?;
                             index_changed = true;
@@ -363,6 +362,7 @@ impl ExtensionStore {
                 anyhow::Ok(())
             }
             .map(drop)
+            .await;
         }));
 
         // Watch the installed extensions directory for changes. Whenever changes are
@@ -399,7 +399,7 @@ impl ExtensionStore {
         &mut self,
         modified_extension: Option<Arc<str>>,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let (tx, rx) = oneshot::channel();
         self.reload_complete_senders.push(tx);
         self.reload_tx
@@ -543,9 +543,9 @@ impl ExtensionStore {
             ],
             cx,
         );
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let extensions = task.await?;
-            this.update(&mut cx, |this, _cx| {
+            this.update(cx, |this, _cx| {
                 extensions
                     .into_iter()
                     .filter(|extension| {
@@ -590,9 +590,9 @@ impl ExtensionStore {
             .cloned()
             .collect::<Vec<_>>();
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             for extension_id in extensions_to_install {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.install_latest_extension(extension_id.clone(), cx);
                 })
                 .ok();
@@ -603,10 +603,8 @@ impl ExtensionStore {
 
     pub fn check_for_updates(&mut self, cx: &mut Context<Self>) {
         let task = self.fetch_extensions_with_update_available(cx);
-        cx.spawn(move |this, mut cx| async move {
-            Self::upgrade_extensions(this, task.await?, &mut cx).await
-        })
-        .detach();
+        cx.spawn(async move |this, cx| Self::upgrade_extensions(this, task.await?, cx).await)
+            .detach();
     }
 
     async fn upgrade_extensions(
@@ -643,11 +641,11 @@ impl ExtensionStore {
         &self,
         path: &str,
         query: &[(&str, &str)],
-        cx: &mut Context<'_, ExtensionStore>,
+        cx: &mut Context<ExtensionStore>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let url = self.http_client.build_zed_api_url(path, query);
         let http_client = self.http_client.clone();
-        cx.spawn(move |_, _| async move {
+        cx.spawn(async move |_, _| {
             let mut response = http_client
                 .get(url?.as_ref(), AsyncBody::empty(), true)
                 .await?;
@@ -699,17 +697,12 @@ impl ExtensionStore {
         };
         cx.notify();
 
-        cx.spawn(move |this, mut cx| async move {
-            let _finish = util::defer({
-                let this = this.clone();
-                let mut cx = cx.clone();
+        cx.spawn(async move |this, cx| {
+            let _finish = cx.on_drop(&this, {
                 let extension_id = extension_id.clone();
-                move || {
-                    this.update(&mut cx, |this, cx| {
-                        this.outstanding_operations.remove(extension_id.as_ref());
-                        cx.notify();
-                    })
-                    .ok();
+                move |this, cx| {
+                    this.outstanding_operations.remove(extension_id.as_ref());
+                    cx.notify();
                 }
             });
 
@@ -745,13 +738,13 @@ impl ExtensionStore {
             let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
             let archive = Archive::new(decompressed_bytes);
             archive.unpack(extension_dir).await?;
-            this.update(&mut cx, |this, cx| {
+            this.update( cx, |this, cx| {
                 this.reload(Some(extension_id.clone()), cx)
             })?
             .await;
 
             if let ExtensionOperation::Install = operation {
-                this.update(&mut cx, |_, cx| {
+                this.update( cx, |_, cx| {
                     cx.emit(Event::ExtensionInstalled(extension_id));
                 })
                 .ok();
@@ -836,28 +829,14 @@ impl ExtensionStore {
             btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
         };
 
-        cx.spawn(move |this, mut cx| async move {
-            let _finish = util::defer({
-                let this = this.clone();
-                let mut cx = cx.clone();
+        cx.spawn(async move |this, cx| {
+            let _finish = cx.on_drop(&this, {
                 let extension_id = extension_id.clone();
-                move || {
-                    this.update(&mut cx, |this, cx| {
-                        this.outstanding_operations.remove(extension_id.as_ref());
-                        cx.notify();
-                    })
-                    .ok();
+                move |this, cx| {
+                    this.outstanding_operations.remove(extension_id.as_ref());
+                    cx.notify();
                 }
             });
-
-            fs.remove_dir(
-                &work_dir,
-                RemoveOptions {
-                    recursive: true,
-                    ignore_if_not_exists: true,
-                },
-            )
-            .await?;
 
             fs.remove_dir(
                 &extension_dir,
@@ -868,8 +847,19 @@ impl ExtensionStore {
             )
             .await?;
 
-            this.update(&mut cx, |this, cx| this.reload(None, cx))?
-                .await;
+            // todo(windows)
+            // Stop the server here.
+            this.update(cx, |this, cx| this.reload(None, cx))?.await;
+
+            fs.remove_dir(
+                &work_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx)
@@ -884,12 +874,12 @@ impl ExtensionStore {
         let fs = self.fs.clone();
         let builder = self.builder.clone();
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let mut extension_manifest =
                 ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
             let extension_id = extension_manifest.id.clone();
 
-            if !this.update(&mut cx, |this, cx| {
+            if !this.update(cx, |this, cx| {
                 match this.outstanding_operations.entry(extension_id.clone()) {
                     btree_map::Entry::Occupied(_) => return false,
                     btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
@@ -900,16 +890,11 @@ impl ExtensionStore {
                 return Ok(());
             }
 
-            let _finish = util::defer({
-                let this = this.clone();
-                let mut cx = cx.clone();
+            let _finish = cx.on_drop(&this, {
                 let extension_id = extension_id.clone();
-                move || {
-                    this.update(&mut cx, |this, cx| {
-                        this.outstanding_operations.remove(extension_id.as_ref());
-                        cx.notify();
-                    })
-                    .ok();
+                move |this, cx| {
+                    this.outstanding_operations.remove(extension_id.as_ref());
+                    cx.notify();
                 }
             });
 
@@ -925,7 +910,10 @@ impl ExtensionStore {
                         .await
                 }
             })
-            .await?;
+            .await
+            .inspect_err(|error| {
+                util::log_err(error);
+            })?;
 
             let output_path = &extensions_dir.join(extension_id.as_ref());
             if let Some(metadata) = fs.metadata(output_path).await? {
@@ -946,8 +934,7 @@ impl ExtensionStore {
             fs.create_symlink(output_path, extension_source_path)
                 .await?;
 
-            this.update(&mut cx, |this, cx| this.reload(None, cx))?
-                .await;
+            this.update(cx, |this, cx| this.reload(None, cx))?.await;
             Ok(())
         })
     }
@@ -974,16 +961,16 @@ impl ExtensionStore {
                 .await
         });
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let result = compile.await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.outstanding_operations.remove(&extension_id);
                 cx.notify();
             })?;
 
             if result.is_ok() {
-                this.update(&mut cx, |this, cx| this.reload(Some(extension_id), cx))?
+                this.update(cx, |this, cx| this.reload(Some(extension_id), cx))?
                     .await;
             }
 
@@ -1217,7 +1204,7 @@ impl ExtensionStore {
         cx.notify();
         cx.emit(Event::ExtensionsUpdated);
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             cx.background_spawn({
                 let fs = fs.clone();
                 async move {
@@ -1264,14 +1251,14 @@ impl ExtensionStore {
                 if let Some(wasm_extension) = wasm_extension.log_err() {
                     wasm_extensions.push((extension.manifest.clone(), wasm_extension));
                 } else {
-                    this.update(&mut cx, |_, cx| {
+                    this.update(cx, |_, cx| {
                         cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
                     })
                     .ok();
                 }
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.reload_complete_senders.clear();
 
                 for (manifest, wasm_extension) in &wasm_extensions {
@@ -1317,6 +1304,12 @@ impl ExtensionStore {
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
+
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionsInstalledChanged, cx)
+                    });
+                }
             })
             .ok();
         })

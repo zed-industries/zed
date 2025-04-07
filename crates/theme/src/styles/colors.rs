@@ -43,7 +43,7 @@ pub struct ThemeColors {
     pub element_hover: Hsla,
     /// Background Color. Used for the active state of an element that should have a different background than the surface it's on.
     ///
-    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressed.
     pub element_active: Hsla,
     /// Background Color. Used for the selected state of an element that should have a different background than the surface it's on.
     ///
@@ -69,7 +69,7 @@ pub struct ThemeColors {
     pub ghost_element_hover: Hsla,
     /// Background Color. Used for the active state of a ghost element that should have the same background as the surface it's on.
     ///
-    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressed.
     pub ghost_element_active: Hsla,
     /// Background Color. Used for the selected state of a ghost element that should have the same background as the surface it's on.
     ///
@@ -109,6 +109,9 @@ pub struct ThemeColors {
     ///
     /// This might be used to show when a toggleable icon button is selected.
     pub icon_accent: Hsla,
+    /// Color used to accent some debugger elements
+    /// Is used by breakpoints
+    pub debugger_accent: Hsla,
 
     // ===
     // UI Elements
@@ -148,6 +151,8 @@ pub struct ThemeColors {
     pub editor_subheader_background: Hsla,
     pub editor_active_line_background: Hsla,
     pub editor_highlighted_line_background: Hsla,
+    /// Line color of the line a debugger is currently stopped at
+    pub editor_debugger_active_line_background: Hsla,
     /// Text Color. Used for the text of the line number in the editor gutter.
     pub editor_line_number: Hsla,
     /// Text Color. Used for the text of the line number in the editor gutter when the line is highlighted.
@@ -246,22 +251,14 @@ pub struct ThemeColors {
 
     /// Represents an added entry or hunk in vcs, like git.
     pub version_control_added: Hsla,
-    /// Represents the line background of an added entry or hunk in vcs, like git.
-    pub version_control_added_background: Hsla,
     /// Represents a deleted entry in version control systems.
     pub version_control_deleted: Hsla,
-    /// Represents the background color for deleted entries in version control systems.
-    pub version_control_deleted_background: Hsla,
     /// Represents a modified entry in version control systems.
     pub version_control_modified: Hsla,
-    /// Represents the background color for modified entries in version control systems.
-    pub version_control_modified_background: Hsla,
     /// Represents a renamed entry in version control systems.
     pub version_control_renamed: Hsla,
     /// Represents a conflicting entry in version control systems.
     pub version_control_conflict: Hsla,
-    /// Represents the background color for conflicting entries in version control systems.
-    pub version_control_conflict_background: Hsla,
     /// Represents an ignored entry in version control systems.
     pub version_control_ignored: Hsla,
 }
@@ -366,14 +363,10 @@ pub enum ThemeColorField {
     TerminalAnsiDimWhite,
     LinkTextHover,
     VersionControlAdded,
-    VersionControlAddedBackground,
     VersionControlDeleted,
-    VersionControlDeletedBackground,
     VersionControlModified,
-    VersionControlModifiedBackground,
     VersionControlRenamed,
     VersionControlConflict,
-    VersionControlConflictBackground,
     VersionControlIgnored,
 }
 
@@ -485,20 +478,10 @@ impl ThemeColors {
             ThemeColorField::TerminalAnsiDimWhite => self.terminal_ansi_dim_white,
             ThemeColorField::LinkTextHover => self.link_text_hover,
             ThemeColorField::VersionControlAdded => self.version_control_added,
-            ThemeColorField::VersionControlAddedBackground => self.version_control_added_background,
             ThemeColorField::VersionControlDeleted => self.version_control_deleted,
-            ThemeColorField::VersionControlDeletedBackground => {
-                self.version_control_deleted_background
-            }
             ThemeColorField::VersionControlModified => self.version_control_modified,
-            ThemeColorField::VersionControlModifiedBackground => {
-                self.version_control_modified_background
-            }
             ThemeColorField::VersionControlRenamed => self.version_control_renamed,
             ThemeColorField::VersionControlConflict => self.version_control_conflict,
-            ThemeColorField::VersionControlConflictBackground => {
-                self.version_control_conflict_background
-            }
             ThemeColorField::VersionControlIgnored => self.version_control_ignored,
         }
     }

@@ -1,6 +1,6 @@
 use crate::{
-    locator::Locator, BufferId, BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset,
-    ToPoint, ToPointUtf16,
+    BufferId, BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset, ToPoint, ToPointUtf16,
+    locator::Locator,
 };
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
@@ -136,6 +136,7 @@ where
 
 pub trait AnchorRangeExt {
     fn cmp(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> Ordering;
+    fn overlaps(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> bool;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -144,5 +145,9 @@ impl AnchorRangeExt for Range<Anchor> {
             Ordering::Equal => other.end.cmp(&self.end, buffer),
             ord => ord,
         }
+    }
+
+    fn overlaps(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> bool {
+        self.start.cmp(&other.end, buffer).is_lt() && other.start.cmp(&self.end, buffer).is_lt()
     }
 }

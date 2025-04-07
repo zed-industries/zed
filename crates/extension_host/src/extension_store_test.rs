@@ -1,20 +1,20 @@
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
-    GrammarManifestEntry, SchemaVersion, RELOAD_DEBOUNCE_DURATION,
+    GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION, SchemaVersion,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
-use futures::{io::BufReader, AsyncReadExt, StreamExt};
-use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+use futures::{AsyncReadExt, StreamExt, io::BufReader};
+use gpui::{AppContext as _, SemanticVersion, SharedString, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus};
+use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
-use project::{Project, DEFAULT_COMPLETION_CONTEXT};
+use project::{DEFAULT_COMPLETION_CONTEXT, Project};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
@@ -163,6 +163,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         slash_commands: BTreeMap::default(),
                         indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
+                        capabilities: Vec::new(),
                     }),
                     dev: false,
                 },
@@ -191,6 +192,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         slash_commands: BTreeMap::default(),
                         indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
+                        capabilities: Vec::new(),
                     }),
                     dev: false,
                 },
@@ -356,6 +358,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 slash_commands: BTreeMap::default(),
                 indexed_docs_providers: BTreeMap::default(),
                 snippets: None,
+                capabilities: Vec::new(),
             }),
             dev: false,
         },
@@ -474,7 +477,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let test_extension_id = "test-extension";
     let test_extension_dir = root_dir.join("extensions").join(test_extension_id);
 
-    let fs = Arc::new(RealFs::default());
+    let fs = Arc::new(RealFs::new(None, cx.executor()));
     let extensions_dir = TempTree::new(json!({
         "installed": {},
         "work": {}
@@ -660,23 +663,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             status_updates.next().await.unwrap(),
         ],
         [
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::CheckingForUpdate
-            ),
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::Downloading
-            ),
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::None
-            )
+            (SharedString::new("gleam"), BinaryStatus::CheckingForUpdate),
+            (SharedString::new("gleam"), BinaryStatus::Downloading),
+            (SharedString::new("gleam"), BinaryStatus::None)
         ]
     );
 
     // The extension creates custom labels for completion items.
-    fake_server.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+    fake_server.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(lsp::CompletionResponse::Array(vec![
             lsp::CompletionItem {
                 label: "foo".into(),
@@ -710,6 +704,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             project.completions(&buffer, 0, DEFAULT_COMPLETION_CONTEXT, cx)
         })
         .await
+        .unwrap()
         .unwrap()
         .into_iter()
         .map(|c| c.label.text)
@@ -777,6 +772,7 @@ fn init_test(cx: &mut TestAppContext) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         release_channel::init(SemanticVersion::default(), cx);
+        extension::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         Project::init_settings(cx);
         ExtensionSettings::register(cx);

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use gpui::{px, AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, Disclosure};
+use crate::{Disclosure, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {
@@ -37,6 +37,7 @@ pub struct ListItem {
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
+    always_show_disclosure_icon: bool,
     outlined: bool,
     rounded: bool,
     overflow_x: bool,
@@ -63,6 +64,7 @@ impl ListItem {
             tooltip: None,
             children: SmallVec::new(),
             selectable: true,
+            always_show_disclosure_icon: false,
             outlined: false,
             rounded: false,
             overflow_x: false,
@@ -77,6 +79,11 @@ impl ListItem {
 
     pub fn selectable(mut self, has_hover: bool) -> Self {
         self.selectable = has_hover;
+        self
+    }
+
+    pub fn always_show_disclosure_icon(mut self, show: bool) -> Self {
+        self.always_show_disclosure_icon = show;
         self
     }
 
@@ -211,13 +218,13 @@ impl RenderOnce for ListItem {
                     .when(self.selectable, |this| {
                         this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                            .when(self.outlined, |this| this.rounded_md())
+                            .when(self.outlined, |this| this.rounded_sm())
                             .when(self.selected, |this| {
                                 this.bg(cx.theme().colors().ghost_element_selected)
                             })
                     })
             })
-            .when(self.rounded, |this| this.rounded_md())
+            .when(self.rounded, |this| this.rounded_sm())
             .child(
                 h_flex()
                     .id("inner_list_item")
@@ -260,7 +267,7 @@ impl RenderOnce for ListItem {
                     .when(self.outlined, |this| {
                         this.border_1()
                             .border_color(cx.theme().colors().border)
-                            .rounded_md()
+                            .rounded_sm()
                             .overflow_hidden()
                     })
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
@@ -271,7 +278,7 @@ impl RenderOnce for ListItem {
                     .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
                     .map(|this| {
                         if self.inset {
-                            this.rounded_md()
+                            this.rounded_sm()
                         } else {
                             // When an item is not inset draw the indent spacing inside of the item
                             this.ml(self.indent_level as f32 * self.indent_step_size)
@@ -282,7 +289,9 @@ impl RenderOnce for ListItem {
                             .flex()
                             .absolute()
                             .left(rems(-1.))
-                            .when(is_open, |this| this.visible_on_hover(""))
+                            .when(is_open && !self.always_show_disclosure_icon, |this| {
+                                this.visible_on_hover("")
+                            })
                             .child(Disclosure::new("toggle", is_open).on_toggle(self.on_toggle))
                     }))
                     .child(

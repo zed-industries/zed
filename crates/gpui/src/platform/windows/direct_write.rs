@@ -1,13 +1,12 @@
 use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use windows::{
-    core::*,
     Win32::{
         Foundation::*,
         Globalization::GetUserDefaultLocaleName,
@@ -21,7 +20,9 @@ use windows::{
         System::SystemServices::LOCALE_NAME_MAX_LENGTH,
         UI::WindowsAndMessaging::*,
     },
+    core::*,
 };
+use windows_numerics::Vector2;
 
 use crate::*;
 
@@ -332,7 +333,7 @@ impl DirectWriteState {
         &self,
         font_features: &FontFeatures,
     ) -> Result<IDWriteTypography> {
-        let direct_write_features = self.components.factory.CreateTypography()?;
+        let direct_write_features = unsafe { self.components.factory.CreateTypography()? };
         apply_font_features(&direct_write_features, font_features)?;
         Ok(direct_write_features)
     }
@@ -351,28 +352,32 @@ impl DirectWriteState {
         } else {
             &self.custom_font_collection
         };
-        let fontset = collection.GetFontSet().log_err()?;
-        let font = fontset
-            .GetMatchingFonts(
-                &HSTRING::from(family_name),
-                font_weight.into(),
-                DWRITE_FONT_STRETCH_NORMAL,
-                font_style.into(),
-            )
-            .log_err()?;
-        let total_number = font.GetFontCount();
+        let fontset = unsafe { collection.GetFontSet().log_err()? };
+        let font = unsafe {
+            fontset
+                .GetMatchingFonts(
+                    &HSTRING::from(family_name),
+                    font_weight.into(),
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    font_style.into(),
+                )
+                .log_err()?
+        };
+        let total_number = unsafe { font.GetFontCount() };
         for index in 0..total_number {
-            let Some(font_face_ref) = font.GetFontFaceReference(index).log_err() else {
+            let Some(font_face_ref) = (unsafe { font.GetFontFaceReference(index).log_err() })
+            else {
                 continue;
             };
-            let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
+            let Some(font_face) = (unsafe { font_face_ref.CreateFontFace().log_err() }) else {
                 continue;
             };
             let Some(identifier) = get_font_identifier(&font_face, &self.components.locale) else {
                 continue;
             };
-            let is_emoji = font_face.IsColorFont().as_bool();
-            let Some(direct_write_features) = self.generate_font_features(font_features).log_err()
+            let is_emoji = unsafe { font_face.IsColorFont().as_bool() };
+            let Some(direct_write_features) =
+                (unsafe { self.generate_font_features(font_features).log_err() })
             else {
                 continue;
             };
@@ -395,14 +400,14 @@ impl DirectWriteState {
     }
 
     unsafe fn update_system_font_collection(&mut self) {
-        let mut collection = std::mem::zeroed();
-        if self
-            .components
-            .factory
-            .GetSystemFontCollection(false, &mut collection, true)
-            .log_err()
-            .is_some()
-        {
+        let mut collection = unsafe { std::mem::zeroed() };
+        if unsafe {
+            self.components
+                .factory
+                .GetSystemFontCollection(false, &mut collection, true)
+                .log_err()
+                .is_some()
+        } {
             self.system_font_collection = collection.unwrap();
         }
     }
@@ -460,35 +465,37 @@ impl DirectWriteState {
         fallbacks: Option<&FontFallbacks>,
     ) -> Option<FontId> {
         // try to find target font in custom font collection first
-        self.get_font_id_from_font_collection(
-            family_name,
-            weight,
-            style,
-            features,
-            fallbacks,
-            false,
-        )
-        .or_else(|| {
+        unsafe {
             self.get_font_id_from_font_collection(
                 family_name,
                 weight,
                 style,
                 features,
                 fallbacks,
-                true,
+                false,
             )
-        })
-        .or_else(|| {
-            self.update_system_font_collection();
-            self.get_font_id_from_font_collection(
-                family_name,
-                weight,
-                style,
-                features,
-                fallbacks,
-                true,
-            )
-        })
+            .or_else(|| {
+                self.get_font_id_from_font_collection(
+                    family_name,
+                    weight,
+                    style,
+                    features,
+                    fallbacks,
+                    true,
+                )
+            })
+            .or_else(|| {
+                self.update_system_font_collection();
+                self.get_font_id_from_font_collection(
+                    family_name,
+                    weight,
+                    style,
+                    features,
+                    fallbacks,
+                    true,
+                )
+            })
+        }
     }
 
     fn layout_line(
@@ -668,7 +675,7 @@ impl DirectWriteState {
         };
         let bounds = unsafe {
             render_target.GetGlyphRunWorldBounds(
-                D2D_POINT_2F { x: 0.0, y: 0.0 },
+                Vector2 { X: 0.0, Y: 0.0 },
                 &glyph_run,
                 DWRITE_MEASURING_MODE_NATURAL,
             )?
@@ -802,9 +809,9 @@ impl DirectWriteState {
             let subpixel_shift = params
                 .subpixel_variant
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
-            let baseline_origin = D2D_POINT_2F {
-                x: subpixel_shift.x / params.scale_factor,
-                y: subpixel_shift.y / params.scale_factor,
+            let baseline_origin = Vector2 {
+                X: subpixel_shift.x / params.scale_factor,
+                Y: subpixel_shift.y / params.scale_factor,
             };
 
             // This `cast()` action here should never fail since we are running on Win10+, and
@@ -1049,7 +1056,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         _measuringmode: DWRITE_MEASURING_MODE,
         glyphrun: *const DWRITE_GLYPH_RUN,
         glyphrundescription: *const DWRITE_GLYPH_RUN_DESCRIPTION,
-        _clientdrawingeffect: Option<&windows::core::IUnknown>,
+        _clientdrawingeffect: windows::core::Ref<windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
         unsafe {
             let glyphrun = &*glyphrun;
@@ -1113,7 +1120,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         _baselineoriginx: f32,
         _baselineoriginy: f32,
         _underline: *const DWRITE_UNDERLINE,
-        _clientdrawingeffect: Option<&windows::core::IUnknown>,
+        _clientdrawingeffect: windows::core::Ref<windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
         Err(windows::core::Error::new(
             E_NOTIMPL,
@@ -1127,7 +1134,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         _baselineoriginx: f32,
         _baselineoriginy: f32,
         _strikethrough: *const DWRITE_STRIKETHROUGH,
-        _clientdrawingeffect: Option<&windows::core::IUnknown>,
+        _clientdrawingeffect: windows::core::Ref<windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
         Err(windows::core::Error::new(
             E_NOTIMPL,
@@ -1140,10 +1147,10 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         _clientdrawingcontext: *const ::core::ffi::c_void,
         _originx: f32,
         _originy: f32,
-        _inlineobject: Option<&IDWriteInlineObject>,
+        _inlineobject: windows::core::Ref<IDWriteInlineObject>,
         _issideways: BOOL,
         _isrighttoleft: BOOL,
-        _clientdrawingeffect: Option<&windows::core::IUnknown>,
+        _clientdrawingeffect: windows::core::Ref<windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
         Err(windows::core::Error::new(
             E_NOTIMPL,
@@ -1477,7 +1484,7 @@ fn is_color_glyph(
     };
     unsafe {
         factory.TranslateColorGlyphRun(
-            D2D_POINT_2F::default(),
+            Vector2::default(),
             &glyph_run as _,
             None,
             DWRITE_GLYPH_IMAGE_FORMATS_COLR

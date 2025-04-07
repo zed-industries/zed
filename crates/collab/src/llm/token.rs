@@ -1,9 +1,9 @@
+use crate::Cents;
 use crate::db::user;
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
-use crate::Cents;
-use crate::{db::billing_preference, Config};
-use anyhow::{anyhow, Result};
-use chrono::Utc;
+use crate::{Config, db::billing_preference};
+use anyhow::{Result, anyhow};
+use chrono::{NaiveDateTime, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -20,9 +20,10 @@ pub struct LlmTokenClaims {
     pub system_id: Option<String>,
     pub metrics_id: Uuid,
     pub github_user_login: String,
+    pub account_created_at: NaiveDateTime,
     pub is_staff: bool,
     pub has_llm_closed_beta_feature_flag: bool,
-    #[serde(default)]
+    pub bypass_account_age_check: bool,
     pub has_predict_edits_feature_flag: bool,
     pub has_llm_subscription: bool,
     pub max_monthly_spend_in_cents: u32,
@@ -33,13 +34,11 @@ pub struct LlmTokenClaims {
 const LLM_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
 
 impl LlmTokenClaims {
-    #[allow(clippy::too_many_arguments)]
     pub fn create(
         user: &user::Model,
         is_staff: bool,
         billing_preferences: Option<billing_preference::Model>,
-        has_llm_closed_beta_feature_flag: bool,
-        has_predict_edits_feature_flag: bool,
+        feature_flags: &Vec<String>,
         has_llm_subscription: bool,
         plan: rpc::proto::Plan,
         system_id: Option<String>,
@@ -59,9 +58,17 @@ impl LlmTokenClaims {
             system_id,
             metrics_id: user.metrics_id,
             github_user_login: user.github_login.clone(),
+            account_created_at: user.account_created_at(),
             is_staff,
-            has_llm_closed_beta_feature_flag,
-            has_predict_edits_feature_flag,
+            has_llm_closed_beta_feature_flag: feature_flags
+                .iter()
+                .any(|flag| flag == "llm-closed-beta"),
+            bypass_account_age_check: feature_flags
+                .iter()
+                .any(|flag| flag == "bypass-account-age-check"),
+            has_predict_edits_feature_flag: feature_flags
+                .iter()
+                .any(|flag| flag == "predict-edits"),
             has_llm_subscription,
             max_monthly_spend_in_cents: billing_preferences
                 .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {

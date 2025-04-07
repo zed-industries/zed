@@ -1,9 +1,9 @@
 //! # panel
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{actions, Entity, TextStyle};
+use gpui::{Entity, TextStyle, actions};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, Tab};
+use ui::{Tab, prelude::*};
 
 actions!(panel, [NextPanelTab, PreviousPanelTab]);
 
@@ -18,8 +18,6 @@ pub trait PanelHeader: workspace::Panel {
             .w_full()
             .px_1()
             .flex_none()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
     }
 }
 
@@ -84,9 +82,10 @@ pub fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorS
 
     let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
 
-    let (font_family, font_features, font_weight, line_height) = if monospace {
+    let (font_family, font_fallbacks, font_features, font_weight, line_height) = if monospace {
         (
             settings.buffer_font.family.clone(),
+            settings.buffer_font.fallbacks.clone(),
             settings.buffer_font.features.clone(),
             settings.buffer_font.weight,
             font_size * settings.buffer_line_height.value(),
@@ -94,6 +93,7 @@ pub fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorS
     } else {
         (
             settings.ui_font.family.clone(),
+            settings.ui_font.fallbacks.clone(),
             settings.ui_font.features.clone(),
             settings.ui_font.weight,
             window.line_height(),
@@ -106,12 +106,14 @@ pub fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorS
         text: TextStyle {
             color: cx.theme().colors().text,
             font_family,
+            font_fallbacks,
             font_features,
             font_size: TextSize::Small.rems(cx).into(),
             font_weight,
             line_height: line_height.into(),
             ..Default::default()
         },
+        syntax: cx.theme().syntax().clone(),
         ..Default::default()
     }
 }

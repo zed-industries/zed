@@ -6,11 +6,11 @@ use settings::{Settings, SettingsSources};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
-    div, Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement, LabelSize,
-    ParentElement, Render, Tooltip, Window,
+    Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement, LabelSize, ParentElement,
+    Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
@@ -72,11 +72,9 @@ impl CursorPosition {
         cx: &mut Context<Self>,
     ) {
         let editor = editor.downgrade();
-        self.update_position = cx.spawn_in(window, |cursor_position, mut cx| async move {
+        self.update_position = cx.spawn_in(window, async move |cursor_position, cx| {
             let is_singleton = editor
-                .update(&mut cx, |editor, cx| {
-                    editor.buffer().read(cx).is_singleton()
-                })
+                .update(cx, |editor, cx| editor.buffer().read(cx).is_singleton())
                 .ok()
                 .unwrap_or(true);
 
@@ -87,7 +85,7 @@ impl CursorPosition {
             }
 
             editor
-                .update(&mut cx, |editor, cx| {
+                .update(cx, |editor, cx| {
                     cursor_position.update(cx, |cursor_position, cx| {
                         cursor_position.selected_count = SelectionStats::default();
                         cursor_position.selected_count.selections = editor.selections.count();

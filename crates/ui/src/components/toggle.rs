@@ -1,12 +1,11 @@
 use gpui::{
-    div, hsla, prelude::*, AnyElement, AnyView, CursorStyle, ElementId, Hsla, IntoElement, Styled,
-    Window,
+    AnyElement, AnyView, ElementId, Hsla, IntoElement, Styled, Window, div, hsla, prelude::*,
 };
 use std::sync::Arc;
 
 use crate::utils::is_light;
-use crate::{prelude::*, ElevationIndex, KeyBinding};
 use crate::{Color, Icon, IconName, ToggleState};
+use crate::{ElevationIndex, KeyBinding, prelude::*};
 
 // TODO: Checkbox, CheckboxWithLabel, and Switch could all be
 // restructured to use a ToggleLike, similar to Button/Buttonlike, Label/Labellike
@@ -40,7 +39,7 @@ pub enum ToggleStyle {
 /// Each checkbox works independently from other checkboxes in the list,
 /// therefore checking an additional box does not affect any other selections.
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct Checkbox {
     id: ElementId,
     toggle_state: ToggleState,
@@ -141,14 +140,14 @@ impl Checkbox {
 
         match self.style.clone() {
             ToggleStyle::Ghost => cx.theme().colors().border,
-            ToggleStyle::ElevationBased(elevation) => elevation.on_elevation_bg(cx),
+            ToggleStyle::ElevationBased(_) => cx.theme().colors().border,
             ToggleStyle::Custom(color) => color.opacity(0.3),
         }
     }
 
     /// container size
-    pub fn container_size(cx: &App) -> Rems {
-        DynamicSpacing::Base20.rems(cx)
+    pub fn container_size() -> Pixels {
+        px(20.0)
     }
 }
 
@@ -157,21 +156,21 @@ impl RenderOnce for Checkbox {
         let group_id = format!("checkbox_group_{:?}", self.id);
         let color = if self.disabled {
             Color::Disabled
-        } else if self.placeholder {
-            Color::Placeholder
         } else {
             Color::Selected
         };
         let icon = match self.toggle_state {
-            ToggleState::Selected => Some(if self.placeholder {
-                Icon::new(IconName::Circle)
-                    .size(IconSize::XSmall)
-                    .color(color)
-            } else {
-                Icon::new(IconName::Check)
-                    .size(IconSize::Small)
-                    .color(color)
-            }),
+            ToggleState::Selected => {
+                if self.placeholder {
+                    None
+                } else {
+                    Some(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(color),
+                    )
+                }
+            }
             ToggleState::Indeterminate => {
                 Some(Icon::new(IconName::Dash).size(IconSize::Small).color(color))
             }
@@ -180,8 +179,9 @@ impl RenderOnce for Checkbox {
 
         let bg_color = self.bg_color(cx);
         let border_color = self.border_color(cx);
+        let hover_border_color = border_color.alpha(0.7);
 
-        let size = Self::container_size(cx);
+        let size = Self::container_size();
 
         let checkbox = h_flex()
             .id(self.id.clone())
@@ -195,22 +195,27 @@ impl RenderOnce for Checkbox {
                     .flex_none()
                     .justify_center()
                     .items_center()
-                    .m(DynamicSpacing::Base04.px(cx))
-                    .size(DynamicSpacing::Base16.rems(cx))
-                    .rounded_sm()
+                    .m_1()
+                    .size_4()
+                    .rounded_xs()
                     .bg(bg_color)
                     .border_1()
                     .border_color(border_color)
-                    .when(self.disabled, |this| {
-                        this.cursor(CursorStyle::OperationNotAllowed)
-                    })
+                    .when(self.disabled, |this| this.cursor_not_allowed())
                     .when(self.disabled, |this| {
                         this.bg(cx.theme().colors().element_disabled.opacity(0.6))
                     })
                     .when(!self.disabled, |this| {
-                        this.group_hover(group_id.clone(), |el| {
-                            el.bg(cx.theme().colors().element_hover)
-                        })
+                        this.group_hover(group_id.clone(), |el| el.border_color(hover_border_color))
+                    })
+                    .when(self.placeholder, |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .rounded_full()
+                                .bg(color.color(cx).alpha(0.5))
+                                .size(px(4.)),
+                        )
                     })
                     .children(icon),
             );
@@ -240,7 +245,7 @@ impl RenderOnce for Checkbox {
 
 /// A [`Checkbox`] that has a [`Label`].
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct CheckboxWithLabel {
     id: ElementId,
     label: Label,
@@ -248,6 +253,7 @@ pub struct CheckboxWithLabel {
     on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
     filled: bool,
     style: ToggleStyle,
+    checkbox_position: IconPosition,
 }
 
 // TODO: Remove `CheckboxWithLabel` now that `label` is a method of `Checkbox`.
@@ -266,6 +272,7 @@ impl CheckboxWithLabel {
             on_click: Arc::new(on_click),
             filled: false,
             style: ToggleStyle::default(),
+            checkbox_position: IconPosition::Start,
         }
     }
 
@@ -286,31 +293,51 @@ impl CheckboxWithLabel {
         self.filled = true;
         self
     }
+
+    pub fn checkbox_position(mut self, position: IconPosition) -> Self {
+        self.checkbox_position = position;
+        self
+    }
 }
 
 impl RenderOnce for CheckboxWithLabel {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .child(
-                Checkbox::new(self.id.clone(), self.checked)
-                    .style(self.style)
-                    .when(self.filled, Checkbox::fill)
-                    .on_click({
-                        let on_click = self.on_click.clone();
-                        move |checked, window, cx| {
-                            (on_click)(checked, window, cx);
-                        }
-                    }),
-            )
+            .when(self.checkbox_position == IconPosition::Start, |this| {
+                this.child(
+                    Checkbox::new(self.id.clone(), self.checked)
+                        .style(self.style.clone())
+                        .when(self.filled, Checkbox::fill)
+                        .on_click({
+                            let on_click = self.on_click.clone();
+                            move |checked, window, cx| {
+                                (on_click)(checked, window, cx);
+                            }
+                        }),
+                )
+            })
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
-                    .on_click(move |_event, window, cx| {
-                        (self.on_click)(&self.checked.inverse(), window, cx);
+                    .on_click({
+                        let on_click = self.on_click.clone();
+                        move |_event, window, cx| {
+                            (on_click)(&self.checked.inverse(), window, cx);
+                        }
                     })
                     .child(self.label),
             )
+            .when(self.checkbox_position == IconPosition::End, |this| {
+                this.child(
+                    Checkbox::new(self.id.clone(), self.checked)
+                        .style(self.style)
+                        .when(self.filled, Checkbox::fill)
+                        .on_click(move |checked, window, cx| {
+                            (self.on_click)(checked, window, cx);
+                        }),
+                )
+            })
     }
 }
 
@@ -318,7 +345,7 @@ impl RenderOnce for CheckboxWithLabel {
 ///
 /// Switches are used to represent opposite states, such as enabled or disabled.
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct Switch {
     id: ElementId,
     toggle_state: ToggleState,
@@ -520,6 +547,12 @@ impl ComponentPreview for Checkbox {
                         single_example(
                             "Unselected",
                             Checkbox::new("checkbox_unselected", ToggleState::Unselected)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Placeholder",
+                            Checkbox::new("checkbox_indeterminate", ToggleState::Selected)
+                                .placeholder(true)
                                 .into_any_element(),
                         ),
                         single_example(

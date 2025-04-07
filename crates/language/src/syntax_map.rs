@@ -2,7 +2,7 @@
 mod syntax_map_tests;
 
 use crate::{
-    with_parser, Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS,
+    Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS, with_parser,
 };
 use collections::HashMap;
 use futures::FutureExt;
@@ -121,9 +121,9 @@ impl SyntaxLayerContent {
 pub struct SyntaxLayer<'a> {
     /// The language for this layer.
     pub language: &'a Arc<Language>,
-    depth: usize,
+    pub(crate) depth: usize,
     tree: &'a Tree,
-    offset: (usize, tree_sitter::Point),
+    pub(crate) offset: (usize, tree_sitter::Point),
 }
 
 /// A layer of syntax highlighting. Like [SyntaxLayer], but holding
@@ -133,7 +133,7 @@ pub struct OwnedSyntaxLayer {
     /// The language for this layer.
     pub language: Arc<Language>,
     tree: tree_sitter::Tree,
-    offset: (usize, tree_sitter::Point),
+    pub offset: (usize, tree_sitter::Point),
 }
 
 #[derive(Debug, Clone)]
@@ -1250,7 +1250,6 @@ fn parse_text(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn get_injections(
     config: &InjectionConfig,
     text: &BufferSnapshot,
@@ -1891,7 +1890,7 @@ impl fmt::Debug for LogChangedRegions<'_> {
         f.debug_list()
             .entries(
                 self.0
-                     .0
+                    .0
                     .iter()
                     .map(|region| LogAnchorRange(&region.range, self.1)),
             )

@@ -5,10 +5,10 @@ use crate::markdown_elements::{
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, img, px, rems, AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context,
-    DefiniteLength, Div, Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource,
-    InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource,
-    SharedString, Styled, StyledText, TextStyle, WeakEntity, Window,
+    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
+    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
+    Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
+    StyledText, TextStyle, WeakEntity, Window, div, img, px, rems,
 };
 use settings::Settings;
 use std::{
@@ -18,12 +18,12 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
-    FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
-    LabelSize, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage, ToggleState,
-    Tooltip, VisibleOnHover,
+    ButtonCommon, Checkbox, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
+    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, StatefulInteractiveElement,
+    StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover, h_flex, relative,
+    tooltip_container, v_flex,
 };
-use workspace::Workspace;
+use workspace::{OpenOptions, OpenVisible, Workspace};
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut Window, &mut App)>>;
 
@@ -398,7 +398,7 @@ fn render_markdown_code_block(
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)
-        .rounded_md()
+        .rounded_sm()
         .child(body)
         .child(
             div()
@@ -490,7 +490,15 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                     if let Some(workspace) = &workspace {
                                         _ = workspace.update(cx, |workspace, cx| {
                                             workspace
-                                                .open_abs_path(path.clone(), false, window, cx)
+                                                .open_abs_path(
+                                                    path.clone(),
+                                                    OpenOptions {
+                                                        visible: Some(OpenVisible::None),
+                                                        ..Default::default()
+                                                    },
+                                                    window,
+                                                    cx,
+                                                )
                                                 .detach();
                                         });
                                     }
@@ -518,9 +526,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             .max_w_full()
                             .with_fallback({
                                 let alt_text = image.alt_text.clone();
-                                {
-                                    move || div().children(alt_text.clone()).into_any_element()
-                                }
+                                move || div().children(alt_text.clone()).into_any_element()
                             }),
                     )
                     .tooltip({
@@ -545,7 +551,15 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                         if let Some(workspace) = &workspace {
                                             _ = workspace.update(cx, |workspace, cx| {
                                                 workspace
-                                                    .open_abs_path(path.clone(), false, window, cx)
+                                                    .open_abs_path(
+                                                        path.clone(),
+                                                        OpenOptions {
+                                                            visible: Some(OpenVisible::None),
+                                                            ..Default::default()
+                                                        },
+                                                        window,
+                                                        cx,
+                                                    )
                                                     .detach();
                                             });
                                         }

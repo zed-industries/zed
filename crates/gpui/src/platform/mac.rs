@@ -11,7 +11,7 @@ mod metal_atlas;
 #[cfg(not(feature = "macos-blade"))]
 pub mod metal_renderer;
 
-use media::core_video::CVImageBuffer;
+use core_video::image_buffer::CVImageBuffer;
 #[cfg(not(feature = "macos-blade"))]
 use metal_renderer as renderer;
 
@@ -30,7 +30,7 @@ mod platform;
 mod window;
 mod window_appearance;
 
-use crate::{px, size, DevicePixels, Pixels, Size};
+use crate::{DevicePixels, Pixels, Size, px, size};
 use cocoa::{
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSNotFound, NSRect, NSSize, NSString, NSUInteger},
@@ -38,7 +38,7 @@ use cocoa::{
 
 use objc::runtime::{BOOL, NO, YES};
 use std::{
-    ffi::{c_char, CStr},
+    ffi::{CStr, c_char},
     ops::Range,
 };
 
@@ -60,11 +60,7 @@ trait BoolExt {
 
 impl BoolExt for bool {
     fn to_objc(self) -> BOOL {
-        if self {
-            YES
-        } else {
-            NO
-        }
+        if self { YES } else { NO }
     }
 }
 
@@ -74,11 +70,13 @@ trait NSStringExt {
 
 impl NSStringExt for id {
     unsafe fn to_str(&self) -> &str {
-        let cstr = self.UTF8String();
-        if cstr.is_null() {
-            ""
-        } else {
-            CStr::from_ptr(cstr as *mut c_char).to_str().unwrap()
+        unsafe {
+            let cstr = self.UTF8String();
+            if cstr.is_null() {
+                ""
+            } else {
+                CStr::from_ptr(cstr as *mut c_char).to_str().unwrap()
+            }
         }
     }
 }
@@ -134,7 +132,7 @@ unsafe impl objc::Encode for NSRange {
 }
 
 unsafe fn ns_string(string: &str) -> id {
-    NSString::alloc(nil).init_str(string).autorelease()
+    unsafe { NSString::alloc(nil).init_str(string).autorelease() }
 }
 
 impl From<NSSize> for Size<Pixels> {

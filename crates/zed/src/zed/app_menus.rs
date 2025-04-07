@@ -35,7 +35,7 @@ pub fn app_menus() -> Vec<Menu> {
                     items: vec![],
                 }),
                 MenuItem::separator(),
-                MenuItem::action("Extensions", zed_actions::Extensions),
+                MenuItem::action("Extensions", zed_actions::Extensions::default()),
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
@@ -69,11 +69,14 @@ pub fn app_menus() -> Vec<Menu> {
                         create_new_window: true,
                     },
                 ),
+                MenuItem::action("Open Remote...", zed_actions::OpenRemote),
                 MenuItem::separator(),
                 MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
+                MenuItem::separator(),
                 MenuItem::action("Save", workspace::Save { save_intent: None }),
                 MenuItem::action("Save As…", workspace::SaveAs),
                 MenuItem::action("Save All", workspace::SaveAll { save_intent: None }),
+                MenuItem::separator(),
                 MenuItem::action(
                     "Close Editor",
                     workspace::CloseActiveItem {
@@ -92,6 +95,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::os_action("Cut", editor::actions::Cut, OsAction::Cut),
                 MenuItem::os_action("Copy", editor::actions::Copy, OsAction::Copy),
+                MenuItem::action("Copy and trim", editor::actions::CopyAndTrim),
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),

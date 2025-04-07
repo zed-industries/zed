@@ -3,38 +3,49 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
-    actions, percentage, Animation, AnimationExt as _, App, Context, CursorStyle, Entity,
-    EventEmitter, InteractiveElement as _, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement, Styled, Transformation, Window,
+    Animation, AnimationExt as _, App, Context, CursorStyle, Entity, EventEmitter,
+    InteractiveElement as _, ParentElement as _, Render, SharedString, StatefulInteractiveElement,
+    Styled, Transformation, Window, actions, percentage,
 };
-use language::{LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId};
-use lsp::LanguageServerName;
-use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
+use language::{BinaryStatus, LanguageRegistry, LanguageServerId};
+use project::{
+    EnvironmentErrorMessage, LanguageServerProgress, LspStoreEvent, Project,
+    ProjectEnvironmentEvent,
+    git_store::{GitStoreEvent, Repository},
+};
 use smallvec::SmallVec;
-use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
-use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
+use std::{
+    cmp::Reverse,
+    fmt::Write,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::truncate_and_trailoff;
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{StatusItemView, Workspace, item::ItemHandle};
+
+const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
 
 actions!(activity_indicator, [ShowErrorMessage]);
 
 pub enum Event {
     ShowError {
-        lsp_name: LanguageServerName,
+        server_name: SharedString,
         error: String,
     },
 }
 
 pub struct ActivityIndicator {
-    statuses: Vec<LspStatus>,
+    statuses: Vec<ServerStatus>,
     project: Entity<Project>,
     auto_updater: Option<Entity<AutoUpdater>>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
-struct LspStatus {
-    name: LanguageServerName,
-    status: LanguageServerBinaryStatus,
+struct ServerStatus {
+    name: SharedString,
+    status: BinaryStatus,
 }
 
 struct PendingWork<'a> {
@@ -61,11 +72,11 @@ impl ActivityIndicator {
         let auto_updater = AutoUpdater::get(cx);
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(async move |this, cx| {
                 while let Some((name, status)) = status_events.next().await {
-                    this.update(&mut cx, |this: &mut ActivityIndicator, cx| {
+                    this.update(cx, |this: &mut ActivityIndicator, cx| {
                         this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(LspStatus { name, status });
+                        this.statuses.push(ServerStatus { name, status });
                         cx.notify();
                     })?;
                 }
@@ -73,7 +84,44 @@ impl ActivityIndicator {
             })
             .detach();
 
-            cx.observe(&project, |_, _, cx| cx.notify()).detach();
+            let mut status_events = languages.dap_server_binary_statuses();
+            cx.spawn(async move |this, cx| {
+                while let Some((name, status)) = status_events.next().await {
+                    this.update(cx, |this, cx| {
+                        this.statuses.retain(|s| s.name != name);
+                        this.statuses.push(ServerStatus { name, status });
+                        cx.notify();
+                    })?;
+                }
+                anyhow::Ok(())
+            })
+            .detach();
+
+            cx.subscribe(
+                &project.read(cx).lsp_store(),
+                |_, _, event, cx| match event {
+                    LspStoreEvent::LanguageServerUpdate { .. } => cx.notify(),
+                    _ => {}
+                },
+            )
+            .detach();
+
+            cx.subscribe(
+                &project.read(cx).environment().clone(),
+                |_, _, event, cx| match event {
+                    ProjectEnvironmentEvent::ErrorsUpdated => cx.notify(),
+                },
+            )
+            .detach();
+
+            cx.subscribe(
+                &project.read(cx).git_store().clone(),
+                |_, _, event: &GitStoreEvent, cx| match event {
+                    project::git_store::GitStoreEvent::JobsUpdated => cx.notify(),
+                    _ => {}
+                },
+            )
+            .detach();
 
             if let Some(auto_updater) = auto_updater.as_ref() {
                 cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
@@ -88,25 +136,25 @@ impl ActivityIndicator {
         });
 
         cx.subscribe_in(&this, window, move |_, _, event, window, cx| match event {
-            Event::ShowError { lsp_name, error } => {
+            Event::ShowError { server_name, error } => {
                 let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
                 let project = project.clone();
                 let error = error.clone();
-                let lsp_name = lsp_name.clone();
-                cx.spawn_in(window, |workspace, mut cx| async move {
+                let server_name = server_name.clone();
+                cx.spawn_in(window, async move |workspace, cx| {
                     let buffer = create_buffer.await?;
-                    buffer.update(&mut cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, cx| {
                         buffer.edit(
                             [(
                                 0..0,
-                                format!("Language server error: {}\n\n{}", lsp_name, error),
+                                format!("Language server error: {}\n\n{}", server_name, error),
                             )],
                             None,
                             cx,
                         );
                         buffer.set_capability(language::Capability::ReadOnly, cx);
                     })?;
-                    workspace.update_in(&mut cx, |workspace, window, cx| {
+                    workspace.update_in(cx, |workspace, window, cx| {
                         workspace.add_item_to_active_pane(
                             Box::new(cx.new(|cx| {
                                 Editor::for_buffer(buffer, Some(project.clone()), window, cx)
@@ -129,9 +177,9 @@ impl ActivityIndicator {
 
     fn show_error_message(&mut self, _: &ShowErrorMessage, _: &mut Window, cx: &mut Context<Self>) {
         self.statuses.retain(|status| {
-            if let LanguageServerBinaryStatus::Failed { error } = &status.status {
+            if let BinaryStatus::Failed { error } = &status.status {
                 cx.emit(Event::ShowError {
-                    lsp_name: status.name.clone(),
+                    server_name: status.name.clone(),
                     error: error.clone(),
                 });
                 false
@@ -188,13 +236,14 @@ impl ActivityIndicator {
     fn pending_environment_errors<'a>(
         &'a self,
         cx: &'a App,
-    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
+    ) -> impl Iterator<Item = (&'a Arc<Path>, &'a EnvironmentErrorMessage)> {
         self.project.read(cx).shell_environment_errors(cx)
     }
 
     fn content_to_render(&mut self, cx: &mut Context<Self>) -> Option<Content> {
         // Show if any direnv calls failed
-        if let Some((&worktree_id, error)) = self.pending_environment_errors(cx).next() {
+        if let Some((abs_path, error)) = self.pending_environment_errors(cx).next() {
+            let abs_path = abs_path.clone();
             return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Warning)
@@ -204,7 +253,7 @@ impl ActivityIndicator {
                 message: error.0.clone(),
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.project.update(cx, |project, cx| {
-                        project.remove_environment_error(cx, worktree_id);
+                        project.remove_environment_error(&abs_path, cx);
                     });
                     window.dispatch_action(Box::new(workspace::OpenLog), cx);
                 })),
@@ -254,18 +303,44 @@ impl ActivityIndicator {
             });
         }
 
+        let current_job = self
+            .project
+            .read(cx)
+            .active_repository(cx)
+            .map(|r| r.read(cx))
+            .and_then(Repository::current_job);
+        // Show any long-running git command
+        if let Some(job_info) = current_job {
+            if Instant::now() - job_info.start >= GIT_OPERATION_DELAY {
+                return Some(Content {
+                    icon: Some(
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::Small)
+                            .with_animation(
+                                "arrow-circle",
+                                Animation::new(Duration::from_secs(2)).repeat(),
+                                |icon, delta| {
+                                    icon.transform(Transformation::rotate(percentage(delta)))
+                                },
+                            )
+                            .into_any_element(),
+                    ),
+                    message: job_info.message.into(),
+                    on_click: None,
+                });
+            }
+        }
+
         // Show any language server installation info.
         let mut downloading = SmallVec::<[_; 3]>::new();
         let mut checking_for_update = SmallVec::<[_; 3]>::new();
         let mut failed = SmallVec::<[_; 3]>::new();
         for status in &self.statuses {
             match status.status {
-                LanguageServerBinaryStatus::CheckingForUpdate => {
-                    checking_for_update.push(status.name.clone())
-                }
-                LanguageServerBinaryStatus::Downloading => downloading.push(status.name.clone()),
-                LanguageServerBinaryStatus::Failed { .. } => failed.push(status.name.clone()),
-                LanguageServerBinaryStatus::None => {}
+                BinaryStatus::CheckingForUpdate => checking_for_update.push(status.name.clone()),
+                BinaryStatus::Downloading => downloading.push(status.name.clone()),
+                BinaryStatus::Failed { .. } => failed.push(status.name.clone()),
+                BinaryStatus::None => {}
             }
         }
 
@@ -278,7 +353,7 @@ impl ActivityIndicator {
                 ),
                 message: format!(
                     "Downloading {}...",
-                    downloading.iter().map(|name| name.0.as_ref()).fold(
+                    downloading.iter().map(|name| name.as_ref()).fold(
                         String::new(),
                         |mut acc, s| {
                             if !acc.is_empty() {
@@ -306,7 +381,7 @@ impl ActivityIndicator {
                 ),
                 message: format!(
                     "Checking for updates to {}...",
-                    checking_for_update.iter().map(|name| name.0.as_ref()).fold(
+                    checking_for_update.iter().map(|name| name.as_ref()).fold(
                         String::new(),
                         |mut acc, s| {
                             if !acc.is_empty() {
@@ -336,7 +411,7 @@ impl ActivityIndicator {
                     "Failed to run {}. Click to show error.",
                     failed
                         .iter()
-                        .map(|name| name.0.as_ref())
+                        .map(|name| name.as_ref())
                         .fold(String::new(), |mut acc, s| {
                             if !acc.is_empty() {
                                 acc.push_str(", ");

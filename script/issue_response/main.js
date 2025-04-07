@@ -24,7 +24,7 @@ async function main() {
 
   const owner = "zed-industries";
   const repo = "zed";
-  const teams = ["staff", "triagers"];
+  const teams = ["staff"];
   const githubHandleSet = new Set();
 
   for (const team of teams) {
@@ -61,12 +61,13 @@ async function main() {
     ...authorFilters,
   ];
 
-  const response = await octokit.rest.search.issuesAndPullRequests({
-    q: q.join("+"),
-    per_page: 100,
-  });
-
-  const issues = response.data.items;
+  const issues = await octokit.paginate(
+    octokit.rest.search.issuesAndPullRequests,
+    {
+      q: q.join("+"),
+      per_page: 100,
+    },
+  );
   const issueLines = issues.map((issue, index) => {
     const formattedDate = new Date(issue.created_at).toLocaleDateString(
       "en-US",

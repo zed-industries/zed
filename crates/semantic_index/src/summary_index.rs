@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayString;
 use fs::{Fs, MTime};
-use futures::{stream::StreamExt, TryFutureExt};
+use futures::{TryFutureExt, stream::StreamExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{App, AppContext as _, Entity, Task};
 use heed::{
-    types::{SerdeBincode, Str},
     RoTxn,
+    types::{SerdeBincode, Str},
 };
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
@@ -130,7 +130,7 @@ impl SummaryIndex {
         &self,
         is_auto_available: bool,
         cx: &App,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<()>> + use<> {
         let start = Instant::now();
         let backlogged;
         let digest;
@@ -193,7 +193,7 @@ impl SummaryIndex {
         updated_entries: UpdatedEntriesSet,
         is_auto_available: bool,
         cx: &App,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<()>> + use<> {
         let start = Instant::now();
         let backlogged;
         let digest;
@@ -422,7 +422,7 @@ impl SummaryIndex {
     ) -> MightNeedSummaryFiles {
         let fs = self.fs.clone();
         let (rx, tx) = channel::bounded(2048);
-        let task = cx.spawn(|cx| async move {
+        let task = cx.spawn(async move |cx| {
             cx.background_executor()
                 .scoped(|cx| {
                     for _ in 0..cx.num_cpus() {
@@ -490,7 +490,7 @@ impl SummaryIndex {
         cx: &App,
     ) -> SummarizeFiles {
         let (summarized_tx, summarized_rx) = channel::bounded(512);
-        let task = cx.spawn(|cx| async move {
+        let task = cx.spawn(async move |cx| {
             while let Ok(file) = unsummarized_files.recv().await {
                 log::debug!("Summarizing {:?}", file);
                 let summary = cx
@@ -528,7 +528,11 @@ impl SummaryIndex {
         }
     }
 
-    fn summarize_code(code: &str, path: &Path, cx: &App) -> impl Future<Output = Result<String>> {
+    fn summarize_code(
+        code: &str,
+        path: &Path,
+        cx: &App,
+    ) -> impl Future<Output = Result<String>> + use<> {
         let start = Instant::now();
         let (summary_model_id, use_cache): (LanguageModelId, bool) = (
             "Qwen/Qwen2-7B-Instruct".to_string().into(), // TODO read this from the user's settings.
@@ -564,7 +568,7 @@ impl SummaryIndex {
         };
 
         let code_len = code.len();
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             let stream = model.stream_completion(request, &cx);
             cx.background_spawn(async move {
                 let answer: String = stream
@@ -639,7 +643,7 @@ impl SummaryIndex {
         &self,
         worktree_abs_path: Arc<Path>,
         cx: &App,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<()>> + use<> {
         let start = Instant::now();
         let backlogged = {
             let (tx, rx) = channel::bounded(512);

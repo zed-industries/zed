@@ -15,7 +15,13 @@ path = "src/component_preview.rs"
 default = []
 
 [dependencies]
+client.workspace = true
 component.workspace = true
 gpui.workspace = true
+languages.workspace = true
+project.workspace = true
 ui.workspace = true
 workspace.workspace = true
+notifications.workspace = true
+collections.workspace = true
+workspace-hack.workspace = true

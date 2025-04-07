@@ -1,11 +1,11 @@
 use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
-use crate::{prelude::*, px, relative, IntoElement};
+use crate::{IntoElement, prelude::*, px, relative};
 use gpui::{
-    point, quad, Along, App, Axis as ScrollbarAxis, Bounds, ContentMask, Corners, Edges, Element,
-    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent, Size, Style,
-    UniformListScrollHandle, Window,
+    Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, Edges, Element,
+    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, ListState,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
+    Size, Style, UniformListScrollHandle, Window, point, quad,
 };
 
 pub struct Scrollbar {
@@ -32,6 +32,39 @@ impl ScrollableHandle for UniformListScrollHandle {
 
     fn viewport(&self) -> Bounds<Pixels> {
         self.0.borrow().base_handle.bounds()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl ScrollableHandle for ListState {
+    fn content_size(&self) -> Option<ContentSize> {
+        Some(ContentSize {
+            size: self.content_size_for_scrollbar(),
+            scroll_adjustment: None,
+        })
+    }
+
+    fn set_offset(&self, point: Point<Pixels>) {
+        self.set_offset_from_scrollbar(point);
+    }
+
+    fn offset(&self) -> Point<Pixels> {
+        self.scroll_px_offset_for_scrollbar()
+    }
+
+    fn drag_started(&self) {
+        self.scrollbar_drag_started();
+    }
+
+    fn drag_ended(&self) {
+        self.scrollbar_drag_ended();
+    }
+
+    fn viewport(&self) -> Bounds<Pixels> {
+        self.viewport_bounds()
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -92,6 +125,8 @@ pub trait ScrollableHandle: Debug + 'static {
     fn offset(&self) -> Point<Pixels>;
     fn viewport(&self) -> Bounds<Pixels>;
     fn as_any(&self) -> &dyn Any;
+    fn drag_started(&self) {}
+    fn drag_ended(&self) {}
 }
 
 /// A scrollbar state that should be persisted across frames.
@@ -136,11 +171,7 @@ impl ScrollbarState {
         let mut current_offset = self.scroll_handle.offset().along(axis).min(px(0.)).abs().0;
         if let Some(adjustment) = scroll_adjustment.and_then(|adjustment| {
             let adjust = adjustment.along(axis).0;
-            if adjust < 0.0 {
-                Some(adjust)
-            } else {
-                None
-            }
+            if adjust < 0.0 { Some(adjust) } else { None }
         }) {
             current_offset -= adjustment;
         }
@@ -286,6 +317,7 @@ impl Element for Scrollbar {
                 thumb_background,
                 Edges::default(),
                 Hsla::transparent_black(),
+                BorderStyle::default(),
             ));
 
             let scroll = self.state.scroll_handle.clone();
@@ -298,6 +330,8 @@ impl Element for Scrollbar {
                     if !(phase.bubble() && bounds.contains(&event.position)) {
                         return;
                     }
+
+                    scroll.drag_started();
 
                     if thumb_bounds.contains(&event.position) {
                         let offset = event.position.along(axis) - thumb_bounds.origin.along(axis);
@@ -348,7 +382,7 @@ impl Element for Scrollbar {
             });
             let state = self.state.clone();
             let axis = self.kind;
-            window.on_mouse_event(move |event: &MouseMoveEvent, _, _, cx| {
+            window.on_mouse_event(move |event: &MouseMoveEvent, _, window, cx| {
                 if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
                     if let Some(ContentSize {
                         size: item_size, ..
@@ -380,6 +414,7 @@ impl Element for Scrollbar {
                                 scroll.set_offset(point(scroll.offset().x, drag_offset));
                             }
                         };
+                        window.refresh();
                         if let Some(id) = state.parent_id {
                             cx.notify(id);
                         }
@@ -389,9 +424,11 @@ impl Element for Scrollbar {
                 }
             });
             let state = self.state.clone();
+            let scroll = self.state.scroll_handle.clone();
             window.on_mouse_event(move |_event: &MouseUpEvent, phase, _, cx| {
                 if phase.bubble() {
                     state.drag.take();
+                    scroll.drag_ended();
                     if let Some(id) = state.parent_id {
                         cx.notify(id);
                     }

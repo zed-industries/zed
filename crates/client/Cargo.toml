@@ -28,6 +28,7 @@ futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true
+http_client_tls.workspace = true
 log.workspace = true
 paths.workspace = true
 parking_lot.workspace = true
@@ -52,6 +53,7 @@ util.workspace = true
 worktree.workspace = true
 telemetry.workspace = true
 tokio.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

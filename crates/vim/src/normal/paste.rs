@@ -1,15 +1,15 @@
-use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{impl_actions, Context, Window};
+use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
+use gpui::{Context, Window, impl_actions};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::cmp;
 
 use crate::{
-    motion::Motion,
+    Vim,
+    motion::{Motion, MotionKind},
     object::Object,
     state::{Mode, Register},
-    Vim,
 };
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -50,7 +50,7 @@ impl Vim {
                     .filter(|sel| sel.len() > 1 && vim.mode != Mode::VisualLine);
 
                 if !action.preserve_clipboard && vim.mode.is_visual() {
-                    vim.copy_selections_content(editor, vim.mode == Mode::VisualLine, cx);
+                    vim.copy_selections_content(editor, MotionKind::for_mode(vim.mode), window, cx);
                 }
 
                 let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
@@ -81,32 +81,32 @@ impl Vim {
                     }
                 }
 
-                let first_selection_start_column =
+                let first_selection_indent_column =
                     clipboard_selections.as_ref().and_then(|zed_selections| {
                         zed_selections
                             .first()
-                            .map(|selection| selection.start_column)
+                            .map(|selection| selection.first_line_indent)
                     });
                 let before = action.before || vim.mode == Mode::VisualLine;
 
                 let mut edits = Vec::new();
                 let mut new_selections = Vec::new();
-                let mut original_start_columns = Vec::new();
+                let mut original_indent_columns = Vec::new();
                 let mut start_offset = 0;
 
                 for (ix, (selection, preserve)) in selections_to_process.iter().enumerate() {
-                    let (mut to_insert, original_start_column) =
+                    let (mut to_insert, original_indent_column) =
                         if let Some(clipboard_selections) = &clipboard_selections {
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 let text = text[start_offset..end_offset].to_string();
                                 start_offset = end_offset + 1;
-                                (text, Some(clipboard_selection.start_column))
+                                (text, Some(clipboard_selection.first_line_indent))
                             } else {
-                                ("".to_string(), first_selection_start_column)
+                                ("".to_string(), first_selection_indent_column)
                             }
                         } else {
-                            (text.to_string(), first_selection_start_column)
+                            (text.to_string(), first_selection_indent_column)
                         };
                     let line_mode = to_insert.ends_with('\n');
                     let is_multiline = to_insert.contains('\n');
@@ -118,8 +118,8 @@ impl Vim {
                         } else {
                             to_insert = "\n".to_owned() + &to_insert;
                         }
-                    } else if !line_mode && vim.mode == Mode::VisualLine {
-                        to_insert += "\n";
+                    } else if line_mode && vim.mode == Mode::VisualLine {
+                        to_insert.pop();
                     }
 
                     let display_range = if !selection.is_empty() {
@@ -152,7 +152,7 @@ impl Vim {
                         new_selections.push((anchor, line_mode, is_multiline));
                     }
                     edits.push((point_range, to_insert.repeat(count)));
-                    original_start_columns.extend(original_start_column);
+                    original_indent_columns.push(original_indent_column);
                 }
 
                 let cursor_offset = editor.selections.last::<usize>(cx).head();
@@ -163,7 +163,7 @@ impl Vim {
                     .language_settings_at(cursor_offset, cx)
                     .auto_indent_on_paste
                 {
-                    editor.edit_with_block_indent(edits, original_start_columns, cx);
+                    editor.edit_with_block_indent(edits, original_indent_columns, cx);
                 } else {
                     editor.edit(edits, cx);
                 }
@@ -257,7 +257,7 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
-                        motion.expand_selection(map, selection, times, false, &text_layout_details);
+                        motion.expand_selection(map, selection, times, &text_layout_details);
                     });
                 });
 
@@ -283,15 +283,15 @@ impl Vim {
 #[cfg(test)]
 mod test {
     use crate::{
+        UseSystemClipboard, VimSettings,
         state::{Mode, Register},
         test::{NeovimBackedTestContext, VimTestContext},
-        UseSystemClipboard, VimSettings,
     };
     use gpui::ClipboardItem;
     use indoc::indoc;
     use language::{
-        language_settings::{AllLanguageSettings, LanguageSettingsContent},
         LanguageName,
+        language_settings::{AllLanguageSettings, LanguageSettingsContent},
     };
     use settings::SettingsStore;
 
@@ -537,6 +537,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             the laˇzy dog"});
+        cx.shared_clipboard().await.assert_eq("fox jumps over\n");
         // paste in visual line mode
         cx.simulate_shared_keystrokes("k shift-v p").await;
         cx.shared_state().await.assert_eq(indoc! {"

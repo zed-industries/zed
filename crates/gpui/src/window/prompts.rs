@@ -3,9 +3,9 @@ use std::ops::Deref;
 use futures::channel::oneshot;
 
 use crate::{
-    div, opaque_grey, white, AnyView, App, AppContext as _, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, PromptLevel, Render,
-    StatefulInteractiveElement, Styled,
+    AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, PromptLevel, Render,
+    StatefulInteractiveElement, Styled, div, opaque_grey, white,
 };
 
 use super::Window;
@@ -135,7 +135,7 @@ impl Render for FallbackPromptRenderer {
                     .border_1()
                     .border_color(opaque_grey(0.2, 0.5))
                     .mt_1()
-                    .rounded_sm()
+                    .rounded_xs()
                     .cursor_pointer()
                     .text_sm()
                     .child(action.clone())

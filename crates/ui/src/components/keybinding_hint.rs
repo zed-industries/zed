@@ -1,6 +1,6 @@
 use crate::KeyBinding;
 use crate::{h_flex, prelude::*};
-use gpui::{point, AnyElement, App, BoxShadow, FontStyle, Hsla, IntoElement, Window};
+use gpui::{AnyElement, App, BoxShadow, FontStyle, Hsla, IntoElement, Window, point};
 use smallvec::smallvec;
 use theme::Appearance;
 
@@ -187,7 +187,7 @@ impl RenderOnce for KeybindingHint {
             .child(
                 h_flex()
                     .items_center()
-                    .rounded_md()
+                    .rounded_sm()
                     .px_0p5()
                     .mr_0p5()
                     .border_1()

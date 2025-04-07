@@ -9,7 +9,7 @@ use gpui::{BackgroundExecutor, Task, TestAppContext};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use rpc::RECEIVE_TIMEOUT;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use settings::SettingsStore;
 use std::sync::OnceLock;
 use std::{
@@ -17,8 +17,8 @@ use std::{
     path::PathBuf,
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
 };
 
@@ -463,7 +463,6 @@ impl<T: RandomizedTest> TestPlan<T> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn apply_server_operation(
         plan: Arc<Mutex<Self>>,
         deterministic: BackgroundExecutor,

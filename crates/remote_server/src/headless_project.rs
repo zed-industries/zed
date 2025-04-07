@@ -1,32 +1,34 @@
 use ::proto::{FromProto, ToProto};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
 use http_client::HttpClient;
-use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
+use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
-    git::GitStore,
+    debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
+    git_store::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
 use rpc::{
-    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
+    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
 };
 
 use settings::initial_server_settings_content;
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
 };
 use util::ResultExt;
 use worktree::Worktree;
@@ -51,6 +53,7 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
+    pub debug_adapters: Arc<DapRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
@@ -68,6 +71,7 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
+            debug_adapters,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut Context<Self>,
@@ -81,24 +85,8 @@ impl HeadlessProject {
             store
         });
 
-        let buffer_store = cx.new(|cx| {
-            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
-            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
-            buffer_store
-        });
-
-        let git_store =
-            cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
-        let prettier_store = cx.new(|cx| {
-            PrettierStore::new(
-                node_runtime.clone(),
-                fs.clone(),
-                languages.clone(),
-                worktree_store.clone(),
-                cx,
-            )
-        });
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
                 languages.clone(),
@@ -108,9 +96,54 @@ impl HeadlessProject {
             )
         });
 
+        let buffer_store = cx.new(|cx| {
+            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
+            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            buffer_store
+        });
+
+        let breakpoint_store =
+            cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
+
+        let dap_store = cx.new(|cx| {
+            DapStore::new_local(
+                http_client.clone(),
+                node_runtime.clone(),
+                fs.clone(),
+                languages.clone(),
+                debug_adapters.clone(),
+                environment.clone(),
+                toolchain_store.read(cx).as_language_toolchain_store(),
+                breakpoint_store.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+        });
+
+        let git_store = cx.new(|cx| {
+            let mut store = GitStore::local(
+                &worktree_store,
+                buffer_store.clone(),
+                environment.clone(),
+                fs.clone(),
+                cx,
+            );
+            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store
+        });
+
+        let prettier_store = cx.new(|cx| {
+            PrettierStore::new(
+                node_runtime.clone(),
+                fs.clone(),
+                languages.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+        });
+
         let task_store = cx.new(|cx| {
             let mut task_store = TaskStore::local(
-                fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
@@ -178,6 +211,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &dap_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
         session.subscribe_to_entity(SSH_PROJECT_ID, &git_store);
 
@@ -212,6 +246,9 @@ impl HeadlessProject {
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
+        DapStore::init(&client);
+        // todo(debugger): Re init breakpoint store when we set it up for collab
+        // BreakpointStore::init(&client);
         GitStore::init(&client);
 
         HeadlessProject {
@@ -334,8 +371,10 @@ impl HeadlessProject {
                     parent = util::paths::home_dir();
                 }
                 let parent = fs.canonicalize(parent).await.map_err(|_| {
-                    anyhow!(proto::ErrorCode::DevServerProjectPathDoesNotExist
-                        .with_tag("path", &path.to_string_lossy().as_ref()))
+                    anyhow!(
+                        proto::ErrorCode::DevServerProjectPathDoesNotExist
+                            .with_tag("path", &path.to_string_lossy().as_ref())
+                    )
                 })?;
                 parent.join(path.file_name().unwrap())
             }
@@ -372,8 +411,8 @@ impl HeadlessProject {
         // and immediately dropping the reference of the new client, causing it
         // to be dropped on the headless project, and the client only then
         // receiving a response to AddWorktree.
-        cx.spawn(|mut cx| async move {
-            this.update(&mut cx, |this, cx| {
+        cx.spawn(async move |cx| {
+            this.update(cx, |this, cx| {
                 this.worktree_store.update(cx, |worktree_store, cx| {
                     worktree_store.add(&worktree, cx);
                 });
@@ -602,7 +641,7 @@ impl HeadlessProject {
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             cx.update(|cx| {
                 // TODO: This is a hack, because in a headless project, shutdown isn't executed
                 // when calling quit, but it should be.

@@ -3,11 +3,11 @@ use alacritty_terminal::vte::ansi::{
 };
 use collections::HashMap;
 use gpui::{
-    px, AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
+    AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString, px,
 };
-use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
+use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::RootSchema};
 use serde_derive::{Deserialize, Serialize};
-use settings::{add_references_to_properties, SettingsJsonSchemaParams, SettingsSources};
+use settings::{SettingsJsonSchemaParams, SettingsSources, add_references_to_properties};
 use std::path::PathBuf;
 use task::Shell;
 
@@ -181,7 +181,7 @@ pub struct TerminalSettingsContent {
     /// presses when in the alternate screen (e.g. when running applications
     /// like vim or  less). The terminal can still set and unset this mode.
     ///
-    /// Default: off
+    /// Default: on
     pub alternate_scroll: Option<AlternateScroll>,
     /// Sets whether the option key behaves as the meta key.
     ///

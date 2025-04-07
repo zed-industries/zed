@@ -1,0 +1,417 @@
+syntax = "proto3";
+package zed.messages;
+
+import "core.proto";
+import "worktree.proto";
+import "buffer.proto";
+import "lsp.proto";
+import "channel.proto";
+import "git.proto";
+
+message CreateRoom {}
+
+message CreateRoomResponse {
+    Room room = 1;
+    optional LiveKitConnectionInfo live_kit_connection_info = 2;
+}
+
+message JoinRoom {
+    uint64 id = 1;
+}
+
+message JoinRoomResponse {
+    Room room = 1;
+    optional uint64 channel_id = 2;
+    optional LiveKitConnectionInfo live_kit_connection_info = 3;
+}
+
+message RejoinRoom {
+    uint64 id = 1;
+    repeated UpdateProject reshared_projects = 2;
+    repeated RejoinProject rejoined_projects = 3;
+}
+
+message RejoinRemoteProjects {
+    repeated RejoinProject rejoined_projects = 1;
+}
+
+message RejoinRemoteProjectsResponse {
+    repeated RejoinedProject rejoined_projects = 1;
+}
+
+message RejoinProject {
+    uint64 id = 1;
+    repeated RejoinWorktree worktrees = 2;
+    repeated RejoinRepository repositories = 3;
+}
+
+message RejoinWorktree {
+    uint64 id = 1;
+    uint64 scan_id = 2;
+}
+
+message RejoinRepository {
+    uint64 id = 1;
+    uint64 scan_id = 2;
+}
+
+message RejoinRoomResponse {
+    Room room = 1;
+    repeated ResharedProject reshared_projects = 2;
+    repeated RejoinedProject rejoined_projects = 3;
+}
+
+message ResharedProject {
+    uint64 id = 1;
+    repeated Collaborator collaborators = 2;
+}
+
+message RejoinedProject {
+    uint64 id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+    repeated Collaborator collaborators = 3;
+    repeated LanguageServer language_servers = 4;
+}
+
+message LeaveRoom {}
+
+message Room {
+    uint64 id = 1;
+    repeated Participant participants = 2;
+    repeated PendingParticipant pending_participants = 3;
+    repeated Follower followers = 4;
+    string livekit_room = 5;
+}
+
+message Participant {
+    uint64 user_id = 1;
+    PeerId peer_id = 2;
+    repeated ParticipantProject projects = 3;
+    ParticipantLocation location = 4;
+    uint32 participant_index = 5;
+    ChannelRole role = 6;
+    reserved 7;
+}
+
+message PendingParticipant {
+    uint64 user_id = 1;
+    uint64 calling_user_id = 2;
+    optional uint64 initial_project_id = 3;
+}
+
+message ParticipantProject {
+    uint64 id = 1;
+    repeated string worktree_root_names = 2;
+}
+
+message Follower {
+    PeerId leader_id = 1;
+    PeerId follower_id = 2;
+    uint64 project_id = 3;
+}
+
+message ParticipantLocation {
+    oneof variant {
+        SharedProject shared_project = 1;
+        UnsharedProject unshared_project = 2;
+        External external = 3;
+    }
+
+    message SharedProject {
+        uint64 id = 1;
+    }
+
+    message UnsharedProject {}
+
+    message External {}
+}
+
+message Call {
+    uint64 room_id = 1;
+    uint64 called_user_id = 2;
+    optional uint64 initial_project_id = 3;
+}
+
+message IncomingCall {
+    uint64 room_id = 1;
+    uint64 calling_user_id = 2;
+    repeated uint64 participant_user_ids = 3;
+    optional ParticipantProject initial_project = 4;
+}
+
+message CallCanceled {
+    uint64 room_id = 1;
+}
+
+message CancelCall {
+    uint64 room_id = 1;
+    uint64 called_user_id = 2;
+}
+
+message DeclineCall {
+    uint64 room_id = 1;
+}
+
+message UpdateParticipantLocation {
+    uint64 room_id = 1;
+    ParticipantLocation location = 2;
+}
+
+message RoomUpdated {
+    Room room = 1;
+}
+
+message LiveKitConnectionInfo {
+    string server_url = 1;
+    string token = 2;
+    bool can_publish = 3;
+}
+
+message ShareProject {
+    uint64 room_id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+    reserved 3;
+    bool is_ssh_project = 4;
+}
+
+message ShareProjectResponse {
+    uint64 project_id = 1;
+}
+
+message UnshareProject {
+    uint64 project_id = 1;
+}
+
+message UpdateProject {
+    uint64 project_id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+}
+
+message JoinProject {
+    uint64 project_id = 1;
+}
+
+message JoinProjectResponse {
+    uint64 project_id = 5;
+    uint32 replica_id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+    repeated Collaborator collaborators = 3;
+    repeated LanguageServer language_servers = 4;
+    ChannelRole role = 6;
+    reserved 7;
+}
+
+message LeaveProject {
+    uint64 project_id = 1;
+}
+
+message UpdateWorktree {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string root_name = 3;
+    repeated Entry updated_entries = 4;
+    repeated uint64 removed_entries = 5;
+    repeated RepositoryEntry updated_repositories = 6; // deprecated
+    repeated uint64 removed_repositories = 7; // deprecated
+    uint64 scan_id = 8;
+    bool is_last_update = 9;
+    string abs_path = 10;
+}
+
+// deprecated
+message RepositoryEntry {
+    uint64 repository_id = 1;
+    reserved 2;
+    repeated StatusEntry updated_statuses = 3;
+    repeated string removed_statuses = 4;
+    repeated string current_merge_conflicts = 5;
+    optional Branch branch_summary = 6;
+}
+
+message AddProjectCollaborator {
+    uint64 project_id = 1;
+    Collaborator collaborator = 2;
+}
+
+message UpdateProjectCollaborator {
+    uint64 project_id = 1;
+    PeerId old_peer_id = 2;
+    PeerId new_peer_id = 3;
+}
+
+message RemoveProjectCollaborator {
+    uint64 project_id = 1;
+    PeerId peer_id = 2;
+}
+
+message GetUsers {
+    repeated uint64 user_ids = 1;
+}
+
+message FuzzySearchUsers {
+    string query = 1;
+}
+
+message UsersResponse {
+    repeated User users = 1;
+}
+
+message RequestContact {
+    uint64 responder_id = 1;
+}
+
+message RemoveContact {
+    uint64 user_id = 1;
+}
+
+message RespondToContactRequest {
+    uint64 requester_id = 1;
+    ContactRequestResponse response = 2;
+}
+
+enum ContactRequestResponse {
+    Accept = 0;
+    Decline = 1;
+    Block = 2;
+    Dismiss = 3;
+}
+
+message UpdateContacts {
+    repeated Contact contacts = 1;
+    repeated uint64 remove_contacts = 2;
+    repeated IncomingContactRequest incoming_requests = 3;
+    repeated uint64 remove_incoming_requests = 4;
+    repeated uint64 outgoing_requests = 5;
+    repeated uint64 remove_outgoing_requests = 6;
+}
+
+message ShowContacts {}
+
+message IncomingContactRequest {
+    uint64 requester_id = 1;
+}
+
+message Follow {
+    uint64 room_id = 1;
+    optional uint64 project_id = 2;
+    PeerId leader_id = 3;
+}
+
+message FollowResponse {
+    View active_view = 3;
+    // TODO: Remove after version 0.145.x stabilizes.
+    optional ViewId active_view_id = 1;
+    repeated View views = 2;
+}
+
+message UpdateFollowers {
+    uint64 room_id = 1;
+    optional uint64 project_id = 2;
+    reserved 3;
+    oneof variant {
+        View create_view = 5;
+        // TODO: Remove after version 0.145.x stabilizes.
+        UpdateActiveView update_active_view = 4;
+        UpdateView update_view = 6;
+    }
+}
+
+message Unfollow {
+    uint64 room_id = 1;
+    optional uint64 project_id = 2;
+    PeerId leader_id = 3;
+}
+
+message ViewId {
+    PeerId creator = 1;
+    uint64 id = 2;
+}
+
+message UpdateActiveView {
+    optional ViewId id = 1;
+    optional PeerId leader_id = 2;
+    View view = 3;
+}
+
+enum PanelId {
+    AssistantPanel = 0;
+    DebugPanel = 1;
+}
+
+message UpdateView {
+    ViewId id = 1;
+    optional PeerId leader_id = 2;
+
+    oneof variant {
+        Editor editor = 3;
+    }
+
+    message Editor {
+        repeated ExcerptInsertion inserted_excerpts = 1;
+        repeated uint64 deleted_excerpts = 2;
+        repeated Selection selections = 3;
+        optional Selection pending_selection = 4;
+        EditorAnchor scroll_top_anchor = 5;
+        float scroll_x = 6;
+        float scroll_y = 7;
+    }
+}
+
+message View {
+    ViewId id = 1;
+    optional PeerId leader_id = 2;
+    optional PanelId panel_id = 6;
+
+    oneof variant {
+        Editor editor = 3;
+        ChannelView channel_view = 4;
+        ContextEditor context_editor = 5;
+    }
+
+    message Editor {
+        bool singleton = 1;
+        optional string title = 2;
+        repeated Excerpt excerpts = 3;
+        repeated Selection selections = 4;
+        optional Selection pending_selection = 5;
+        EditorAnchor scroll_top_anchor = 6;
+        float scroll_x = 7;
+        float scroll_y = 8;
+    }
+
+    message ChannelView {
+        uint64 channel_id = 1;
+        Editor editor = 2;
+    }
+
+    message ContextEditor {
+        string context_id = 1;
+        Editor editor = 2;
+    }
+}
+
+message ExcerptInsertion {
+    Excerpt excerpt = 1;
+    optional uint64 previous_excerpt_id = 2;
+}
+
+message Excerpt {
+    uint64 id = 1;
+    uint64 buffer_id = 2;
+    Anchor context_start = 3;
+    Anchor context_end = 4;
+    Anchor primary_start = 5;
+    Anchor primary_end = 6;
+}
+
+message Contact {
+    uint64 user_id = 1;
+    bool online = 2;
+    bool busy = 3;
+}
+
+message SetRoomParticipantRole {
+    uint64 room_id = 1;
+    uint64 user_id = 2;
+    ChannelRole role = 3;
+}

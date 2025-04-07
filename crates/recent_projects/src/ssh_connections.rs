@@ -1,19 +1,19 @@
 use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use auto_update::AutoUpdater;
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
-    percentage, Animation, AnimationExt, AnyWindowHandle, App, AsyncApp, DismissEvent, Entity,
-    EventEmitter, Focusable, FontFeatures, ParentElement as _, PromptLevel, Render,
-    SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, WeakEntity,
+    Animation, AnimationExt, AnyWindowHandle, App, AsyncApp, DismissEvent, Entity, EventEmitter,
+    Focusable, FontFeatures, ParentElement as _, PromptLevel, Render, SemanticVersion,
+    SharedString, Task, TextStyleRefinement, Transformation, WeakEntity, percentage,
 };
 
 use language::CursorShape;
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::ssh_session::{ConnectionIdentifier, SshPortForwardOption};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon, Styled, Window,
+    ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
+    LabelCommon, Styled, Window, prelude::*,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -33,7 +33,7 @@ pub struct SshSettings {
 }
 
 impl SshSettings {
-    pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> {
+    pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> + use<> {
         self.ssh_connections.clone().into_iter().flatten()
     }
 
@@ -131,7 +131,7 @@ pub struct SshPrompt {
     connection_string: SharedString,
     nickname: Option<SharedString>,
     status_message: Option<SharedString>,
-    prompt: Option<(Entity<Markdown>, oneshot::Sender<Result<String>>)>,
+    prompt: Option<(Entity<Markdown>, oneshot::Sender<String>)>,
     cancellation: Option<oneshot::Sender<()>>,
     editor: Entity<Editor>,
 }
@@ -176,13 +176,12 @@ impl SshPrompt {
     pub fn set_prompt(
         &mut self,
         prompt: String,
-        tx: oneshot::Sender<Result<String>>,
+        tx: oneshot::Sender<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let theme = ThemeSettings::get_global(cx);
 
-        let mut text_style = window.text_style();
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
             font_features: Some(FontFeatures::disable_ligatures()),
@@ -192,7 +191,6 @@ impl SshPrompt {
             ..Default::default()
         };
 
-        text_style.refine(&refinement);
         self.editor.update(cx, |editor, cx| {
             if prompt.contains("yes/no") {
                 editor.set_masked(false, cx);
@@ -202,12 +200,8 @@ impl SshPrompt {
             editor.set_text_style_refinement(refinement);
             editor.set_cursor_shape(CursorShape::Block, cx);
         });
-        let markdown_style = MarkdownStyle {
-            base_text_style: text_style,
-            selection_background_color: cx.theme().players().local().selection,
-            ..Default::default()
-        };
-        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, cx));
+
+        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx));
@@ -223,7 +217,7 @@ impl SshPrompt {
         if let Some((_, tx)) = self.prompt.take() {
             self.status_message = Some("Connecting".into());
             self.editor.update(cx, |editor, cx| {
-                tx.send(Ok(editor.text(cx))).ok();
+                tx.send(editor.text(cx)).ok();
                 editor.clear(window, cx);
             });
         }
@@ -231,7 +225,26 @@ impl SshPrompt {
 }
 
 impl Render for SshPrompt {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = ThemeSettings::get_global(cx);
+
+        let mut text_style = window.text_style();
+        let refinement = TextStyleRefinement {
+            font_family: Some(theme.buffer_font.family.clone()),
+            font_features: Some(FontFeatures::disable_ligatures()),
+            font_size: Some(theme.buffer_font_size(cx).into()),
+            color: Some(cx.theme().colors().editor_foreground),
+            background_color: Some(gpui::transparent_black()),
+            ..Default::default()
+        };
+
+        text_style.refine(&refinement);
+        let markdown_style = MarkdownStyle {
+            base_text_style: text_style,
+            selection_background_color: cx.theme().players().local().selection,
+            ..Default::default()
+        };
+
         v_flex()
             .key_context("PasswordPrompt")
             .py_2()
@@ -266,7 +279,7 @@ impl Render for SshPrompt {
                     div()
                         .size_full()
                         .overflow_hidden()
-                        .child(prompt.0.clone())
+                        .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
                         .child(self.editor.clone()),
                 )
             })
@@ -331,7 +344,7 @@ impl RenderOnce for SshConnectionHeader {
             .px(DynamicSpacing::Base12.rems(cx))
             .pt(DynamicSpacing::Base08.rems(cx))
             .pb(DynamicSpacing::Base04.rems(cx))
-            .rounded_t_md()
+            .rounded_t_sm()
             .w_full()
             .gap_1p5()
             .child(Icon::new(IconName::Server).size(IconSize::XSmall))
@@ -429,11 +442,10 @@ pub struct SshClientDelegate {
 }
 
 impl remote::SshClientDelegate for SshClientDelegate {
-    fn ask_password(&self, prompt: String, cx: &mut AsyncApp) -> oneshot::Receiver<Result<String>> {
-        let (tx, rx) = oneshot::channel();
+    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp) {
         let mut known_password = self.known_password.clone();
         if let Some(password) = known_password.take() {
-            tx.send(Ok(password)).ok();
+            tx.send(password).ok();
         } else {
             self.window
                 .update(cx, |_, window, cx| {
@@ -443,7 +455,6 @@ impl remote::SshClientDelegate for SshClientDelegate {
                 })
                 .ok();
         }
-        rx
     }
 
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
@@ -457,13 +468,13 @@ impl remote::SshClientDelegate for SshClientDelegate {
         version: Option<SemanticVersion>,
         cx: &mut AsyncApp,
     ) -> Task<anyhow::Result<PathBuf>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let binary_path = AutoUpdater::download_remote_server_release(
                 platform.os,
                 platform.arch,
                 release_channel,
                 version,
-                &mut cx,
+                cx,
             )
             .await
             .map_err(|e| {
@@ -488,13 +499,13 @@ impl remote::SshClientDelegate for SshClientDelegate {
         version: Option<SemanticVersion>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Option<(String, String)>>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             AutoUpdater::get_remote_server_release_url(
                 platform.os,
                 platform.arch,
                 release_channel,
                 version,
-                &mut cx,
+                cx,
             )
             .await
         })
@@ -559,6 +570,7 @@ pub async fn open_ssh_project(
                 app_state.node_runtime.clone(),
                 app_state.user_store.clone(),
                 app_state.languages.clone(),
+                app_state.debug_adapters.clone(),
                 app_state.fs.clone(),
                 None,
                 cx,
@@ -600,7 +612,7 @@ pub async fn open_ssh_project(
 
         let did_open_ssh_project = cx
             .update(|cx| {
-                workspace::open_ssh_project(
+                workspace::open_ssh_project_with_new_connection(
                     window,
                     connection_options.clone(),
                     cancel_rx,

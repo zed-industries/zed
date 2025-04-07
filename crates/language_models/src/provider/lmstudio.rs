@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use anyhow::{Result, anyhow};
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{AuthenticateError, LanguageModelCompletionEvent};
@@ -9,14 +9,14 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use lmstudio::{
-    get_models, preload_model, stream_chat_completion, ChatCompletionRequest, ChatMessage,
-    ModelType,
+    ChatCompletionRequest, ChatMessage, ModelType, get_models, preload_model,
+    stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{prelude::*, ButtonLike, Indicator};
+use ui::{ButtonLike, Indicator, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
@@ -67,7 +67,7 @@ impl State {
         let api_url = settings.api_url.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
 
             let mut models: Vec<lmstudio::Model> = models
@@ -78,7 +78,7 @@ impl State {
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.available_models = models;
                 cx.notify();
             })
@@ -96,7 +96,7 @@ impl State {
         }
 
         let fetch_models_task = self.fetch_models(cx);
-        cx.spawn(|_this, _cx| async move { Ok(fetch_models_task.await?) })
+        cx.spawn(async move |_this, _cx| Ok(fetch_models_task.await?))
     }
 }
 
@@ -198,7 +198,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
         let id = model.id().0.to_string();
-        cx.spawn(|_| async move { preload_model(http_client, &api_url, &id).await })
+        cx.spawn(async move |_| preload_model(http_client, &api_url, &id).await)
             .detach_and_log_err(cx);
     }
 
@@ -271,6 +271,10 @@ impl LanguageModel for LmStudioLanguageModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn supports_tools(&self) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String {
@@ -360,17 +364,6 @@ impl LanguageModel for LmStudioLanguageModel {
         }
         .boxed()
     }
-
-    fn use_any_tool(
-        &self,
-        _request: LanguageModelRequest,
-        _tool_name: String,
-        _tool_description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        async move { Ok(futures::stream::empty().boxed()) }.boxed()
-    }
 }
 
 struct ConfigurationView {
@@ -382,14 +375,14 @@ impl ConfigurationView {
     pub fn new(state: gpui::Entity<State>, cx: &mut Context<Self>) -> Self {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
-            |this, mut cx| async move {
+            async move |this, cx| {
                 if let Some(task) = state
-                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
                     task.await.log_err();
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.loading_models_task = None;
                     cx.notify();
                 })
@@ -415,8 +408,7 @@ impl Render for ConfigurationView {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let lmstudio_intro = "Run local LLMs like Llama, Phi, and Qwen.";
-        let lmstudio_reqs =
-            "To use LM Studio as a provider for Zed assistant, it needs to be running with at least one model downloaded.";
+        let lmstudio_reqs = "To use LM Studio as a provider for Zed assistant, it needs to be running with at least one model downloaded.";
 
         let inline_code_bg = cx.theme().colors().editor_foreground.opacity(0.05);
 
@@ -441,7 +433,7 @@ impl Render for ConfigurationView {
                                     div()
                                         .bg(inline_code_bg)
                                         .px_1p5()
-                                        .rounded_md()
+                                        .rounded_sm()
                                         .child(Label::new("lms get qwen2.5-coder-7b")),
                                 ),
                         ),

@@ -6,12 +6,12 @@ use project::{Entry, PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool},
         Arc,
+        atomic::{self, AtomicBool},
     },
 };
-use ui::{highlight_ranges, prelude::*, LabelLike, ListItemSpacing};
 use ui::{Context, ListItem, Window};
+use ui::{LabelLike, ListItemSpacing, highlight_ranges, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -150,14 +150,14 @@ impl Match {
 
                     text.push_str(dir_indicator);
                     highlights.push((
-                        offset..offset + dir_indicator.bytes().len(),
+                        offset..offset + dir_indicator.len(),
                         HighlightStyle::color(Color::Muted.color(cx)),
                     ));
                 }
             } else {
                 text.push_str(dir_indicator);
                 highlights.push((
-                    offset..offset + dir_indicator.bytes().len(),
+                    offset..offset + dir_indicator.len(),
                     HighlightStyle::color(Color::Muted.color(cx)),
                 ))
             }
@@ -186,7 +186,7 @@ impl Match {
             if suffix.ends_with('/') {
                 text.push_str(dir_indicator);
                 highlights.push((
-                    offset..offset + dir_indicator.bytes().len(),
+                    offset..offset + dir_indicator.len(),
                     HighlightStyle::color(Color::Muted.color(cx)),
                 ));
             }
@@ -312,7 +312,7 @@ impl PickerDelegate for NewPathDelegate {
         let cancel_flag = self.cancel_flag.clone();
         let query = query.to_string();
         let prefix = dir.clone();
-        cx.spawn_in(window, |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 &dir,
@@ -328,7 +328,7 @@ impl PickerDelegate for NewPathDelegate {
                 return;
             }
             picker
-                .update(&mut cx, |picker, cx| {
+                .update(cx, |picker, cx| {
                     picker
                         .delegate
                         .set_search_matches(query, prefix, suffix, matches, cx)
@@ -378,10 +378,10 @@ impl PickerDelegate for NewPathDelegate {
                 &["Replace", "Cancel"],
             cx);
             let m = m.clone();
-            cx.spawn_in(window, |picker, mut cx| async move {
+            cx.spawn_in(window, async move |picker, cx| {
                 let answer = answer.await.ok();
                 picker
-                    .update(&mut cx, |picker, cx| {
+                    .update(cx, |picker, cx| {
                         picker.delegate.should_dismiss = true;
                         if answer != Some(0) {
                             return;
@@ -436,8 +436,8 @@ impl PickerDelegate for NewPathDelegate {
         )
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        "Type a path...".into()
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("Type a path...".into())
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {

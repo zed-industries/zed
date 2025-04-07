@@ -1,15 +1,15 @@
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::CompletionProvider;
-use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
+use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    actions, point, size, transparent_black, Action, App, Bounds, Entity, EventEmitter, Focusable,
-    PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions,
+    Action, App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task,
+    TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, point, size,
+    transparent_black,
 };
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
+use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{
-    div, prelude::*, Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing,
-    ParentElement, Render, SharedString, Styled, Tooltip, Window,
+    Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
+    SharedString, Styled, Tooltip, Window, div, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::Workspace;
@@ -78,7 +78,7 @@ pub fn open_prompt_library(
     cx: &mut App,
 ) -> Task<Result<WindowHandle<PromptLibrary>>> {
     let store = PromptStore::global(cx);
-    cx.spawn(|cx| async move {
+    cx.spawn(async move |cx| {
         // We query windows in spawn so that all windows have been returned to GPUI
         let existing_window = cx
             .update(|cx| {
@@ -179,12 +179,13 @@ impl PickerDelegate for PromptPickerDelegate {
         self.matches.len()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        if self.store.prompt_count() == 0 {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if self.store.prompt_count() == 0 {
             "No prompts.".into()
         } else {
             "No prompts found matching your search.".into()
-        }
+        };
+        Some(text)
     }
 
     fn selected_index(&self) -> usize {
@@ -212,7 +213,7 @@ impl PickerDelegate for PromptPickerDelegate {
     ) -> Task<()> {
         let search = self.store.search(query);
         let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let (matches, selected_index) = cx
                 .background_spawn(async move {
                     let matches = search.await;
@@ -226,7 +227,7 @@ impl PickerDelegate for PromptPickerDelegate {
                 })
                 .await;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate.matches = matches;
                 this.delegate.set_selected_index(selected_index, window, cx);
                 cx.notify();
@@ -326,7 +327,7 @@ impl PickerDelegate for PromptPickerDelegate {
     ) -> Div {
         h_flex()
             .bg(cx.theme().colors().editor_background)
-            .rounded_md()
+            .rounded_sm()
             .overflow_hidden()
             .flex_none()
             .py_1()
@@ -408,9 +409,9 @@ impl PromptLibrary {
         let save = self.store.save(prompt_id, None, false, "".into());
         self.picker
             .update(cx, |picker, cx| picker.refresh(window, cx));
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             save.await?;
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.load_prompt(prompt_id, true, window, cx)
             })
         })
@@ -448,10 +449,10 @@ impl PromptLibrary {
 
         prompt_editor.next_title_and_body_to_save = Some((title, body));
         if prompt_editor.pending_save.is_none() {
-            prompt_editor.pending_save = Some(cx.spawn_in(window, |this, mut cx| {
+            prompt_editor.pending_save = Some(cx.spawn_in(window, async move |this, cx| {
                 async move {
                     loop {
-                        let title_and_body = this.update(&mut cx, |this, _| {
+                        let title_and_body = this.update(cx, |this, _| {
                             this.prompt_editors
                                 .get_mut(&prompt_id)?
                                 .next_title_and_body_to_save
@@ -468,7 +469,7 @@ impl PromptLibrary {
                                 .save(prompt_id, title, prompt_metadata.default, body)
                                 .await
                                 .log_err();
-                            this.update_in(&mut cx, |this, window, cx| {
+                            this.update_in(cx, |this, window, cx| {
                                 this.picker
                                     .update(cx, |picker, cx| picker.refresh(window, cx));
                                 cx.notify();
@@ -480,13 +481,14 @@ impl PromptLibrary {
                         }
                     }
 
-                    this.update(&mut cx, |this, _cx| {
+                    this.update(cx, |this, _cx| {
                         if let Some(prompt_editor) = this.prompt_editors.get_mut(&prompt_id) {
                             prompt_editor.pending_save = None;
                         }
                     })
                 }
                 .log_err()
+                .await
             }));
         }
     }
@@ -547,10 +549,10 @@ impl PromptLibrary {
             let language_registry = self.language_registry.clone();
             let prompt = self.store.load(prompt_id);
             let make_completion_provider = self.make_completion_provider.clone();
-            self.pending_load = cx.spawn_in(window, |this, mut cx| async move {
+            self.pending_load = cx.spawn_in(window, async move |this, cx| {
                 let prompt = prompt.await;
                 let markdown = language_registry.language_for_name("Markdown").await;
-                this.update_in(&mut cx, |this, window, cx| match prompt {
+                this.update_in(cx, |this, window, cx| match prompt {
                     Ok(prompt) => {
                         let title_editor = cx.new(|cx| {
                             let mut editor = Editor::auto_width(window, cx);
@@ -683,9 +685,9 @@ impl PromptLibrary {
                 cx,
             );
 
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 if confirmation.await.ok() == Some(0) {
-                    this.update_in(&mut cx, |this, window, cx| {
+                    this.update_in(cx, |this, window, cx| {
                         if this.active_prompt_id == Some(prompt_id) {
                             this.set_active_prompt(None, window, cx);
                         }
@@ -739,9 +741,9 @@ impl PromptLibrary {
                 .save(new_id, Some(title.into()), false, body.into());
             self.picker
                 .update(cx, |picker, cx| picker.refresh(window, cx));
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 save.await?;
-                this.update_in(&mut cx, |prompt_library, window, cx| {
+                this.update_in(cx, |prompt_library, window, cx| {
                     prompt_library.load_prompt(new_id, true, window, cx)
                 })
             })
@@ -775,7 +777,9 @@ impl PromptLibrary {
         };
 
         let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+        let Some(ConfiguredModel { provider, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        else {
             return;
         };
 
@@ -878,14 +882,16 @@ impl PromptLibrary {
     }
 
     fn count_tokens(&mut self, prompt_id: PromptId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).default_model()
+        else {
             return;
         };
         if let Some(prompt) = self.prompt_editors.get_mut(&prompt_id) {
             let editor = &prompt.body_editor.read(cx);
             let buffer = &editor.buffer().read(cx).as_singleton().unwrap().read(cx);
             let body = buffer.as_rope().clone();
-            prompt.pending_token_count = cx.spawn_in(window, |this, mut cx| {
+            prompt.pending_token_count = cx.spawn_in(window, async move |this, cx| {
                 async move {
                     const DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -908,13 +914,14 @@ impl PromptLibrary {
                         })?
                         .await?;
 
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         let prompt_editor = this.prompt_editors.get_mut(&prompt_id).unwrap();
                         prompt_editor.token_count = Some(token_count);
                         cx.notify();
                     })
                 }
                 .log_err()
+                .await
             });
         }
     }
@@ -964,7 +971,9 @@ impl PromptLibrary {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
                 let focus_handle = prompt_editor.body_editor.focus_handle(cx);
-                let model = LanguageModelRegistry::read_global(cx).active_model();
+                let model = LanguageModelRegistry::read_global(cx)
+                    .default_model()
+                    .map(|default| default.model);
                 let settings = ThemeSettings::get_global(cx);
 
                 Some(
@@ -992,7 +1001,7 @@ impl PromptLibrary {
                                             .on_action(cx.listener(Self::move_down_from_title))
                                             .border_1()
                                             .border_color(transparent_black())
-                                            .rounded_md()
+                                            .rounded_sm()
                                             .group_hover("active-editor-header", |this| {
                                                 this.border_color(
                                                     cx.theme().colors().border_variant,

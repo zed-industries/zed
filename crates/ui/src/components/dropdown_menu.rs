@@ -1,6 +1,6 @@
 use gpui::{ClickEvent, Corner, CursorStyle, Entity, MouseButton};
 
-use crate::{prelude::*, ContextMenu, PopoverMenu};
+use crate::{ContextMenu, PopoverMenu, prelude::*};
 
 #[derive(IntoElement)]
 pub struct DropdownMenu {
@@ -44,7 +44,11 @@ impl RenderOnce for DropdownMenu {
         PopoverMenu::new(self.id)
             .full_width(self.full_width)
             .menu(move |_window, _cx| Some(self.menu.clone()))
-            .trigger(DropdownMenuTrigger::new(self.label).full_width(self.full_width))
+            .trigger(
+                DropdownMenuTrigger::new(self.label)
+                    .full_width(self.full_width)
+                    .disabled(self.disabled),
+            )
             .attach(Corner::BottomLeft)
     }
 }
@@ -110,7 +114,7 @@ impl RenderOnce for DropdownMenuTrigger {
         h_flex()
             .id("dropdown-menu-trigger")
             .justify_between()
-            .rounded_md()
+            .rounded_sm()
             .bg(cx.theme().colors().editor_background)
             .pl_2()
             .pr_1p5()

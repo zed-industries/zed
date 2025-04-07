@@ -1,16 +1,16 @@
 use super::*;
 use collections::HashMap;
 use editor::{
-    display_map::{Block, BlockContext, DisplayRow},
     DisplayPoint, GutterDimensions,
+    display_map::{Block, BlockContext, DisplayRow},
 };
-use gpui::{px, AvailableSpace, Stateful, TestAppContext, VisualTestContext};
+use gpui::{AvailableSpace, Stateful, TestAppContext, VisualTestContext, px};
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, PointUtf16, Rope, Unclipped,
 };
 use pretty_assertions::assert_eq;
 use project::FakeFs;
-use rand::{rngs::StdRng, seq::IteratorRandom as _, Rng};
+use rand::{Rng, rngs::StdRng, seq::IteratorRandom as _};
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use unindent::Unindent as _;
-use util::{path, post_inc, RandomCharIter};
+use util::{RandomCharIter, path, post_inc};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -169,10 +169,10 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(3), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(16), EXCERPT_HEADER.into()),
-            (DisplayRow(18), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(27), EXCERPT_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(15), EXCERPT_HEADER.into()),
+            (DisplayRow(16), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(25), EXCERPT_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -186,7 +186,6 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             // diagnostic group 1
             "\n", // primary message
             "\n", // padding
-            "\n", // expand
             "    let x = vec![];\n",
             "    let y = vec![];\n",
             "\n", // supporting diagnostic
@@ -198,7 +197,6 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             "    c(y);\n",
             "\n", // supporting diagnostic
             "    d(x);\n",
-            "\n", // expand
             "\n", // context ellipsis
             // diagnostic group 2
             "\n", // primary message
@@ -210,13 +208,11 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             "    a(x);\n",
             "\n", // supporting diagnostic
             "    b(y);\n",
-            "\n", // expand
             "\n", // context ellipsis
             "    c(y);\n",
             "    d(x);\n",
             "\n", // supporting diagnostic
             "}",
-            "\n", // expand
         )
     );
 
@@ -224,7 +220,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.selections.display_ranges(cx),
-            [DisplayPoint::new(DisplayRow(13), 6)..DisplayPoint::new(DisplayRow(13), 6)]
+            [DisplayPoint::new(DisplayRow(12), 6)..DisplayPoint::new(DisplayRow(12), 6)]
         );
     });
 
@@ -260,12 +256,12 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(3), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(8), FILE_HEADER.into()),
-            (DisplayRow(12), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(25), EXCERPT_HEADER.into()),
-            (DisplayRow(27), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(36), EXCERPT_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), FILE_HEADER.into()),
+            (DisplayRow(9), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(22), EXCERPT_HEADER.into()),
+            (DisplayRow(23), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(32), EXCERPT_HEADER.into()),
         ]
     );
 
@@ -280,7 +276,6 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             // diagnostic group 1
             "\n", // primary message
             "\n", // padding
-            "\n", // expand
             "const a: i32 = 'a';\n",
             "\n", // supporting diagnostic
             "const b: i32 = c;\n",
@@ -292,8 +287,6 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             // diagnostic group 1
             "\n", // primary message
             "\n", // padding
-            "\n", // expand
-            "\n", // expand
             "    let x = vec![];\n",
             "    let y = vec![];\n",
             "\n", // supporting diagnostic
@@ -309,7 +302,6 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             // diagnostic group 2
             "\n", // primary message
             "\n", // filename
-            "\n", // expand
             "fn main() {\n",
             "    let x = vec![];\n",
             "\n", // supporting diagnostic
@@ -317,13 +309,11 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             "    a(x);\n",
             "\n", // supporting diagnostic
             "    b(y);\n",
-            "\n", // expand
             "\n", // context ellipsis
             "    c(y);\n",
             "    d(x);\n",
             "\n", // supporting diagnostic
             "}",
-            "\n", // expand
         )
     );
 
@@ -331,7 +321,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.selections.display_ranges(cx),
-            [DisplayPoint::new(DisplayRow(22), 6)..DisplayPoint::new(DisplayRow(22), 6)]
+            [DisplayPoint::new(DisplayRow(19), 6)..DisplayPoint::new(DisplayRow(19), 6)]
         );
     });
 
@@ -380,14 +370,14 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(3), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(8), EXCERPT_HEADER.into()),
-            (DisplayRow(10), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(15), FILE_HEADER.into()),
-            (DisplayRow(19), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(32), EXCERPT_HEADER.into()),
-            (DisplayRow(34), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(43), EXCERPT_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(13), FILE_HEADER.into()),
+            (DisplayRow(15), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(28), EXCERPT_HEADER.into()),
+            (DisplayRow(29), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(38), EXCERPT_HEADER.into()),
         ]
     );
 
@@ -402,7 +392,6 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             // diagnostic group 1
             "\n", // primary message
             "\n", // padding
-            "\n", // expand
             "const a: i32 = 'a';\n",
             "\n", // supporting diagnostic
             "const b: i32 = c;\n",
@@ -410,7 +399,6 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             // diagnostic group 2
             "\n", // primary message
             "\n", // padding
-            "\n", // expand
             "const a: i32 = 'a';\n",
             "const b: i32 = c;\n",
             "\n", // supporting diagnostic
@@ -422,8 +410,6 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             // diagnostic group 1
             "\n", // primary message
             "\n", // padding
-            "\n", // expand
-            "\n", // expand
             "    let x = vec![];\n",
             "    let y = vec![];\n",
             "\n", // supporting diagnostic
@@ -439,7 +425,6 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             // diagnostic group 2
             "\n", // primary message
             "\n", // filename
-            "\n", // expand
             "fn main() {\n",
             "    let x = vec![];\n",
             "\n", // supporting diagnostic
@@ -447,13 +432,11 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             "    a(x);\n",
             "\n", // supporting diagnostic
             "    b(y);\n",
-            "\n", // expand
             "\n", // context ellipsis
             "    c(y);\n",
             "    d(x);\n",
             "\n", // supporting diagnostic
             "}",
-            "\n", // expand
         )
     );
 }
@@ -535,7 +518,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(3), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -546,9 +529,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             // diagnostic group 1
             "\n",     // primary message
             "\n",     // padding
-            "\n",     // expand
             "a();\n", //
-            "b();", "\n", // expand
+            "b();",
         )
     );
 
@@ -584,9 +566,9 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(3), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(7), EXCERPT_HEADER.into()),
-            (DisplayRow(9), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(6), EXCERPT_HEADER.into()),
+            (DisplayRow(7), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -597,10 +579,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             // diagnostic group 1
             "\n",     // primary message
             "\n",     // padding
-            "\n",     // expand
             "a();\n", // location
             "b();\n", //
-            "\n",     // expand
             "\n",     // collapsed context
             // diagnostic group 2
             "\n",     // primary message
@@ -608,7 +588,6 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             "a();\n", // context
             "b();\n", //
             "c();",   // context
-            "\n",     // expand
         )
     );
 
@@ -655,9 +634,9 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(3), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(8), EXCERPT_HEADER.into()),
-            (DisplayRow(10), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -668,11 +647,9 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             // diagnostic group 1
             "\n",     // primary message
             "\n",     // padding
-            "\n",     // expand
             "a();\n", // location
             "b();\n", //
             "c();\n", // context
-            "\n",     // expand
             "\n",     // collapsed context
             // diagnostic group 2
             "\n",     // primary message
@@ -680,7 +657,6 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             "b();\n", // context
             "c();\n", //
             "d();",   // context
-            "\n",     // expand
         )
     );
 
@@ -716,9 +692,9 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(3), DIAGNOSTIC_HEADER.into()),
-            (DisplayRow(8), EXCERPT_HEADER.into()),
-            (DisplayRow(10), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
+            (DisplayRow(7), EXCERPT_HEADER.into()),
+            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -729,11 +705,9 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             // diagnostic group 1
             "\n",     // primary message
             "\n",     // padding
-            "\n",     // expand
             "b();\n", // location
             "c();\n", //
             "d();\n", // context
-            "\n",     // expand
             "\n",     // collapsed context
             // diagnostic group 2
             "\n",     // primary message
@@ -741,7 +715,6 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             "c();\n", // context
             "d();\n", //
             "e();",   // context
-            "\n",     // expand
         )
     );
 }
@@ -940,7 +913,7 @@ fn get_diagnostics_excerpts(
                     path: buffer.file().unwrap().path().to_path_buf(),
                     range: ExcerptRange {
                         context: range.context.to_point(buffer),
-                        primary: range.primary.map(|range| range.to_point(buffer)),
+                        primary: range.primary.to_point(buffer),
                     },
                     group_id: usize::MAX,
                     primary: false,

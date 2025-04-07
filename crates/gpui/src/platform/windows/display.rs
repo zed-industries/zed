@@ -4,7 +4,6 @@ use std::rc::Rc;
 use util::ResultExt;
 use uuid::Uuid;
 use windows::{
-    core::*,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
@@ -13,9 +12,10 @@ use windows::{
             WindowsAndMessaging::USER_DEFAULT_SCREEN_DPI,
         },
     },
+    core::*,
 };
 
-use crate::{logical_point, point, size, Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay};
+use crate::{Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, logical_point, point, size};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowsDisplay {
@@ -215,7 +215,7 @@ fn available_monitors() -> SmallVec<[HMONITOR; 4]> {
     let mut monitors: SmallVec<[HMONITOR; 4]> = SmallVec::new();
     unsafe {
         EnumDisplayMonitors(
-            HDC::default(),
+            None,
             None,
             Some(monitor_enum_proc),
             LPARAM(&mut monitors as *mut _ as _),

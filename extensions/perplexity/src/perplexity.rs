@@ -3,7 +3,7 @@ use zed::{
     http_client::HttpRequest,
     serde_json::{self, json},
 };
-use zed_extension_api::{self as zed, http_client::RedirectPolicy, Result};
+use zed_extension_api::{self as zed, Result, http_client::RedirectPolicy};
 
 struct Perplexity;
 

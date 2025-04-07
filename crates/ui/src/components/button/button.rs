@@ -1,13 +1,11 @@
-use component::{example_group_with_title, single_example, ComponentPreview};
+use component::{ComponentPreview, example_group_with_title, single_example};
 use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::IntoComponent;
 
+use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label};
 use crate::{
-    prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding,
-    KeybindingPosition, TintColor,
-};
-use crate::{
-    ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
+    Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, KeybindingPosition, TintColor,
+    prelude::*,
 };
 
 use super::button_icon::ButtonIcon;
@@ -31,7 +29,7 @@ use super::button_icon::ButtonIcon;
 /// use ui::prelude::*;
 ///
 /// Button::new("button_id", "Click me!")
-///     .on_click(|event, cx| {
+///     .on_click(|event, window, cx| {
 ///         // Handle click event
 ///     });
 /// ```
@@ -46,7 +44,7 @@ use super::button_icon::ButtonIcon;
 /// Button::new("button_id", "Click me!")
 ///     .icon(IconName::Check)
 ///     .selected(true)
-///     .on_click(|event, cx| {
+///     .on_click(|event, window, cx| {
 ///         // Handle click event
 ///     });
 /// ```
@@ -60,7 +58,7 @@ use super::button_icon::ButtonIcon;
 /// Button::new("button_id", "Click me!")
 ///     .selected(true)
 ///     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-///     .on_click(|event, cx| {
+///     .on_click(|event, window, cx| {
 ///         // Handle click event
 ///     });
 /// ```
@@ -74,13 +72,13 @@ use super::button_icon::ButtonIcon;
 ///
 /// let button = Button::new("button_id", "Click me!")
 ///     .full_width()
-///     .on_click(|event, cx| {
+///     .on_click(|event, window, cx| {
 ///         // Handle click event
 ///     });
 /// ```
 ///
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct Button {
     base: ButtonLike,
     label: SharedString,
@@ -232,7 +230,7 @@ impl Toggleable for Button {
     ///
     /// Button::new("button_id", "Click me!")
     ///     .selected(true)
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -256,7 +254,7 @@ impl SelectableButton for Button {
     /// Button::new("button_id", "Click me!")
     ///     .selected(true)
     ///     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -280,7 +278,7 @@ impl Disableable for Button {
     ///
     /// Button::new("button_id", "Click me!")
     ///     .disabled(true)
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -321,7 +319,7 @@ impl FixedWidth for Button {
     ///
     /// Button::new("button_id", "Click me!")
     ///     .width(px(100.).into())
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -341,7 +339,7 @@ impl FixedWidth for Button {
     ///
     /// Button::new("button_id", "Click me!")
     ///     .full_width()
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -385,7 +383,7 @@ impl ButtonCommon for Button {
     ///
     /// Button::new("button_id", "Click me!")
     ///     .tooltip(Tooltip::text_f("This is a tooltip", cx))
-    ///     .on_click(|event, cx| {
+    ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
@@ -448,7 +446,6 @@ impl RenderOnce for Button {
                                 .color(label_color)
                                 .size(self.label_size.unwrap_or_default())
                                 .when_some(self.alpha, |this, alpha| this.alpha(alpha))
-                                .line_height_style(LineHeightStyle::UiLabel)
                                 .when(self.truncate, |this| this.truncate()),
                         )
                         .children(self.key_binding),

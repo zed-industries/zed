@@ -1,14 +1,15 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncApp;
-use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
-use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
+use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
+use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
+use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
 pub struct CLspAdapter;
 
@@ -273,11 +274,14 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         mut original: InitializeParams,
     ) -> Result<InitializeParams> {
-        // enable clangd's dot-to-arrow feature.
         let experimental = json!({
             "textDocument": {
                 "completion" : {
+                    // enable clangd's dot-to-arrow feature.
                     "editsNearCursor": true
+                },
+                "inactiveRegionsCapabilities": {
+                    "inactiveRegions": true,
                 }
             }
         });
@@ -287,6 +291,40 @@ impl super::LspAdapter for CLspAdapter {
             original.capabilities.experimental = Some(experimental);
         }
         Ok(original)
+    }
+
+    fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        server_id: LanguageServerId,
+        buffer_access: Option<&'_ Buffer>,
+    ) {
+        if let Some(buffer) = buffer_access {
+            let snapshot = buffer.snapshot();
+            let inactive_regions = buffer
+                .get_diagnostics(server_id)
+                .into_iter()
+                .flat_map(|v| v.iter())
+                .filter(|diag| clangd_ext::is_inactive_region(&diag.diagnostic))
+                .map(move |diag| {
+                    let range =
+                        language::range_to_lsp(diag.range.to_point_utf16(&snapshot)).unwrap();
+                    let mut tags = vec![];
+                    if diag.diagnostic.is_unnecessary {
+                        tags.push(DiagnosticTag::UNNECESSARY);
+                    }
+                    lsp::Diagnostic {
+                        range,
+                        severity: Some(diag.diagnostic.severity),
+                        source: diag.diagnostic.source.clone(),
+                        tags: Some(tags),
+                        message: diag.diagnostic.message.clone(),
+                        code: diag.diagnostic.code.clone(),
+                        ..Default::default()
+                    }
+                });
+            params.diagnostics.extend(inactive_regions);
+        }
     }
 }
 
@@ -322,7 +360,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
-    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 

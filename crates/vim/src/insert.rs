@@ -1,6 +1,6 @@
-use crate::{state::Mode, Vim};
-use editor::{scroll::Autoscroll, Bias, Editor};
-use gpui::{actions, Action, Context, Window};
+use crate::{Vim, state::Mode};
+use editor::{Bias, Editor, scroll::Autoscroll};
+use gpui::{Action, Context, Window, actions};
 use language::SelectionGoal;
 
 actions!(vim, [NormalBefore, TemporaryNormal]);
@@ -25,7 +25,7 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         self.stop_recording_immediately(action.boxed_clone(), cx);
         if count <= 1 || Vim::globals(cx).dot_replaying {
-            self.create_mark("^".into(), false, window, cx);
+            self.create_mark("^".into(), window, cx);
             self.update_editor(window, cx, |_, editor, window, cx| {
                 editor.dismiss_menus_and_popups(false, window, cx);
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {

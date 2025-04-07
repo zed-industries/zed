@@ -169,7 +169,7 @@ impl<T: AsRef<Path>> From<T> for SanitizedPath {
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
-const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
+const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
     ([^\(]+)(?:
         \((\d+)[,:](\d+)\) # filename(row,column), filename(row:column)
         |
@@ -377,10 +377,10 @@ impl PartialEq for PathMatcher {
 impl Eq for PathMatcher {}
 
 impl PathMatcher {
-    pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
+    pub fn new(globs: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Self, globset::Error> {
         let globs = globs
-            .iter()
-            .map(|glob| Glob::new(glob))
+            .into_iter()
+            .map(|as_str| Glob::new(as_str.as_ref()))
             .collect::<Result<Vec<_>, _>>()?;
         let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
         let mut glob_builder = GlobSetBuilder::new();
@@ -621,6 +621,24 @@ mod tests {
             PathWithPosition {
                 path: PathBuf::from("test_file.rs"),
                 row: Some(1),
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("ab\ncd"),
+            PathWithPosition {
+                path: PathBuf::from("ab\ncd"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("👋\nab"),
+            PathWithPosition {
+                path: PathBuf::from("👋\nab"),
+                row: None,
                 column: None
             }
         );
