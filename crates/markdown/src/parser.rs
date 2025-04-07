@@ -7,10 +7,11 @@ use pulldown_cmark::{
 use std::{
     collections::HashSet,
     ops::{Deref, Range},
-    path::PathBuf,
+    path::Path,
+    sync::Arc,
 };
 
-use crate::path_range::PathRange;
+use crate::path_range::PathWithRange;
 
 const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
@@ -27,7 +28,7 @@ pub fn parse_markdown(
 ) -> (
     Vec<(Range<usize>, MarkdownEvent)>,
     HashSet<SharedString>,
-    HashSet<PathBuf>,
+    HashSet<Arc<Path>>,
 ) {
     let mut events = Vec::new();
     let mut language_names = HashSet::new();
@@ -73,7 +74,7 @@ pub fn parse_markdown(
                             // Languages should never contain a slash, and PathRanges always should.
                             // (Models are told to specify them relative to a workspace root.)
                         } else if info.contains('/') {
-                            let path_range = PathRange::new(info);
+                            let path_range = PathWithRange::new(info);
                             language_paths.insert(path_range.path.clone());
                             CodeBlockKind::FencedSrc(path_range)
                         } else {
@@ -332,7 +333,7 @@ pub enum CodeBlockKind {
     /// e.g. ```path/to/foo.rs#L123-456 instead of ```rust
     Fenced,
     FencedLang(SharedString),
-    FencedSrc(PathRange),
+    FencedSrc(PathWithRange),
 }
 
 impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
@@ -378,7 +379,7 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
                     } else if info.contains('/') {
                         // Languages should never contain a slash, and PathRanges always should.
                         // (Models are told to specify them relative to a workspace root.)
-                        CodeBlockKind::FencedSrc(PathRange::new(info))
+                        CodeBlockKind::FencedSrc(PathWithRange::new(info))
                     } else {
                         CodeBlockKind::FencedLang(SharedString::from(info.to_string()))
                     })

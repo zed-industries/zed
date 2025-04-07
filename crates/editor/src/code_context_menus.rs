@@ -623,7 +623,6 @@ impl CompletionsMenu {
                             .language_at(self.initial_position, cx)
                             .map(|l| l.name().to_proto());
                         Markdown::new(SharedString::default(), languages, language, cx)
-                            .copy_code_block_buttons(false)
                     })
                 });
                 markdown.update(cx, |markdown, cx| {
@@ -631,6 +630,9 @@ impl CompletionsMenu {
                 });
                 div().child(
                     MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
+                        .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                            copy_button: false,
+                        })
                         .on_url_click(open_markdown_url),
                 )
             }
