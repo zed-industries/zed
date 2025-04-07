@@ -1,8 +1,8 @@
-name: Agent Beta
-description: There is a bug related to new Agent Panel in Zed
+name: Git
+description: There is a bug related to Git features in Zed
 type: "Bug"
-labels: [agent, ai]
-title: "Agent Beta: <a short description of the Agent Panel bug>"
+labels: ["git"]
+title: "Git: <a short description of the Git bug>"
 body:
   - type: textarea
     attributes:
