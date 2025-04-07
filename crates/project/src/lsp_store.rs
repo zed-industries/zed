@@ -5606,27 +5606,37 @@ impl LspStore {
                     .collect_vec()
             });
             if server_ids.is_empty() {
-                return self.request_lsp(
+                let lsp_request_task = self.request_lsp(
                     buffer_handle.clone(),
                     LanguageServerToQuery::FirstCapable,
-                    SemanticTokensFull,
+                    lsp_request,
                     cx,
                 );
+                return cx.spawn(async move |_, cx| {
+                    buffer_handle
+                        .update(cx, |buffer, _| {
+                            buffer.wait_for_edits(vec![range.start.timestamp, range.end.timestamp])
+                        })?
+                        .await
+                        .context("waiting for semantic token request range edits")?;
+                    lsp_request_task.await.context("semantic token LSP request")
+                });
             }
-            let requests = server_ids
-                .into_iter()
-                .map(|id| {
-                    let lsp = LanguageServerToQuery::Other(id);
-                    self.request_lsp(buffer_handle.clone(), lsp, lsp_request.clone(), cx)
-                })
-                .collect_vec();
-            cx.spawn(async move |_, _| {
-                let mut output = vec![];
-                for request in requests {
-                    let tokens = request.await?;
-                    output.extend(tokens);
-                }
-                Ok(output)
+            let request = join_all(server_ids.into_iter().map(|id| {
+                let lsp = LanguageServerToQuery::Other(id);
+                self.request_lsp(buffer_handle.clone(), lsp, lsp_request.clone(), cx)
+            }));
+            cx.spawn(async move |_, cx| {
+                buffer_handle
+                    .update(cx, |buffer, _| buffer.wait_for_edits(vec![]))?
+                    .await
+                    .context("waiting for semantic token range edits")?;
+                request
+                    .await
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()
+                    .map(|tokens| tokens.into_iter().flatten().collect_vec())
+                    .context("semantic tokens LSP request")
             })
         }
     }
@@ -5676,28 +5686,38 @@ impl LspStore {
                     })
                     .collect_vec()
             });
+
             if server_ids.is_empty() {
-                return self.request_lsp(
+                let lsp_request_task = self.request_lsp(
                     buffer_handle.clone(),
                     LanguageServerToQuery::FirstCapable,
                     SemanticTokensFull,
                     cx,
                 );
+                return cx.spawn(async move |_, cx| {
+                    buffer_handle
+                        .update(cx, |buffer, _| buffer.wait_for_edits(vec![]))?
+                        .await
+                        .context("waiting for semantic token request range edits")?;
+                    lsp_request_task.await.context("semantic token LSP request")
+                });
             }
-            let requests = server_ids
-                .into_iter()
-                .map(|id| {
-                    let lsp = LanguageServerToQuery::Other(id);
-                    self.request_lsp(buffer_handle.clone(), lsp, SemanticTokensFull, cx)
-                })
-                .collect_vec();
-            cx.spawn(async move |_, _| {
-                let mut output = vec![];
-                for request in requests {
-                    let tokens = request.await?;
-                    output.extend(tokens);
-                }
-                Ok(output)
+
+            let request = join_all(server_ids.into_iter().map(|id| {
+                let lsp = LanguageServerToQuery::Other(id);
+                self.request_lsp(buffer_handle.clone(), lsp, SemanticTokensFull, cx)
+            }));
+            cx.spawn(async move |_, cx| {
+                buffer_handle
+                    .update(cx, |buffer, _| buffer.wait_for_edits(vec![]))?
+                    .await
+                    .context("waiting for semantic token range edits")?;
+                request
+                    .await
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()
+                    .map(|tokens| tokens.into_iter().flatten().collect_vec())
+                    .context("semantic tokens LSP request")
             })
         }
     }
