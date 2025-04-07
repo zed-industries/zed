@@ -29,10 +29,11 @@ use crate::{
 };
 
 const MAX_CONCURRENT_LSP_REQUESTS: usize = 5;
-const INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS: u64 = 100;
+const INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS: u64 = 400;
 
 pub struct SemanticTokensCache {
     pub(crate) enabled: bool,
+    lsp_request_cache: Option<Vec<SemanticToken>>,
     tokens: HashMap<ExcerptId, Arc<RwLock<CachedExcerptTokens>>>,
     enabled_in_settings: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
@@ -78,6 +79,7 @@ struct ExcerptTokensUpdate {
 impl SemanticTokensCache {
     pub(super) fn new(semantic_tokens_settings: SemanticTokensSettings) -> Self {
         Self {
+            lsp_request_cache: None,
             enabled: semantic_tokens_settings.enabled,
             version: 0,
             enabled_in_settings: semantic_tokens_settings.enabled,
@@ -225,6 +227,7 @@ impl SemanticTokensCache {
             None
         } else {
             self.version += 1;
+            self.lsp_request_cache = None;
             Some(TokenSplice {
                 to_remove,
                 to_insert: Vec::new(),
@@ -234,6 +237,7 @@ impl SemanticTokensCache {
 
     pub(super) fn clear(&mut self) {
         if !self.update_tasks.is_empty() || !self.tokens.is_empty() {
+            self.lsp_request_cache = None;
             self.version += 1;
         }
         self.update_tasks.clear();
@@ -343,7 +347,7 @@ fn new_update_task(
                                 excerpt_buffer.clone(),
                                 query,
                                 visible_range.clone(),
-                                query.invalidate.should_invalidate(),
+                                query.invalidate,
                                 cx,
                             )
                         })
@@ -393,7 +397,7 @@ fn new_update_task(
                                 excerpt_buffer.clone(),
                                 query,
                                 invisible_range.clone(),
-                                false, // visible screen request already invalidated the entries
+                                InvalidationStrategy::None, // visible screen request already invalidated the entries
                                 cx,
                             )
                         })
@@ -410,9 +414,9 @@ fn new_update_task(
     })
 }
 
-async fn semantic_tokens_fetch(
+async fn fetch_semantic_tokens(
     editor: WeakEntity<Editor>,
-    invalidate: bool,
+    invalidate: InvalidationStrategy,
     lsp_request_limiter: Arc<Semaphore>,
     cached_excerpt_tokens: Option<Arc<RwLock<CachedExcerptTokens>>>,
     visible_tokens: &[Token],
@@ -467,16 +471,29 @@ async fn semantic_tokens_fetch(
 
         let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
 
-        editor
-            .semantics_provider
-            .as_ref()?
-            .semantic_tokens(buffer, fetch_range.clone(), cx)
+        match (invalidate, &editor.semantic_tokens_cache.lsp_request_cache) {
+            (InvalidationStrategy::BufferEdited, None)=> {
+                editor
+                    .semantics_provider
+                    .as_ref()?
+                    .semantic_tokens(buffer, fetch_range.clone(), cx)
+            }
+            (InvalidationStrategy::None, Some(tokens)) => {
+                Some(Task::ready(Ok::<_, anyhow::Error>(tokens.clone())))
+            },
+            _ => {
+                editor
+                    .semantics_provider
+                    .as_ref()?
+                    .semantic_tokens_full(buffer, fetch_range.clone(), cx)
+            }
+        }
     });
 
     let new_tokens = match semantic_tokens_fetch_task.ok().flatten() {
         Some(fetch_task) => {
             log::debug!(
-                "Fetching semantic tokens for range {fetch_range_to_log:?}, reason: {query_reason}, invalidate: {invalidate}",
+                "Fetching semantic tokens for range {fetch_range_to_log:?}, reason: {query_reason}, invalidate: {invalidate:?}",
                 query_reason = query.reason,
             );
             log::trace!(
@@ -487,6 +504,13 @@ async fn semantic_tokens_fetch(
         }
         None => return Ok(None),
     };
+    editor.update(cx, |editor, _| match invalidate {
+        InvalidationStrategy::RefreshRequested => {
+            editor.semantic_tokens_cache.lsp_request_cache = Some(new_tokens.clone());
+        }
+        InvalidationStrategy::BufferEdited => editor.semantic_tokens_cache.lsp_request_cache = None,
+        InvalidationStrategy::None => {}
+    })?;
     drop(lsp_request_guard);
     log::debug!(
         "Fetched {} semantic tokens for range {fetch_range_to_log:?}",
@@ -500,7 +524,7 @@ fn fetch_and_update_tokens(
     excerpt_buffer: Entity<Buffer>,
     query: ExcerptQuery,
     fetch_range: Range<language::Anchor>,
-    invalidate: bool,
+    invalidate: InvalidationStrategy,
     cx: &mut Context<Editor>,
 ) -> Task<anyhow::Result<()>> {
     cx.spawn(async move |editor, cx|{
@@ -520,7 +544,7 @@ fn fetch_and_update_tokens(
         })?;
         let fetch_range_to_log =
             fetch_range.start.to_point(&buffer_snapshot)..fetch_range.end.to_point(&buffer_snapshot);
-        let Some(new_tokens) = semantic_tokens_fetch(
+        let Some(new_tokens) = fetch_semantic_tokens(
             editor.clone(),
             invalidate,
             lsp_request_limiter,
@@ -540,7 +564,7 @@ fn fetch_and_update_tokens(
         let new_update = cx.background_spawn(async move {
             calculate_token_updates(
                 query.excerpt_id,
-                invalidate,
+                invalidate.should_invalidate(),
                 background_fetch_range,
                 new_tokens,
                 &background_task_buffer_snapshot,
@@ -562,7 +586,7 @@ fn fetch_and_update_tokens(
                         editor,
                         new_update,
                         query,
-                        invalidate,
+                        invalidate.should_invalidate(),
                         buffer_snapshot,
                         multi_buffer_snapshot,
                         cx,

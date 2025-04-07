@@ -465,6 +465,16 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.semantic_tokens(buffer, range, cx)
     }
 
+    fn semantic_tokens_full(
+        &self,
+        buffer: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<project::SemanticToken>>>> {
+        let buffer = self.to_base(&buffer, &[range.start, range.end], cx)?;
+        self.0.semantic_tokens_full(buffer, range, cx)
+    }
+
     fn resolve_inlay_hint(
         &self,
         hint: project::InlayHint,

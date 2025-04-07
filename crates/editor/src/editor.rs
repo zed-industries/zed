@@ -8,6 +8,7 @@
 //! * [`display_map`] - chunks up text in the editor into the logical blocks, establishes coordinates and mapping between each of them.
 //!   Contains all metadata related to text transformations (folds, fake inlay text insertions, soft wraps, tab markup, etc.).
 //! * [`inlay_hint_cache`] - is a storage of inlay hints out of LSP requests, responsible for querying LSP and updating `display_map`'s state accordingly.
+//! * [`semantic_hint_cache`] - is a storage of semantic tokens out of LSP requests, responsible for querying LSP and updating `display_map`'s state accordingly.
 //!
 //! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
 //!
@@ -4118,7 +4119,9 @@ impl Editor {
                 }
                 return;
             }
-            SemanticTokensRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
+            SemanticTokensRefreshReason::NewLinesShown => {
+                (InvalidationStrategy::RefreshRequested, None)
+            }
             SemanticTokensRefreshReason::BufferEdited(buffer_languages) => {
                 (InvalidationStrategy::BufferEdited, Some(buffer_languages))
             }
@@ -18541,6 +18544,13 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<SemanticToken>>>>;
 
+    fn semantic_tokens_full(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<SemanticToken>>>>;
+
     fn inlay_hints(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -19081,6 +19091,17 @@ impl SemanticsProvider for Entity<Project> {
     ) -> Option<Task<Result<ProjectTransaction>>> {
         Some(self.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), position, new_name, cx)
+        }))
+    }
+
+    fn semantic_tokens_full(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<SemanticToken>>>> {
+        Some(self.update(cx, |this, cx| {
+            this.semantic_tokens_full(buffer_handle, range, cx)
         }))
     }
 }
