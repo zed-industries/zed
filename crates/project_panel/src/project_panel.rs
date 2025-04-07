@@ -22,7 +22,7 @@ use gpui::{
     Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
     Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions,
-    anchored, deferred, div, impl_actions, point, px, size, transparent_black, uniform_list,
+    anchored, deferred, div, impl_actions, point, px, size, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
@@ -4178,36 +4178,29 @@ impl ProjectPanel {
                     .overflow_x(),
             )
             .when(
-
-                validation_error, |el| {
-                el
+                validation_error, |this| {
+                this
                     .relative()
                     .child(
-                            deferred(
-                                // Wizardry of highest order to make error border align with entry border
-                                div()
-                                    .occlude()
-                                    .absolute()
-                                    .top_full()
-                                    .left_neg_0p5()
-                                    .right_neg_1()
-                                    .border_x_1()
-                                    .border_color(transparent_black())
-                                    .child(
-                                        div()
-                                            .py_1()
-                                            .px_2()
-                                            .border_1()
-                                            .border_color(Color::Error.color(cx))
-                                            .bg(cx.theme().colors().background)
-                                            .child(
-                                                Label::new(format!("{} already exists", self.filename_editor.read(cx).text(cx)))
-                                                    .color(Color::Error)
-                                                    .size(LabelSize::Small)
-                                            )
-                                    )
-
+                        deferred(
+                            div()
+                            .occlude()
+                            .absolute()
+                            .top_full()
+                            .left(px(-1.)) // Used px over rem so that it doesn't change with font size
+                            .right(px(-0.5))
+                            .py_1()
+                            .px_2()
+                            .border_1()
+                            .border_color(Color::Error.color(cx))
+                            .bg(cx.theme().colors().background)
+                            .child(
+                                Label::new(format!("{} already exists", self.filename_editor.read(cx).text(cx)))
+                                .color(Color::Error)
+                                .size(LabelSize::Small)
+                                .truncate()
                             )
+                        )
                     )
                 }
             )
