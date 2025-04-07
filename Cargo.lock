@@ -1083,18 +1083,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
-name = "async-tls"
-version = "0.13.0"
-source = "git+https://github.com/zed-industries/async-tls?rev=1e759a4b5e370f87dc15e40756ac4f8815b61d9d#1e759a4b5e370f87dc15e40756ac4f8815b61d9d"
-dependencies = [
- "futures-core",
- "futures-io",
- "rustls 0.23.25",
- "rustls-pemfile 2.2.0",
- "webpki-roots",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1103,24 +1091,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.100",
-]
-
-[[package]]
-name = "async-tungstenite"
-version = "0.28.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c348fb0b6d132c596eca3dcd941df48fb597aafcb07a738ec41c004b087dc99"
-dependencies = [
- "async-std",
- "async-tls",
- "atomic-waker",
- "futures-core",
- "futures-io",
- "futures-task",
- "futures-util",
- "log",
- "pin-project-lite",
- "tungstenite 0.24.0",
 ]
 
 [[package]]
@@ -2846,7 +2816,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion 0.3.2",
- "async-tungstenite 0.29.1",
+ "async-tungstenite",
  "chrono",
  "clock",
  "cocoa 0.26.0",
@@ -3004,7 +2974,7 @@ dependencies = [
  "assistant_tool",
  "async-stripe",
  "async-trait",
- "async-tungstenite 0.29.1",
+ "async-tungstenite",
  "audio",
  "aws-config",
  "aws-sdk-kinesis",
@@ -7479,7 +7449,7 @@ source = "git+https://github.com/ConradIrwin/runtimed?rev=7130c804216b6914355d15
 dependencies = [
  "anyhow",
  "async-trait",
- "async-tungstenite 0.29.1",
+ "async-tungstenite",
  "futures 0.3.31",
  "jupyter-protocol",
  "serde",
@@ -11746,7 +11716,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
- "async-tungstenite 0.29.1",
+ "async-tungstenite",
  "base64 0.22.1",
  "client",
  "collections",
@@ -12054,7 +12024,7 @@ name = "rpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-tungstenite 0.29.1",
+ "async-tungstenite",
  "base64 0.22.1",
  "chrono",
  "collections",
@@ -15327,24 +15297,6 @@ dependencies = [
 
 [[package]]
 name = "tungstenite"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18e5b8366ee7a95b16d32197d0b2604b43a0be89dc5fac9f8e96ccafbaedda8a"
-dependencies = [
- "byteorder",
- "bytes 1.10.1",
- "data-encoding",
- "http 1.3.1",
- "httparse",
- "log",
- "rand 0.8.5",
- "sha1",
- "thiserror 1.0.69",
- "utf-8",
-]
-
-[[package]]
-name = "tungstenite"
 version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4793cb5e56680ecbb1d843515b23b6de9a75eb04b66643e256a396d43be33c13"
@@ -17590,7 +17542,7 @@ dependencies = [
  "arrayvec",
  "async-compression",
  "async-std",
- "async-tungstenite 0.28.2",
+ "async-tungstenite",
  "aws-config",
  "aws-credential-types",
  "aws-runtime",
@@ -17696,7 +17648,6 @@ dependencies = [
  "scopeguard",
  "sea-orm",
  "sea-query-binder",
- "security-framework 2.11.1",
  "security-framework 3.2.0",
  "security-framework-sys",
  "semver",
@@ -17727,6 +17678,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-core",
+ "tungstenite 0.26.2",
  "unicode-properties",
  "url",
  "uuid",
@@ -18635,3 +18587,8 @@ dependencies = [
  "syn 2.0.100",
  "winnow",
 ]
+
+[[patch.unused]]
+name = "async-tls"
+version = "0.13.0"
+source = "git+https://github.com/zed-industries/async-tls?rev=1e759a4b5e370f87dc15e40756ac4f8815b61d9d#1e759a4b5e370f87dc15e40756ac4f8815b61d9d"
