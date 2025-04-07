@@ -109,8 +109,8 @@ use language::{
     IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
     TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, InlayHintSettings, RewrapBehavior, WordsCompletionMode, all_language_settings,
-        language_settings,
+        self, AllLanguageSettings, InlayHintSettings, LspInsertMode, RewrapBehavior,
+        WordsCompletionMode, all_language_settings, language_settings,
     },
     point_from_lsp, text_diff_with_options,
 };
@@ -4461,7 +4461,8 @@ impl Editor {
                     words.remove(&lsp_completion.new_text);
                 }
                 completions.extend(words.into_iter().map(|(word, word_range)| Completion {
-                    old_range: old_range.clone(),
+                    replace_range: old_range.clone(),
+                    insert_range: None,
                     new_text: word.clone(),
                     label: CodeLabel::plain(word, None),
                     icon_path: None,
@@ -4568,6 +4569,26 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Complete, window, cx)
     }
 
+    pub fn confirm_completion_insert(
+        &mut self,
+        _: &ConfirmCompletionInsert,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
+        self.do_completion(None, CompletionIntent::CompleteWithInsert, window, cx)
+    }
+
+    pub fn confirm_completion_replace(
+        &mut self,
+        _: &ConfirmCompletionReplace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
+        self.do_completion(None, CompletionIntent::CompleteWithReplace, window, cx)
+    }
+
     pub fn compose_completion(
         &mut self,
         action: &ComposeCompletion,
@@ -4587,12 +4608,10 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         use language::ToOffset as _;
 
-        let completions_menu =
-            if let CodeContextMenu::Completions(menu) = self.hide_context_menu(window, cx)? {
-                menu
-            } else {
-                return None;
-            };
+        let CodeContextMenu::Completions(completions_menu) = self.hide_context_menu(window, cx)?
+        else {
+            return None;
+        };
 
         let candidate_id = {
             let entries = completions_menu.entries.borrow();
@@ -4621,9 +4640,12 @@ impl Editor {
             new_text = completion.new_text.clone();
         };
         let selections = self.selections.all::<usize>(cx);
+
+        let replace_range = choose_completion_range(&completion, intent, &buffer_handle, cx);
         let buffer = buffer_handle.read(cx);
-        let old_range = completion.old_range.to_offset(buffer);
-        let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
+        let old_text = buffer
+            .text_for_range(replace_range.clone())
+            .collect::<String>();
 
         let newest_selection = self.selections.newest_anchor();
         if newest_selection.start.buffer_id != Some(buffer_handle.read(cx).remote_id()) {
@@ -4634,8 +4656,8 @@ impl Editor {
             .start
             .text_anchor
             .to_offset(buffer)
-            .saturating_sub(old_range.start);
-        let lookahead = old_range
+            .saturating_sub(replace_range.start);
+        let lookahead = replace_range
             .end
             .saturating_sub(newest_selection.end.text_anchor.to_offset(buffer));
         let mut common_prefix_len = 0;
@@ -4664,8 +4686,8 @@ impl Editor {
                 ranges.clear();
                 ranges.extend(selections.iter().map(|s| {
                     if s.id == newest_selection.id {
-                        range_to_replace = Some(old_range.clone());
-                        old_range.clone()
+                        range_to_replace = Some(replace_range.clone());
+                        replace_range.clone()
                     } else {
                         s.start..s.end
                     }
@@ -17918,6 +17940,71 @@ impl Editor {
     }
 }
 
+// Consider user intent and default settings
+fn choose_completion_range(
+    completion: &Completion,
+    intent: CompletionIntent,
+    buffer: &Entity<Buffer>,
+    cx: &mut Context<Editor>,
+) -> Range<usize> {
+    fn should_replace(
+        completion: &Completion,
+        intent: CompletionIntent,
+        completion_mode_setting: LspInsertMode,
+        buffer: &Buffer,
+    ) -> bool {
+        let Some(insert_range) = &completion.insert_range else {
+            return true;
+        };
+
+        // specific actions take precedence over settings
+        match intent {
+            CompletionIntent::CompleteWithInsert => return false,
+            CompletionIntent::CompleteWithReplace => return true,
+            CompletionIntent::Complete | CompletionIntent::Compose => {}
+        }
+
+        match completion_mode_setting {
+            LspInsertMode::Insert => false,
+            LspInsertMode::Replace => true,
+            LspInsertMode::ReplaceSubsequence => {
+                let mut text_to_replace = buffer.chars_for_range(
+                    buffer.anchor_before(completion.replace_range.start)
+                        ..buffer.anchor_after(completion.replace_range.end),
+                );
+                let mut completion_text = completion.new_text.chars();
+
+                // is `text_to_replace` a subsequence of `completion_text`
+                text_to_replace
+                    .all(|needle_ch| completion_text.any(|haystack_ch| haystack_ch == needle_ch))
+            }
+            LspInsertMode::ReplaceSuffix => {
+                let range_after_cursor = insert_range.end..completion.replace_range.end;
+
+                let text_after_cursor = buffer
+                    .text_for_range(
+                        buffer.anchor_before(range_after_cursor.start)
+                            ..buffer.anchor_after(range_after_cursor.end),
+                    )
+                    .collect::<String>();
+                completion.new_text.ends_with(&text_after_cursor)
+            }
+        }
+    }
+
+    let completion_mode_setting = AllLanguageSettings::get_global(cx)
+        .defaults
+        .completions
+        .lsp_insert_mode;
+    let buffer = buffer.read(cx);
+
+    if should_replace(completion, intent, completion_mode_setting, buffer) {
+        completion.replace_range.to_offset(buffer)
+    } else {
+        completion.insert_range.as_ref().unwrap().to_offset(buffer)
+    }
+}
+
 fn insert_extra_newline_brackets(
     buffer: &MultiBufferSnapshot,
     range: Range<usize>,
@@ -18639,7 +18726,8 @@ fn snippet_completions(
                     end: lsp_end,
                 };
                 Some(Completion {
-                    old_range: range,
+                    replace_range: range,
+                    insert_range: None,
                     new_text: snippet.body.clone(),
                     source: CompletionSource::Lsp {
                         server_id: LanguageServerId(usize::MAX),

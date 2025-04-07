@@ -120,7 +120,8 @@ impl SlashCommandCompletionProvider {
                                         ) as Arc<_>
                                     });
                             Some(project::Completion {
-                                old_range: name_range.clone(),
+                                replace_range: name_range.clone(),
+                                insert_range: None,
                                 documentation: Some(CompletionDocumentation::SingleLine(
                                     command.description().into(),
                                 )),
@@ -219,11 +220,12 @@ impl SlashCommandCompletionProvider {
                             }
 
                             project::Completion {
-                                old_range: if new_argument.replace_previous_arguments {
+                                replace_range: if new_argument.replace_previous_arguments {
                                     argument_range.clone()
                                 } else {
                                     last_argument_range.clone()
                                 },
+                                insert_range: None,
                                 label: new_argument.label,
                                 icon_path: None,
                                 new_text,

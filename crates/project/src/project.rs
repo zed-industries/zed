@@ -359,8 +359,14 @@ pub struct InlayHint {
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub enum CompletionIntent {
     /// The user intends to 'commit' this result, if possible
-    /// completion confirmations should run side effects
+    /// completion confirmations should run side effects.
+    ///
+    /// For LSP completions, will respect the setting `completions.lsp_insert_mode`.
     Complete,
+    /// Similar to [Self::Complete], but behaves like `lsp_insert_mode` is set to `insert`.
+    CompleteWithInsert,
+    /// Similar to [Self::Complete], but behaves like `lsp_insert_mode` is set to `replace`.
+    CompleteWithReplace,
     /// The user intends to continue 'composing' this completion
     /// completion confirmations should not run side effects and
     /// let the user continue composing their action
@@ -380,8 +386,10 @@ impl CompletionIntent {
 /// A completion provided by a language server
 #[derive(Clone)]
 pub struct Completion {
-    /// The range of the buffer that will be replaced.
-    pub old_range: Range<Anchor>,
+    /// The range of text that will be replaced by this completion.
+    pub replace_range: Range<Anchor>,
+    /// TODO: re-do this description: The range of the buffer that will be replaced by a `ConfirmCompletionInsert`.
+    pub insert_range: Option<Range<Anchor>>,
     /// The new text that will be inserted.
     pub new_text: String,
     /// A label for this completion that is shown in the menu.
@@ -508,7 +516,8 @@ impl CompletionSource {
 impl std::fmt::Debug for Completion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Completion")
-            .field("old_range", &self.old_range)
+            .field("replace_range", &self.replace_range)
+            .field("insert_range", &self.insert_range)
             .field("new_text", &self.new_text)
             .field("label", &self.label)
             .field("documentation", &self.documentation)
@@ -520,7 +529,8 @@ impl std::fmt::Debug for Completion {
 /// A completion provided by a language server
 #[derive(Clone, Debug)]
 pub(crate) struct CoreCompletion {
-    old_range: Range<Anchor>,
+    replace_range: Range<Anchor>,
+    insert_range: Option<Range<Anchor>>,
     new_text: String,
     source: CompletionSource,
 }
