@@ -30,8 +30,7 @@ use ui::{
 use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
-    ActivePaneDecorator, DraggedTab, Item, Pane, PaneAxis, PaneGroup, Workspace, move_item,
-    pane::Event,
+    ActivePaneDecorator, DraggedTab, Item, Pane, PaneGroup, Workspace, move_item, pane::Event,
 };
 
 pub struct RunningState {
