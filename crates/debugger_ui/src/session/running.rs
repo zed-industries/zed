@@ -366,7 +366,7 @@ impl RunningState {
             .find_map(|pane| {
                 pane.read(cx)
                     .items_of_type::<SubView>()
-                    .position(|view| view.read(cx).tab_name == SharedString::from("Variables"))
+                    .position(|view| view.read(cx).tab_name == *"Variables")
                     .map(|view| (view, pane))
             })
             .unwrap();
