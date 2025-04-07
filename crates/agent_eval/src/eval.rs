@@ -1,6 +1,6 @@
 use crate::git_commands::{run_git, setup_temp_repo};
 use crate::headless_assistant::{HeadlessAppState, HeadlessAssistant};
-use crate::{get_exercise_language, get_exercise_name, templates_eval::Template};
+use crate::{get_exercise_language, get_exercise_name};
 use agent::RequestKind;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
@@ -18,8 +18,6 @@ use std::{
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EvalResult {
     pub exercise_name: String,
-    pub template_name: String,
-    pub score: String,
     pub diff: String,
     pub assistant_response: String,
     pub elapsed_time_ms: u128,
@@ -29,7 +27,6 @@ pub struct EvalResult {
     pub output_tokens: usize,
     pub total_tokens: usize,
     pub tool_use_counts: usize,
-    pub judge_model_name: String, // Added field for judge model name
 }
 
 pub struct EvalOutput {
@@ -251,29 +248,6 @@ pub async fn read_instructions(exercise_path: &Path) -> Result<String> {
     Ok(instructions)
 }
 
-pub async fn read_example_solution(exercise_path: &Path, language: &str) -> Result<String> {
-    // Map the language to the file extension
-    let language_extension = match language {
-        "python" => "py",
-        "go" => "go",
-        "rust" => "rs",
-        "typescript" => "ts",
-        "javascript" => "js",
-        "ruby" => "rb",
-        "php" => "php",
-        "bash" => "sh",
-        "multi" => "diff",
-        "internal" => "diff",
-        _ => return Err(anyhow!("Unsupported language: {}", language)),
-    };
-    let example_path = exercise_path
-        .join(".meta")
-        .join(format!("example.{}", language_extension));
-    println!("Reading example solution from: {}", example_path.display());
-    let example = smol::unblock(move || std::fs::read_to_string(&example_path)).await?;
-    Ok(example)
-}
-
 pub async fn save_eval_results(exercise_path: &Path, results: Vec<EvalResult>) -> Result<()> {
     let eval_dir = exercise_path.join("evaluation");
     fs::create_dir_all(&eval_dir)?;
@@ -311,12 +285,8 @@ pub async fn save_eval_results(exercise_path: &Path, results: Vec<EvalResult>) -
     // Group the new results by test name (exercise name)
     for result in results {
         let exercise_name = &result.exercise_name;
-        let template_name = &result.template_name;
 
-        println!(
-            "Adding result: exercise={}, template={}",
-            exercise_name, template_name
-        );
+        println!("Adding result: exercise={}", exercise_name);
 
         // Ensure the exercise entry exists
         if eval_data.get(exercise_name).is_none() {
@@ -329,7 +299,7 @@ pub async fn save_eval_results(exercise_path: &Path, results: Vec<EvalResult>) -
         }
 
         // Add this result under the timestamp with template name as key
-        eval_data[exercise_name][&timestamp][template_name] = serde_json::to_value(&result)?;
+        eval_data[exercise_name][&timestamp] = serde_json::to_value(&result)?;
     }
 
     // Write back to file with pretty formatting
@@ -344,9 +314,7 @@ pub async fn save_eval_results(exercise_path: &Path, results: Vec<EvalResult>) -
 
 pub async fn run_exercise_eval(
     exercise_path: PathBuf,
-    template: Template,
     model: Arc<dyn LanguageModel>,
-    judge_model: Arc<dyn LanguageModel>,
     app_state: Arc<HeadlessAppState>,
     base_sha: String,
     _framework_path: PathBuf,
@@ -359,67 +327,14 @@ pub async fn run_exercise_eval(
         "\n\nWhen writing the code for this prompt, use {} to achieve the goal.",
         language
     ));
-    let example_solution = read_example_solution(&exercise_path, &language).await?;
 
-    println!(
-        "Running evaluation for exercise: {} with template: {}",
-        exercise_name, template.name
-    );
+    println!("Running evaluation for exercise: {}", exercise_name);
 
     // Create temporary directory with exercise files
     let temp_dir = setup_temp_repo(&exercise_path, &base_sha).await?;
     let temp_path = temp_dir.path().to_path_buf();
 
-    if template.name == "ProjectCreation" {
-        for entry in fs::read_dir(&temp_path)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            // Skip directories that start with dot (like .docs, .meta, .git)
-            if path.is_dir()
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map(|name| name.starts_with("."))
-                    .unwrap_or(false)
-            {
-                continue;
-            }
-
-            // Delete regular files
-            if path.is_file() {
-                println!("  Deleting file: {}", path.display());
-                fs::remove_file(path)?;
-            }
-        }
-
-        // Commit the deletion so it shows up in the diff
-        run_git(&temp_path, &["add", "."]).await?;
-        run_git(
-            &temp_path,
-            &["commit", "-m", "Remove root files for clean slate"],
-        )
-        .await?;
-    }
-
     let local_commit_sha = run_git(&temp_path, &["rev-parse", "HEAD"]).await?;
-
-    // Prepare prompt based on template
-    let prompt = match template.name {
-        "ProjectCreation" => format!(
-            "I need to create a new implementation for this exercise. Please create all the necessary files in the best location.\n\n{}",
-            instructions
-        ),
-        "CodeModification" => format!(
-            "I need help updating my code to meet these requirements. Please modify the appropriate files:\n\n{}",
-            instructions
-        ),
-        "ConversationalGuidance" => format!(
-            "I'm trying to solve this coding exercise but I'm not sure where to start. Can you help me understand the requirements and guide me through the solution process without writing code for me?\n\n{}",
-            instructions
-        ),
-        _ => instructions.clone(),
-    };
 
     let start_time = SystemTime::now();
 
@@ -430,7 +345,7 @@ pub async fn run_exercise_eval(
             url: format!("file://{}", temp_path.display()),
             base_sha: local_commit_sha, // Use the local commit SHA instead of the framework base SHA
         },
-        user_prompt: prompt,
+        user_prompt: instructions.clone(),
     };
 
     // Run the evaluation
@@ -441,79 +356,6 @@ pub async fn run_exercise_eval(
     // Get diff from git
     let diff = eval_output.diff.clone();
 
-    // For project creation template, we need to compare with reference implementation
-    let judge_output = if template.name == "ProjectCreation" {
-        let project_judge_prompt = template
-            .content
-            .replace(
-                "<!-- ```requirements go here``` -->",
-                &format!("```\n{}\n```", instructions),
-            )
-            .replace(
-                "<!-- ```reference code goes here``` -->",
-                &format!("```{}\n{}\n```", language, example_solution),
-            )
-            .replace(
-                "<!-- ```git diff goes here``` -->",
-                &format!("```\n{}\n```", diff),
-            );
-
-        // Use the run_with_prompt method which we'll add to judge.rs
-        let judge = crate::judge::Judge {
-            original_diff: None,
-            original_message: Some(project_judge_prompt),
-            model: judge_model.clone(),
-        };
-
-        cx.update(|cx| judge.run_with_prompt(cx))?.await?
-    } else if template.name == "CodeModification" {
-        // For CodeModification, we'll compare the example solution with the LLM-generated solution
-        let code_judge_prompt = template
-            .content
-            .replace(
-                "<!-- ```reference code goes here``` -->",
-                &format!("```{}\n{}\n```", language, example_solution),
-            )
-            .replace(
-                "<!-- ```git diff goes here``` -->",
-                &format!("```\n{}\n```", diff),
-            );
-
-        // Use the run_with_prompt method
-        let judge = crate::judge::Judge {
-            original_diff: None,
-            original_message: Some(code_judge_prompt),
-            model: judge_model.clone(),
-        };
-
-        cx.update(|cx| judge.run_with_prompt(cx))?.await?
-    } else {
-        // Conversational template
-        let conv_judge_prompt = template
-            .content
-            .replace(
-                "<!-- ```query goes here``` -->",
-                &format!("```\n{}\n```", instructions),
-            )
-            .replace(
-                "<!-- ```transcript goes here``` -->",
-                &format!("```\n{}\n```", eval_output.last_message),
-            )
-            .replace(
-                "<!-- ```git diff goes here``` -->",
-                &format!("```\n{}\n```", diff),
-            );
-
-        // Use the run_with_prompt method for consistency
-        let judge = crate::judge::Judge {
-            original_diff: None,
-            original_message: Some(conv_judge_prompt),
-            model: judge_model.clone(),
-        };
-
-        cx.update(|cx| judge.run_with_prompt(cx))?.await?
-    };
-
     let elapsed_time = start_time.elapsed()?;
 
     // Calculate total tokens as the sum of input and output tokens
@@ -522,14 +364,9 @@ pub async fn run_exercise_eval(
     let tool_use_counts = eval_output.tool_use_counts.values().sum::<u32>();
     let total_tokens = input_tokens + output_tokens;
 
-    // Get judge model name
-    let judge_model_name = judge_model.id().0.to_string();
-
     // Save results to evaluation directory
     let result = EvalResult {
         exercise_name: exercise_name.clone(),
-        template_name: template.name.to_string(),
-        score: judge_output.trim().to_string(),
         diff,
         assistant_response: eval_output.last_message.clone(),
         elapsed_time_ms: elapsed_time.as_millis(),
@@ -541,7 +378,6 @@ pub async fn run_exercise_eval(
         output_tokens: output_tokens.try_into().unwrap(),
         total_tokens: total_tokens.try_into().unwrap(),
         tool_use_counts: tool_use_counts.try_into().unwrap(),
-        judge_model_name, // Add judge model name to result
     };
 
     Ok(result)
