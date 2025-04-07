@@ -3,11 +3,10 @@ use std::path::PathBuf;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use windows::{
-    core::{Interface, GUID, HSTRING},
     Win32::{
         Foundation::PROPERTYKEY,
         Globalization::u_strlen,
-        System::Com::{CoCreateInstance, StructuredStorage::PROPVARIANT, CLSCTX_INPROC_SERVER},
+        System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, StructuredStorage::PROPVARIANT},
         UI::{
             Controls::INFOTIPSIZE,
             Shell::{
@@ -18,9 +17,15 @@ use windows::{
             },
         },
     },
+    core::{GUID, HSTRING, Interface},
 };
 
 use crate::{Action, MenuItem};
+
+pub(crate) struct DestinationList {
+    pub(crate) dock_menus: Vec<DockMenuItem>,
+    pub(crate) recent_workspaces: Vec<SmallVec<[PathBuf; 2]>>,
+}
 
 pub(crate) struct DockMenuItem {
     pub(crate) name: String,
