@@ -439,6 +439,7 @@ fn render_markdown_code_block(
             .icon_color(Color::Muted)
             .shape(ui::IconButtonShape::Square)
             .tooltip(Tooltip::text("Copy Code"))
+            .visible_on_hover("markdown-code-block")
             .on_click({
                 let active_thread = active_thread.clone();
                 let parsed_markdown = parsed_markdown.clone();

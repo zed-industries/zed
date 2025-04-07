@@ -861,7 +861,15 @@ impl Element for MarkdownElement {
                                     self.markdown.clone(),
                                     cx,
                                 );
-                                el.child(div().absolute().top_1().right_1().w_5().child(codeblock))
+                                el.child(
+                                    div()
+                                        .group("markdown-code-block")
+                                        .absolute()
+                                        .top_1()
+                                        .right_1()
+                                        .w_5()
+                                        .child(codeblock),
+                                )
                             });
                         }
 
