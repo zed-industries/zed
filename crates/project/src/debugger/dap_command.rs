@@ -1568,7 +1568,7 @@ impl LocalDapCommand for Initialize {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq)]
-pub(super) struct ConfigurationDone;
+pub(super) struct ConfigurationDone {}
 
 impl LocalDapCommand for ConfigurationDone {
     type Response = ();
@@ -1581,7 +1581,7 @@ impl LocalDapCommand for ConfigurationDone {
     }
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
-        dap::ConfigurationDoneArguments
+        dap::ConfigurationDoneArguments {}
     }
 
     fn response_from_dap(

@@ -89,7 +89,10 @@ impl DebugAdapter for GdbDebugAdapter {
 
             DebugRequestType::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
-                map.insert("args".into(), launch.args.clone().into());
+
+                if !launch.args.is_empty() {
+                    map.insert("args".into(), launch.args.clone().into());
+                }
 
                 if let Some(stop_on_entry) = config.stop_on_entry {
                     map.insert("stopOnEntry".into(), stop_on_entry.into());
