@@ -339,9 +339,9 @@
     }
   },
   {
-    "context": "ThreadHistory",
+    "context": "ThreadHistory > Editor",
     "bindings": {
-      "backspace": "agent::RemoveSelectedThread"
+      "shift-backspace": "agent::RemoveSelectedThread"
     }
   },
   {
@@ -430,7 +430,8 @@
       "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
       "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "cmd-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
-      "cmd-k cmd-w": ["pane::CloseAllItems", { "close_pinned": false }],
+      "cmd-k w": ["pane::CloseAllItems", { "close_pinned": false }],
+      "cmd-k cmd-w": "workspace::CloseAllItemsAndPanes",
       "cmd-f": "project_search::ToggleFocus",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPreviousMatch",
@@ -607,6 +608,8 @@
       "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
+      // or by tag:
+      // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
     }
   },
   // Bindings from Sublime Text

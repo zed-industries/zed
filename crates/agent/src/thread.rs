@@ -14,10 +14,10 @@ use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason, TokenUsage,
+    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    PaymentRequiredError, Role, StopReason, TokenUsage,
 };
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use project::{Project, Worktree};
@@ -290,7 +290,7 @@ impl Thread {
             last_restore_checkpoint: None,
             pending_checkpoint: None,
             tool_use: ToolUseState::new(tools.clone()),
-            action_log: cx.new(|_| ActionLog::new()),
+            action_log: cx.new(|_| ActionLog::new(project.clone())),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project, cx);
                 cx.foreground_executor()
@@ -354,11 +354,11 @@ impl Thread {
             pending_completions: Vec::new(),
             last_restore_checkpoint: None,
             pending_checkpoint: None,
-            project,
+            project: project.clone(),
             prompt_builder,
             tools,
             tool_use,
-            action_log: cx.new(|_| ActionLog::new()),
+            action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
@@ -385,14 +385,28 @@ impl Thread {
         self.summary.clone()
     }
 
+    pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
+
     pub fn summary_or_default(&self) -> SharedString {
-        const DEFAULT: SharedString = SharedString::new_static("New Thread");
-        self.summary.clone().unwrap_or(DEFAULT)
+        self.summary.clone().unwrap_or(Self::DEFAULT_SUMMARY)
     }
 
-    pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut Context<Self>) {
-        self.summary = Some(summary.into());
-        cx.emit(ThreadEvent::SummaryChanged);
+    pub fn set_summary(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let Some(current_summary) = &self.summary else {
+            // Don't allow setting summary until generated
+            return;
+        };
+
+        let mut new_summary = new_summary.into();
+
+        if new_summary.is_empty() {
+            new_summary = Self::DEFAULT_SUMMARY;
+        }
+
+        if current_summary != &new_summary {
+            self.summary = Some(new_summary);
+            cx.emit(ThreadEvent::SummaryChanged);
+        }
     }
 
     pub fn latest_detailed_summary_or_text(&self) -> SharedString {
@@ -1250,14 +1264,11 @@ impl Thread {
     }
 
     pub fn summarize(&mut self, cx: &mut Context<Self>) {
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
-            return;
-        };
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).thread_summary_model() else {
             return;
         };
 
-        if !provider.is_authenticated(cx) {
+        if !model.provider.is_authenticated(cx) {
             return;
         }
 
@@ -1276,7 +1287,7 @@ impl Thread {
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
-                let stream = model.stream_completion_text(request, &cx);
+                let stream = model.model.stream_completion_text(request, &cx);
                 let mut messages = stream.await?;
 
                 let mut new_summary = String::new();
@@ -1296,7 +1307,7 @@ impl Thread {
                         this.summary = Some(new_summary.into());
                     }
 
-                    cx.emit(ThreadEvent::SummaryChanged);
+                    cx.emit(ThreadEvent::SummaryGenerated);
                 })?;
 
                 anyhow::Ok(())
@@ -1320,8 +1331,8 @@ impl Thread {
             _ => {}
         }
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let ConfiguredModel { model, provider } =
+            LanguageModelRegistry::read_global(cx).thread_summary_model()?;
 
         if !provider.is_authenticated(cx) {
             return None;
@@ -1757,6 +1768,17 @@ impl Thread {
             .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
     }
 
+    pub fn reject_edits_in_range(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        buffer_range: Range<language::Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.action_log.update(cx, |action_log, cx| {
+            action_log.reject_edits_in_range(buffer, buffer_range, cx)
+        })
+    }
+
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }
@@ -1771,11 +1793,11 @@ impl Thread {
 
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.active_model() else {
+        let Some(model) = model_registry.default_model() else {
             return TotalTokenUsage::default();
         };
 
-        let max = model.max_token_count();
+        let max = model.model.max_token_count();
 
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
@@ -1839,6 +1861,7 @@ pub enum ThreadEvent {
     MessageAdded(MessageId),
     MessageEdited(MessageId),
     MessageDeleted(MessageId),
+    SummaryGenerated,
     SummaryChanged,
     UsePendingTools,
     ToolFinished {

@@ -2,6 +2,7 @@
 #![deny(missing_docs)]
 
 mod debug_format;
+mod serde_helpers;
 pub mod static_source;
 mod task_template;
 mod vscode_format;

@@ -399,11 +399,11 @@ async-trait = "0.1"
 async-tungstenite = "0.28"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
-aws-config = { version = "1.5.16", features = ["behavior-version-latest"] }
-aws-credential-types = { version = "1.2.1", features = ["hardcoded-credentials"] }
-aws-sdk-bedrockruntime = { version = "1.73.0", features = ["behavior-version-latest"] }
-aws-smithy-runtime-api = { version = "1.7.3", features = ["http-1x", "client"] }
-aws-smithy-types = { version = "1.2.13", features = ["http-body-1-x"] }
+aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.2", features = ["hardcoded-credentials"] }
+aws-sdk-bedrockruntime = { version = "1.80.0", features = ["behavior-version-latest"] }
+aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
+aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
 bitflags = "2.6.0"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
@@ -508,6 +508,7 @@ rust-embed = { version = "8.4", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.22" }
 rustls-platform-verifier = "0.5.0"
+scap = { git = "https://github.com/zed-industries/scap", rev = "08f0a01417505cc0990b9931a37e5120db92e0d0", default-features = false }
 schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -547,7 +548,7 @@ time = { version = "0.3", features = [
 tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1" }
-tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"]}
+tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.25.3", features = ["wasm"] }
 tree-sitter-bash = "0.23"

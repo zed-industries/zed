@@ -2,9 +2,11 @@ use crate::inline_prompt_editor::CodegenStatus;
 use client::telemetry::Telemetry;
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
-use language_model::{LanguageModelRegistry, LanguageModelRequest, report_assistant_event};
+use language_model::{
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, report_assistant_event,
+};
 use std::{sync::Arc, time::Instant};
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 
 pub struct TerminalCodegen {
@@ -31,7 +33,9 @@ impl TerminalCodegen {
     }
 
     pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut Context<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        else {
             return;
         };
 
@@ -75,7 +79,7 @@ impl TerminalCodegen {
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
                         report_assistant_event(
-                            AssistantEvent {
+                            AssistantEventData {
                                 conversation_id: None,
                                 kind: AssistantKind::InlineTerminal,
                                 message_id,

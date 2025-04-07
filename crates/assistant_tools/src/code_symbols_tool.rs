@@ -156,7 +156,7 @@ impl Tool for CodeSymbolsTool {
     }
 }
 
-async fn file_outline(
+pub async fn file_outline(
     project: Entity<Project>,
     path: String,
     action_log: Entity<ActionLog>,

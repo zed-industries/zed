@@ -1,0 +1,27 @@
+syntax = "proto3";
+package zed.messages;
+
+message PeerId {
+    uint32 owner_id = 1;
+    uint32 id = 2;
+}
+
+message User {
+    uint64 id = 1;
+    string github_login = 2;
+    string avatar_url = 3;
+    optional string email = 4;
+    optional string name = 5;
+}
+
+message Nonce {
+    uint64 upper_half = 1;
+    uint64 lower_half = 2;
+}
+
+message Collaborator {
+    PeerId peer_id = 1;
+    uint32 replica_id = 2;
+    uint64 user_id = 3;
+    bool is_host = 4;
+}

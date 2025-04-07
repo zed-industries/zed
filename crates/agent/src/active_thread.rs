@@ -21,7 +21,7 @@ use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
-use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
+use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use project::ProjectItem as _;
 use settings::{Settings as _, update_settings_file};
@@ -46,8 +46,10 @@ pub struct ActiveThread {
     messages: Vec<MessageId>,
     list_state: ListState,
     scrollbar_state: ScrollbarState,
+    show_scrollbar: bool,
+    hide_scrollbar_task: Option<Task<()>>,
     rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
-    rendered_tool_use_labels: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
+    rendered_tool_uses: HashMap<LanguageModelToolUseId, RenderedToolUse>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
@@ -61,6 +63,13 @@ pub struct ActiveThread {
 struct RenderedMessage {
     language_registry: Arc<LanguageRegistry>,
     segments: Vec<RenderedMessageSegment>,
+}
+
+#[derive(Clone)]
+struct RenderedToolUse {
+    label: Entity<Markdown>,
+    input: Entity<Markdown>,
+    output: Entity<Markdown>,
 }
 
 impl RenderedMessage {
@@ -233,7 +242,7 @@ fn render_markdown(
             font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
             font_features: Some(theme_settings.buffer_font.features.clone()),
             font_size: Some(buffer_font_size.into()),
-            background_color: Some(colors.editor_foreground.opacity(0.1)),
+            background_color: Some(colors.editor_foreground.opacity(0.08)),
             ..Default::default()
         },
         link: TextStyleRefinement {
@@ -241,6 +250,85 @@ fn render_markdown(
             underline: Some(UnderlineStyle {
                 color: Some(colors.text_accent.opacity(0.5)),
                 thickness: px(1.),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        link_callback: Some(Rc::new(move |url, cx| {
+            if MentionLink::is_valid(url) {
+                let colors = cx.theme().colors();
+                Some(TextStyleRefinement {
+                    background_color: Some(colors.element_background),
+                    ..Default::default()
+                })
+            } else {
+                None
+            }
+        })),
+        ..Default::default()
+    };
+
+    cx.new(|cx| {
+        Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
+            move |text, window, cx| {
+                open_markdown_link(text, workspace.clone(), window, cx);
+            },
+        )
+    })
+}
+
+fn render_tool_use_markdown(
+    text: SharedString,
+    language_registry: Arc<LanguageRegistry>,
+    workspace: WeakEntity<Workspace>,
+    window: &Window,
+    cx: &mut App,
+) -> Entity<Markdown> {
+    let theme_settings = ThemeSettings::get_global(cx);
+    let colors = cx.theme().colors();
+    let ui_font_size = TextSize::Default.rems(cx);
+    let buffer_font_size = TextSize::Small.rems(cx);
+    let mut text_style = window.text_style();
+
+    text_style.refine(&TextStyleRefinement {
+        font_family: Some(theme_settings.ui_font.family.clone()),
+        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+        font_features: Some(theme_settings.ui_font.features.clone()),
+        font_size: Some(ui_font_size.into()),
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    });
+
+    let markdown_style = MarkdownStyle {
+        base_text_style: text_style,
+        syntax: cx.theme().syntax().clone(),
+        selection_background_color: cx.theme().players().local().selection,
+        code_block_overflow_x_scroll: true,
+        code_block: StyleRefinement {
+            margin: EdgesRefinement::default(),
+            padding: EdgesRefinement::default(),
+            background: Some(colors.editor_background.into()),
+            border_color: None,
+            border_widths: EdgesRefinement::default(),
+            text: Some(TextStyleRefinement {
+                font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                font_features: Some(theme_settings.buffer_font.features.clone()),
+                font_size: Some(buffer_font_size.into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        inline_code: TextStyleRefinement {
+            font_family: Some(theme_settings.buffer_font.family.clone()),
+            font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+            font_features: Some(theme_settings.buffer_font.features.clone()),
+            font_size: Some(TextSize::XSmall.rems(cx).into()),
+            ..Default::default()
+        },
+        heading: StyleRefinement {
+            text: Some(TextStyleRefinement {
+                font_size: Some(ui_font_size.into()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -320,6 +408,7 @@ fn open_markdown_link(
                 });
             }
         }),
+        Some(MentionLink::Fetch(url)) => cx.open_url(&url),
         None => cx.open_url(&text),
     }
 }
@@ -360,11 +449,13 @@ impl ActiveThread {
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
-            rendered_tool_use_labels: HashMap::default(),
+            rendered_tool_uses: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
             expanded_thinking_segments: HashMap::default(),
             list_state: list_state.clone(),
             scrollbar_state: ScrollbarState::new(list_state),
+            show_scrollbar: false,
+            hide_scrollbar_task: None,
             editing_message: None,
             last_error: None,
             notifications: Vec::new(),
@@ -377,9 +468,11 @@ impl ActiveThread {
             this.push_message(&message.id, &message.segments, window, cx);
 
             for tool_use in thread.read(cx).tool_uses_for_message(message.id, cx) {
-                this.render_tool_use_label_markdown(
+                this.render_tool_use_markdown(
                     tool_use.id.clone(),
                     tool_use.ui_text.clone(),
+                    &tool_use.input,
+                    tool_use.status.text(),
                     window,
                     cx,
                 );
@@ -470,23 +563,44 @@ impl ActiveThread {
         self.rendered_messages_by_id.remove(id);
     }
 
-    fn render_tool_use_label_markdown(
+    fn render_tool_use_markdown(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         tool_label: impl Into<SharedString>,
+        tool_input: &serde_json::Value,
+        tool_output: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.rendered_tool_use_labels.insert(
-            tool_use_id,
-            render_markdown(
+        let rendered = RenderedToolUse {
+            label: render_tool_use_markdown(
                 tool_label.into(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
                 window,
                 cx,
             ),
-        );
+            input: render_tool_use_markdown(
+                format!(
+                    "```json\n{}\n```",
+                    serde_json::to_string_pretty(tool_input).unwrap_or_default()
+                )
+                .into(),
+                self.language_registry.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            ),
+            output: render_tool_use_markdown(
+                tool_output,
+                self.language_registry.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            ),
+        };
+        self.rendered_tool_uses
+            .insert(tool_use_id.clone(), rendered);
     }
 
     fn handle_thread_event(
@@ -500,7 +614,9 @@ impl ActiveThread {
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
             }
-            ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
+            ThreadEvent::StreamedCompletion
+            | ThreadEvent::SummaryGenerated
+            | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
             ThreadEvent::DoneStreaming => {
@@ -569,9 +685,11 @@ impl ActiveThread {
                     .update(cx, |thread, cx| thread.use_pending_tools(cx));
 
                 for tool_use in tool_uses {
-                    self.render_tool_use_label_markdown(
+                    self.render_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
+                        &tool_use.input,
+                        "".into(),
                         window,
                         cx,
                     );
@@ -584,9 +702,15 @@ impl ActiveThread {
             } => {
                 let canceled = *canceled;
                 if let Some(tool_use) = pending_tool_use {
-                    self.render_tool_use_label_markdown(
+                    self.render_tool_use_markdown(
                         tool_use.id.clone(),
-                        SharedString::from(tool_use.ui_text.clone()),
+                        tool_use.ui_text.clone(),
+                        &tool_use.input,
+                        self.thread
+                            .read(cx)
+                            .tool_result(&tool_use.id)
+                            .map(|result| result.content.clone().into())
+                            .unwrap_or("".into()),
                         window,
                         cx,
                     );
@@ -594,7 +718,7 @@ impl ActiveThread {
 
                 if self.thread.read(cx).all_tools_finished() {
                     let model_registry = LanguageModelRegistry::read_global(cx);
-                    if let Some(model) = model_registry.active_model() {
+                    if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
                         self.thread.update(cx, |thread, cx| {
                             thread.attach_tool_results(cx);
                             if !canceled {
@@ -802,21 +926,17 @@ impl ActiveThread {
             }
         });
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        if provider
-            .as_ref()
-            .map_or(false, |provider| provider.must_accept_terms(cx))
-        {
-            cx.notify();
-            return;
-        }
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
 
+        if model.provider.must_accept_terms(cx) {
+            cx.notify();
+            return;
+        }
+
         self.thread.update(cx, |thread, cx| {
-            thread.send_to_model(model, RequestKind::Chat, cx)
+            thread.send_to_model(model.model, RequestKind::Chat, cx)
         });
         cx.notify();
     }
@@ -1247,7 +1367,7 @@ impl ActiveThread {
                 .pb_2p5()
                 .when(!tool_uses.is_empty(), |parent| {
                     parent.child(
-                        v_flex().children(
+                        div().children(
                             tool_uses
                                 .into_iter()
                                 .map(|tool_use| self.render_tool_use(tool_use, cx)),
@@ -1681,11 +1801,13 @@ impl ActiveThread {
             }
         });
 
-        let content_container = || v_flex().py_1().gap_0p5().px_2p5();
+        let rendered_tool_use = self.rendered_tool_uses.get(&tool_use.id).cloned();
+        let results_content_container = || v_flex().p_2().gap_0p5();
+
         let results_content = v_flex()
             .gap_1()
             .child(
-                content_container()
+                results_content_container()
                     .child(
                         Label::new("Input")
                             .size(LabelSize::XSmall)
@@ -1693,16 +1815,16 @@ impl ActiveThread {
                             .buffer_font(cx),
                     )
                     .child(
-                        Label::new(
-                            serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
-                        )
-                        .size(LabelSize::Small)
-                        .buffer_font(cx),
+                        div().w_full().text_ui_sm(cx).children(
+                            rendered_tool_use
+                                .as_ref()
+                                .map(|rendered| rendered.input.clone()),
+                        ),
                     ),
             )
             .map(|container| match tool_use.status {
-                ToolUseStatus::Finished(output) => container.child(
-                    content_container()
+                ToolUseStatus::Finished(_) => container.child(
+                    results_content_container()
                         .border_t_1()
                         .border_color(self.tool_card_border_color(cx))
                         .child(
@@ -1711,10 +1833,16 @@ impl ActiveThread {
                                 .color(Color::Muted)
                                 .buffer_font(cx),
                         )
-                        .child(Label::new(output).size(LabelSize::Small).buffer_font(cx)),
+                        .child(
+                            div().w_full().text_ui_sm(cx).children(
+                                rendered_tool_use
+                                    .as_ref()
+                                    .map(|rendered| rendered.output.clone()),
+                            ),
+                        ),
                 ),
                 ToolUseStatus::Running => container.child(
-                    content_container().child(
+                    results_content_container().child(
                         h_flex()
                             .gap_1()
                             .pb_1()
@@ -1742,8 +1870,8 @@ impl ActiveThread {
                             ),
                     ),
                 ),
-                ToolUseStatus::Error(err) => container.child(
-                    content_container()
+                ToolUseStatus::Error(_) => container.child(
+                    results_content_container()
                         .border_t_1()
                         .border_color(self.tool_card_border_color(cx))
                         .child(
@@ -1752,11 +1880,17 @@ impl ActiveThread {
                                 .color(Color::Muted)
                                 .buffer_font(cx),
                         )
-                        .child(Label::new(err).size(LabelSize::Small).buffer_font(cx)),
+                        .child(
+                            div().text_ui_sm(cx).children(
+                                rendered_tool_use
+                                    .as_ref()
+                                    .map(|rendered| rendered.output.clone()),
+                            ),
+                        ),
                 ),
                 ToolUseStatus::Pending => container,
                 ToolUseStatus::NeedsConfirmation => container.child(
-                    content_container()
+                    results_content_container()
                         .border_t_1()
                         .border_color(self.tool_card_border_color(cx))
                         .child(
@@ -1772,13 +1906,13 @@ impl ActiveThread {
             div()
                 .h_full()
                 .absolute()
-                .w_8()
+                .w_12()
                 .bottom_0()
                 .map(|element| {
                     if is_status_finished {
-                        element.right_7()
+                        element.right_6()
                     } else {
-                        element.right(px(46.))
+                        element.right(px(44.))
                     }
                 })
                 .bg(linear_gradient(
@@ -1814,9 +1948,7 @@ impl ActiveThread {
                                         )
                                         .child(
                                             h_flex().pr_8().text_ui_sm(cx).children(
-                                                self.rendered_tool_use_labels
-                                                    .get(&tool_use.id)
-                                                    .cloned(),
+                                                rendered_tool_use.map(|rendered| rendered.label)
                                             ),
                                         ),
                                 )
@@ -1904,9 +2036,7 @@ impl ActiveThread {
                                     )
                                     .child(
                                         h_flex().pr_8().text_ui_sm(cx).children(
-                                            self.rendered_tool_use_labels
-                                                .get(&tool_use.id)
-                                                .cloned(),
+                                            rendered_tool_use.map(|rendered| rendered.label)
                                         ),
                                     ),
                             )
@@ -2187,37 +2317,60 @@ impl ActiveThread {
         }
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("active-thread-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        if !self.show_scrollbar && !self.scrollbar_state.is_dragging() {
+            return None;
+        }
+
+        Some(
+            div()
+                .occlude()
+                .id("active-thread-scrollbar")
+                .on_mouse_move(cx.listener(|_, _, _, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, _, cx| {
                     cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
+                })
+                .on_any_mouse_down(|_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|_, _, _, cx| {
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                    cx.notify();
+                }))
+                .h_full()
+                .absolute()
+                .right_1()
+                .top_1()
+                .bottom_0()
+                .w(px(12.))
+                .cursor_default()
+                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
+        )
+    }
+
+    fn hide_scrollbar_later(&mut self, cx: &mut Context<Self>) {
+        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+        self.hide_scrollbar_task = Some(cx.spawn(async move |thread, cx| {
+            cx.background_executor()
+                .timer(SCROLLBAR_SHOW_INTERVAL)
+                .await;
+            thread
+                .update(cx, |thread, cx| {
+                    if !thread.scrollbar_state.is_dragging() {
+                        thread.show_scrollbar = false;
+                        cx.notify();
+                    }
+                })
+                .log_err();
+        }))
     }
 }
 
@@ -2226,8 +2379,26 @@ impl Render for ActiveThread {
         v_flex()
             .size_full()
             .relative()
+            .on_mouse_move(cx.listener(|this, _, _, cx| {
+                this.show_scrollbar = true;
+                this.hide_scrollbar_later(cx);
+                cx.notify();
+            }))
+            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                this.show_scrollbar = true;
+                this.hide_scrollbar_later(cx);
+                cx.notify();
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.hide_scrollbar_later(cx);
+                }),
+            )
             .child(list(self.list_state.clone()).flex_grow())
-            .child(self.render_vertical_scrollbar(cx))
+            .when_some(self.render_vertical_scrollbar(cx), |this, scrollbar| {
+                this.child(scrollbar)
+            })
     }
 }
 

@@ -13,12 +13,12 @@ use fs::Fs;
 use gpui::{App, Entity, Focusable, Global, Subscription, UpdateGlobal, WeakEntity};
 use language::Buffer;
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
-    report_assistant_event,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    Role, report_assistant_event,
 };
 use prompt_store::PromptBuilder;
 use std::sync::Arc;
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::TerminalView;
 use ui::prelude::*;
 use util::ResultExt;
@@ -286,11 +286,13 @@ impl TerminalInlineAssistant {
                 })
                 .log_err();
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            if let Some(ConfiguredModel { model, .. }) =
+                LanguageModelRegistry::read_global(cx).inline_assistant_model()
+            {
                 let codegen = assist.codegen.read(cx);
                 let executor = cx.background_executor().clone();
                 report_assistant_event(
-                    AssistantEvent {
+                    AssistantEventData {
                         conversation_id: None,
                         kind: AssistantKind::InlineTerminal,
                         message_id: codegen.message_id.clone(),
