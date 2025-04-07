@@ -709,51 +709,45 @@ impl Element for MarkdownElement {
                                                     })
                                             }),
                                         CodeBlockKind::FencedSrc(path_range) => {
-                                            if let Some(project_path) = window
-                                                .root::<Workspace>()
-                                                .flatten()
-                                                .and_then(|workspace| {
-                                                    workspace
-                                                        .read(cx)
-                                                        .project()
-                                                        .read(cx)
-                                                        .find_project_path(&path_range.path, cx)
-                                                })
-                                            {
-                                                file_icons::FileIcons::get_icon(
-                                                    &project_path.path,
-                                                    cx,
-                                                )
+                                            file_icons::FileIcons::get_icon(&path_range.path, cx)
                                                 .map(Icon::from_path)
                                                 .map(|icon| {
                                                     icon.color(Color::Muted)
                                                         .size(IconSize::XSmall)
                                                         .into_any_element()
                                                 })
-                                            } else {
-                                                None
-                                            }
                                         }
                                     };
 
                                     let label = match kind {
                                         CodeBlockKind::Indented => None,
                                         CodeBlockKind::Fenced => Some(
-                                            Label::new("untitled")
-                                                .size(LabelSize::Small)
+                                            h_flex()
+                                                .gap_1()
+                                                .children(icon)
+                                                .child(
+                                                    Label::new("untitled").size(LabelSize::Small),
+                                                )
                                                 .into_any_element(),
                                         ),
                                         CodeBlockKind::FencedLang(raw_language_name) => Some(
-                                            Label::new(
-                                                parsed_markdown
-                                                    .languages_by_name
-                                                    .get(raw_language_name)
-                                                    .map(|language| language.name().into())
-                                                    .clone()
-                                                    .unwrap_or_else(|| raw_language_name.clone()),
-                                            )
-                                            .size(LabelSize::Small)
-                                            .into_any_element(),
+                                            h_flex()
+                                                .gap_1()
+                                                .children(icon)
+                                                .child(
+                                                    Label::new(
+                                                        parsed_markdown
+                                                            .languages_by_name
+                                                            .get(raw_language_name)
+                                                            .map(|language| language.name().into())
+                                                            .clone()
+                                                            .unwrap_or_else(|| {
+                                                                raw_language_name.clone()
+                                                            }),
+                                                    )
+                                                    .size(LabelSize::Small),
+                                                )
+                                                .into_any_element(),
                                         ),
                                         CodeBlockKind::FencedSrc(path_range) => {
                                             path_range.path.file_name().map(|file_name| {
@@ -761,6 +755,7 @@ impl Element for MarkdownElement {
                                                     path_range.path.parent()
                                                 {
                                                     h_flex()
+                                                        .ml_1()
                                                         .gap_1()
                                                         .child(
                                                             Label::new(
@@ -788,6 +783,7 @@ impl Element for MarkdownElement {
                                                             .to_string(),
                                                     )
                                                     .size(LabelSize::Small)
+                                                    .ml_1()
                                                     .into_any_element()
                                                 };
 
@@ -803,9 +799,13 @@ impl Element for MarkdownElement {
                                                             .map(|path| (workspace, path))
                                                     });
 
-                                                div()
+                                                h_flex()
                                                     .id(("code-block-header-label", index))
+                                                    .w_full()
+                                                    .max_w_full()
                                                     .px_1()
+                                                    .gap_0p5()
+                                                    .children(icon)
                                                     .child(content)
                                                     .when_some(
                                                         project_path,
@@ -816,11 +816,19 @@ impl Element for MarkdownElement {
                                                                     item.bg(cx
                                                                         .theme()
                                                                         .colors()
-                                                                        .editor_background)
+                                                                        .element_hover
+                                                                        .opacity(0.5))
                                                                 })
                                                                 .tooltip(Tooltip::text(
                                                                     "Jump to file",
                                                                 ))
+                                                                .child(
+                                                                    Icon::new(
+                                                                        IconName::ArrowUpRight,
+                                                                    )
+                                                                    .size(IconSize::XSmall)
+                                                                    .color(Color::Ignored),
+                                                                )
                                                                 .on_click(move |_, window, cx| {
                                                                     workspace.update(cx, {
                                                                         let project_path =
@@ -849,7 +857,7 @@ impl Element for MarkdownElement {
 
                                     let code_block_header_bg =
                                         cx.theme().colors().element_background.blend(
-                                            cx.theme().colors().editor_foreground.opacity(0.025),
+                                            cx.theme().colors().editor_foreground.opacity(0.01),
                                         );
 
                                     let code = without_fences(
@@ -858,14 +866,14 @@ impl Element for MarkdownElement {
                                     .to_string();
 
                                     let codeblock_header = h_flex()
-                                        .py_0p5()
-                                        .px_1()
+                                        .p_1()
+                                        .gap_1()
                                         .justify_between()
                                         .border_b_1()
                                         .border_color(cx.theme().colors().border_variant)
                                         .bg(code_block_header_bg)
                                         .rounded_t_md()
-                                        .child(h_flex().gap_1p5().children(icon).children(label))
+                                        .children(label)
                                         .child(render_copy_code_block_button(
                                             index,
                                             code,
