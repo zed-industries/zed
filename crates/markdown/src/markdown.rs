@@ -14,7 +14,7 @@ use std::time::Duration;
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, KeyContext,
-    Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Render, Stateful,
+    Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Stateful,
     StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, actions, point, quad,
 };
@@ -74,7 +74,6 @@ pub struct Markdown {
     selection: Selection,
     pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
-    style: MarkdownStyle,
     parsed_markdown: ParsedMarkdown,
     should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
@@ -97,7 +96,6 @@ actions!(markdown, [Copy]);
 impl Markdown {
     pub fn new(
         source: SharedString,
-        style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
         cx: &mut Context<Self>,
@@ -108,7 +106,6 @@ impl Markdown {
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
-            style,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
@@ -136,14 +133,13 @@ impl Markdown {
         }
     }
 
-    pub fn new_text(source: SharedString, style: MarkdownStyle, cx: &mut Context<Self>) -> Self {
+    pub fn new_text(source: SharedString, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
             source,
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
-            style,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
@@ -275,12 +271,6 @@ impl Markdown {
     }
 }
 
-impl Render for Markdown {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        MarkdownElement::new(cx.entity().clone(), self.style.clone())
-    }
-}
-
 impl Focusable for Markdown {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -341,7 +331,7 @@ pub struct MarkdownElement {
 }
 
 impl MarkdownElement {
-    fn new(markdown: Entity<Markdown>, style: MarkdownStyle) -> Self {
+    pub fn new(markdown: Entity<Markdown>, style: MarkdownStyle) -> Self {
         Self { markdown, style }
     }
 
@@ -638,6 +628,10 @@ impl Element for MarkdownElement {
                                     // If the path actually exists in the project, render a link to it.
                                     if let Some(project_path) =
                                         window.root::<Workspace>().flatten().and_then(|workspace| {
+                                            if path_range.path.is_absolute() {
+                                                return None;
+                                            }
+
                                             workspace
                                                 .read(cx)
                                                 .project()
