@@ -628,6 +628,10 @@ impl Element for MarkdownElement {
                                     // If the path actually exists in the project, render a link to it.
                                     if let Some(project_path) =
                                         window.root::<Workspace>().flatten().and_then(|workspace| {
+                                            if path_range.path.is_absolute() {
+                                                return None;
+                                            }
+
                                             workspace
                                                 .read(cx)
                                                 .project()
