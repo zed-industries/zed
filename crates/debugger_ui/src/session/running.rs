@@ -7,11 +7,12 @@ pub mod variable_list;
 use std::{any::Any, ops::ControlFlow, sync::Arc};
 
 use super::DebugPanelItemEvent;
+use collections::HashMap;
 use console::Console;
 use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
 use gpui::{
-    Action as _, AnyView, AppContext, Entity, EventEmitter, FocusHandle, Focusable, NoAction,
-    Subscription, WeakEntity,
+    Action as _, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    NoAction, Subscription, WeakEntity,
 };
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
@@ -28,7 +29,10 @@ use ui::{
 };
 use util::ResultExt;
 use variable_list::VariableList;
-use workspace::{ActivePaneDecorator, DraggedTab, Item, Pane, PaneGroup, Workspace, move_item};
+use workspace::{
+    ActivePaneDecorator, DraggedTab, Item, Pane, PaneAxis, PaneGroup, Workspace, move_item,
+    pane::Event,
+};
 
 pub struct RunningState {
     session: Entity<Session>,
@@ -43,6 +47,7 @@ pub struct RunningState {
     _module_list: Entity<module_list::ModuleList>,
     _console: Entity<Console>,
     panes: PaneGroup,
+    pane_close_subscriptions: HashMap<EntityId, Subscription>,
 }
 
 impl Render for RunningState {
@@ -152,7 +157,11 @@ fn new_debugger_pane(
                     weak_running.update(cx, |running, cx| {
                         let new_pane =
                             new_debugger_pane(workspace.clone(), project.clone(), window, cx);
-
+                        let _previous_subscription = running.pane_close_subscriptions.insert(
+                            new_pane.entity_id(),
+                            cx.subscribe(&new_pane, RunningState::handle_pane_event),
+                        );
+                        debug_assert!(_previous_subscription.is_none());
                         running
                             .panes
                             .split(&this_pane, &new_pane, split_direction)?;
@@ -195,7 +204,7 @@ fn new_debugger_pane(
         }
     };
 
-    cx.new(move |cx| {
+    let ret = cx.new(move |cx| {
         let mut pane = Pane::new(
             workspace.clone(),
             project.clone(),
@@ -235,7 +244,9 @@ fn new_debugger_pane(
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
         pane
-    })
+    });
+
+    ret
 }
 impl RunningState {
     pub fn new(
@@ -295,10 +306,8 @@ impl RunningState {
             }),
         ];
 
-        let root = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
-
-        let mut panes = PaneGroup::new(root.clone());
-        root.update(cx, |this, cx| {
+        let leftmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        leftmost_pane.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
                     this.focus_handle(cx),
@@ -313,8 +322,8 @@ impl RunningState {
                 cx,
             );
         });
-        let second = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
-        second.update(cx, |this, cx| {
+        let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        center_pane.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
                     variable_list.focus_handle(cx),
@@ -342,11 +351,8 @@ impl RunningState {
                 cx,
             );
         });
-        panes
-            .split(&root, &second.clone(), workspace::SplitDirection::Right)
-            .log_err();
-        let third_column = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
-        third_column.update(cx, |this, cx| {
+        let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        rightmost_pane.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
                     this.focus_handle(cx),
@@ -361,13 +367,25 @@ impl RunningState {
                 cx,
             );
         });
-        panes
-            .split(
-                &second,
-                &third_column.clone(),
-                workspace::SplitDirection::Right,
-            )
-            .log_err();
+        let pane_close_subscriptions = HashMap::from_iter(
+            [&leftmost_pane, &center_pane, &rightmost_pane]
+                .into_iter()
+                .map(|entity| {
+                    (
+                        entity.entity_id(),
+                        cx.subscribe(entity, Self::handle_pane_event),
+                    )
+                }),
+        );
+        let group_root = workspace::PaneAxis::new(
+            gpui::Axis::Horizontal,
+            [leftmost_pane, center_pane, rightmost_pane]
+                .into_iter()
+                .map(workspace::Member::Pane)
+                .collect(),
+        );
+
+        let panes = PaneGroup::with_root(workspace::Member::Axis(group_root));
 
         Self {
             session,
@@ -382,9 +400,22 @@ impl RunningState {
             panes,
             _module_list: module_list,
             _console: console,
+            pane_close_subscriptions,
         }
     }
 
+    fn handle_pane_event(
+        this: &mut RunningState,
+        source_pane: Entity<Pane>,
+        event: &Event,
+        cx: &mut Context<RunningState>,
+    ) {
+        if let Event::Remove { .. } = event {
+            let _did_find_pane = this.panes.remove(&source_pane).is_ok();
+            debug_assert!(_did_find_pane);
+            cx.notify();
+        }
+    }
     pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
