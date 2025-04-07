@@ -310,7 +310,7 @@ fn show_hover(
                 let mut background_color: Option<Hsla> = None;
 
                 let parsed_content = cx
-                    .new_window_entity(|window, cx| {
+                    .new_window_entity(|_window, cx| {
                         let status_colors = cx.theme().status();
 
                         match local_diagnostic.diagnostic.severity {
@@ -335,30 +335,36 @@ fn show_hover(
                                 border_color = Some(status_colors.ignored_border);
                             }
                         };
-                        let settings = ThemeSettings::get_global(cx);
-                        let mut base_text_style = window.text_style();
-                        base_text_style.refine(&TextStyleRefinement {
-                            font_family: Some(settings.ui_font.family.clone()),
-                            font_fallbacks: settings.ui_font.fallbacks.clone(),
-                            font_size: Some(settings.ui_font_size(cx).into()),
-                            color: Some(cx.theme().colors().editor_foreground),
-                            background_color: Some(gpui::transparent_black()),
 
-                            ..Default::default()
-                        });
-                        let markdown_style = MarkdownStyle {
-                            base_text_style,
-                            selection_background_color: { cx.theme().players().local().selection },
-                            link: TextStyleRefinement {
-                                underline: Some(gpui::UnderlineStyle {
-                                    thickness: px(1.),
-                                    color: Some(cx.theme().colors().editor_foreground),
-                                    wavy: false,
-                                }),
+                        fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+                            let settings = ThemeSettings::get_global(cx);
+                            let mut base_text_style = window.text_style();
+                            base_text_style.refine(&TextStyleRefinement {
+                                font_family: Some(settings.ui_font.family.clone()),
+                                font_fallbacks: settings.ui_font.fallbacks.clone(),
+                                font_size: Some(settings.ui_font_size(cx).into()),
+                                color: Some(cx.theme().colors().editor_foreground),
+                                background_color: Some(gpui::transparent_black()),
+
                                 ..Default::default()
-                            },
-                            ..Default::default()
-                        };
+                            });
+                            MarkdownStyle {
+                                base_text_style,
+                                selection_background_color: {
+                                    cx.theme().players().local().selection
+                                },
+                                link: TextStyleRefinement {
+                                    underline: Some(gpui::UnderlineStyle {
+                                        thickness: px(1.),
+                                        color: Some(cx.theme().colors().editor_foreground),
+                                        wavy: false,
+                                    }),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            }
+                        }
+
                         Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
                             .open_url(open_markdown_url)
                     })
@@ -563,10 +569,10 @@ async fn parse_blocks(
         .join("\n\n");
 
     let rendered_block = cx
-        .new_window_entity(|window, cx| {
+        .new_window_entity(|_window, cx| {
             Markdown::new(
                 combined_text.into(),
-                hover_markdown_style(window, cx),
+                hover_markdown_style,
                 Some(language_registry.clone()),
                 fallback_language_name,
                 cx,

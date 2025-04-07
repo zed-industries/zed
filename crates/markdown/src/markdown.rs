@@ -70,7 +70,7 @@ pub struct Markdown {
     selection: Selection,
     pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
-    style: MarkdownStyle,
+    style: Box<dyn Fn(&Window, &App) -> MarkdownStyle>,
     parsed_markdown: ParsedMarkdown,
     should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
@@ -93,7 +93,7 @@ actions!(markdown, [Copy]);
 impl Markdown {
     pub fn new(
         source: SharedString,
-        style: MarkdownStyle,
+        style: impl Fn(&Window, &App) -> MarkdownStyle + 'static,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
         cx: &mut Context<Self>,
@@ -104,7 +104,7 @@ impl Markdown {
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
-            style,
+            style: Box::new(style),
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
@@ -132,14 +132,18 @@ impl Markdown {
         }
     }
 
-    pub fn new_text(source: SharedString, style: MarkdownStyle, cx: &mut Context<Self>) -> Self {
+    pub fn new_text(
+        source: SharedString,
+        style: impl Fn(&Window, &App) -> MarkdownStyle + 'static,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
             source,
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
-            style,
+            style: Box::new(style),
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
@@ -263,8 +267,12 @@ impl Markdown {
 }
 
 impl Render for Markdown {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        MarkdownElement::new(cx.entity().clone(), self.style.clone())
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        MarkdownElement::new(
+            cx.entity().clone(),
+            // TODO: cache?
+            (self.style)(window, cx),
+        )
     }
 }
 

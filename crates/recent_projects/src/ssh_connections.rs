@@ -180,6 +180,30 @@ impl SshPrompt {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+            let theme = ThemeSettings::get_global(cx);
+
+            let mut text_style = window.text_style();
+            let refinement = TextStyleRefinement {
+                font_family: Some(theme.buffer_font.family.clone()),
+                font_features: Some(FontFeatures::disable_ligatures()),
+                font_size: Some(theme.buffer_font_size(cx).into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(gpui::transparent_black()),
+                ..Default::default()
+            };
+
+            text_style.refine(&refinement);
+
+            MarkdownStyle {
+                base_text_style: text_style,
+                selection_background_color: cx.theme().players().local().selection,
+                ..Default::default()
+            }
+        }
+
+        // todo! remove duplication
+
         let theme = ThemeSettings::get_global(cx);
 
         let mut text_style = window.text_style();
@@ -202,11 +226,6 @@ impl SshPrompt {
             editor.set_text_style_refinement(refinement);
             editor.set_cursor_shape(CursorShape::Block, cx);
         });
-        let markdown_style = MarkdownStyle {
-            base_text_style: text_style,
-            selection_background_color: cx.theme().players().local().selection,
-            ..Default::default()
-        };
         let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();

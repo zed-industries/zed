@@ -597,7 +597,7 @@ impl CompletionsMenu {
         &mut self,
         editor: &Editor,
         max_size: Size<Pixels>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         if !self.show_completion_documentation {
@@ -623,7 +623,7 @@ impl CompletionsMenu {
                             .map(|l| l.name().to_proto());
                         Markdown::new(
                             SharedString::default(),
-                            hover_markdown_style(window, cx),
+                            hover_markdown_style,
                             languages,
                             language,
                             cx,

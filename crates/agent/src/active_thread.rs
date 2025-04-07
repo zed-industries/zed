@@ -17,8 +17,8 @@ use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength,
     EdgesRefinement, Empty, Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton,
     PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription, Task,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
-    linear_color_stop, linear_gradient, list, percentage, pulsating_between,
+    TextStyleRefinement, Transformation, WeakEntity, WindowHandle, linear_color_stop,
+    linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -183,90 +183,83 @@ fn render_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
     workspace: WeakEntity<Workspace>,
-    window: &Window,
+    _window: &Window,
     cx: &mut App,
 ) -> Entity<Markdown> {
-    let theme_settings = ThemeSettings::get_global(cx);
-    let colors = cx.theme().colors();
-    let ui_font_size = TextSize::Default.rems(cx);
-    let buffer_font_size = TextSize::Small.rems(cx);
-    let mut text_style = window.text_style();
+    fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let colors = cx.theme().colors();
+        let ui_font_size = TextSize::Default.rems(cx);
+        let buffer_font_size = TextSize::Small.rems(cx);
+        let mut text_style = window.text_style();
 
-    text_style.refine(&TextStyleRefinement {
-        font_family: Some(theme_settings.ui_font.family.clone()),
-        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
-        font_features: Some(theme_settings.ui_font.features.clone()),
-        font_size: Some(ui_font_size.into()),
-        color: Some(cx.theme().colors().text),
-        ..Default::default()
-    });
+        text_style.refine(&TextStyleRefinement {
+            font_family: Some(theme_settings.ui_font.family.clone()),
+            font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+            font_features: Some(theme_settings.ui_font.features.clone()),
+            font_size: Some(ui_font_size.into()),
+            color: Some(cx.theme().colors().text),
+            ..Default::default()
+        });
 
-    let markdown_style = MarkdownStyle {
-        base_text_style: text_style,
-        syntax: cx.theme().syntax().clone(),
-        selection_background_color: cx.theme().players().local().selection,
-        code_block_overflow_x_scroll: true,
-        table_overflow_x_scroll: true,
-        code_block: StyleRefinement {
-            margin: EdgesRefinement {
-                top: Some(Length::Definite(rems(0.).into())),
-                left: Some(Length::Definite(rems(0.).into())),
-                right: Some(Length::Definite(rems(0.).into())),
-                bottom: Some(Length::Definite(rems(0.5).into())),
+        MarkdownStyle {
+            base_text_style: text_style,
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: cx.theme().players().local().selection,
+            code_block_overflow_x_scroll: true,
+            table_overflow_x_scroll: true,
+            code_block: StyleRefinement {
+                margin: EdgesRefinement {
+                    top: Some(Length::Definite(rems(0.).into())),
+                    left: Some(Length::Definite(rems(0.).into())),
+                    right: Some(Length::Definite(rems(0.).into())),
+                    bottom: Some(Length::Definite(rems(0.5).into())),
+                },
+                padding: EdgesRefinement {
+                    top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                },
+                background: Some(colors.editor_background.into()),
+                border_color: Some(colors.border_variant),
+                border_widths: EdgesRefinement {
+                    top: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                    left: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                    right: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                    bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                },
+                text: Some(TextStyleRefinement {
+                    font_family: Some(theme_settings.buffer_font.family.clone()),
+                    font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                    font_features: Some(theme_settings.buffer_font.features.clone()),
+                    font_size: Some(buffer_font_size.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
             },
-            padding: EdgesRefinement {
-                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-            },
-            background: Some(colors.editor_background.into()),
-            border_color: Some(colors.border_variant),
-            border_widths: EdgesRefinement {
-                top: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                left: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                right: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
-            },
-            text: Some(TextStyleRefinement {
+            inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
+                background_color: Some(colors.editor_foreground.opacity(0.1)),
                 ..Default::default()
-            }),
+            },
+            link_callback: Some(Rc::new(move |url, cx| {
+                if MentionLink::is_valid(url) {
+                    let colors = cx.theme().colors();
+                    Some(TextStyleRefinement {
+                        background_color: Some(colors.element_background),
+                        ..Default::default()
+                    })
+                } else {
+                    None
+                }
+            })),
             ..Default::default()
-        },
-        inline_code: TextStyleRefinement {
-            font_family: Some(theme_settings.buffer_font.family.clone()),
-            font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
-            font_features: Some(theme_settings.buffer_font.features.clone()),
-            font_size: Some(buffer_font_size.into()),
-            background_color: Some(colors.editor_foreground.opacity(0.08)),
-            ..Default::default()
-        },
-        link: TextStyleRefinement {
-            background_color: Some(colors.editor_foreground.opacity(0.025)),
-            underline: Some(UnderlineStyle {
-                color: Some(colors.text_accent.opacity(0.5)),
-                thickness: px(1.),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        link_callback: Some(Rc::new(move |url, cx| {
-            if MentionLink::is_valid(url) {
-                let colors = cx.theme().colors();
-                Some(TextStyleRefinement {
-                    background_color: Some(colors.element_background),
-                    ..Default::default()
-                })
-            } else {
-                None
-            }
-        })),
-        ..Default::default()
-    };
+        }
+    }
 
     cx.new(|cx| {
         Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(
@@ -281,60 +274,62 @@ fn render_tool_use_markdown(
     text: SharedString,
     language_registry: Arc<LanguageRegistry>,
     workspace: WeakEntity<Workspace>,
-    window: &Window,
+    _window: &Window,
     cx: &mut App,
 ) -> Entity<Markdown> {
-    let theme_settings = ThemeSettings::get_global(cx);
-    let colors = cx.theme().colors();
-    let ui_font_size = TextSize::Default.rems(cx);
-    let buffer_font_size = TextSize::Small.rems(cx);
-    let mut text_style = window.text_style();
+    fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let colors = cx.theme().colors();
+        let ui_font_size = TextSize::Default.rems(cx);
+        let buffer_font_size = TextSize::Small.rems(cx);
+        let mut text_style = window.text_style();
 
-    text_style.refine(&TextStyleRefinement {
-        font_family: Some(theme_settings.ui_font.family.clone()),
-        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
-        font_features: Some(theme_settings.ui_font.features.clone()),
-        font_size: Some(ui_font_size.into()),
-        color: Some(cx.theme().colors().text),
-        ..Default::default()
-    });
+        text_style.refine(&TextStyleRefinement {
+            font_family: Some(theme_settings.ui_font.family.clone()),
+            font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+            font_features: Some(theme_settings.ui_font.features.clone()),
+            font_size: Some(ui_font_size.into()),
+            color: Some(cx.theme().colors().text),
+            ..Default::default()
+        });
 
-    let markdown_style = MarkdownStyle {
-        base_text_style: text_style,
-        syntax: cx.theme().syntax().clone(),
-        selection_background_color: cx.theme().players().local().selection,
-        code_block_overflow_x_scroll: true,
-        code_block: StyleRefinement {
-            margin: EdgesRefinement::default(),
-            padding: EdgesRefinement::default(),
-            background: Some(colors.editor_background.into()),
-            border_color: None,
-            border_widths: EdgesRefinement::default(),
-            text: Some(TextStyleRefinement {
+        MarkdownStyle {
+            base_text_style: text_style,
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: cx.theme().players().local().selection,
+            code_block_overflow_x_scroll: true,
+            code_block: StyleRefinement {
+                margin: EdgesRefinement::default(),
+                padding: EdgesRefinement::default(),
+                background: Some(colors.editor_background.into()),
+                border_color: None,
+                border_widths: EdgesRefinement::default(),
+                text: Some(TextStyleRefinement {
+                    font_family: Some(theme_settings.buffer_font.family.clone()),
+                    font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                    font_features: Some(theme_settings.buffer_font.features.clone()),
+                    font_size: Some(buffer_font_size.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                 font_features: Some(theme_settings.buffer_font.features.clone()),
-                font_size: Some(buffer_font_size.into()),
+                font_size: Some(TextSize::XSmall.rems(cx).into()),
                 ..Default::default()
-            }),
-            ..Default::default()
-        },
-        inline_code: TextStyleRefinement {
-            font_family: Some(theme_settings.buffer_font.family.clone()),
-            font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
-            font_features: Some(theme_settings.buffer_font.features.clone()),
-            font_size: Some(TextSize::XSmall.rems(cx).into()),
-            ..Default::default()
-        },
-        heading: StyleRefinement {
-            text: Some(TextStyleRefinement {
-                font_size: Some(ui_font_size.into()),
+            },
+            heading: StyleRefinement {
+                text: Some(TextStyleRefinement {
+                    font_size: Some(ui_font_size.into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    };
+        }
+    }
 
     cx.new(|cx| {
         Markdown::new(text, markdown_style, Some(language_registry), None, cx).open_url(

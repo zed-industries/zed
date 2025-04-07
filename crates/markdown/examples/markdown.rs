@@ -48,46 +48,6 @@ pub fn main() {
         cx.activate(true);
         cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|cx| {
-                let markdown_style = MarkdownStyle {
-                    base_text_style: gpui::TextStyle {
-                        font_family: "Zed Plex Sans".into(),
-                        color: cx.theme().colors().terminal_ansi_black,
-                        ..Default::default()
-                    },
-                    code_block: StyleRefinement::default()
-                        .font_family("Zed Plex Mono")
-                        .m(rems(1.))
-                        .bg(rgb(0xAAAAAAA)),
-                    inline_code: gpui::TextStyleRefinement {
-                        font_family: Some("Zed Mono".into()),
-                        color: Some(cx.theme().colors().editor_foreground),
-                        background_color: Some(cx.theme().colors().editor_background),
-                        ..Default::default()
-                    },
-                    rule_color: Color::Muted.color(cx),
-                    block_quote_border_color: Color::Muted.color(cx),
-                    block_quote: gpui::TextStyleRefinement {
-                        color: Some(Color::Muted.color(cx)),
-                        ..Default::default()
-                    },
-                    link: gpui::TextStyleRefinement {
-                        color: Some(Color::Accent.color(cx)),
-                        underline: Some(gpui::UnderlineStyle {
-                            thickness: px(1.),
-                            color: Some(Color::Accent.color(cx)),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    },
-                    syntax: cx.theme().syntax().clone(),
-                    selection_background_color: {
-                        let mut selection = cx.theme().players().local().selection;
-                        selection.fade_out(0.7);
-                        selection
-                    },
-                    ..Default::default()
-                };
-
                 MarkdownExample::new(
                     MARKDOWN_EXAMPLE.into(),
                     markdown_style,
@@ -100,6 +60,48 @@ pub fn main() {
     });
 }
 
+fn markdown_style(_window: &Window, cx: &App) -> MarkdownStyle {
+    MarkdownStyle {
+        base_text_style: gpui::TextStyle {
+            font_family: "Zed Plex Sans".into(),
+            color: cx.theme().colors().terminal_ansi_black,
+            ..Default::default()
+        },
+        code_block: StyleRefinement::default()
+            .font_family("Zed Plex Mono")
+            .m(rems(1.))
+            .bg(rgb(0xAAAAAAA)),
+        inline_code: gpui::TextStyleRefinement {
+            font_family: Some("Zed Mono".into()),
+            color: Some(cx.theme().colors().editor_foreground),
+            background_color: Some(cx.theme().colors().editor_background),
+            ..Default::default()
+        },
+        rule_color: Color::Muted.color(cx),
+        block_quote_border_color: Color::Muted.color(cx),
+        block_quote: gpui::TextStyleRefinement {
+            color: Some(Color::Muted.color(cx)),
+            ..Default::default()
+        },
+        link: gpui::TextStyleRefinement {
+            color: Some(Color::Accent.color(cx)),
+            underline: Some(gpui::UnderlineStyle {
+                thickness: px(1.),
+                color: Some(Color::Accent.color(cx)),
+                wavy: false,
+            }),
+            ..Default::default()
+        },
+        syntax: cx.theme().syntax().clone(),
+        selection_background_color: {
+            let mut selection = cx.theme().players().local().selection;
+            selection.fade_out(0.7);
+            selection
+        },
+        ..Default::default()
+    }
+}
+
 struct MarkdownExample {
     markdown: Entity<Markdown>,
 }
@@ -107,7 +109,7 @@ struct MarkdownExample {
 impl MarkdownExample {
     pub fn new(
         text: SharedString,
-        style: MarkdownStyle,
+        style: impl Fn(&Window, &App) -> MarkdownStyle + 'static,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {

@@ -8,7 +8,7 @@ use gpui::{
     App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement, WeakEntity, prelude::*,
 };
-use markdown::Markdown;
+use markdown::{Markdown, MarkdownStyle};
 use project::git_store::Repository;
 use settings::Settings;
 use std::hash::Hash;
@@ -149,13 +149,17 @@ impl CommitTooltip {
         commit: CommitDetails,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut style = hover_markdown_style(window, cx);
-        if let Some(code_block) = &style.code_block.text {
-            style.base_text_style.refine(code_block);
+        fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+            let mut style = hover_markdown_style(window, cx);
+            if let Some(code_block) = &style.code_block.text {
+                style.base_text_style.refine(code_block);
+            }
+            style
         }
+
         let markdown = cx.new(|cx| {
             Markdown::new(
                 commit
@@ -163,7 +167,7 @@ impl CommitTooltip {
                     .as_ref()
                     .map(|message| message.message.clone())
                     .unwrap_or_default(),
-                style,
+                markdown_style,
                 None,
                 None,
                 cx,
