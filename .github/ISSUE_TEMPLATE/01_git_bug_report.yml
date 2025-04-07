@@ -1,4 +1,4 @@
-name: Git
+name: Git Bug Report
 description: There is a bug related to Git features in Zed
 type: "Bug"
 labels: ["git"]

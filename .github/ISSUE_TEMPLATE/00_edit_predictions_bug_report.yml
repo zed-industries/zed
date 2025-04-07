@@ -1,4 +1,4 @@
-name: Edit Predictions
+name: Edit Predictions Bug Report
 description: There is a bug related to Edit Predictions in Zed
 type: "Bug"
 labels: ["ai", "inline completion", "zeta"]

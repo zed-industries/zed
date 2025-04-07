@@ -1,4 +1,4 @@
-name: Agent Panel
+name: Agent Panel Bug Report
 description: There is a bug related to the Agent Panel in Zed
 type: "Bug"
 labels: ["agent", "ai"]
