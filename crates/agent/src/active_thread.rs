@@ -169,7 +169,28 @@ fn render_markdown(
 ) -> Entity<Markdown> {
     cx.new(|cx| {
         Markdown::new(text, Some(language_registry), None, cx)
-            .code_block_variant(markdown::CodeBlockVariant::Card)
+            .code_block_variant(markdown::CodeBlockVariant::Card {
+                open_path_callback: Some(Arc::new({
+                    let workspace = workspace.clone();
+                    move |path_with_range, window, cx| {
+                        workspace
+                            .update(cx, {
+                                |workspace, cx| {
+                                    if let Some(project_path) = workspace
+                                        .project()
+                                        .read(cx)
+                                        .find_project_path(&path_with_range.path, cx)
+                                    {
+                                        workspace
+                                            .open_path(project_path, None, true, window, cx)
+                                            .detach_and_log_err(cx);
+                                    }
+                                }
+                            })
+                            .ok();
+                    }
+                })),
+            })
             .open_url(move |text, window, cx| {
                 open_markdown_link(text, workspace.clone(), window, cx);
             })

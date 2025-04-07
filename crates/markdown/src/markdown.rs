@@ -19,11 +19,11 @@ use gpui::{
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
+use path_range::PathRange;
 use pulldown_cmark::Alignment;
 use theme::SyntaxTheme;
 use ui::{Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
-use workspace::Workspace;
 
 use crate::parser::CodeBlockKind;
 
@@ -84,16 +84,18 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
 }
 
-#[derive(Debug)]
 struct Options {
     parse_links_only: bool,
     code_block_variant: CodeBlockVariant,
 }
 
-#[derive(Debug)]
 pub enum CodeBlockVariant {
-    Default { copy_button: bool },
-    Card,
+    Default {
+        copy_button: bool,
+    },
+    Card {
+        open_path_callback: Option<Arc<dyn Fn(&PathRange, &mut Window, &mut App)>>,
+    },
 }
 
 actions!(markdown, [Copy]);
@@ -667,7 +669,7 @@ impl Element for MarkdownElement {
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
-                                (CodeBlockVariant::Card, _) => {
+                                (CodeBlockVariant::Card { open_path_callback }, _) => {
                                     let icon = match kind {
                                         CodeBlockKind::Indented => None,
                                         CodeBlockKind::Fenced => Some(
@@ -777,70 +779,46 @@ impl Element for MarkdownElement {
                                                     .into_any_element()
                                                 };
 
-                                                let project_path = window
-                                                    .root::<Workspace>()
-                                                    .flatten()
-                                                    .and_then(|workspace| {
-                                                        workspace
-                                                            .read(cx)
-                                                            .project()
-                                                            .read(cx)
-                                                            .find_project_path(&path_range.path, cx)
-                                                            .map(|path| (workspace, path))
-                                                    });
-
-                                                h_flex()
+                                                let mut label = h_flex()
                                                     .id(("code-block-header-label", index))
                                                     .w_full()
                                                     .max_w_full()
                                                     .px_1()
                                                     .gap_0p5()
                                                     .children(icon)
-                                                    .child(content)
-                                                    .when_some(
-                                                        project_path,
-                                                        |this, (workspace, project_path)| {
-                                                            this.cursor_pointer()
-                                                                .rounded_sm()
-                                                                .hover(|item| {
-                                                                    item.bg(cx
-                                                                        .theme()
-                                                                        .colors()
-                                                                        .element_hover
-                                                                        .opacity(0.5))
-                                                                })
-                                                                .tooltip(Tooltip::text(
-                                                                    "Jump to file",
-                                                                ))
-                                                                .child(
-                                                                    Icon::new(
-                                                                        IconName::ArrowUpRight,
-                                                                    )
-                                                                    .size(IconSize::XSmall)
-                                                                    .color(Color::Ignored),
+                                                    .child(content);
+
+                                                if let Some(open_path_callback) =
+                                                    open_path_callback.clone()
+                                                {
+                                                    label = label
+                                                        .cursor_pointer()
+                                                        .rounded_sm()
+                                                        .hover(|item| {
+                                                            item.bg(cx
+                                                                .theme()
+                                                                .colors()
+                                                                .element_hover
+                                                                .opacity(0.5))
+                                                        })
+                                                        .tooltip(Tooltip::text("Jump to file"))
+                                                        .child(
+                                                            Icon::new(IconName::ArrowUpRight)
+                                                                .size(IconSize::XSmall)
+                                                                .color(Color::Ignored),
+                                                        )
+                                                        .on_click({
+                                                            let path_range = path_range.clone();
+                                                            move |_, window, cx| {
+                                                                open_path_callback(
+                                                                    &path_range,
+                                                                    window,
+                                                                    cx,
                                                                 )
-                                                                .on_click(move |_, window, cx| {
-                                                                    workspace.update(cx, {
-                                                                        let project_path =
-                                                                            project_path.clone();
-                                                                        |workspace, cx| {
-                                                                            workspace
-                                                                                .open_path(
-                                                                                    project_path,
-                                                                                    None,
-                                                                                    true,
-                                                                                    window,
-                                                                                    cx,
-                                                                                )
-                                                                                .detach_and_log_err(
-                                                                                    cx,
-                                                                                );
-                                                                        }
-                                                                    });
-                                                                })
-                                                        },
-                                                    )
-                                                    .into_any_element()
+                                                            }
+                                                        });
+                                                }
+                                                label.into_any_element()
                                             })
                                         }
                                     };
