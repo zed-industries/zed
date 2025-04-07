@@ -65,7 +65,7 @@ impl ImageCache {
         }))
     }
 
-    pub(crate) fn load(
+    pub fn load(
         &self,
         source: &Resource,
         window: &mut Window,
