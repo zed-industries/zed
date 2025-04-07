@@ -288,7 +288,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
             get_all_tasks(&project, &task_contexts, cx)
         })
-        .await
         .into_iter()
         .map(|(source_kind, task)| {
             let resolved = task.resolved.unwrap();
@@ -328,7 +327,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
     let (_, resolved_task) = cx
         .update(|cx| get_all_tasks(&project, &task_contexts, cx))
-        .await
         .into_iter()
         .find(|(source_kind, _)| source_kind == &topmost_local_task_source_kind)
         .expect("should have one global task");
@@ -368,7 +366,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
     let all_tasks = cx
         .update(|cx| get_all_tasks(&project, &task_contexts, cx))
-        .await
         .into_iter()
         .map(|(source_kind, task)| {
             let resolved = task.resolved.unwrap();
@@ -455,45 +452,41 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
         })
     });
 
-    let active_non_worktree_item_tasks = cx
-        .update(|cx| {
-            get_all_tasks(
-                &project,
-                &TaskContexts {
-                    active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
-                    active_worktree_context: None,
-                    other_worktree_contexts: Vec::new(),
-                    lsp_context: None,
-                },
-                cx,
-            )
-        })
-        .await;
+    let active_non_worktree_item_tasks = cx.update(|cx| {
+        get_all_tasks(
+            &project,
+            &TaskContexts {
+                active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
+                active_worktree_context: None,
+                other_worktree_contexts: Vec::new(),
+                lsp_task_sources: HashMap::default(),
+            },
+            cx,
+        )
+    });
     assert!(
         active_non_worktree_item_tasks.is_empty(),
         "A task can not be resolved with context with no ZED_WORKTREE_ROOT data"
     );
 
-    let active_worktree_tasks = cx
-        .update(|cx| {
-            get_all_tasks(
-                &project,
-                &TaskContexts {
-                    active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
-                    active_worktree_context: Some((worktree_id, {
-                        let mut worktree_context = TaskContext::default();
-                        worktree_context
-                            .task_variables
-                            .insert(task::VariableName::WorktreeRoot, "/dir".to_string());
-                        worktree_context
-                    })),
-                    other_worktree_contexts: Vec::new(),
-                    lsp_context: None,
-                },
-                cx,
-            )
-        })
-        .await;
+    let active_worktree_tasks = cx.update(|cx| {
+        get_all_tasks(
+            &project,
+            &TaskContexts {
+                active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
+                active_worktree_context: Some((worktree_id, {
+                    let mut worktree_context = TaskContext::default();
+                    worktree_context
+                        .task_variables
+                        .insert(task::VariableName::WorktreeRoot, "/dir".to_string());
+                    worktree_context
+                })),
+                other_worktree_contexts: Vec::new(),
+                lsp_task_sources: HashMap::default(),
+            },
+            cx,
+        )
+    });
     assert_eq!(
         active_worktree_tasks
             .into_iter()
@@ -8382,8 +8375,8 @@ fn get_all_tasks(
     project: &Entity<Project>,
     task_contexts: &TaskContexts,
     cx: &mut App,
-) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
-    let task = project.update(cx, |project, cx| {
+) -> Vec<(TaskSourceKind, ResolvedTask)> {
+    let (mut old, new) = project.update(cx, |project, cx| {
         project
             .task_store
             .read(cx)
@@ -8392,11 +8385,8 @@ fn get_all_tasks(
             .read(cx)
             .used_and_current_resolved_tasks(task_contexts, cx)
     });
-    cx.background_spawn(async move {
-        let (mut old, new) = task.await;
-        old.extend(new);
-        old
-    })
+    old.extend(new);
+    old
 }
 
 #[track_caller]

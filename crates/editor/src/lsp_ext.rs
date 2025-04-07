@@ -1,12 +1,17 @@
 use std::sync::Arc;
 
 use crate::Editor;
+use collections::HashMap;
 use gpui::{App, AppContext as _, Entity, Task};
 use itertools::Itertools;
 use language::Buffer;
 use language::Language;
 use lsp::LanguageServerId;
+use lsp::LanguageServerName;
 use multi_buffer::Anchor;
+use project::Project;
+use task::TaskTemplates;
+use text::BufferId;
 
 pub(crate) fn find_specific_language_server_in_selection<F>(
     editor: &Editor,
@@ -59,4 +64,12 @@ where
 
         None
     })
+}
+
+pub fn lsp_tasks(
+    project: &Project,
+    task_sources: &HashMap<LanguageServerName, Vec<BufferId>>,
+    cx: &App,
+) -> Task<TaskTemplates> {
+    todo!("TODO kb")
 }

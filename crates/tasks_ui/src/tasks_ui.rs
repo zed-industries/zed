@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use std::path::Path;
 
+use collections::HashMap;
 use debugger_ui::Start;
 use editor::Editor;
 use feature_flags::{Debugger, FeatureFlagViewExt};
@@ -294,12 +294,8 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
 
-    let editor_contexts = active_editor.as_ref().map(|active_editor| {
-        active_editor.update(cx, |editor, cx| {
-            let task_context = editor.task_context(window, cx);
-            let lsp_task_context = editor.lsp_task_context();
-            (task_context, lsp_task_context)
-        })
+    let editor_context_task = active_editor.as_ref().map(|active_editor| {
+        active_editor.update(cx, |editor, cx| editor.task_context(window, cx))
     });
 
     let location = active_editor.as_ref().and_then(|editor| {
@@ -318,6 +314,11 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
         })
     });
 
+    let lsp_task_sources = active_editor
+        .as_ref()
+        .map(|active_editor| active_editor.update(cx, |editor, cx| editor.lsp_task_sources(cx)))
+        .unwrap_or_default();
+
     let mut worktree_abs_paths = workspace
         .worktrees(cx)
         .filter(|worktree| is_visible_directory(worktree, cx))
@@ -330,12 +331,13 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
     cx.background_spawn(async move {
         let mut task_contexts = TaskContexts::default();
 
-        if let Some((editor_context_task, editor_lsp_context)) = editor_contexts {
+        task_contexts.lsp_task_sources = lsp_task_sources;
+
+        if let Some(editor_context_task) = editor_context_task {
             if let Some(editor_context) = editor_context_task.await {
                 task_contexts.active_item_context =
                     Some((active_worktree, location, editor_context));
             }
-            task_contexts.lsp_context = editor_lsp_context;
         }
 
         if let Some(active_worktree) = active_worktree {

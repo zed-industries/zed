@@ -1,10 +1,11 @@
 use crate::Editor;
 
+use collections::HashMap;
 use gpui::{App, Task, Window};
-use language::LspContext;
+use lsp::LanguageServerName;
 use project::Location;
 use task::{TaskContext, TaskVariables, VariableName};
-use text::{ToOffset, ToPoint};
+use text::{BufferId, ToOffset, ToPoint};
 
 impl Editor {
     pub fn task_context(&self, window: &mut Window, cx: &mut App) -> Task<Option<TaskContext>> {
@@ -72,7 +73,28 @@ impl Editor {
         })
     }
 
-    pub fn lsp_task_context(&self) -> Option<LspContext> {
-        todo!("TODO kb")
+    pub fn lsp_task_sources(&self, cx: &App) -> HashMap<LanguageServerName, Vec<BufferId>> {
+        self.buffer()
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .filter_map(|buffer| {
+                let lsp_tasks_source = buffer
+                    .read(cx)
+                    .language()?
+                    .context_provider()?
+                    .lsp_task_source()?;
+                let buffer_id = buffer.read(cx).remote_id();
+                Some((lsp_tasks_source, buffer_id))
+            })
+            .fold(
+                HashMap::default(),
+                |mut acc, (lsp_task_source, buffer_id)| {
+                    acc.entry(lsp_task_source)
+                        .or_insert_with(Vec::new)
+                        .push(buffer_id);
+                    acc
+                },
+            )
     }
 }

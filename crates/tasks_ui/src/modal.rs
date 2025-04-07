@@ -224,13 +224,28 @@ impl PickerDelegate for TasksModalDelegate {
         let candidates = match &self.candidates {
             Some(candidates) => Task::ready(string_match_candidates(candidates, task_type)),
             None => {
-                if let Some(task_inventory) = self.task_store.read(cx).task_inventory().cloned() {
-                    let task = task_inventory
+                let project = self
+                    .workspace
+                    .update(cx, |workspace, _| workspace.project().clone())
+                    .ok();
+                if let Some((task_inventory, project)) = self
+                    .task_store
+                    .read(cx)
+                    .task_inventory()
+                    .cloned()
+                    .zip(project)
+                {
+                    let lsp_tasks = project.update(cx, |project, cx| {
+                        editor::lsp_tasks(project, &self.task_contexts.lsp_task_sources, cx)
+                    });
+
+                    let (used, current) = task_inventory
                         .read(cx)
                         .used_and_current_resolved_tasks(&self.task_contexts, cx);
 
                     cx.spawn(async move |picker, cx| {
-                        let (used, current) = task.await;
+                        let lsp_task_context = TaskContext::default();
+                        let lsp_tasks = lsp_tasks.await;
                         picker
                             .update(cx, |picker, _| {
                                 picker.delegate.last_used_candidate_index = if used.is_empty() {
@@ -426,6 +441,7 @@ impl PickerDelegate for TasksModalDelegate {
             color: Color::Default,
         };
         let icon = match source_kind {
+            TaskSourceKind::Lsp(..) => Some(Icon::new(IconName::Server)),
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
             TaskSourceKind::AbsPath { .. } => Some(Icon::new(IconName::Settings)),
             TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),

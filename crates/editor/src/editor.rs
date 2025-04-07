@@ -140,6 +140,7 @@ use lsp::{
 };
 
 use language::BufferSnapshot;
+pub use lsp_ext::lsp_tasks;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, RowInfo,
@@ -12449,6 +12450,7 @@ impl Editor {
             return Task::ready(());
         }
         let project = self.project.as_ref().map(Entity::downgrade);
+        let task_sources = self.lsp_task_sources(cx);
         cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
@@ -12477,9 +12479,14 @@ impl Editor {
                     }
                 })
                     .await;
+            let Ok(lsp_tasks) = project.update(cx, |project, cx| {
+                crate::lsp_tasks(project, &task_sources, cx)
+            }) else {
+                return;
+            };
+            let lsp_tasks = lsp_tasks.await;
 
             let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
-            // TODO kb fetch LSP tasks here?
             editor
                 .update(cx, |editor, _| {
                     editor.clear_tasks();

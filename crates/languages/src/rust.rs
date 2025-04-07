@@ -7,8 +7,7 @@ use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
-use lsp::{InitializeParams, LanguageServer, LanguageServerBinary};
-use project::lsp_store::lsp_ext_command::LspRunnables;
+use lsp::{InitializeParams, LanguageServerBinary};
 use regex::Regex;
 use serde_json::json;
 use smol::fs::{self};
@@ -799,96 +798,8 @@ impl ContextProvider for RustContextProvider {
         Some(TaskTemplates(task_templates))
     }
 
-    fn lsp_context(&self) -> Option<LspContext> {
-        let lsp_context = LspContext {
-            server_name: SERVER_NAME,
-            lsp_task_provider: Box::new(|server, buffer| {
-                Box::new(async move {
-                    todo!("TODO kb");
-                })
-            }),
-        };
-
-        // if server.name() != SERVER_NAME {
-        //     return Task::ready(Ok(Vec::new()));
-        // }
-        // let url = file
-        //     // TODO kb make a proto request for remote clients, need buffer_id or something for that?
-        //     .as_local()
-        //     .map(|f| f.abs_path(cx))
-        //     .and_then(|abs_path| {
-        //         lsp::Url::from_file_path(&abs_path)
-        //             .map_err(|_| anyhow!("failed to convert abs path {abs_path:?} to uri"))
-        //             .log_err()
-        //     });
-        // let Some(url) = dbg!(url) else {
-        //     return Task::ready(Ok(Vec::new()));
-        // };
-        // let request =
-        //     server.request::<rust_analyzer_ext::Runnables>(rust_analyzer_ext::RunnablesParams {
-        //         text_document: lsp::TextDocumentIdentifier::new(url),
-        //         position: None,
-        //     });
-
-        // cx.background_spawn(async move {
-        //     let tasks = request.await?;
-        //     dbg!(tasks);
-        //     Ok(Vec::new())
-        // })
-        todo!("TODO kb")
-
-        /*
-
-        pub fn lsp_runnables(
-            editor: &mut Editor,
-            window: &mut Window,
-            cx: &mut Context<Editor>,
-        ) -> Task<TaskTemplates> {
-            let Some(project) = &editor.project else {
-                return;
-            };
-            let Some(workspace) = editor.workspace() else {
-                return;
-            };
-
-            let buffers = editor
-                .buffer()
-                .read(cx)
-                .all_buffers()
-                .into_iter()
-                .filter_map(|buffer| {
-                    let language = buffer.read(cx).language()?;
-                    if is_rust_language(language) {
-                        let server_id_task = project.update(cx, |project, cx| {
-                            project.language_server_id_for_name(buffer, language_server_name, cx)
-                        });
-                        return Some((buffer, server_id_task));
-                    }
-                    None
-                })
-                .collect::<Vec<_>>();
-            let a = cx.spawn(|editor, cx| async move {
-                if let Some((client, project_id)) = upstream_client {
-                    todo!("TODO kb")
-                } else {
-                    project
-                        .update(cx, |project, cx| {
-                            project.request_lsp(
-                                buffer,
-                                project::LanguageServerToQuery::Other(server_to_query),
-                                project::lsp_store::lsp_ext_command::LspRunnables {},
-                                cx,
-                            )
-                        })?
-                        .await
-                        .context("lsp runnables")?
-                }
-            });
-
-            todo!("TODO kb")
-        }
-
-        */
+    fn lsp_task_source(&self) -> Option<LanguageServerName> {
+        Some(SERVER_NAME)
     }
 }
 
