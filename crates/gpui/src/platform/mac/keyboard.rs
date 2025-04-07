@@ -41,6 +41,7 @@ impl MacKeyboardMapper {
         let mut char_to_code = HashMap::default();
         let mut code_to_char = HashMap::default();
 
+        let start = std::time::Instant::now();
         for (scan_code, code) in OTHER_CODES {
             for (key, modifiers) in generate_keymap_info(scan_code) {
                 if modifiers == Modifiers::none() {
@@ -49,6 +50,12 @@ impl MacKeyboardMapper {
                 char_to_code.insert(key, (code, modifiers));
             }
         }
+        let elapsed = start.elapsed();
+        println!(
+            "MacKeyboardMapper::new() took {}ms or {}us",
+            elapsed.as_millis(),
+            elapsed.as_micros()
+        );
 
         Self {
             char_to_code,
