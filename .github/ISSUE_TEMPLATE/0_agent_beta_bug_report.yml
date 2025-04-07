@@ -1,7 +1,7 @@
 name: Agent Beta
 description: There is a bug related to new Agent Panel in Zed
 type: "Bug"
-labels: [agent]
+labels: [agent, ai]
 title: "Agent Beta: <a short description of the Agent Panel bug>"
 body:
   - type: textarea
