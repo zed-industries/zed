@@ -18,6 +18,7 @@ use editor::{
     scroll::Autoscroll,
 };
 use editor::{FoldPlaceholder, display_map::CreaseId};
+use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
@@ -56,8 +57,7 @@ use ui::{
 use util::{ResultExt, maybe};
 use workspace::searchable::{Direction, SearchableItemHandle};
 use workspace::{
-    Save, ShowConfiguration, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    Save, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotificationId,
     pane::{self, SaveIntent},
@@ -384,7 +384,9 @@ impl ContextEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let provider = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.provider);
         if provider
             .as_ref()
             .map_or(false, |provider| provider.must_accept_terms(cx))
@@ -1560,7 +1562,7 @@ impl ContextEditor {
                 })
             };
             let create_block_properties = |message: &Message| BlockProperties {
-                height: 2,
+                height: Some(2),
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Above(
                     buffer
@@ -2109,7 +2111,7 @@ impl ContextEditor {
                     let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         placement: BlockPlacement::Above(anchor),
-                        height: MAX_HEIGHT_IN_LINES,
+                        height: Some(MAX_HEIGHT_IN_LINES),
                         style: BlockStyle::Sticky,
                         render: Arc::new(move |cx| {
                             let image_size = size_for_image(
@@ -2357,7 +2359,19 @@ impl ContextEditor {
                             .on_click({
                                 let focus_handle = self.focus_handle(cx).clone();
                                 move |_event, window, cx| {
-                                    focus_handle.dispatch_action(&ShowConfiguration, window, cx);
+                                    if cx.has_flag::<Assistant2FeatureFlag>() {
+                                        focus_handle.dispatch_action(
+                                            &zed_actions::agent::OpenConfiguration,
+                                            window,
+                                            cx,
+                                        );
+                                    } else {
+                                        focus_handle.dispatch_action(
+                                            &zed_actions::assistant::ShowConfiguration,
+                                            window,
+                                            cx,
+                                        );
+                                    };
                                 }
                             }),
                     )
@@ -2395,13 +2409,13 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let model = LanguageModelRegistry::read_global(cx).default_model();
 
         let has_configuration_error = configuration_error(cx).is_some();
         let needs_to_accept_terms = self.show_accept_terms
-            && provider
+            && model
                 .as_ref()
-                .map_or(false, |provider| provider.must_accept_terms(cx));
+                .map_or(false, |model| model.provider.must_accept_terms(cx));
         let disabled = has_configuration_error || needs_to_accept_terms;
 
         ButtonLike::new("send_button")
@@ -2454,7 +2468,9 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let provider = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.provider);
 
         let has_configuration_error = configuration_error(cx).is_some();
         let needs_to_accept_terms = self.show_accept_terms
@@ -2500,7 +2516,9 @@ impl ContextEditor {
     }
 
     fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let active_model = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.model);
         let focus_handle = self.editor().focus_handle(cx).clone();
         let model_name = match active_model {
             Some(model) => model.name().0,
@@ -3020,7 +3038,9 @@ impl EventEmitter<SearchEvent> for ContextEditor {}
 
 impl Render for ContextEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let provider = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.provider);
         let accept_terms = if self.show_accept_terms {
             provider.as_ref().and_then(|provider| {
                 provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
@@ -3616,7 +3636,9 @@ enum TokenState {
 fn token_state(context: &Entity<AssistantContext>, cx: &App) -> Option<TokenState> {
     const WARNING_TOKEN_THRESHOLD: f32 = 0.8;
 
-    let model = LanguageModelRegistry::read_global(cx).active_model()?;
+    let model = LanguageModelRegistry::read_global(cx)
+        .default_model()?
+        .model;
     let token_count = context.read(cx).token_count()?;
     let max_token_count = model.max_token_count();
 
@@ -3669,16 +3691,16 @@ pub enum ConfigurationError {
 }
 
 fn configuration_error(cx: &App) -> Option<ConfigurationError> {
-    let provider = LanguageModelRegistry::read_global(cx).active_provider();
-    let is_authenticated = provider
+    let model = LanguageModelRegistry::read_global(cx).default_model();
+    let is_authenticated = model
         .as_ref()
-        .map_or(false, |provider| provider.is_authenticated(cx));
+        .map_or(false, |model| model.provider.is_authenticated(cx));
 
-    if provider.is_some() && is_authenticated {
+    if model.is_some() && is_authenticated {
         return None;
     }
 
-    if provider.is_none() {
+    if model.is_none() {
         return Some(ConfigurationError::NoProvider);
     }
 
@@ -3703,6 +3725,18 @@ pub fn humanize_token_count(count: usize) -> String {
                 format!("{}.{}k", thousands, hundreds)
             }
         }
+        1_000_000..=9_999_999 => {
+            let millions = count / 1_000_000;
+            let hundred_thousands = (count % 1_000_000 + 50_000) / 100_000;
+            if hundred_thousands == 0 {
+                format!("{}M", millions)
+            } else if hundred_thousands == 10 {
+                format!("{}M", millions + 1)
+            } else {
+                format!("{}.{}M", millions, hundred_thousands)
+            }
+        }
+        10_000_000.. => format!("{}M", (count + 500_000) / 1_000_000),
         _ => format!("{}k", (count + 500) / 1000),
     }
 }

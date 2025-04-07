@@ -1,9 +1,9 @@
-use crate::{Thread, ThreadEvent};
+use crate::{Keep, Reject, Thread, ThreadEvent};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
 use editor::{
-    AnchorRangeExt, Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
+    Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
 };
@@ -26,6 +26,7 @@ use workspace::{
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
 };
+use zed_actions::assistant::ToggleFocus;
 
 pub struct AgentDiff {
     multibuffer: Entity<MultiBuffer>,
@@ -43,22 +44,29 @@ impl AgentDiff {
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<()> {
-        let existing_diff = workspace.update(cx, |workspace, cx| {
-            workspace
-                .items_of_type::<AgentDiff>(cx)
-                .find(|diff| diff.read(cx).thread == thread)
-        })?;
+    ) -> Result<Entity<Self>> {
+        workspace.update(cx, |workspace, cx| {
+            Self::deploy_in_workspace(thread, workspace, window, cx)
+        })
+    }
+
+    pub fn deploy_in_workspace(
+        thread: Entity<Thread>,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
+        let existing_diff = workspace
+            .items_of_type::<AgentDiff>(cx)
+            .find(|diff| diff.read(cx).thread == thread);
         if let Some(existing_diff) = existing_diff {
-            workspace.update(cx, |workspace, cx| {
-                workspace.activate_item(&existing_diff, true, true, window, cx);
-            })
+            workspace.activate_item(&existing_diff, true, true, window, cx);
+            existing_diff
         } else {
             let agent_diff =
-                cx.new(|cx| AgentDiff::new(thread.clone(), workspace.clone(), window, cx));
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_item_to_center(Box::new(agent_diff), window, cx);
-            })
+                cx.new(|cx| AgentDiff::new(thread.clone(), workspace.weak_handle(), window, cx));
+            workspace.add_item_to_center(Box::new(agent_diff.clone()), window, cx);
+            agent_diff
         }
     }
 
@@ -133,11 +141,11 @@ impl AgentDiff {
         let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
         for (buffer, diff_handle) in changed_buffers {
-            let Some(file) = buffer.read(cx).file().cloned() else {
+            if buffer.read(cx).file().is_none() {
                 continue;
-            };
+            }
 
-            let path_key = PathKey::namespaced(0, file.full_path(cx).into());
+            let path_key = PathKey::for_buffer(&buffer, cx);
             paths_to_delete.remove(&path_key);
 
             let snapshot = buffer.read(cx).snapshot();
@@ -235,8 +243,28 @@ impl AgentDiff {
 
     fn handle_thread_event(&mut self, event: &ThreadEvent, cx: &mut Context<Self>) {
         match event {
-            ThreadEvent::SummaryChanged => self.update_title(cx),
+            ThreadEvent::SummaryGenerated => self.update_title(cx),
             _ => {}
+        }
+    }
+
+    pub fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
+            self.editor.update(cx, |editor, cx| {
+                let first_hunk = editor
+                    .diff_hunks_in_ranges(
+                        &[position..editor::Anchor::max()],
+                        &self.multibuffer.read(cx).read(cx),
+                    )
+                    .next();
+
+                if let Some(first_hunk) = first_hunk {
+                    let first_hunk_start = first_hunk.multi_buffer_range().start;
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+                        selections.select_anchor_ranges([first_hunk_start..first_hunk_start]);
+                    })
+                }
+            });
         }
     }
 
@@ -327,13 +355,16 @@ impl AgentDiff {
             self.update_selection(&diff_hunks_in_ranges, window, cx);
         }
 
-        let point_ranges = ranges
-            .into_iter()
-            .map(|range| range.to_point(&snapshot))
-            .collect();
-        self.editor.update(cx, |editor, cx| {
-            editor.restore_hunks_in_ranges(point_ranges, window, cx)
-        });
+        for hunk in &diff_hunks_in_ranges {
+            let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
+            if let Some(buffer) = buffer {
+                self.thread
+                    .update(cx, |thread, cx| {
+                        thread.reject_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
+                    })
+                    .detach_and_log_err(cx);
+            }
+        }
     }
 
     fn update_selection(
@@ -553,11 +584,12 @@ impl Item for AgentDiff {
 }
 
 impl Render for AgentDiff {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
+        let focus_handle = &self.focus_handle;
 
         div()
-            .track_focus(&self.focus_handle)
+            .track_focus(focus_handle)
             .key_context(if is_empty { "EmptyPane" } else { "AgentDiff" })
             .on_action(cx.listener(Self::keep))
             .on_action(cx.listener(Self::reject))
@@ -568,7 +600,32 @@ impl Render for AgentDiff {
             .items_center()
             .justify_center()
             .size_full()
-            .when(is_empty, |el| el.child("No changes to review"))
+            .when(is_empty, |el| {
+                el.child(
+                    v_flex()
+                        .items_center()
+                        .gap_2()
+                        .child("No changes to review")
+                        .child(
+                            Button::new("continue-iterating", "Continue Iterating")
+                                .style(ButtonStyle::Filled)
+                                .icon(IconName::ForwardArrow)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .full_width()
+                                .key_binding(KeyBinding::for_action_in(
+                                    &ToggleFocus,
+                                    &focus_handle.clone(),
+                                    window,
+                                    cx,
+                                ))
+                                .on_click(|_event, window, cx| {
+                                    window.dispatch_action(ToggleFocus.boxed_clone(), cx)
+                                }),
+                        ),
+                )
+            })
             .when(!is_empty, |el| el.child(self.editor.clone()))
     }
 }
@@ -604,7 +661,7 @@ fn render_diff_hunk_controls(
                 .disabled(is_created_file)
                 .key_binding(
                     KeyBinding::for_action_in(
-                        &crate::Reject,
+                        &Reject,
                         &editor.read(cx).focus_handle(cx),
                         window,
                         cx,
@@ -625,13 +682,8 @@ fn render_diff_hunk_controls(
                 }),
             Button::new(("keep", row as u64), "Keep")
                 .key_binding(
-                    KeyBinding::for_action_in(
-                        &crate::Keep,
-                        &editor.read(cx).focus_handle(cx),
-                        window,
-                        cx,
-                    )
-                    .map(|kb| kb.size(rems_from_px(12.))),
+                    KeyBinding::for_action_in(&Keep, &editor.read(cx).focus_handle(cx), window, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click({
                     let agent_diff = agent_diff.clone();
@@ -942,7 +994,7 @@ mod tests {
             Point::new(3, 0)..Point::new(3, 0)
         );
 
-        // Restoring a hunk also moves the cursor to the next hunk, possibly cycling if it's at the end.
+        // Rejecting a hunk also moves the cursor to the next hunk, possibly cycling if it's at the end.
         editor.update_in(cx, |editor, window, cx| {
             editor.change_selections(None, window, cx, |selections| {
                 selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)])

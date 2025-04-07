@@ -51,6 +51,7 @@ util.workspace = true
 wasmparser.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

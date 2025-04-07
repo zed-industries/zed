@@ -1,3 +1,4 @@
+use crate::platform::scap_screen_capture::scap_screen_sources;
 use core::str;
 use std::{
     cell::RefCell,
@@ -8,13 +9,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context as _;
 use calloop::{
     EventLoop, LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
 };
-
-use anyhow::Context as _;
 use collections::HashMap;
+use futures::channel::oneshot;
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
@@ -59,8 +60,8 @@ use crate::platform::{
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform, PlatformDisplay,
-    PlatformInput, Point, RequestFrameOptions, ScaledPixels, ScrollDelta, Size, TouchPhase,
-    WindowParams, X11Window, modifiers_from_xinput_info, point, px,
+    PlatformInput, Point, RequestFrameOptions, ScaledPixels, ScreenCaptureSource, ScrollDelta,
+    Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -1325,6 +1326,16 @@ impl LinuxClient for X11Client {
         Some(Rc::new(
             X11Display::new(&state.xcb_connection, state.scale_factor, id.0 as usize).ok()?,
         ))
+    }
+
+    fn is_screen_capture_supported(&self) -> bool {
+        true
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        scap_screen_sources(&self.0.borrow().common.foreground_executor)
     }
 
     fn open_window(

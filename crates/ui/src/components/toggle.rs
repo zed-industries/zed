@@ -253,6 +253,7 @@ pub struct CheckboxWithLabel {
     on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
     filled: bool,
     style: ToggleStyle,
+    checkbox_position: IconPosition,
 }
 
 // TODO: Remove `CheckboxWithLabel` now that `label` is a method of `Checkbox`.
@@ -271,6 +272,7 @@ impl CheckboxWithLabel {
             on_click: Arc::new(on_click),
             filled: false,
             style: ToggleStyle::default(),
+            checkbox_position: IconPosition::Start,
         }
     }
 
@@ -291,31 +293,51 @@ impl CheckboxWithLabel {
         self.filled = true;
         self
     }
+
+    pub fn checkbox_position(mut self, position: IconPosition) -> Self {
+        self.checkbox_position = position;
+        self
+    }
 }
 
 impl RenderOnce for CheckboxWithLabel {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .child(
-                Checkbox::new(self.id.clone(), self.checked)
-                    .style(self.style)
-                    .when(self.filled, Checkbox::fill)
-                    .on_click({
-                        let on_click = self.on_click.clone();
-                        move |checked, window, cx| {
-                            (on_click)(checked, window, cx);
-                        }
-                    }),
-            )
+            .when(self.checkbox_position == IconPosition::Start, |this| {
+                this.child(
+                    Checkbox::new(self.id.clone(), self.checked)
+                        .style(self.style.clone())
+                        .when(self.filled, Checkbox::fill)
+                        .on_click({
+                            let on_click = self.on_click.clone();
+                            move |checked, window, cx| {
+                                (on_click)(checked, window, cx);
+                            }
+                        }),
+                )
+            })
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
-                    .on_click(move |_event, window, cx| {
-                        (self.on_click)(&self.checked.inverse(), window, cx);
+                    .on_click({
+                        let on_click = self.on_click.clone();
+                        move |_event, window, cx| {
+                            (on_click)(&self.checked.inverse(), window, cx);
+                        }
                     })
                     .child(self.label),
             )
+            .when(self.checkbox_position == IconPosition::End, |this| {
+                this.child(
+                    Checkbox::new(self.id.clone(), self.checked)
+                        .style(self.style)
+                        .when(self.filled, Checkbox::fill)
+                        .on_click(move |checked, window, cx| {
+                            (self.on_click)(checked, window, cx);
+                        }),
+                )
+            })
     }
 }
 

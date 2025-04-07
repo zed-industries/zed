@@ -1,4 +1,4 @@
-use crate::assistant_model_selector::AssistantModelSelector;
+use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::buffer_codegen::BufferCodegen;
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
@@ -582,7 +582,7 @@ impl<T: 'static> PromptEditor<T> {
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let default_model = model_registry.active_model();
+        let default_model = model_registry.default_model().map(|default| default.model);
         let alternative_models = model_registry.inline_alternative_models();
 
         let get_model_name = |index: usize| -> String {
@@ -890,6 +890,7 @@ impl PromptEditor<BufferCodegen> {
                     fs,
                     model_selector_menu_handle,
                     prompt_editor.focus_handle(cx),
+                    ModelType::InlineAssistant,
                     window,
                     cx,
                 )
@@ -1042,6 +1043,7 @@ impl PromptEditor<TerminalCodegen> {
                     fs,
                     model_selector_menu_handle.clone(),
                     prompt_editor.focus_handle(cx),
+                    ModelType::InlineAssistant,
                     window,
                     cx,
                 )

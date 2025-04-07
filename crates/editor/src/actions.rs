@@ -412,6 +412,7 @@ actions!(
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
+        StopLanguageServer,
         SwitchSourceHeader,
         Tab,
         Backtab,

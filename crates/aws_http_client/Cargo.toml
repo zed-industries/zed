@@ -20,3 +20,4 @@ aws-smithy-types.workspace = true
 futures.workspace = true
 http_client.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+workspace-hack.workspace = true

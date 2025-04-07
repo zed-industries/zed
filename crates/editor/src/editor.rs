@@ -58,7 +58,7 @@ use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use display_map::*;
-pub use display_map::{DisplayPoint, FoldPlaceholder};
+pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 use editor_settings::GoToDefinitionFallback;
 pub use editor_settings::{
     CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, SearchSettings,
@@ -4377,7 +4377,7 @@ impl Editor {
                 );
 
                 let words = match completion_settings.words {
-                    WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
+                    WordsCompletionMode::Disabled => Task::ready(BTreeMap::default()),
                     WordsCompletionMode::Enabled | WordsCompletionMode::Fallback => cx
                         .background_spawn(async move {
                             buffer_snapshot.words_in_range(WordsQuery {
@@ -4404,7 +4404,7 @@ impl Editor {
 
         let sort_completions = provider
             .as_ref()
-            .map_or(true, |provider| provider.sort_completions());
+            .map_or(false, |provider| provider.sort_completions());
 
         let filter_completions = provider
             .as_ref()
@@ -4421,7 +4421,7 @@ impl Editor {
                 if let Some(provided_completions) = provided_completions.await.log_err().flatten() {
                     completions.extend(provided_completions);
                     if completion_settings.words == WordsCompletionMode::Fallback {
-                        words = Task::ready(HashMap::default());
+                        words = Task::ready(BTreeMap::default());
                     }
                 }
 
@@ -7702,7 +7702,6 @@ impl Editor {
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
-        y_flipped: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
@@ -7711,7 +7710,7 @@ impl Editor {
         if !menu.visible() {
             return None;
         };
-        Some(menu.render(style, max_height_in_lines, y_flipped, window, cx))
+        Some(menu.render(style, max_height_in_lines, window, cx))
     }
 
     fn render_context_menu_aside(
@@ -7876,13 +7875,18 @@ impl Editor {
                         }
                     }
                     if let Some(pair) = bracket_pair {
-                        let start = snapshot.anchor_after(selection_head);
-                        let end = snapshot.anchor_after(selection_head);
-                        self.autoclose_regions.push(AutocloseRegion {
-                            selection_id: selection.id,
-                            range: start..end,
-                            pair,
-                        });
+                        let snapshot_settings = snapshot.language_settings_at(selection_head, cx);
+                        let autoclose_enabled =
+                            self.use_autoclose && snapshot_settings.use_autoclose;
+                        if autoclose_enabled {
+                            let start = snapshot.anchor_after(selection_head);
+                            let end = snapshot.anchor_after(selection_head);
+                            self.autoclose_regions.push(AutocloseRegion {
+                                selection_id: selection.id,
+                                range: start..end,
+                                pair,
+                            });
+                        }
                     }
                 }
             }
@@ -8713,7 +8717,7 @@ impl Editor {
         let blocks = vec![BlockProperties {
             style: BlockStyle::Sticky,
             placement: BlockPlacement::Above(anchor),
-            height,
+            height: Some(height),
             render: Arc::new(move |cx| {
                 *cloned_prompt.read(cx).gutter_dimensions.lock() = *cx.gutter_dimensions;
                 cloned_prompt.clone().into_any_element()
@@ -12797,7 +12801,6 @@ impl Editor {
     ) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.selections.newest::<usize>(cx);
-
         // If there is an active Diagnostic Popover jump to its diagnostic instead.
         if direction == Direction::Next {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
@@ -13802,7 +13805,7 @@ impl Editor {
                         [BlockProperties {
                             style: BlockStyle::Flex,
                             placement: BlockPlacement::Below(range.start),
-                            height: 1,
+                            height: Some(1),
                             render: Arc::new({
                                 let rename_editor = rename_editor.clone();
                                 move |cx: &mut BlockContext| {
@@ -14144,6 +14147,25 @@ impl Editor {
         }
     }
 
+    fn stop_language_server(
+        &mut self,
+        _: &StopLanguageServer,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(project) = self.project.clone() {
+            self.buffer.update(cx, |multi_buffer, cx| {
+                project.update(cx, |project, cx| {
+                    project.stop_language_servers_for_buffers(
+                        multi_buffer.all_buffers().into_iter().collect(),
+                        cx,
+                    );
+                    cx.emit(project::Event::RefreshInlayHints);
+                });
+            });
+        }
+    }
+
     fn cancel_language_server_work(
         workspace: &mut Workspace,
         _: &actions::CancelLanguageServerWork,
@@ -14250,7 +14272,7 @@ impl Editor {
                             placement: BlockPlacement::Below(
                                 buffer.anchor_after(entry.range.start),
                             ),
-                            height: message_height,
+                            height: Some(message_height),
                             render: diagnostic_block_renderer(diagnostic, None, true),
                             priority: 0,
                         }
@@ -15038,6 +15060,15 @@ impl Editor {
         cx.notify();
         self.scrollbar_marker_state.dirty = true;
         self.active_indent_guides_state.dirty = true;
+    }
+
+    pub fn update_fold_widths(
+        &mut self,
+        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.display_map
+            .update(cx, |map, cx| map.update_fold_widths(widths, cx))
     }
 
     pub fn default_fold_placeholder(&self, cx: &App) -> FoldPlaceholder {

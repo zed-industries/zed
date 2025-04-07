@@ -1211,7 +1211,7 @@ fn build_path_rasterization_pipeline_state(
 
 // Align to multiples of 256 make Metal happy.
 fn align_offset(offset: &mut usize) {
-    *offset = ((*offset + 255) / 256) * 256;
+    *offset = (*offset).div_ceil(256) * 256;
 }
 
 #[repr(C)]

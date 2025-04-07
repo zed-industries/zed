@@ -1,7 +1,8 @@
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
-    Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource,
-    ScreenCaptureStream, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, px, size,
+    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
+    ForegroundExecutor, Keymap, Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame,
+    ScreenCaptureSource, ScreenCaptureStream, Size, Task, TestDisplay, TestWindow,
+    WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -46,13 +47,14 @@ pub struct TestScreenCaptureSource {}
 pub struct TestScreenCaptureStream {}
 
 impl ScreenCaptureSource for TestScreenCaptureSource {
-    fn resolution(&self) -> Result<crate::Size<crate::Pixels>> {
-        Ok(size(px(1.), px(1.)))
+    fn resolution(&self) -> Result<Size<DevicePixels>> {
+        Ok(size(DevicePixels(1), DevicePixels(1)))
     }
 
     fn stream(
         &self,
-        _frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+        _foreground_executor: &ForegroundExecutor,
+        _frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         let (mut tx, rx) = oneshot::channel();
         let stream = TestScreenCaptureStream {};
@@ -269,6 +271,10 @@ impl Platform for TestPlatform {
 
     fn primary_display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
         Some(self.active_display.clone())
+    }
+
+    fn is_screen_capture_supported(&self) -> bool {
+        true
     }
 
     fn screen_capture_sources(

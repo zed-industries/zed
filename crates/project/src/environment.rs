@@ -60,7 +60,7 @@ impl ProjectEnvironment {
         }
     }
 
-    /// Returns an iterator over all pairs `(worktree_id, error_message)` of
+    /// Returns an iterator over all pairs `(abs_path, error_message)` of
     /// environment errors associated with this project environment.
     pub(crate) fn environment_errors(
         &self,
@@ -144,7 +144,14 @@ impl From<EnvironmentOrigin> for String {
     }
 }
 
+#[derive(Debug)]
 pub struct EnvironmentErrorMessage(pub String);
+
+impl std::fmt::Display for EnvironmentErrorMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl EnvironmentErrorMessage {
     #[allow(dead_code)]
@@ -361,6 +368,10 @@ fn get_directory_env(
 
         if let Some(error) = error_message {
             this.update(cx, |this, cx| {
+                log::error!(
+                    "error fetching environment for path {abs_path:?}: {}",
+                    error
+                );
                 this.environment_error_messages.insert(abs_path, error);
                 cx.emit(ProjectEnvironmentEvent::ErrorsUpdated)
             })

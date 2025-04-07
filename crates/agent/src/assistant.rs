@@ -23,7 +23,7 @@ mod ui;
 
 use std::sync::Arc;
 
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AgentProfileId, AssistantSettings};
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
@@ -51,7 +51,6 @@ actions!(
         ToggleProfileSelector,
         RemoveAllContext,
         OpenHistory,
-        OpenConfiguration,
         AddContextServer,
         RemoveSelectedThread,
         Chat,
@@ -82,11 +81,11 @@ pub struct NewThread {
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 pub struct ManageProfiles {
     #[serde(default)]
-    pub customize_tools: Option<Arc<str>>,
+    pub customize_tools: Option<AgentProfileId>,
 }
 
 impl ManageProfiles {
-    pub fn customize_tools(profile_id: Arc<str>) -> Self {
+    pub fn customize_tools(profile_id: AgentProfileId) -> Self {
         Self {
             customize_tools: Some(profile_id),
         }

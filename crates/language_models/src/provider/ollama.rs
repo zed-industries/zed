@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
@@ -9,8 +9,8 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaToolCall,
-    get_models, preload_model, stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, KeepAlive, get_models, preload_model,
+    stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -265,22 +265,6 @@ impl OllamaLanguageModel {
             tools: vec![],
         }
     }
-    fn request_completion(
-        &self,
-        request: ChatRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<ChatResponseDelta>> {
-        let http_client = self.http_client.clone();
-
-        let Ok(api_url) = cx.update(|cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-            settings.api_url.clone()
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        async move { ollama::complete(http_client.as_ref(), &api_url, request).await }.boxed()
-    }
 }
 
 impl LanguageModel for OllamaLanguageModel {
@@ -371,48 +355,6 @@ impl LanguageModel for OllamaLanguageModel {
                 .boxed())
         }
         .boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        use ollama::{OllamaFunctionTool, OllamaTool};
-        let function = OllamaFunctionTool {
-            name: tool_name.clone(),
-            description: Some(tool_description),
-            parameters: Some(schema),
-        };
-        let tools = vec![OllamaTool::Function { function }];
-        let request = self.to_ollama_request(request).with_tools(tools);
-        let response = self.request_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                let ChatMessage::Assistant { tool_calls, .. } = response.message else {
-                    bail!("message does not have an assistant role");
-                };
-                if let Some(tool_calls) = tool_calls.filter(|calls| !calls.is_empty()) {
-                    for call in tool_calls {
-                        let OllamaToolCall::Function(function) = call;
-                        if function.name == tool_name {
-                            return Ok(futures::stream::once(async move {
-                                Ok(function.arguments.to_string())
-                            })
-                            .boxed());
-                        }
-                    }
-                } else {
-                    bail!("assistant message does not have any tool calls");
-                };
-
-                bail!("tool not used")
-            })
-            .boxed()
     }
 }
 

@@ -15,3 +15,4 @@ workspace = true
 anyhow.workspace = true
 gpui.workspace = true
 rust-embed.workspace = true
+workspace-hack.workspace = true

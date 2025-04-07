@@ -1,7 +1,7 @@
 use crate::{
-    Pixels, Size,
+    DevicePixels, ForegroundExecutor, Size,
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
-    px, size,
+    size,
 };
 use anyhow::{Result, anyhow};
 use block::ConcreteBlock;
@@ -48,7 +48,7 @@ const FRAME_CALLBACK_IVAR: &str = "frame_callback";
 const SCStreamOutputTypeScreen: NSInteger = 0;
 
 impl ScreenCaptureSource for MacScreenCaptureSource {
-    fn resolution(&self) -> Result<Size<Pixels>> {
+    fn resolution(&self) -> Result<Size<DevicePixels>> {
         unsafe {
             let display_id: CGDirectDisplayID = msg_send![self.sc_display, displayID];
             let display_mode_ref = CGDisplayCopyDisplayMode(display_id);
@@ -56,13 +56,17 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let height = CGDisplayModeGetPixelHeight(display_mode_ref);
             CGDisplayModeRelease(display_mode_ref);
 
-            Ok(size(px(width as f32), px(height as f32)))
+            Ok(size(
+                DevicePixels(width as i32),
+                DevicePixels(height as i32),
+            ))
         }
     }
 
     fn stream(
         &self,
-        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+        _foreground_executor: &ForegroundExecutor,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         unsafe {
             let stream: id = msg_send![class!(SCStream), alloc];

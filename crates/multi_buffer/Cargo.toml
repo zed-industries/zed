@@ -28,7 +28,6 @@ collections.workspace = true
 ctor.workspace = true
 buffer_diff.workspace = true
 env_logger.workspace = true
-futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -45,6 +44,7 @@ text.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 buffer_diff = { workspace = true, features = ["test-support"] }

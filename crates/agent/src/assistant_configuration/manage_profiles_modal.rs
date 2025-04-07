@@ -2,7 +2,7 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfile, AssistantSettings};
+use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
 use assistant_tool::ToolWorkingSet;
 use convert_case::{Case, Casing as _};
 use editor::Editor;
@@ -27,7 +27,7 @@ enum Mode {
     NewProfile(NewProfileMode),
     ViewProfile(ViewProfileMode),
     ConfigureTools {
-        profile_id: Arc<str>,
+        profile_id: AgentProfileId,
         tool_picker: Entity<ToolPicker>,
         _subscription: Subscription,
     },
@@ -58,7 +58,7 @@ impl Mode {
 
 #[derive(Clone)]
 struct ProfileEntry {
-    pub id: Arc<str>,
+    pub id: AgentProfileId,
     pub name: SharedString,
     pub navigation: NavigableEntry,
 }
@@ -71,7 +71,7 @@ pub struct ChooseProfileMode {
 
 #[derive(Clone)]
 pub struct ViewProfileMode {
-    profile_id: Arc<str>,
+    profile_id: AgentProfileId,
     fork_profile: NavigableEntry,
     configure_tools: NavigableEntry,
 }
@@ -79,7 +79,7 @@ pub struct ViewProfileMode {
 #[derive(Clone)]
 pub struct NewProfileMode {
     name_editor: Entity<Editor>,
-    base_profile_id: Option<Arc<str>>,
+    base_profile_id: Option<AgentProfileId>,
 }
 
 pub struct ManageProfilesModal {
@@ -140,7 +140,7 @@ impl ManageProfilesModal {
 
     fn new_profile(
         &mut self,
-        base_profile_id: Option<Arc<str>>,
+        base_profile_id: Option<AgentProfileId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -158,7 +158,7 @@ impl ManageProfilesModal {
 
     pub fn view_profile(
         &mut self,
-        profile_id: Arc<str>,
+        profile_id: AgentProfileId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -172,7 +172,7 @@ impl ManageProfilesModal {
 
     fn configure_tools(
         &mut self,
-        profile_id: Arc<str>,
+        profile_id: AgentProfileId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -219,7 +219,7 @@ impl ManageProfilesModal {
                     .and_then(|profile_id| settings.profiles.get(profile_id).cloned());
 
                 let name = mode.name_editor.read(cx).text(cx);
-                let profile_id: Arc<str> = name.to_case(Case::Kebab).into();
+                let profile_id = AgentProfileId(name.to_case(Case::Kebab).into());
 
                 let profile = AgentProfile {
                     name: name.into(),
@@ -261,7 +261,12 @@ impl ManageProfilesModal {
         }
     }
 
-    fn create_profile(&self, profile_id: Arc<str>, profile: AgentProfile, cx: &mut Context<Self>) {
+    fn create_profile(
+        &self,
+        profile_id: AgentProfileId,
+        profile: AgentProfile,
+        cx: &mut Context<Self>,
+    ) {
         update_settings_file::<AssistantSettings>(self.fs.clone(), cx, {
             move |settings, _cx| {
                 settings.create_profile(profile_id, profile).log_err();
