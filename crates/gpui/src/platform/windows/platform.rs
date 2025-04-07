@@ -49,7 +49,7 @@ pub(crate) struct WindowsPlatform {
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: Vec<OwnedMenu>,
-    dock_menus: Vec<DockMenuItem>,
+    jump_list: JumpList,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Option<HCURSOR>,
 }
@@ -67,12 +67,12 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
-        let dock_menus = Vec::new();
+        let jump_list = JumpList::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
-            dock_menus,
+            jump_list,
             current_cursor,
             menus: Vec::new(),
         }
@@ -186,6 +186,7 @@ impl WindowsPlatform {
         let mut lock = self.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
             let Some(action) = lock
+                .jump_list
                 .dock_menus
                 .get(action_idx)
                 .map(|dock_menu| dock_menu.action.boxed_clone())
@@ -251,7 +252,6 @@ impl WindowsPlatform {
         false
     }
 
-    /// You have to call `update_jump_list` to show the button after calling this method.
     fn set_dock_menus(&self, menus: Vec<MenuItem>) {
         let mut actions = Vec::new();
         menus.into_iter().for_each(|menu| {
@@ -259,12 +259,17 @@ impl WindowsPlatform {
                 actions.push(dock_menu);
             }
         });
-        self.state.borrow_mut().dock_menus = actions;
+        let mut lock = self.state.borrow_mut();
+        lock.jump_list.dock_menus = actions;
+        update_jump_list(&lock.jump_list)
+            .log_err()
+            .unwrap_or_default();
     }
 
     fn update_jump_list(&self, entries: &[&SmallVec<[PathBuf; 2]>]) -> Vec<SmallVec<[PathBuf; 2]>> {
-        let dock_menus = &self.state.borrow().dock_menus;
-        update_jump_list(entries, dock_menus)
+        let mut lock = self.state.borrow_mut();
+        lock.jump_list.recent_workspaces = entries.iter().cloned().cloned().collect_vec();
+        update_jump_list(&lock.jump_list)
             .log_err()
             .unwrap_or_default()
     }

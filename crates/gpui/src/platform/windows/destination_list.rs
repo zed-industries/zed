@@ -22,9 +22,18 @@ use windows::{
 
 use crate::{Action, MenuItem};
 
-pub(crate) struct DestinationList {
+pub(crate) struct JumpList {
     pub(crate) dock_menus: Vec<DockMenuItem>,
     pub(crate) recent_workspaces: Vec<SmallVec<[PathBuf; 2]>>,
+}
+
+impl JumpList {
+    pub(crate) fn new() -> Self {
+        Self {
+            dock_menus: Vec::new(),
+            recent_workspaces: Vec::new(),
+        }
+    }
 }
 
 pub(crate) struct DockMenuItem {
@@ -55,12 +64,11 @@ impl DockMenuItem {
 // This code is based on the example from Microsoft:
 // https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/winui/shell/appshellintegration/RecipePropertyHandler/RecipePropertyHandler.cpp
 pub(crate) fn update_jump_list(
-    entries: &[&SmallVec<[PathBuf; 2]>],
-    dock_menus: &[DockMenuItem],
+    jump_list: &JumpList,
 ) -> anyhow::Result<Vec<SmallVec<[PathBuf; 2]>>> {
     let (list, removed) = create_destination_list()?;
-    add_recent_folders(&list, entries, removed.as_ref())?;
-    add_dock_menu(&list, dock_menus)?;
+    add_recent_folders(&list, &jump_list.recent_workspaces, removed.as_ref())?;
+    add_dock_menu(&list, &jump_list.dock_menus)?;
     unsafe { list.CommitList() }?;
     Ok(removed)
 }
@@ -122,7 +130,7 @@ fn add_dock_menu(list: &ICustomDestinationList, dock_menus: &[DockMenuItem]) -> 
 
 fn add_recent_folders(
     list: &ICustomDestinationList,
-    entries: &[&SmallVec<[PathBuf; 2]>],
+    entries: &[SmallVec<[PathBuf; 2]>],
     removed: &Vec<SmallVec<[PathBuf; 2]>>,
 ) -> anyhow::Result<()> {
     unsafe {
