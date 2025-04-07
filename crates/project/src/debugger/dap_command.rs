@@ -1479,7 +1479,7 @@ impl LocalDapCommand for ThreadsCommand {
     type DapRequest = dap::requests::Threads;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
-        ()
+        dap::ThreadsArgument {}
     }
 
     fn response_from_dap(
