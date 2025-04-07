@@ -3544,6 +3544,8 @@ impl Project {
         range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<SemanticToken>>> {
+        let buffer = buffer_handle.read(cx);
+        let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.semantic_tokens_range(buffer_handle, range, cx)
         })
@@ -3555,6 +3557,8 @@ impl Project {
         range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<SemanticToken>>> {
+        let buffer = buffer_handle.read(cx);
+        let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.semantic_tokens_full(buffer_handle, range, cx)
         })

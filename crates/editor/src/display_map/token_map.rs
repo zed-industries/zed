@@ -915,3 +915,179 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
         sum_tree.push(Transform::Isomorphic(summary), &());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::Hsla;
+    use multi_buffer::MultiBuffer;
+    use ui::App;
+
+    use super::*;
+
+    #[gpui::test]
+    fn test_basic_semantic_tokens(cx: &mut App) {
+        let buffer = MultiBuffer::build_simple("abcdefghi", cx);
+        let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        assert_eq!(token_snapshot.text(), "abcdefghi");
+        let mut next_token_id = 0;
+
+        // Add a token that highlights "def"
+        let (token_snapshot, _) = token_map.splice(
+            &[],
+            vec![Token::new(
+                next_token_id,
+                buffer.read(cx).snapshot(cx).anchor_at(3, Bias::Left)
+                    ..buffer.read(cx).snapshot(cx).anchor_at(6, Bias::Right),
+                HighlightStyle::color(Hsla::green()),
+                "def",
+            )],
+        );
+        next_token_id += 1;
+        assert_eq!(token_snapshot.text(), "abcdefghi");
+
+        // Test token point to buffer point conversion
+        assert_eq!(
+            token_snapshot.to_buffer_point(TokenPoint::new(0, 0)),
+            Point::new(0, 0)
+        );
+        assert_eq!(
+            token_snapshot.to_buffer_point(TokenPoint::new(0, 3)),
+            Point::new(0, 3)
+        );
+        assert_eq!(
+            token_snapshot.to_buffer_point(TokenPoint::new(0, 6)),
+            Point::new(0, 6)
+        );
+
+        // Test buffer point to token point conversion
+        assert_eq!(
+            token_snapshot.to_token_point(Point::new(0, 0)),
+            TokenPoint::new(0, 0)
+        );
+        assert_eq!(
+            token_snapshot.to_token_point(Point::new(0, 3)),
+            TokenPoint::new(0, 3)
+        );
+        assert_eq!(
+            token_snapshot.to_token_point(Point::new(0, 6)),
+            TokenPoint::new(0, 6)
+        );
+
+        // Test clipping points
+        assert_eq!(
+            token_snapshot.clip_point(TokenPoint::new(0, 0), Bias::Left),
+            TokenPoint::new(0, 0)
+        );
+        assert_eq!(
+            token_snapshot.clip_point(TokenPoint::new(0, 9), Bias::Right),
+            TokenPoint::new(0, 9)
+        );
+
+        // Edits before or after the token should not affect it
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..1, "A"), (8..9, "I")], None, cx)
+        });
+        let (token_snapshot, _) = token_map.sync(
+            buffer.read(cx).snapshot(cx),
+            buffer_edits.consume().into_inner(),
+        );
+        assert_eq!(token_snapshot.text(), "AbcdefghI");
+
+        // Add another token that highlights "bc"
+        let (token_snapshot, _) = token_map.splice(
+            &[],
+            vec![Token::new(
+                next_token_id,
+                buffer.read(cx).snapshot(cx).anchor_at(1, Bias::Left)
+                    ..buffer.read(cx).snapshot(cx).anchor_at(3, Bias::Right),
+                HighlightStyle::color(Hsla::blue()),
+                "bc",
+            )],
+        );
+        next_token_id += 1;
+        assert_eq!(token_snapshot.text(), "AbcdefghI");
+
+        // An edit within a token should invalidate it
+        buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "X")], None, cx));
+        let (token_snapshot, _) = token_map.sync(
+            buffer.read(cx).snapshot(cx),
+            buffer_edits.consume().into_inner(),
+        );
+        assert_eq!(token_snapshot.text(), "AbcdXfghI");
+
+        // Add multiple overlapping tokens
+        let (token_snapshot, _) = token_map.splice(
+            &[],
+            vec![
+                Token::new(
+                    next_token_id,
+                    buffer.read(cx).snapshot(cx).anchor_at(2, Bias::Left)
+                        ..buffer.read(cx).snapshot(cx).anchor_at(5, Bias::Right),
+                    HighlightStyle::color(Hsla::red()),
+                    "cdX",
+                ),
+                Token::new(
+                    next_token_id + 1,
+                    buffer.read(cx).snapshot(cx).anchor_at(5, Bias::Left)
+                        ..buffer.read(cx).snapshot(cx).anchor_at(7, Bias::Right),
+                    HighlightStyle::color(Hsla::red()),
+                    "fg",
+                ),
+            ],
+        );
+        next_token_id += 2;
+        assert_eq!(token_snapshot.text(), "AbcdXfghI");
+
+        // The tokens can be manually removed
+        let (token_snapshot, _) = token_map.splice(
+            &token_map
+                .current_tokens()
+                .map(|token| token.id)
+                .collect::<Vec<usize>>(),
+            Vec::new(),
+        );
+        assert_eq!(token_snapshot.text(), "AbcdXfghI");
+
+        // Test with multiline text
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..8, "hello\nworld")], None, cx)
+        });
+        let (token_snapshot, _) = token_map.sync(
+            buffer.read(cx).snapshot(cx),
+            buffer_edits.consume().into_inner(),
+        );
+        assert_eq!(token_snapshot.text(), "hello\nworldI");
+
+        // Add tokens spanning multiple lines
+        let (token_snapshot, _) = token_map.splice(
+            &[],
+            vec![
+                Token::new(
+                    next_token_id,
+                    buffer.read(cx).snapshot(cx).anchor_at(2, Bias::Left)
+                        ..buffer.read(cx).snapshot(cx).anchor_at(7, Bias::Right),
+                    HighlightStyle::color(Hsla::green()),
+                    "llo\nw",
+                ),
+                Token::new(
+                    next_token_id + 1,
+                    buffer.read(cx).snapshot(cx).anchor_at(8, Bias::Left)
+                        ..buffer.read(cx).snapshot(cx).anchor_at(11, Bias::Right),
+                    HighlightStyle::color(Hsla::blue()),
+                    "orl",
+                ),
+            ],
+        );
+        assert_eq!(token_snapshot.text(), "hello\nworldI");
+
+        // Test row information
+        assert_eq!(
+            token_snapshot
+                .row_infos(0)
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
+            vec![Some(0), Some(1)]
+        );
+    }
+}

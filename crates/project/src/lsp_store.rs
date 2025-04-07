@@ -5705,7 +5705,6 @@ impl LspStore {
                     lsp_request_task.await.context("semantic token LSP request")
                 });
             }
-
             let request = join_all(server_ids.into_iter().map(|id| {
                 let lsp = LanguageServerToQuery::Other(id);
                 self.request_lsp(buffer_handle.clone(), lsp, SemanticTokensFull, cx)
