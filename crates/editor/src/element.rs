@@ -3912,9 +3912,13 @@ impl EditorElement {
         );
 
         let hover_popovers = self.editor.update(cx, |editor, cx| {
-            editor
-                .hover_state
-                .render(snapshot, visible_display_row_range.clone(), max_size, cx)
+            editor.hover_state.render(
+                snapshot,
+                visible_display_row_range.clone(),
+                max_size,
+                window,
+                cx,
+            )
         });
         let Some((position, hover_popovers)) = hover_popovers else {
             return;
