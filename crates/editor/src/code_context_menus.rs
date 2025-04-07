@@ -240,6 +240,7 @@ impl CompletionsMenu {
                 icon_path: None,
                 documentation: None,
                 confirm: None,
+                insert_text_mode: None,
                 source: CompletionSource::Custom,
             })
             .collect();

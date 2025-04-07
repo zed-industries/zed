@@ -136,7 +136,7 @@ use task::{ResolvedTask, TaskTemplate, TaskVariables};
 pub use lsp::CompletionContext;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity,
-    InsertTextFormat, LanguageServerId, LanguageServerName,
+    InsertTextFormat, InsertTextMode, LanguageServerId, LanguageServerName,
 };
 
 use language::BufferSnapshot;
@@ -4442,6 +4442,7 @@ impl Editor {
                         word_range,
                         resolved: false,
                     },
+                    insert_text_mode: Some(InsertTextMode::AS_IS),
                     confirm: None,
                 }));
 
@@ -4687,7 +4688,13 @@ impl Editor {
             } else {
                 this.buffer.update(cx, |buffer, cx| {
                     let edits = ranges.iter().map(|range| (range.clone(), text));
-                    buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                    let auto_indent = if completion.insert_text_mode == Some(InsertTextMode::AS_IS)
+                    {
+                        None
+                    } else {
+                        this.autoindent_mode.clone()
+                    };
+                    buffer.edit(edits, auto_indent, cx);
                 });
             }
             for (buffer, edits) in linked_edits {
@@ -18637,6 +18644,7 @@ fn snippet_completions(
                         .description
                         .clone()
                         .map(|description| CompletionDocumentation::SingleLine(description.into())),
+                    insert_text_mode: None,
                     confirm: None,
                 })
             })
