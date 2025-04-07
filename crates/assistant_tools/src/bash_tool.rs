@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, TOOL_OUTPUT_LIMIT, Tool};
+use assistant_tool::{ActionLog, Tool};
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt, AsyncReadExt};
 use gpui::{App, Entity, Task};
@@ -144,9 +144,11 @@ impl Tool for BashTool {
             const ERR_MESSAGE_1: &str = "Command failed with exit code ";
             const ERR_MESSAGE_2: &str = "\n\n";
 
-            const LIMIT: usize = TOOL_OUTPUT_LIMIT
+            const STDOUT_LIMIT: usize = 8192;
+
+            const LIMIT: usize = STDOUT_LIMIT
                 - (MESSAGE_1.len()
-                    + (TOOL_OUTPUT_LIMIT.ilog10() as usize + 1) // byte count
+                    + (STDOUT_LIMIT.ilog10() as usize + 1) // byte count
                     + MESSAGE_2.len()
                     + ERR_MESSAGE_1.len()
                     + 3 // status code
@@ -190,21 +192,25 @@ impl Tool for BashTool {
                 String::from_utf8_lossy(&output_bytes).into()
             };
 
-            if status.success() {
+            let output_with_status = if status.success() {
                 if output_string.is_empty() {
-                    Ok("Command executed successfully.".to_string())
+                    "Command executed successfully.".to_string()
                 } else {
-                    Ok(output_string.to_string())
+                    output_string.to_string()
                 }
             } else {
-                Ok(format!(
+                format!(
                     "{}{}{}{}",
                     ERR_MESSAGE_1,
                     status.code().unwrap_or(-1),
                     ERR_MESSAGE_2,
                     output_string,
-                ))
-            }
+                )
+            };
+
+            debug_assert!(output_with_status.len() <= STDOUT_LIMIT);
+
+            Ok(output_with_status)
         })
     }
 }

@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{TOOL_OUTPUT_LIMIT, Tool, ToolWorkingSet};
+use assistant_tool::{Tool, ToolWorkingSet};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, SharedString, Task};
 use language_model::{
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, Role,
+    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolResult,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
 };
 use ui::IconName;
 use util::truncate_lines_to_byte_limit;
@@ -332,13 +332,24 @@ impl ToolUseState {
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
         output: Result<String>,
+        cx: &App,
     ) -> Option<PendingToolUse> {
         match output {
             Ok(tool_result) => {
-                let tool_result = if tool_result.len() <= TOOL_OUTPUT_LIMIT {
+                let model_registry = LanguageModelRegistry::read_global(cx);
+
+                const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
+
+                // Protect from clearly large output
+                let tool_output_limit = model_registry
+                    .default_model()
+                    .map(|model| model.model.max_token_count() * BYTES_PER_TOKEN_ESTIMATE)
+                    .unwrap_or(usize::MAX);
+
+                let tool_result = if tool_result.len() <= tool_output_limit {
                     tool_result
                 } else {
-                    let truncated = truncate_lines_to_byte_limit(&tool_result, TOOL_OUTPUT_LIMIT);
+                    let truncated = truncate_lines_to_byte_limit(&tool_result, tool_output_limit);
 
                     format!(
                         "Tool result too long. The first {} bytes:\n\n{}",
