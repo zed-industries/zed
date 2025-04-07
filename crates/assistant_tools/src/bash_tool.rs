@@ -16,7 +16,7 @@ use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BashToolInput {
-    /// The bash command to execute as a one-liner.
+    /// The bash one-liner command to execute.
     command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     cd: String,
