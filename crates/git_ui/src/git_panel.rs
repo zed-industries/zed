@@ -3927,9 +3927,9 @@ impl GitPanelMessageTooltip {
                     }),
                 };
 
-                this.update_in(cx, |this: &mut GitPanelMessageTooltip, window, cx| {
+                this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {
                     this.commit_tooltip = Some(cx.new(move |cx| {
-                        CommitTooltip::new(commit_details, repository, workspace, window, cx)
+                        CommitTooltip::new(commit_details, repository, workspace, cx)
                     }));
                     cx.notify();
                 })
