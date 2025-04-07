@@ -18,6 +18,7 @@ use anyhow::{Context as _, anyhow};
 use async_task::Runnable;
 use calloop::{LoopSignal, channel::Channel};
 use futures::channel::oneshot;
+use smallvec::SmallVec;
 use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};

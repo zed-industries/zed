@@ -45,6 +45,7 @@ use objc::{
 };
 use parking_lot::Mutex;
 use ptr::null_mut;
+use smallvec::SmallVec;
 use std::{
     cell::Cell,
     convert::TryInto,
