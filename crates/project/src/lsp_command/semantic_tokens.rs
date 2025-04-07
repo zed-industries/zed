@@ -376,16 +376,22 @@ fn proto_to_semantic_token(proto: proto::SemanticToken) -> anyhow::Result<Semant
         .context("invalid end position")?;
     Ok(SemanticToken {
         range: start..end,
-        modifiers: vec![],
+        modifiers: proto.modifiers.into_iter().map(Into::into).collect_vec(),
         r#type: lsp::SemanticTokenType::from(proto.token),
     })
 }
 #[cfg(test)]
 mod tests {
+    use crate::Project;
+
     use super::*;
-    use gpui::TestAppContext;
+    use fs::FakeFs;
+    use gpui::{SemanticVersion, TestAppContext};
     use language::Anchor;
     use lsp::{SemanticTokenModifier, SemanticTokenType};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
 
     #[test]
     fn test_active_modifiers_empty() {
@@ -439,141 +445,104 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_response_to_proto(cx: &TestAppContext) {
-        // let app = cx.app;
+    async fn test_from_proto_semantic_tokens_range(cx: &mut TestAppContext) {
+        init_test(cx);
 
-        // // Create some mock semantic tokens
-        // let tokens = vec![
-        //     SemanticToken {
-        //         range: Anchor::from(Point::new(0, 0))..Anchor::from(Point::new(0, 8)),
-        //         modifiers: vec![SemanticTokenModifier::READONLY],
-        //         r#type: SemanticTokenType::FUNCTION,
-        //     },
-        //     SemanticToken {
-        //         range: Anchor::from(Point::new(1, 2))..Anchor::from(Point::new(1, 8)),
-        //         modifiers: vec![],
-        //         r#type: SemanticTokenType::VARIABLE,
-        //     },
-        // ];
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { let x = 42; } // and some long comment to ensure tokens are not trimmed out",
+            }),
+        )
+        .await;
 
-        // let mut lsp_store = LspStore::default();
-        // let buffer_version = clock::Global::new();
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
 
-        // // Call response_to_proto
-        // let proto_response = app
-        //     .update(|cx| {
-        //         SemanticTokensFull::response_to_proto(
-        //             tokens,
-        //             &mut lsp_store,
-        //             PeerId(0),
-        //             &buffer_version,
-        //             cx,
-        //         )
-        //     })
-        //     .unwrap();
+        // Create start and end anchors
+        let start_anchor = buffer.update(cx, |buffer, _| {
+            buffer.anchor_before(buffer.offset_to_point(0))
+        });
+        let end_anchor = buffer.update(cx, |buffer, _| {
+            buffer.anchor_after(buffer.offset_to_point(20))
+        });
 
-        // // Verify the proto response
-        // assert_eq!(proto_response.tokens.len(), 2);
-        // assert_eq!(proto_response.tokens[0].token, "function");
-        // assert_eq!(proto_response.tokens[1].token, "variable");
+        // Create a proto request
+        let proto_request = cx.update(|app| proto::SemanticTokensRangeRequest {
+            project_id: 100,
+            buffer_id: buffer.read(app).remote_id().to_proto(),
+            version: serialize_version(&buffer.read(app).version()),
+            start: Some(language::proto::serialize_anchor(&start_anchor)),
+            end: Some(language::proto::serialize_anchor(&end_anchor)),
+        });
 
-        // assert_eq!(proto_response.tokens[0].modifiers.len(), 1);
-        // assert_eq!(proto_response.tokens[0].modifiers[0], "readonly");
-        // assert_eq!(proto_response.tokens[1].modifiers.len(), 0);
+        // Call from_proto
+        let result = cx
+            .update(|app| {
+                SemanticTokensRange::from_proto(
+                    proto_request,
+                    project.read(app).lsp_store(),
+                    buffer,
+                    app.to_async(),
+                )
+            })
+            .await
+            .unwrap();
+
+        // Verify the result
+        assert_eq!(result.range.start, start_anchor);
+        assert_eq!(result.range.end, end_anchor);
     }
 
     #[gpui::test]
-    async fn test_from_proto_semantic_tokens_range(cx: &TestAppContext) {
-        // let app = cx.app;
+    async fn test_from_proto_semantic_tokens_full(cx: &mut TestAppContext) {
+        init_test(cx);
 
-        // // Create a start and end anchor
-        // let (start, end) = app
-        //     .update(|cx| {
-        //         let snapshot = buffer.read(cx).snapshot();
-        //         let start = snapshot.anchor_before(Point::new(0, 0));
-        //         let end = snapshot.anchor_after(Point::new(2, 1));
-        //         (start, end)
-        //     })
-        //     .unwrap();
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { let x = 42; } // and some long comment to ensure tokens are not trimmed out",
+            }),
+        )
+        .await;
 
-        // // Create a proto request
-        // let proto_request = proto::SemanticTokensRangeRequest {
-        //     project_id: 100,
-        //     buffer_id: buffer.remote_id().to_proto(),
-        //     version: serialize_version(&buffer.version()),
-        //     start: Some(language::proto::serialize_anchor(&start)),
-        //     end: Some(language::proto::serialize_anchor(&end)),
-        // };
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
 
-        // // Call from_proto
-        // let lsp_store_entity = app
-        //     .update(|cx| Entity::test(EntityId::from_parts(3, 0), LspStore::default(), cx))
-        //     .unwrap();
-        // let result = SemanticTokensRange::from_proto(
-        //     proto_request,
-        //     lsp_store_entity,
-        //     buffer_entity,
-        //     app.to_async(),
-        // )
-        // .await
-        // .unwrap();
+        // Create a proto request
+        let proto_request = cx.update(|app| proto::SemanticTokensFullRequest {
+            project_id: 100,
+            buffer_id: buffer.read(app).remote_id().to_proto(),
+            version: serialize_version(&buffer.read(app).version()),
+        });
 
-        // // Verify the result
-        // app.update(|cx| {
-        //     let snapshot = buffer.read(cx).snapshot();
-        //     assert_eq!(
-        //         result.range.start.to_offset(&snapshot),
-        //         start.to_offset(&snapshot)
-        //     );
-        //     assert_eq!(
-        //         result.range.end.to_offset(&snapshot),
-        //         end.to_offset(&snapshot)
-        //     );
-        // })
-        // .unwrap();
-    }
+        // Call from_proto
+        let result = cx
+            .update(|app| {
+                SemanticTokensFull::from_proto(
+                    proto_request,
+                    project.read(app).lsp_store(),
+                    buffer,
+                    app.to_async(),
+                )
+            })
+            .await
+            .unwrap();
 
-    #[gpui::test]
-    async fn test_from_proto_semantic_tokens_full(cx: &TestAppContext) {
-        // let app = cx.app;
-
-        // // Create a mock buffer
-        // let buffer = app
-        //     .update(|cx| {
-        //         Buffer::new(
-        //             0,
-        //             BufferId::new(1).unwrap(),
-        //             "function test() {\n  return 42;\n}",
-        //         )
-        //         .unwrap()
-        //     })
-        //     .unwrap();
-        // let buffer_entity = app
-        //     .update(|cx| Entity::test(EntityId::from_parts(2, 0), buffer.clone(), cx))
-        //     .unwrap();
-
-        // // Create a proto request
-        // let proto_request = proto::SemanticTokensFullRequest {
-        //     project_id: 100,
-        //     buffer_id: buffer.remote_id().to_proto(),
-        //     version: serialize_version(&buffer.version()),
-        // };
-
-        // // Call from_proto
-        // let lsp_store_entity = app
-        //     .update(|cx| Entity::test(EntityId::from_parts(3, 0), LspStore::default(), cx))
-        //     .unwrap();
-        // let result = SemanticTokensFull::from_proto(
-        //     proto_request,
-        //     lsp_store_entity,
-        //     buffer_entity,
-        //     app.to_async(),
-        // )
-        // .await
-        // .unwrap();
-
-        // // Just verify it doesn't fail - the result doesn't have any fields to check
-        // assert!(matches!(result, SemanticTokensFull));
+        // Just verify it doesn't fail - the result doesn't have any fields to check
+        assert!(matches!(result, SemanticTokensFull));
     }
 
     #[test]
@@ -595,7 +564,7 @@ mod tests {
 
         // Verify the result
         assert_eq!(result.r#type, SemanticTokenType::FUNCTION);
-        // Note: modifiers aren't preserved by the function as implemented
+        assert_eq!(result.modifiers, vec![SemanticTokenModifier::READONLY])
     }
 
     #[test]
@@ -645,5 +614,19 @@ mod tests {
         // Verify anchors were serialized
         assert!(proto_token.start.is_some());
         assert!(proto_token.end.is_some());
+    }
+
+    pub fn init_test(cx: &mut gpui::TestAppContext) {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            release_channel::init(SemanticVersion::default(), cx);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
     }
 }
