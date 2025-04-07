@@ -543,6 +543,17 @@ impl AssistantPanel {
         })
     }
 
+    pub fn go_back(&mut self, _: &workspace::GoBack, window: &mut Window, cx: &mut Context<Self>) {
+        match self.active_view {
+            ActiveView::Configuration | ActiveView::History => {
+                self.active_view =
+                    ActiveView::thread(self.thread.read(cx).thread().clone(), window, cx);
+                cx.notify();
+            }
+            _ => {}
+        }
+    }
+
     pub fn open_agent_diff(
         &mut self,
         _: &OpenAgentDiff,
@@ -839,7 +850,6 @@ impl AssistantPanel {
         h_flex()
             .key_context("TitleEditor")
             .id("TitleEditor")
-            .pl_2()
             .flex_grow()
             .w_full()
             .max_w_full()
@@ -864,6 +874,29 @@ impl AssistantPanel {
             _ => false,
         };
 
+        let go_back_button = match &self.active_view {
+            ActiveView::History | ActiveView::Configuration => Some(
+                IconButton::new("go-back", IconName::ArrowLeft)
+                    .icon_size(IconSize::Small)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.go_back(&workspace::GoBack, window, cx);
+                    }))
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Go Back",
+                                &workspace::GoBack,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    }),
+            ),
+            _ => None,
+        };
+
         h_flex()
             .id("assistant-toolbar")
             .h(Tab::container_height(cx))
@@ -874,7 +907,14 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .child(self.render_title_view(window, cx))
+            .child(
+                h_flex()
+                    .w_full()
+                    .pl_2()
+                    .gap_2()
+                    .children(go_back_button)
+                    .child(self.render_title_view(window, cx)),
+            )
             .child(
                 h_flex()
                     .h_full()
@@ -1500,6 +1540,7 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
             .on_action(cx.listener(Self::deploy_prompt_library))
             .on_action(cx.listener(Self::open_agent_diff))
+            .on_action(cx.listener(Self::go_back))
             .child(self.render_toolbar(window, cx))
             .map(|parent| match self.active_view {
                 ActiveView::Thread { .. } => parent
