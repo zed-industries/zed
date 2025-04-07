@@ -4421,18 +4421,6 @@ impl Workspace {
         None
     }
 
-    #[cfg(target_os = "windows")]
-    fn shared_screen_for_peer(
-        &self,
-        _peer_id: PeerId,
-        _pane: &Entity<Pane>,
-        _window: &mut Window,
-        _cx: &mut App,
-    ) -> Option<Entity<SharedScreen>> {
-        None
-    }
-
-    #[cfg(not(target_os = "windows"))]
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,

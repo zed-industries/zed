@@ -1,9 +1,12 @@
 pub mod parser;
+mod path_range;
 
+use file_icons::FileIcons;
 use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::mem;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,7 +14,7 @@ use std::time::Duration;
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, KeyContext,
-    Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Render, Stateful,
+    Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Stateful,
     StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, actions, point, quad,
 };
@@ -19,8 +22,9 @@ use language::{Language, LanguageRegistry, Rope};
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
 use theme::SyntaxTheme;
-use ui::{Tooltip, prelude::*};
+use ui::{ButtonLike, Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
+use workspace::Workspace;
 
 use crate::parser::CodeBlockKind;
 
@@ -70,7 +74,6 @@ pub struct Markdown {
     selection: Selection,
     pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
-    style: MarkdownStyle,
     parsed_markdown: ParsedMarkdown,
     should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
@@ -93,7 +96,6 @@ actions!(markdown, [Copy]);
 impl Markdown {
     pub fn new(
         source: SharedString,
-        style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
         cx: &mut Context<Self>,
@@ -104,7 +106,6 @@ impl Markdown {
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
-            style,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
@@ -132,14 +133,13 @@ impl Markdown {
         }
     }
 
-    pub fn new_text(source: SharedString, style: MarkdownStyle, cx: &mut Context<Self>) -> Self {
+    pub fn new_text(source: SharedString, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
             source,
             selection: Selection::default(),
             pressed_link: None,
             autoscroll_request: None,
-            style,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
@@ -210,13 +210,15 @@ impl Markdown {
                 return anyhow::Ok(ParsedMarkdown {
                     events: Arc::from(parse_links_only(source.as_ref())),
                     source,
-                    languages: HashMap::default(),
+                    languages_by_name: HashMap::default(),
+                    languages_by_path: HashMap::default(),
                 });
             }
-            let (events, language_names) = parse_markdown(&source);
-            let mut languages = HashMap::with_capacity(language_names.len());
-            for name in language_names {
-                if let Some(registry) = language_registry.as_ref() {
+            let (events, language_names, paths) = parse_markdown(&source);
+            let mut languages_by_name = HashMap::with_capacity(language_names.len());
+            let mut languages_by_path = HashMap::with_capacity(paths.len());
+            if let Some(registry) = language_registry.as_ref() {
+                for name in language_names {
                     let language = if !name.is_empty() {
                         registry.language_for_name(&name)
                     } else if let Some(fallback) = &fallback {
@@ -225,14 +227,21 @@ impl Markdown {
                         continue;
                     };
                     if let Ok(language) = language.await {
-                        languages.insert(name, language);
+                        languages_by_name.insert(name, language);
+                    }
+                }
+
+                for path in paths {
+                    if let Ok(language) = registry.language_for_file_path(&path).await {
+                        languages_by_path.insert(path, language);
                     }
                 }
             }
             anyhow::Ok(ParsedMarkdown {
                 source,
                 events: Arc::from(events),
-                languages,
+                languages_by_name,
+                languages_by_path,
             })
         });
 
@@ -259,12 +268,6 @@ impl Markdown {
     pub fn copy_code_block_buttons(mut self, should_copy: bool) -> Self {
         self.options.copy_code_block_buttons = should_copy;
         self
-    }
-}
-
-impl Render for Markdown {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        MarkdownElement::new(cx.entity().clone(), self.style.clone())
     }
 }
 
@@ -308,7 +311,8 @@ impl Selection {
 pub struct ParsedMarkdown {
     source: SharedString,
     events: Arc<[(Range<usize>, MarkdownEvent)]>,
-    languages: HashMap<SharedString, Arc<Language>>,
+    languages_by_name: HashMap<SharedString, Arc<Language>>,
+    languages_by_path: HashMap<PathBuf, Arc<Language>>,
 }
 
 impl ParsedMarkdown {
@@ -327,7 +331,7 @@ pub struct MarkdownElement {
 }
 
 impl MarkdownElement {
-    fn new(markdown: Entity<Markdown>, style: MarkdownStyle) -> Self {
+    pub fn new(markdown: Entity<Markdown>, style: MarkdownStyle) -> Self {
         Self { markdown, style }
     }
 
@@ -574,7 +578,9 @@ impl Element for MarkdownElement {
         } else {
             0
         };
-        for (range, event) in parsed_markdown.events.iter() {
+
+        let code_citation_id = SharedString::from("code-citation-link");
+        for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
@@ -613,10 +619,106 @@ impl Element for MarkdownElement {
                             );
                         }
                         MarkdownTag::CodeBlock(kind) => {
-                            let language = if let CodeBlockKind::Fenced(language) = kind {
-                                parsed_markdown.languages.get(language).cloned()
-                            } else {
-                                None
+                            let language = match kind {
+                                CodeBlockKind::Fenced => None,
+                                CodeBlockKind::FencedLang(language) => {
+                                    parsed_markdown.languages_by_name.get(language).cloned()
+                                }
+                                CodeBlockKind::FencedSrc(path_range) => {
+                                    // If the path actually exists in the project, render a link to it.
+                                    if let Some(project_path) =
+                                        window.root::<Workspace>().flatten().and_then(|workspace| {
+                                            if path_range.path.is_absolute() {
+                                                return None;
+                                            }
+
+                                            workspace
+                                                .read(cx)
+                                                .project()
+                                                .read(cx)
+                                                .find_project_path(&path_range.path, cx)
+                                        })
+                                    {
+                                        builder.flush_text();
+
+                                        builder.push_div(
+                                            div().relative().w_full(),
+                                            range,
+                                            markdown_end,
+                                        );
+
+                                        builder.modify_current_div(|el| {
+                                            let file_icon =
+                                                FileIcons::get_icon(&project_path.path, cx)
+                                                    .map(|path| {
+                                                        Icon::from_path(path)
+                                                            .color(Color::Muted)
+                                                            .into_any_element()
+                                                    })
+                                                    .unwrap_or_else(|| {
+                                                        IconButton::new(
+                                                            "file-path-icon",
+                                                            IconName::File,
+                                                        )
+                                                        .shape(ui::IconButtonShape::Square)
+                                                        .into_any_element()
+                                                    });
+
+                                            el.child(
+                                                ButtonLike::new(ElementId::NamedInteger(
+                                                    code_citation_id.clone(),
+                                                    index,
+                                                ))
+                                                .child(
+                                                    div()
+                                                        .mb_1()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .child(file_icon)
+                                                        .child(
+                                                            Label::new(
+                                                                project_path
+                                                                    .path
+                                                                    .display()
+                                                                    .to_string(),
+                                                            )
+                                                            .color(Color::Muted)
+                                                            .underline(),
+                                                        ),
+                                                )
+                                                .on_click({
+                                                    let click_path = project_path.clone();
+                                                    move |_, window, cx| {
+                                                        if let Some(workspace) =
+                                                            window.root::<Workspace>().flatten()
+                                                        {
+                                                            workspace.update(cx, |workspace, cx| {
+                                                                workspace
+                                                                    .open_path(
+                                                                        click_path.clone(),
+                                                                        None,
+                                                                        true,
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                    .detach_and_log_err(cx);
+                                                            })
+                                                        }
+                                                    }
+                                                }),
+                                            )
+                                        });
+
+                                        builder.pop_div();
+                                    }
+
+                                    parsed_markdown
+                                        .languages_by_path
+                                        .get(&path_range.path)
+                                        .cloned()
+                                }
+                                _ => None,
                             };
 
                             // This is a parent container that we can position the copy button inside.

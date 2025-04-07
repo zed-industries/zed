@@ -367,6 +367,7 @@ impl ConsoleQueryBarCompletionProvider {
                             documentation: None,
                             confirm: None,
                             source: project::CompletionSource::Custom,
+                            insert_text_mode: None,
                         })
                     })
                     .collect(),
@@ -409,6 +410,7 @@ impl ConsoleQueryBarCompletionProvider {
                         documentation: None,
                         confirm: None,
                         source: project::CompletionSource::Custom,
+                        insert_text_mode: None,
                     })
                     .collect(),
             ))

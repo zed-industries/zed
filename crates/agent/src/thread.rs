@@ -471,11 +471,11 @@ impl Thread {
         cx.emit(ThreadEvent::CheckpointChanged);
         cx.notify();
 
-        let project = self.project.read(cx);
-        let restore = project
-            .git_store()
-            .read(cx)
-            .restore_checkpoint(checkpoint.git_checkpoint.clone(), cx);
+        let git_store = self.project().read(cx).git_store().clone();
+        let restore = git_store.update(cx, |git_store, cx| {
+            git_store.restore_checkpoint(checkpoint.git_checkpoint.clone(), cx)
+        });
+
         cx.spawn(async move |this, cx| {
             let result = restore.await;
             this.update(cx, |this, cx| {
@@ -506,11 +506,11 @@ impl Thread {
         };
 
         let git_store = self.project.read(cx).git_store().clone();
-        let final_checkpoint = git_store.read(cx).checkpoint(cx);
+        let final_checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
         cx.spawn(async move |this, cx| match final_checkpoint.await {
             Ok(final_checkpoint) => {
                 let equal = git_store
-                    .read_with(cx, |store, cx| {
+                    .update(cx, |store, cx| {
                         store.compare_checkpoints(
                             pending_checkpoint.git_checkpoint.clone(),
                             final_checkpoint.clone(),
@@ -522,7 +522,7 @@ impl Thread {
 
                 if equal {
                     git_store
-                        .read_with(cx, |store, cx| {
+                        .update(cx, |store, cx| {
                             store.delete_checkpoint(pending_checkpoint.git_checkpoint, cx)
                         })?
                         .detach();
@@ -533,7 +533,7 @@ impl Thread {
                 }
 
                 git_store
-                    .read_with(cx, |store, cx| {
+                    .update(cx, |store, cx| {
                         store.delete_checkpoint(final_checkpoint, cx)
                     })?
                     .detach();
@@ -1650,10 +1650,10 @@ impl Thread {
                 .ok()
                 .flatten()
                 .map(|repo| {
-                    repo.read_with(cx, |repo, _| {
+                    repo.update(cx, |repo, _| {
                         let current_branch =
                             repo.branch.as_ref().map(|branch| branch.name.to_string());
-                        repo.send_job(|state, _| async move {
+                        repo.send_job(None, |state, _| async move {
                             let RepositoryState::Local { backend, .. } = state else {
                                 return GitState {
                                     remote_url: None,

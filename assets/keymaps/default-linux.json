@@ -624,7 +624,6 @@
     "context": "AgentPanel",
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "new": "agent::NewThread",
       "ctrl-alt-n": "agent::NewPromptEditor",
       "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenConfiguration",

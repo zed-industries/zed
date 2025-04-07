@@ -136,7 +136,7 @@ use task::{ResolvedTask, TaskTemplate, TaskVariables};
 pub use lsp::CompletionContext;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity,
-    InsertTextFormat, LanguageServerId, LanguageServerName,
+    InsertTextFormat, InsertTextMode, LanguageServerId, LanguageServerName,
 };
 
 use language::BufferSnapshot;
@@ -183,7 +183,7 @@ use std::{
 };
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
-use text::{BufferId, OffsetUtf16, Rope};
+use text::{BufferId, FromAnchor, OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings,
     observe_buffer_font_size_adjustment,
@@ -1101,7 +1101,7 @@ impl SelectSyntaxNodeHistory {
 
 enum SelectSyntaxNodeScrollBehavior {
     CursorTop,
-    CenterSelection,
+    FitSelection,
     CursorBottom,
 }
 
@@ -4442,6 +4442,7 @@ impl Editor {
                         word_range,
                         resolved: false,
                     },
+                    insert_text_mode: Some(InsertTextMode::AS_IS),
                     confirm: None,
                 }));
 
@@ -4687,7 +4688,13 @@ impl Editor {
             } else {
                 this.buffer.update(cx, |buffer, cx| {
                     let edits = ranges.iter().map(|range| (range.clone(), text));
-                    buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                    let auto_indent = if completion.insert_text_mode == Some(InsertTextMode::AS_IS)
+                    {
+                        None
+                    } else {
+                        this.autoindent_mode.clone()
+                    };
+                    buffer.edit(edits, auto_indent, cx);
                 });
             }
             for (buffer, edits) in linked_edits {
@@ -12352,17 +12359,15 @@ impl Editor {
         let selection_height = end_row - start_row + 1;
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
 
-        // if fits on screen (considering margin), keep it in the middle, else, scroll to selection head
-        let scroll_behavior = if visible_row_count >= selection_height + scroll_margin_rows * 2 {
-            let middle_row = (end_row + start_row) / 2;
-            let selection_center = middle_row.saturating_sub(visible_row_count / 2);
-            self.set_scroll_top_row(DisplayRow(selection_center), window, cx);
-            SelectSyntaxNodeScrollBehavior::CenterSelection
+        let fits_on_the_screen = visible_row_count >= selection_height + scroll_margin_rows * 2;
+        let scroll_behavior = if fits_on_the_screen {
+            self.request_autoscroll(Autoscroll::fit(), cx);
+            SelectSyntaxNodeScrollBehavior::FitSelection
         } else if is_selection_reversed {
-            self.scroll_cursor_top(&Default::default(), window, cx);
+            self.scroll_cursor_top(&ScrollCursorTop, window, cx);
             SelectSyntaxNodeScrollBehavior::CursorTop
         } else {
-            self.scroll_cursor_bottom(&Default::default(), window, cx);
+            self.scroll_cursor_bottom(&ScrollCursorBottom, window, cx);
             SelectSyntaxNodeScrollBehavior::CursorBottom
         };
 
@@ -12379,17 +12384,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(visible_row_count) = self.visible_row_count() else {
-            return;
-        };
-
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
         if let Some((mut selections, scroll_behavior, is_selection_reversed)) =
             self.select_syntax_node_history.pop()
         {
-            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-
             if let Some(selection) = selections.last_mut() {
                 selection.reversed = is_selection_reversed;
             }
@@ -12400,22 +12399,15 @@ impl Editor {
             });
             self.select_syntax_node_history.disable_clearing = false;
 
-            let newest = self.selections.newest::<usize>(cx);
-            let start_row = newest.start.to_display_point(&display_map).row().0;
-            let end_row = newest.end.to_display_point(&display_map).row().0;
-
             match scroll_behavior {
                 SelectSyntaxNodeScrollBehavior::CursorTop => {
-                    self.scroll_cursor_top(&Default::default(), window, cx);
+                    self.scroll_cursor_top(&ScrollCursorTop, window, cx);
                 }
-                SelectSyntaxNodeScrollBehavior::CenterSelection => {
-                    let middle_row = (end_row + start_row) / 2;
-                    let selection_center = middle_row.saturating_sub(visible_row_count / 2);
-                    // centralize the selection, not the cursor
-                    self.set_scroll_top_row(DisplayRow(selection_center), window, cx);
+                SelectSyntaxNodeScrollBehavior::FitSelection => {
+                    self.request_autoscroll(Autoscroll::fit(), cx);
                 }
                 SelectSyntaxNodeScrollBehavior::CursorBottom => {
-                    self.scroll_cursor_bottom(&Default::default(), window, cx);
+                    self.scroll_cursor_bottom(&ScrollCursorBottom, window, cx);
                 }
             }
         }
@@ -12733,12 +12725,33 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let current_scroll_position = self.scroll_position(cx);
-        let lines = EditorSettings::get_global(cx).expand_excerpt_lines;
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.expand_excerpts([excerpt], lines, direction, cx)
-        });
+        let lines_to_expand = EditorSettings::get_global(cx).expand_excerpt_lines;
+        let mut should_scroll_up = false;
+
         if direction == ExpandExcerptDirection::Down {
-            let new_scroll_position = current_scroll_position + gpui::Point::new(0.0, lines as f32);
+            let multi_buffer = self.buffer.read(cx);
+            let snapshot = multi_buffer.snapshot(cx);
+            if let Some(buffer_id) = snapshot.buffer_id_for_excerpt(excerpt) {
+                if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                    if let Some(excerpt_range) = snapshot.buffer_range_for_excerpt(excerpt) {
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        let excerpt_end_row =
+                            Point::from_anchor(&excerpt_range.end, &buffer_snapshot).row;
+                        let last_row = buffer_snapshot.max_point().row;
+                        let lines_below = last_row.saturating_sub(excerpt_end_row);
+                        should_scroll_up = lines_below >= lines_to_expand;
+                    }
+                }
+            }
+        }
+
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.expand_excerpts([excerpt], lines_to_expand, direction, cx)
+        });
+
+        if should_scroll_up {
+            let new_scroll_position =
+                current_scroll_position + gpui::Point::new(0.0, lines_to_expand as f32);
             self.set_scroll_position(new_scroll_position, window, cx);
         }
     }
@@ -18631,6 +18644,7 @@ fn snippet_completions(
                         .description
                         .clone()
                         .map(|description| CompletionDocumentation::SingleLine(description.into())),
+                    insert_text_mode: None,
                     confirm: None,
                 })
             })

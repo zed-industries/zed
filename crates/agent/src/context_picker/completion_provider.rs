@@ -112,6 +112,7 @@ impl ContextPickerCompletionProvider {
                         icon_path: Some(mode.icon().path().into()),
                         documentation: None,
                         source: project::CompletionSource::Custom,
+                        insert_text_mode: None,
                         // This ensures that when a user accepts this completion, the
                         // completion menu will still be shown after "@category " is
                         // inserted
@@ -163,6 +164,7 @@ impl ContextPickerCompletionProvider {
             new_text,
             label: CodeLabel::plain(thread_entry.summary.to_string(), None),
             documentation: None,
+            insert_text_mode: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_for_completion.path().into()),
             confirm: Some(confirm_completion_callback(
@@ -209,6 +211,7 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Globe.path().into()),
+            insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 IconName::Globe.path().into(),
                 url_to_fetch.clone(),
@@ -232,8 +235,8 @@ impl ContextPickerCompletionProvider {
                                 url_to_fetch.to_string(),
                             ))
                             .await?;
-                        context_store.update(cx, |context_store, _| {
-                            context_store.add_fetched_url(url_to_fetch.to_string(), content)
+                        context_store.update(cx, |context_store, cx| {
+                            context_store.add_fetched_url(url_to_fetch.to_string(), content, cx)
                         })
                     })
                     .detach_and_log_err(cx);
@@ -290,6 +293,7 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
+            insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 crease_icon_path,
                 file_name,
@@ -352,6 +356,7 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Code.path().into()),
+            insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 IconName::Code.path().into(),
                 symbol.name.clone().into(),

@@ -10236,6 +10236,62 @@ async fn test_completion_sort(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_as_is_completions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "unsafe".into(),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 1,
+                                character: 2,
+                            },
+                            end: lsp::Position {
+                                line: 1,
+                                character: 3,
+                            },
+                        },
+                        new_text: "unsafe".to_string(),
+                    })),
+                    insert_text_mode: Some(lsp::InsertTextMode::AS_IS),
+                    ..Default::default()
+                },
+            ])))
+        });
+    cx.set_state("fn a() {}\n  nˇ");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: Some("\n".into()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.executor().run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.confirm_completion(&Default::default(), window, cx)
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state("fn a() {}\n  unsafeˇ");
+}
+
+#[gpui::test]
 async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

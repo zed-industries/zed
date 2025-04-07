@@ -299,10 +299,7 @@ impl TitleBar {
         let is_screen_sharing = room.is_screen_sharing();
         let can_use_microphone = room.can_use_microphone();
         let can_share_projects = room.can_share_projects();
-        let screen_sharing_supported = match self.platform_style {
-            PlatformStyle::Mac => true,
-            PlatformStyle::Linux | PlatformStyle::Windows => false,
-        };
+        let screen_sharing_supported = cx.is_screen_capture_supported();
 
         let mut children = Vec::new();
 
