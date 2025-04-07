@@ -10,7 +10,8 @@ use gpui::{
 use language::{BinaryStatus, LanguageRegistry, LanguageServerId};
 use project::{
     EnvironmentErrorMessage, LanguageServerProgress, LspStoreEvent, Project,
-    ProjectEnvironmentEvent, git_store::Repository,
+    ProjectEnvironmentEvent,
+    git_store::{GitStoreEvent, Repository},
 };
 use smallvec::SmallVec;
 use std::{
@@ -109,6 +110,15 @@ impl ActivityIndicator {
                 &project.read(cx).environment().clone(),
                 |_, _, event, cx| match event {
                     ProjectEnvironmentEvent::ErrorsUpdated => cx.notify(),
+                },
+            )
+            .detach();
+
+            cx.subscribe(
+                &project.read(cx).git_store().clone(),
+                |_, _, event: &GitStoreEvent, cx| match event {
+                    project::git_store::GitStoreEvent::JobsUpdated => cx.notify(),
+                    _ => {}
                 },
             )
             .detach();

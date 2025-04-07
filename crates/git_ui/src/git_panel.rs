@@ -398,7 +398,7 @@ impl GitPanel {
                 ) => {
                     this.schedule_update(*full_scan, window, cx);
                 }
-                GitStoreEvent::RepositoryUpdated(_, _, _) => {}
+
                 GitStoreEvent::RepositoryAdded(_) | GitStoreEvent::RepositoryRemoved(_) => {
                     this.schedule_update(false, window, cx);
                 }
@@ -409,6 +409,8 @@ impl GitPanel {
                         })
                         .ok();
                 }
+                GitStoreEvent::RepositoryUpdated(_, _, _) => {}
+                GitStoreEvent::JobsUpdated => {}
             },
         )
         .detach();

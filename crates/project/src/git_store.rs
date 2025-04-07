@@ -274,6 +274,9 @@ pub enum RepositoryEvent {
     MergeHeadsChanged,
 }
 
+#[derive(Clone, Debug)]
+pub struct JobsUpdated;
+
 #[derive(Debug)]
 pub enum GitStoreEvent {
     ActiveRepositoryChanged(Option<RepositoryId>),
@@ -281,9 +284,11 @@ pub enum GitStoreEvent {
     RepositoryAdded(RepositoryId),
     RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
+    JobsUpdated,
 }
 
 impl EventEmitter<RepositoryEvent> for Repository {}
+impl EventEmitter<JobsUpdated> for Repository {}
 impl EventEmitter<GitStoreEvent> for GitStore {}
 
 pub struct GitJob {
@@ -1092,6 +1097,10 @@ impl GitStore {
         ))
     }
 
+    fn on_jobs_updated(&mut self, _: Entity<Repository>, _: &JobsUpdated, cx: &mut Context<Self>) {
+        cx.emit(GitStoreEvent::JobsUpdated)
+    }
+
     /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
     fn update_repositories_from_worktree(
         &mut self,
@@ -1144,6 +1153,8 @@ impl GitStore {
                 });
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_repository_event));
+                self._subscriptions
+                    .push(cx.subscribe(&repo, Self::on_jobs_updated));
                 self.repositories.insert(id, repo);
                 cx.emit(GitStoreEvent::RepositoryAdded(id));
                 self.active_repo_id.get_or_insert_with(|| {
@@ -2727,21 +2738,24 @@ impl Repository {
                     let job = job(state, cx.clone());
                     cx.spawn(async move |cx| {
                         if let Some(s) = status.clone() {
-                            this.update(cx, |this, _| {
+                            this.update(cx, |this, cx| {
                                 this.active_jobs.insert(
                                     job_id,
                                     JobInfo {
                                         start: Instant::now(),
                                         message: s.clone(),
                                     },
-                                )
+                                );
+
+                                cx.notify();
                             })
                             .ok();
                         }
                         let result = job.await;
 
-                        this.update(cx, |this, _| {
+                        this.update(cx, |this, cx| {
                             this.active_jobs.remove(&job_id);
+                            cx.notify();
                         })
                         .ok();
 
