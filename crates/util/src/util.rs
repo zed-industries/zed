@@ -145,6 +145,22 @@ pub fn truncate_lines_and_trailoff(s: &str, max_lines: usize) -> String {
     }
 }
 
+/// Truncates the string at a character boundary, such that the result is less than `max_bytes` in
+/// length.
+pub fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
+    if s.len() < max_bytes {
+        return s;
+    }
+
+    for i in (0..max_bytes).rev() {
+        if s.is_char_boundary(i) {
+            return &s[..i];
+        }
+    }
+
+    ""
+}
+
 /// Takes a prefix of complete lines which fit within the byte limit. If the first line is longer
 /// than the limit, truncates at a character boundary.
 pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
@@ -161,11 +177,7 @@ pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
         }
     }
 
-    for i in (0..max_bytes).rev() {
-        if s.is_char_boundary(i) {
-            return &s[..i];
-        }
-    }
+    truncate_to_byte_limit(s, max_bytes);
 
     ""
 }
