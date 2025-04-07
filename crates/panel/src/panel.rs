@@ -1,9 +1,9 @@
 //! # panel
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{actions, Entity, TextStyle};
+use gpui::{Entity, TextStyle, actions};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, Tab};
+use ui::{Tab, prelude::*};
 
 actions!(panel, [NextPanelTab, PreviousPanelTab]);
 
@@ -113,6 +113,7 @@ pub fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorS
             line_height: line_height.into(),
             ..Default::default()
         },
+        syntax: cx.theme().syntax().clone(),
         ..Default::default()
     }
 }

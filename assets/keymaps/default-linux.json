@@ -30,6 +30,13 @@
       "ctrl-0": ["zed::ResetBufferFontSize", { "persist": false }],
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
+      "f4": "debugger::Start",
+      "f5": "debugger::Continue",
+      "shift-f5": "debugger::Stop",
+      "f6": "debugger::Pause",
+      "f7": "debugger::StepOver",
+      "cmd-f11": "debugger::StepInto",
+      "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "edit_prediction::RateCompletions",
       "ctrl-shift-i": "edit_prediction::ToggleMenu"
@@ -46,7 +53,9 @@
     "context": "Prompt",
     "bindings": {
       "left": "menu::SelectPrevious",
-      "right": "menu::SelectNext"
+      "right": "menu::SelectNext",
+      "h": "menu::SelectPrevious",
+      "l": "menu::SelectNext"
     }
   },
   {
@@ -107,6 +116,7 @@
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
       "ctrl-shift-i": "editor::Format",
+      "alt-shift-o": "editor::OrganizeImports",
       // "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true, "stop_at_indent": true }],
       // "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
       "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
@@ -116,14 +126,31 @@
       // "alt-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
-      "ctrl-k ctrl-r": "git::Restore",
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
       "ctrl-\"": "editor::ExpandAllDiffHunks",
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "editor::ToggleGitBlame",
       "menu": "editor::OpenContextMenu",
       "shift-f10": "editor::OpenContextMenu",
-      "ctrl-shift-e": "editor::ToggleEditPrediction"
+      "ctrl-shift-e": "editor::ToggleEditPrediction",
+      "f9": "editor::ToggleBreakpoint",
+      "shift-f9": "editor::EditLogBreakpoint"
+    }
+  },
+  {
+    "context": "Editor && !agent_diff",
+    "bindings": {
+      "ctrl-k ctrl-r": "git::Restore",
+      "ctrl-alt-y": "git::ToggleStaged",
+      "alt-y": "git::StageAndNext",
+      "alt-shift-y": "git::UnstageAndNext"
+    }
+  },
+  {
+    "context": "AgentDiff",
+    "bindings": {
+      "ctrl-y": "agent::Keep",
+      "ctrl-k ctrl-r": "agent::Reject"
     }
   },
   {
@@ -183,7 +210,7 @@
       "ctrl-shift-g": "search::SelectPreviousMatch",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "assistant::DeployPromptLibrary",
+      "ctrl-k l": "assistant::OpenPromptLibrary",
       "new": "assistant::NewChat",
       "ctrl-t": "assistant::NewChat",
       "ctrl-n": "assistant::NewChat"
@@ -284,6 +311,7 @@
       "ctrl-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "ctrl-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
       "ctrl-k w": ["pane::CloseAllItems", { "close_pinned": false }],
+      "ctrl-k ctrl-w": "workspace::CloseAllItemsAndPanes",
       "back": "pane::GoBack",
       "ctrl-alt--": "pane::GoBack",
       "ctrl-alt-_": "pane::GoForward",
@@ -370,9 +398,6 @@
       "ctrl-k v": "markdown::OpenPreviewToTheSide",
       "ctrl-shift-v": "markdown::OpenPreview",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames",
-      "ctrl-alt-y": "git::ToggleStaged",
-      "alt-y": "git::StageAndNext",
-      "alt-shift-y": "git::UnstageAndNext",
       "alt-.": "editor::GoToHunk",
       "alt-,": "editor::GoToPreviousHunk"
     }
@@ -457,6 +482,8 @@
       "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
+      // or by tag:
+      // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
     }
   },
   {
@@ -571,13 +598,6 @@
     }
   },
   {
-    "context": "ProposedChangesEditor",
-    "bindings": {
-      "ctrl-shift-y": "editor::ApplyDiffHunk",
-      "ctrl-alt-a": "editor::ApplyAllDiffHunks"
-    }
-  },
-  {
     "context": "Editor && jupyter && !ContextEditor",
     "bindings": {
       "ctrl-shift-enter": "repl::Run",
@@ -601,29 +621,33 @@
     }
   },
   {
-    "context": "AssistantPanel2",
+    "context": "AgentPanel",
     "bindings": {
-      "ctrl-n": "assistant2::NewThread",
-      "new": "assistant2::NewThread",
-      "ctrl-shift-h": "assistant2::OpenHistory",
+      "ctrl-n": "agent::NewThread",
+      "ctrl-alt-n": "agent::NewPromptEditor",
+      "ctrl-shift-h": "agent::OpenHistory",
+      "ctrl-alt-c": "agent::OpenConfiguration",
+      "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
-      "ctrl-shift-a": "assistant2::ToggleContextPicker",
-      "ctrl-e": "assistant2::ChatMode",
-      "ctrl-alt-e": "assistant2::RemoveAllContext"
+      "ctrl-shift-a": "agent::ToggleContextPicker",
+      "ctrl-e": "agent::ChatMode",
+      "ctrl-alt-e": "agent::RemoveAllContext"
     }
   },
   {
-    "context": "AssistantPanel2 && prompt_editor",
+    "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "assistant2::NewPromptEditor",
-      "cmd-alt-t": "assistant2::NewThread"
+      "cmd-n": "agent::NewPromptEditor",
+      "cmd-alt-t": "agent::NewThread"
     }
   },
   {
     "context": "MessageEditor > Editor",
     "bindings": {
-      "enter": "assistant2::Chat"
+      "enter": "agent::Chat",
+      "ctrl-i": "agent::ToggleProfileSelector",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
     }
   },
   {
@@ -636,20 +660,29 @@
     }
   },
   {
+    "context": "AgentFeedbackMessageEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline"
+    }
+  },
+  {
     "context": "ContextStrip",
     "bindings": {
-      "up": "assistant2::FocusUp",
-      "right": "assistant2::FocusRight",
-      "left": "assistant2::FocusLeft",
-      "down": "assistant2::FocusDown",
-      "backspace": "assistant2::RemoveFocusedContext",
-      "enter": "assistant2::AcceptSuggestedContext"
+      "up": "agent::FocusUp",
+      "right": "agent::FocusRight",
+      "left": "agent::FocusLeft",
+      "down": "agent::FocusDown",
+      "backspace": "agent::RemoveFocusedContext",
+      "enter": "agent::AcceptSuggestedContext"
     }
   },
   {
     "context": "ThreadHistory",
     "bindings": {
-      "backspace": "assistant2::RemoveSelectedThread"
+      "backspace": "agent::RemoveSelectedThread"
     }
   },
   {
@@ -657,7 +690,7 @@
     "bindings": {
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist",
-      "ctrl-alt-e": "assistant2::RemoveAllContext"
+      "ctrl-alt-e": "agent::RemoveAllContext"
     }
   },
   {
@@ -742,7 +775,11 @@
       "escape": "git_panel::ToggleFocus",
       "ctrl-enter": "git::Commit",
       "alt-enter": "menu::SecondaryConfirm",
-      "backspace": "git::RestoreFile"
+      "delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "shift-delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "ctrl-backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "ctrl-delete": ["git::RestoreFile", { "skip_prompt": false }]
     }
   },
   {

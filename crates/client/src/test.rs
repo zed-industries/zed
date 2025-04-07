@@ -1,12 +1,12 @@
 use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::Duration;
-use futures::{stream::BoxStream, StreamExt};
+use futures::{StreamExt, stream::BoxStream};
 use gpui::{AppContext as _, BackgroundExecutor, Entity, TestAppContext};
 use parking_lot::Mutex;
 use rpc::{
-    proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
     ConnectionId, Peer, Receipt, TypedEnvelope,
+    proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
 };
 use std::sync::Arc;
 
@@ -44,7 +44,7 @@ impl FakeServer {
                 let state = Arc::downgrade(&server.state);
                 move |cx| {
                     let state = state.clone();
-                    cx.spawn(move |_| async move {
+                    cx.spawn(async move |_| {
                         let state = state.upgrade().ok_or_else(|| anyhow!("server dropped"))?;
                         let mut state = state.lock();
                         state.auth_count += 1;
@@ -63,7 +63,7 @@ impl FakeServer {
                     let peer = peer.clone();
                     let state = state.clone();
                     let credentials = credentials.clone();
-                    cx.spawn(move |cx| async move {
+                    cx.spawn(async move |cx| {
                         let state = state.upgrade().ok_or_else(|| anyhow!("server dropped"))?;
                         let peer = peer.upgrade().ok_or_else(|| anyhow!("server dropped"))?;
                         if state.lock().forbid_connections {

@@ -1,0 +1,32 @@
+[
+  {
+    "label": "Debug active PHP file",
+    "adapter": "php",
+    "program": "$ZED_FILE",
+    "request": "launch",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "Debug active Python file",
+    "adapter": "python",
+    "program": "$ZED_FILE",
+    "request": "launch",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "Debug active JavaScript file",
+    "adapter": "javascript",
+    "program": "$ZED_FILE",
+    "request": "launch",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "JavaScript debug terminal",
+    "adapter": "javascript",
+    "request": "launch",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "initialize_args": {
+      "console": "integratedTerminal"
+    }
+  }
+]

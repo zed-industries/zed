@@ -1,9 +1,9 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
-use gpui::{actions, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable};
+use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, actions, prelude::*};
 use language::language_settings;
 use std::time::Duration;
-use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
+use ui::{KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -281,6 +281,7 @@ impl RateCompletionModal {
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_runnables(false, cx);
+                editor.set_show_breakpoints(false, cx);
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
                 editor.set_show_edit_predictions(Some(false), window, cx);

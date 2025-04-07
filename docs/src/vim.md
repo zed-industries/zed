@@ -105,8 +105,8 @@ Treesitter is a powerful tool that Zed uses to understand the structure of your 
 | A comment                                                  | `g c`            |
 | An argument, or list item, etc.                            | `i a`            |
 | An argument, or list item, etc. (including trailing comma) | `a a`            |
-| Around an HTML-like tag                                    | `i a`            |
-| Inside an HTML-like tag                                    | `i a`            |
+| Around an HTML-like tag                                    | `a t`            |
+| Inside an HTML-like tag                                    | `i t`            |
 | The current indent level, and one line before and after    | `a I`            |
 | The current indent level, and one line before              | `a i`            |
 | The current indent level                                   | `i i`            |
@@ -212,6 +212,7 @@ These ex commands open Zed's various panels and windows.
 | Open the collaboration panel | `:C[ollab]`      |
 | Open the chat panel          | `:Ch[at]`        |
 | Open the AI panel            | `:A[I]`          |
+| Open the git panel           | `:G[it]`         |
 | Open the notifications panel | `:No[tif]`       |
 | Open the feedback window     | `:fe[edback]`    |
 | Open the diagnostics window  | `:cl[ist]`       |

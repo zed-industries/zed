@@ -1,15 +1,15 @@
 use crate::{
+    AppState, FollowerState, Pane, Workspace, WorkspaceSettings,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
-    AppState, FollowerState, Pane, Workspace, WorkspaceSettings,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
-    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, Context, Entity, IntoElement,
-    MouseButton, Pixels, Point, StyleRefinement, Window,
+    Along, AnyView, AnyWeakView, Axis, Bounds, Context, Entity, IntoElement, MouseButton, Pixels,
+    Point, StyleRefinement, Window, point, size,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -803,9 +803,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, size, Along, AnyElement, App, Axis, Bounds, Element, GlobalElementId,
-        IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-        Size, Style, WeakEntity, Window,
+        Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId, IntoElement,
+        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
+        WeakEntity, Window, px, relative, size,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -1165,6 +1165,7 @@ mod element {
                                 gpui::transparent_black(),
                                 border,
                                 cx.theme().colors().border_selected,
+                                BorderStyle::Solid,
                             ));
                         }
                     }
@@ -1175,7 +1176,7 @@ mod element {
                         Axis::Vertical => CursorStyle::ResizeRow,
                         Axis::Horizontal => CursorStyle::ResizeColumn,
                     };
-                    window.set_cursor_style(cursor_style, &handle.hitbox);
+                    window.set_cursor_style(cursor_style, Some(&handle.hitbox));
                     window.paint_quad(gpui::fill(
                         handle.divider_bounds,
                         cx.theme().colors().pane_group_border,

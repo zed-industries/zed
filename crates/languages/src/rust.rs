@@ -1,13 +1,13 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{io::BufReader, StreamExt};
-use gpui::{App, AsyncApp, Task};
+use futures::{StreamExt, io::BufReader};
+use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
-use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::fs::{self};
 use std::fmt::Display;
@@ -17,8 +17,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
-use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use task::{TaskTemplate, TaskTemplates, TaskType, TaskVariables, VariableName};
+use util::{ResultExt, fs::remove_matching, maybe};
 
 use crate::language_settings::language_settings;
 
@@ -68,20 +68,23 @@ impl RustLspAdapter {
     }
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for RustLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+pub(crate) struct CargoManifestProvider;
+
+impl ManifestProvider for CargoManifestProvider {
+    fn name(&self) -> ManifestName {
+        SharedString::new_static("Cargo.toml").into()
     }
 
-    fn find_project_root(
+    fn search(
         &self,
-        path: &Path,
-        ancestor_depth: usize,
-        delegate: &Arc<dyn LspAdapterDelegate>,
+        ManifestQuery {
+            path,
+            depth,
+            delegate,
+        }: ManifestQuery,
     ) -> Option<Arc<Path>> {
         let mut outermost_cargo_toml = None;
-        for path in path.ancestors().take(ancestor_depth) {
+        for path in path.ancestors().take(depth) {
             let p = path.join("Cargo.toml");
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
@@ -89,6 +92,17 @@ impl LspAdapter for RustLspAdapter {
         }
 
         outermost_cargo_toml
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for RustLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME.clone()
+    }
+
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("Cargo.toml").into())
     }
 
     async fn check_if_user_installed(
@@ -241,7 +255,12 @@ impl LspAdapter for RustLspAdapter {
         Some("rust-analyzer/flycheck".into())
     }
 
-    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
+    fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        _: LanguageServerId,
+        _: Option<&'_ Buffer>,
+    ) {
         static REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?m)`([^`]+)\n`$").expect("Failed to create REGEX"));
 
@@ -555,10 +574,15 @@ impl ContextProvider for RustContextProvider {
             .variables
             .get(CUSTOM_TARGET_DIR)
             .cloned();
-        let run_task_args = if let Some(package_to_run) = package_to_run {
+        let run_task_args = if let Some(package_to_run) = package_to_run.clone() {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
+        };
+        let debug_task_args = if let Some(package_to_run) = package_to_run {
+            vec!["build".into(), "-p".into(), package_to_run]
+        } else {
+            vec!["build".into()]
         };
         let mut task_templates = vec![
             TaskTemplate {
@@ -596,6 +620,32 @@ impl ContextProvider for RustContextProvider {
                     RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
+                ],
+                tags: vec!["rust-test".to_owned()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "Debug Test '{}' (package: {})",
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
+                task_type: TaskType::Debug(task::DebugArgs {
+                    adapter: "LLDB".to_owned(),
+                    request: task::DebugArgsRequest::Launch,
+                    locator: Some("cargo".into()),
+                    tcp_connection: None,
+                    initialize_args: None,
+                    stop_on_entry: None,
+                }),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
+                    "--no-run".into(),
                 ],
                 tags: vec!["rust-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -676,6 +726,27 @@ impl ContextProvider for RustContextProvider {
                 command: "cargo".into(),
                 args: run_task_args,
                 cwd: Some("$ZED_DIRNAME".to_owned()),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "Debug {} {} (package: {})",
+                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
+                    RUST_BIN_NAME_TASK_VARIABLE.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
+                cwd: Some("$ZED_DIRNAME".to_owned()),
+                command: "cargo".into(),
+                task_type: TaskType::Debug(task::DebugArgs {
+                    request: task::DebugArgsRequest::Launch,
+                    adapter: "LLDB".to_owned(),
+                    initialize_args: None,
+                    locator: Some("cargo".into()),
+                    tcp_connection: None,
+                    stop_on_entry: None,
+                }),
+                args: debug_task_args,
+                tags: vec!["rust-main".to_owned()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -945,7 +1016,7 @@ mod tests {
                 },
             ],
         };
-        RustLspAdapter.process_diagnostics(&mut params);
+        RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0), None);
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 

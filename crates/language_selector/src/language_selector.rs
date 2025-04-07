@@ -5,17 +5,17 @@ use anyhow::anyhow;
 use editor::Editor;
 use file_finder::file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ParentElement, Render, Styled, WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
+    Render, Styled, WeakEntity, Window, actions,
 };
 use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use settings::Settings;
 use std::{ops::Not as _, path::Path, sync::Arc};
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
@@ -190,7 +190,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
             let language = self.language_registry.language_for_name(language_name);
             let project = self.project.downgrade();
             let buffer = self.buffer.downgrade();
-            cx.spawn_in(window, |_, mut cx| async move {
+            cx.spawn_in(window, async move |_, cx| {
                 let language = language.await?;
                 let project = project
                     .upgrade()
@@ -198,7 +198,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
                 let buffer = buffer
                     .upgrade()
                     .ok_or_else(|| anyhow!("buffer was dropped"))?;
-                project.update(&mut cx, |project, cx| {
+                project.update(cx, |project, cx| {
                     project.set_language_for_buffer(&buffer, language, cx);
                 })
             })
@@ -234,7 +234,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
     ) -> gpui::Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self.candidates.clone();
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -258,7 +258,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let delegate = &mut this.delegate;
                 delegate.matches = matches;
                 delegate.selected_index = delegate

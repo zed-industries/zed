@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandResult,
@@ -10,8 +10,8 @@ use context_server::{
 };
 use gpui::{App, Entity, Task, WeakEntity, Window};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use text::LineEnding;
 use ui::{IconName, SharedString};
 use workspace::Workspace;
