@@ -24,6 +24,8 @@ use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelu
 use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
+const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
+
 actions!(activity_indicator, [ShowErrorMessage]);
 
 pub enum Event {
@@ -291,15 +293,15 @@ impl ActivityIndicator {
             });
         }
 
-        // Show any long-running git command
-        if let Some((command, start)) = self
+        let current_job = self
             .project
             .read(cx)
             .active_repository(cx)
             .map(|r| r.read(cx))
-            .and_then(Repository::status)
-        {
-            if Instant::now() - start >= Duration::from_millis(100) {
+            .and_then(Repository::current_job);
+        // Show any long-running git command
+        if let Some(job_info) = current_job {
+            if Instant::now() - job_info.start >= GIT_OPERATION_DELAY {
                 return Some(Content {
                     icon: Some(
                         Icon::new(IconName::ArrowCircle)
@@ -313,7 +315,7 @@ impl ActivityIndicator {
                             )
                             .into_any_element(),
                     ),
-                    message: command.into(),
+                    message: job_info.message.into(),
                     on_click: None,
                 });
             }
