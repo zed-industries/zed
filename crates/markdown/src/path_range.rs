@@ -1,8 +1,8 @@
-use std::ops::Range;
+use std::{ops::Range, path::PathBuf};
 
-#[derive(Debug)]
-pub struct PathRange<'a> {
-    pub path: &'a str,
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathRange {
+    pub path: PathBuf,
     pub range: Option<Range<LineCol>>,
 }
 
@@ -31,8 +31,9 @@ impl LineCol {
     }
 }
 
-impl<'a> PathRange<'a> {
-    pub fn new(str: &'a str) -> Self {
+impl PathRange {
+    pub fn new(str: impl AsRef<str>) -> Self {
+        let str = str.as_ref();
         // Sometimes the model will include a language at the start,
         // e.g. "```rust zed/crates/markdown/src/markdown.rs#L1"
         // We just discard that.
@@ -53,10 +54,13 @@ impl<'a> PathRange<'a> {
                         .map(|start| iter.next().map(|end| start..end).unwrap_or(start..start))
                 };
 
-                Self { path, range }
+                Self {
+                    path: PathBuf::from(path),
+                    range,
+                }
             }
             None => Self {
-                path: str,
+                path: str.into(),
                 range: None,
             },
         }
@@ -110,7 +114,7 @@ mod tests {
     fn test_pathrange_parsing() {
         // Test path with line range
         let path_range = PathRange::new("file.rs#L10-L20");
-        assert_eq!(path_range.path, "file.rs");
+        assert_eq!(path_range.path, PathBuf::from("file.rs"));
         assert!(path_range.range.is_some());
         if let Some(range) = path_range.range {
             assert_eq!(range.start.line, 10);
@@ -121,7 +125,7 @@ mod tests {
 
         // Test path with single line
         let single_line = PathRange::new("file.rs#L15");
-        assert_eq!(single_line.path, "file.rs");
+        assert_eq!(single_line.path, PathBuf::from("file.rs"));
         assert!(single_line.range.is_some());
         if let Some(range) = single_line.range {
             assert_eq!(range.start.line, 15);
@@ -130,12 +134,12 @@ mod tests {
 
         // Test path with no range
         let no_range = PathRange::new("file.rs");
-        assert_eq!(no_range.path, "file.rs");
+        assert_eq!(no_range.path, PathBuf::from("file.rs"));
         assert!(no_range.range.is_none());
 
         // Test lowercase 'l' handling
         let lowercase = PathRange::new("file.rs#l5-l10");
-        assert_eq!(lowercase.path, "file.rs");
+        assert_eq!(lowercase.path, PathBuf::from("file.rs"));
         assert!(lowercase.range.is_some());
         if let Some(range) = lowercase.range {
             assert_eq!(range.start.line, 5);
@@ -144,7 +148,7 @@ mod tests {
 
         // Test with complex path
         let complex = PathRange::new("src/path/to/file.rs#L100");
-        assert_eq!(complex.path, "src/path/to/file.rs");
+        assert_eq!(complex.path, PathBuf::from("src/path/to/file.rs"));
         assert!(complex.range.is_some());
     }
 
@@ -154,7 +158,7 @@ mod tests {
         let with_range = path_range_from_str("file.rs#L10-L20");
         assert!(with_range.is_some());
         if let Some(path_range) = with_range {
-            assert_eq!(path_range.path, "file.rs");
+            assert_eq!(path_range.path, PathBuf::from("file.rs"));
             assert!(path_range.range.is_some());
         }
 
@@ -171,7 +175,7 @@ mod tests {
     fn test_pathrange_leading_text_trimming() {
         // Test with language identifier prefix
         let with_language = PathRange::new("```rust file.rs#L10");
-        assert_eq!(with_language.path, "file.rs");
+        assert_eq!(with_language.path, PathBuf::from("file.rs"));
         assert!(with_language.range.is_some());
         if let Some(range) = with_language.range {
             assert_eq!(range.start.line, 10);
@@ -179,12 +183,12 @@ mod tests {
 
         // Test with multiple spaces
         let with_spaces = PathRange::new("```    file.rs#L10-L20");
-        assert_eq!(with_spaces.path, "file.rs");
+        assert_eq!(with_spaces.path, PathBuf::from("file.rs"));
         assert!(with_spaces.range.is_some());
 
         // Test with multiple words before path
         let with_words = PathRange::new("```rust code example file.rs#L15:10");
-        assert_eq!(with_words.path, "file.rs");
+        assert_eq!(with_words.path, PathBuf::from("file.rs"));
         assert!(with_words.range.is_some());
         if let Some(range) = with_words.range {
             assert_eq!(range.start.line, 15);
@@ -193,12 +197,12 @@ mod tests {
 
         // Test with just whitespace at start
         let with_whitespace = PathRange::new("  file.rs#L5");
-        assert_eq!(with_whitespace.path, "file.rs");
+        assert_eq!(with_whitespace.path, PathBuf::from("file.rs"));
         assert!(with_whitespace.range.is_some());
 
         // Test with no leading text (unchanged behavior)
         let no_leading = PathRange::new("file.rs#L10");
-        assert_eq!(no_leading.path, "file.rs");
+        assert_eq!(no_leading.path, PathBuf::from("file.rs"));
         assert!(no_leading.range.is_some());
     }
 
@@ -206,7 +210,7 @@ mod tests {
     fn test_pathrange_with_line_and_column() {
         // Test with single line and column
         let line_and_col = PathRange::new("file.rs#L10:5");
-        assert_eq!(line_and_col.path, "file.rs");
+        assert_eq!(line_and_col.path, PathBuf::from("file.rs"));
         assert!(line_and_col.range.is_some());
         if let Some(range) = line_and_col.range {
             assert_eq!(range.start.line, 10);
@@ -217,7 +221,7 @@ mod tests {
 
         // Test with range from line+col to line+col
         let full_range = PathRange::new("file.rs#L10:5-L20:15");
-        assert_eq!(full_range.path, "file.rs");
+        assert_eq!(full_range.path, PathBuf::from("file.rs"));
         assert!(full_range.range.is_some());
         if let Some(range) = full_range.range {
             assert_eq!(range.start.line, 10);
@@ -228,7 +232,7 @@ mod tests {
 
         // Test with range from line+col to just line
         let mixed_range1 = PathRange::new("file.rs#L10:5-L20");
-        assert_eq!(mixed_range1.path, "file.rs");
+        assert_eq!(mixed_range1.path, PathBuf::from("file.rs"));
         assert!(mixed_range1.range.is_some());
         if let Some(range) = mixed_range1.range {
             assert_eq!(range.start.line, 10);
@@ -239,7 +243,7 @@ mod tests {
 
         // Test with range from just line to line+col
         let mixed_range2 = PathRange::new("file.rs#L10-L20:15");
-        assert_eq!(mixed_range2.path, "file.rs");
+        assert_eq!(mixed_range2.path, PathBuf::from("file.rs"));
         assert!(mixed_range2.range.is_some());
         if let Some(range) = mixed_range2.range {
             assert_eq!(range.start.line, 10);

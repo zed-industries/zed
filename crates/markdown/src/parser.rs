@@ -2,7 +2,9 @@ use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{Alignment, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser};
-use std::{collections::HashSet, ops::Range};
+use std::{collections::HashSet, ops::Range, path::PathBuf};
+
+use crate::path_range::PathRange;
 
 const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
@@ -14,9 +16,16 @@ const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_OLD_FOOTNOTES)
     .union(Options::ENABLE_GFM);
 
-pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSet<SharedString>) {
+pub fn parse_markdown(
+    text: &str,
+) -> (
+    Vec<(Range<usize>, MarkdownEvent)>,
+    HashSet<SharedString>,
+    HashSet<PathBuf>,
+) {
     let mut events = Vec::new();
     let mut languages = HashSet::new();
+    let mut paths = HashSet::new();
     let mut within_link = false;
     let mut within_metadata = false;
     for (pulldown_event, mut range) in Parser::new_ext(text, PARSE_OPTIONS).into_offset_iter() {
@@ -30,17 +39,46 @@ pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSe
         }
         match pulldown_event {
             pulldown_cmark::Event::Start(tag) => {
-                match tag {
-                    pulldown_cmark::Tag::Link { .. } => within_link = true,
-                    pulldown_cmark::Tag::MetadataBlock { .. } => within_metadata = true,
-                    pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(
-                        ref language,
-                    )) => {
-                        languages.insert(SharedString::from(language.to_string()));
+                let tag = match tag {
+                    pulldown_cmark::Tag::Link {
+                        link_type,
+                        dest_url,
+                        title,
+                        id,
+                    } => {
+                        within_link = true;
+                        MarkdownTag::Link {
+                            link_type,
+                            dest_url: SharedString::from(dest_url.into_string()),
+                            title: SharedString::from(title.into_string()),
+                            id: SharedString::from(id.into_string()),
+                        }
                     }
-                    _ => {}
-                }
-                events.push((range, MarkdownEvent::Start(tag.into())))
+                    pulldown_cmark::Tag::MetadataBlock(kind) => {
+                        within_metadata = true;
+                        MarkdownTag::MetadataBlock(kind)
+                    }
+                    pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(
+                        ref info,
+                    )) => {
+                        let info = info.trim();
+                        MarkdownTag::CodeBlock(if info.is_empty() {
+                            CodeBlockKind::Fenced
+                            // Languages should never contain a slash, and PathRanges always should.
+                            // (Models are told to specify them relative to a workspace root.)
+                        } else if info.contains('/') {
+                            let path_range = PathRange::new(info);
+                            paths.insert(path_range.path.clone());
+                            CodeBlockKind::FencedSrc(path_range)
+                        } else {
+                            let language = SharedString::from(info.to_string());
+                            languages.insert(language.clone());
+                            CodeBlockKind::FencedLang(language)
+                        })
+                    }
+                    tag => tag.into(),
+                };
+                events.push((range, MarkdownEvent::Start(tag)))
             }
             pulldown_cmark::Event::End(tag) => {
                 if let pulldown_cmark::TagEnd::Link = tag {
@@ -113,7 +151,7 @@ pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSe
             pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
         }
     }
-    (events, languages)
+    (events, languages, paths)
 }
 
 pub fn parse_links_only(mut text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
@@ -278,8 +316,13 @@ pub enum MarkdownTag {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CodeBlockKind {
     Indented,
-    /// The value contained in the tag describes the language of the code, which may be empty.
-    Fenced(SharedString),
+    /// "Fenced" means "surrounded by triple backticks."
+    /// There can optionally be either a language after the backticks (like in traditional Markdown)
+    /// or, if an agent is specifying a path for a source location in the project, it can be a PathRange,
+    /// e.g. ```path/to/foo.rs#L123-456 instead of ```rust
+    Fenced,
+    FencedLang(SharedString),
+    FencedSrc(PathRange),
 }
 
 impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
@@ -318,9 +361,18 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
                 pulldown_cmark::CodeBlockKind::Indented => {
                     MarkdownTag::CodeBlock(CodeBlockKind::Indented)
                 }
-                pulldown_cmark::CodeBlockKind::Fenced(info) => MarkdownTag::CodeBlock(
-                    CodeBlockKind::Fenced(SharedString::from(info.into_string())),
-                ),
+                pulldown_cmark::CodeBlockKind::Fenced(info) => {
+                    let info = info.trim();
+                    MarkdownTag::CodeBlock(if info.is_empty() {
+                        CodeBlockKind::Fenced
+                    } else if info.contains('/') {
+                        // Languages should never contain a slash, and PathRanges always should.
+                        // (Models are told to specify them relative to a workspace root.)
+                        CodeBlockKind::FencedSrc(PathRange::new(info))
+                    } else {
+                        CodeBlockKind::FencedLang(SharedString::from(info.to_string()))
+                    })
+                }
             },
             pulldown_cmark::Tag::List(start_number) => MarkdownTag::List(start_number),
             pulldown_cmark::Tag::Item => MarkdownTag::Item,
