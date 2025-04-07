@@ -64,7 +64,14 @@ impl Render for RunningState {
         } else {
             div().into_any_element()
         };
+        let thread_status = self
+            .thread_id
+            .map(|thread_id| self.session.read(cx).thread_status(thread_id))
+            .unwrap_or(ThreadStatus::Exited);
 
+        self.variable_list.update(cx, |this, cx| {
+            this.disabled(thread_status != ThreadStatus::Stopped, cx);
+        });
         v_flex()
             .size_full()
             .key_context("DebugSessionItem")
@@ -73,15 +80,6 @@ impl Render for RunningState {
 
         // let threads = self.session.update(cx, |this, cx| this.threads(cx));
         // self.select_current_thread(&threads, cx);
-
-        // let thread_status = self
-        //     .thread_id
-        //     .map(|thread_id| self.session.read(cx).thread_status(thread_id))
-        //     .unwrap_or(ThreadStatus::Exited);
-
-        // self.variable_list.update(cx, |this, cx| {
-        //     this.disabled(thread_status != ThreadStatus::Stopped, cx);
-        // });
 
         // let active_thread_item = &self.active_thread_item;
 
