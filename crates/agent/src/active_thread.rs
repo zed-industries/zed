@@ -981,11 +981,14 @@ impl ActiveThread {
         let workspace = self.workspace.clone();
 
         let thread = self.thread.read(cx);
+
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
         let context = thread.context_for_message(message_id).collect::<Vec<_>>();
+
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
+        let is_generating = has_tool_uses || thread.is_generating();
 
         // Don't render user messages that are just there for returning tool results.
         if message.role == Role::User && thread.message_has_tool_results(message_id) {
@@ -1285,18 +1288,16 @@ impl ActiveThread {
                 .ml_2()
                 .pl_2()
                 .pr_4()
+                .pb_2p5()
+                .gap_2p5()
                 .border_l_1()
                 .border_color(cx.theme().colors().border_variant)
                 .children(message_content)
-                .gap_2p5()
-                .pb_2p5()
-                .when(!tool_uses.is_empty(), |parent| {
-                    parent.child(
-                        div().children(
-                            tool_uses
-                                .into_iter()
-                                .map(|tool_use| self.render_tool_use(tool_use, window, cx)),
-                        ),
+                .when(has_tool_uses, |parent| {
+                    parent.children(
+                        tool_uses
+                            .into_iter()
+                            .map(|tool_use| self.render_tool_use(tool_use, window, cx)),
                     )
                 }),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
@@ -1309,9 +1310,6 @@ impl ActiveThread {
 
         v_flex()
             .w_full()
-            .when(first_message, |parent| {
-                parent.child(self.render_rules_item(cx))
-            })
             .when_some(checkpoint, |parent, checkpoint| {
                 let mut is_pending = false;
                 let mut error = None;
@@ -1381,65 +1379,64 @@ impl ActiveThread {
                         .child(ui::Divider::horizontal()),
                 )
             })
+            .when(first_message, |parent| {
+                parent.child(self.render_rules_item(cx))
+            })
             .child(styled_message)
-            .when(
-                show_feedback && !self.thread.read(cx).is_generating(),
-                |parent| {
-                    parent.child(feedback_items).when_some(
-                        self.feedback_message_editor.clone(),
-                        |parent, feedback_editor| {
-                            let focus_handle = feedback_editor.focus_handle(cx);
-                            parent.child(
-                                v_flex()
-                                    .key_context("AgentFeedbackMessageEditor")
-                                    .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                                        this.feedback_message_editor = None;
-                                        cx.notify();
-                                    }))
-                                    .on_action(cx.listener(|this, _: &menu::Confirm, _, cx| {
-                                        this.submit_feedback_message(cx);
-                                        cx.notify();
-                                    }))
-                                    .on_action(cx.listener(Self::confirm_editing_message))
-                                    .mx_4()
-                                    .mb_3()
-                                    .p_2()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .bg(cx.theme().colors().editor_background)
-                                    .child(feedback_editor)
-                                    .child(
-                                        h_flex()
-                                            .gap_1()
-                                            .justify_end()
-                                            .child(
-                                                Button::new("dismiss-feedback-message", "Cancel")
-                                                    .label_size(LabelSize::Small)
-                                                    .key_binding(
-                                                        KeyBinding::for_action_in(
-                                                            &menu::Cancel,
-                                                            &focus_handle,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                                    )
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.feedback_message_editor = None;
-                                                        cx.notify();
-                                                    })),
-                                            )
-                                            .child(
-                                                Button::new(
-                                                    "submit-feedback-message",
-                                                    "Share Feedback",
-                                                )
-                                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+            .when(is_generating && ix == self.messages.len() - 1, |this| {
+                let thread = self.thread.read(cx);
+                let has_tools_needing_confirmation =
+                    thread.tools_needing_confirmation().next().is_some();
+
+                let label_text = if has_tools_needing_confirmation {
+                    "Waiting for confirmation…"
+                } else {
+                    "Generating…"
+                };
+
+                this.child(
+                    Label::new(label_text)
+                        .color(Color::Muted)
+                        .size(LabelSize::Small)
+                        .ml_4()
+                        .mb_2(),
+                )
+            })
+            .when(show_feedback && !is_generating, |parent| {
+                parent.child(feedback_items).when_some(
+                    self.feedback_message_editor.clone(),
+                    |parent, feedback_editor| {
+                        let focus_handle = feedback_editor.focus_handle(cx);
+                        parent.child(
+                            v_flex()
+                                .key_context("AgentFeedbackMessageEditor")
+                                .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                                    this.feedback_message_editor = None;
+                                    cx.notify();
+                                }))
+                                .on_action(cx.listener(|this, _: &menu::Confirm, _, cx| {
+                                    this.submit_feedback_message(cx);
+                                    cx.notify();
+                                }))
+                                .on_action(cx.listener(Self::confirm_editing_message))
+                                .mx_4()
+                                .mb_3()
+                                .p_2()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().editor_background)
+                                .child(feedback_editor)
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .justify_end()
+                                        .child(
+                                            Button::new("dismiss-feedback-message", "Cancel")
                                                 .label_size(LabelSize::Small)
                                                 .key_binding(
                                                     KeyBinding::for_action_in(
-                                                        &menu::Confirm,
+                                                        &menu::Cancel,
                                                         &focus_handle,
                                                         window,
                                                         cx,
@@ -1447,16 +1444,38 @@ impl ActiveThread {
                                                     .map(|kb| kb.size(rems_from_px(10.))),
                                                 )
                                                 .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.submit_feedback_message(cx);
+                                                    this.feedback_message_editor = None;
                                                     cx.notify();
                                                 })),
+                                        )
+                                        .child(
+                                            Button::new(
+                                                "submit-feedback-message",
+                                                "Share Feedback",
+                                            )
+                                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                            .label_size(LabelSize::Small)
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Confirm,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(10.))),
+                                            )
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.submit_feedback_message(cx);
+                                                    cx.notify();
+                                                }),
                                             ),
-                                    ),
-                            )
-                        },
-                    )
-                },
-            )
+                                        ),
+                                ),
+                        )
+                    },
+                )
+            })
             .into_any()
     }
 
@@ -2207,7 +2226,7 @@ impl ActiveThread {
         };
 
         div()
-            .pt_1()
+            .pt_2()
             .px_2p5()
             .child(
                 h_flex()
