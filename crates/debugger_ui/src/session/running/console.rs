@@ -393,7 +393,6 @@ impl ConsoleQueryBarCompletionProvider {
             })
         });
         let snapshot = buffer.read(cx).text_snapshot();
-        let query = buffer.read(cx).text();
         cx.background_executor().spawn(async move {
             let completions = completion_task.await?;
 
