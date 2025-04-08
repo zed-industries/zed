@@ -1199,16 +1199,62 @@ impl ActiveThread {
 
         let context_store = self.context_store.clone();
         let workspace = self.workspace.clone();
-
         let thread = self.thread.read(cx);
+
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
         let context = thread.context_for_message(message_id).collect::<Vec<_>>();
+
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
+        let is_generating = thread.is_generating();
+
+        let is_first_message = ix == 0;
+        let is_last_message = ix == self.messages.len() - 1;
+        let show_feedback = is_last_message && message.role != Role::User;
+
+        let needs_confirmation = tool_uses.iter().any(|tool_use| tool_use.needs_confirmation);
+
+        let generating_label = (is_generating && is_last_message).then(|| {
+            Label::new("Generating")
+                .color(Color::Muted)
+                .size(LabelSize::Small)
+                .with_animation(
+                    "generating-label",
+                    Animation::new(Duration::from_secs(1)).repeat(),
+                    |mut label, delta| {
+                        let text = match delta {
+                            d if d < 0.25 => "Generating",
+                            d if d < 0.5 => "Generating.",
+                            d if d < 0.75 => "Generating..",
+                            _ => "Generating...",
+                        };
+                        label.set_text(text);
+                        label
+                    },
+                )
+                .with_animation(
+                    "pulsating-label",
+                    Animation::new(Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(pulsating_between(0.6, 1.)),
+                    |label, delta| label.map_element(|label| label.alpha(delta)),
+                )
+        });
 
         // Don't render user messages that are just there for returning tool results.
         if message.role == Role::User && thread.message_has_tool_results(message_id) {
+            if let Some(generating_label) = generating_label {
+                return h_flex()
+                    .w_full()
+                    .h_10()
+                    .py_1p5()
+                    .pl_4()
+                    .pb_3()
+                    .child(generating_label)
+                    .into_any_element();
+            }
+
             return Empty.into_any();
         }
 
@@ -1219,9 +1265,6 @@ impl ActiveThread {
             .as_ref()
             .filter(|(id, _)| *id == message_id)
             .map(|(_, state)| state.editor.clone());
-
-        let first_message = ix == 0;
-        let show_feedback = ix == self.messages.len() - 1 && message.role != Role::User;
 
         let colors = cx.theme().colors();
         let active_color = colors.element_active;
@@ -1391,7 +1434,7 @@ impl ActiveThread {
             Role::User => v_flex()
                 .id(("message-container", ix))
                 .map(|this| {
-                    if first_message {
+                    if is_first_message {
                         this.pt_2()
                     } else {
                         this.pt_4()
@@ -1509,15 +1552,11 @@ impl ActiveThread {
                 .border_l_1()
                 .border_color(cx.theme().colors().border_variant)
                 .children(message_content)
-                .gap_2p5()
-                .pb_2p5()
-                .when(!tool_uses.is_empty(), |parent| {
-                    parent.child(
-                        div().children(
-                            tool_uses
-                                .into_iter()
-                                .map(|tool_use| self.render_tool_use(tool_use, window, cx)),
-                        ),
+                .when(has_tool_uses, |parent| {
+                    parent.children(
+                        tool_uses
+                            .into_iter()
+                            .map(|tool_use| self.render_tool_use(tool_use, window, cx)),
                     )
                 }),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
@@ -1530,9 +1569,6 @@ impl ActiveThread {
 
         v_flex()
             .w_full()
-            .when(first_message, |parent| {
-                parent.child(self.render_rules_item(cx))
-            })
             .when_some(checkpoint, |parent, checkpoint| {
                 let mut is_pending = false;
                 let mut error = None;
@@ -1602,65 +1638,56 @@ impl ActiveThread {
                         .child(ui::Divider::horizontal()),
                 )
             })
+            .when(is_first_message, |parent| {
+                parent.child(self.render_rules_item(cx))
+            })
             .child(styled_message)
-            .when(
-                show_feedback && !self.thread.read(cx).is_generating(),
-                |parent| {
-                    parent.child(feedback_items).when_some(
-                        self.feedback_message_editor.clone(),
-                        |parent, feedback_editor| {
-                            let focus_handle = feedback_editor.focus_handle(cx);
-                            parent.child(
-                                v_flex()
-                                    .key_context("AgentFeedbackMessageEditor")
-                                    .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                                        this.feedback_message_editor = None;
-                                        cx.notify();
-                                    }))
-                                    .on_action(cx.listener(|this, _: &menu::Confirm, _, cx| {
-                                        this.submit_feedback_message(cx);
-                                        cx.notify();
-                                    }))
-                                    .on_action(cx.listener(Self::confirm_editing_message))
-                                    .mx_4()
-                                    .mb_3()
-                                    .p_2()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .bg(cx.theme().colors().editor_background)
-                                    .child(feedback_editor)
-                                    .child(
-                                        h_flex()
-                                            .gap_1()
-                                            .justify_end()
-                                            .child(
-                                                Button::new("dismiss-feedback-message", "Cancel")
-                                                    .label_size(LabelSize::Small)
-                                                    .key_binding(
-                                                        KeyBinding::for_action_in(
-                                                            &menu::Cancel,
-                                                            &focus_handle,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                                    )
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.feedback_message_editor = None;
-                                                        cx.notify();
-                                                    })),
-                                            )
-                                            .child(
-                                                Button::new(
-                                                    "submit-feedback-message",
-                                                    "Share Feedback",
-                                                )
-                                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+            .when(!needs_confirmation && generating_label.is_some(), |this| {
+                this.child(
+                    h_flex()
+                        .h_8()
+                        .mt_2()
+                        .mb_4()
+                        .ml_4()
+                        .py_1p5()
+                        .child(generating_label.unwrap()),
+                )
+            })
+            .when(show_feedback && !is_generating, |parent| {
+                parent.child(feedback_items).when_some(
+                    self.feedback_message_editor.clone(),
+                    |parent, feedback_editor| {
+                        let focus_handle = feedback_editor.focus_handle(cx);
+                        parent.child(
+                            v_flex()
+                                .key_context("AgentFeedbackMessageEditor")
+                                .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                                    this.feedback_message_editor = None;
+                                    cx.notify();
+                                }))
+                                .on_action(cx.listener(|this, _: &menu::Confirm, _, cx| {
+                                    this.submit_feedback_message(cx);
+                                    cx.notify();
+                                }))
+                                .on_action(cx.listener(Self::confirm_editing_message))
+                                .my_3()
+                                .mx_4()
+                                .p_2()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().editor_background)
+                                .child(feedback_editor)
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .justify_end()
+                                        .child(
+                                            Button::new("dismiss-feedback-message", "Cancel")
                                                 .label_size(LabelSize::Small)
                                                 .key_binding(
                                                     KeyBinding::for_action_in(
-                                                        &menu::Confirm,
+                                                        &menu::Cancel,
                                                         &focus_handle,
                                                         window,
                                                         cx,
@@ -1668,16 +1695,38 @@ impl ActiveThread {
                                                     .map(|kb| kb.size(rems_from_px(10.))),
                                                 )
                                                 .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.submit_feedback_message(cx);
+                                                    this.feedback_message_editor = None;
                                                     cx.notify();
                                                 })),
+                                        )
+                                        .child(
+                                            Button::new(
+                                                "submit-feedback-message",
+                                                "Share Feedback",
+                                            )
+                                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                            .label_size(LabelSize::Small)
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Confirm,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(10.))),
+                                            )
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.submit_feedback_message(cx);
+                                                    cx.notify();
+                                                }),
                                             ),
-                                    ),
-                            )
-                        },
-                    )
-                },
-            )
+                                        ),
+                                ),
+                        )
+                    },
+                )
+            })
             .into_any()
     }
 
@@ -2160,6 +2209,7 @@ impl ActiveThread {
             if !tool_use.needs_confirmation {
                 element.child(
                     v_flex()
+                        .my_1p5()
                         .child(
                             h_flex()
                                 .group("disclosure-header")
@@ -2231,6 +2281,7 @@ impl ActiveThread {
                 )
             } else {
                 v_flex()
+                    .my_3()
                     .rounded_lg()
                     .border_1()
                     .border_color(self.tool_card_border_color(cx))
@@ -2333,7 +2384,32 @@ impl ActiveThread {
                                 .border_t_1()
                                 .border_color(self.tool_card_border_color(cx))
                                 .rounded_b_lg()
-                                .child(Label::new("Action Confirmation").color(Color::Muted).size(LabelSize::Small))
+                                .child(
+                                    Label::new("Waiting for Confirmation…")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small)
+                                        .with_animation(
+                                            "generating-label",
+                                            Animation::new(Duration::from_secs(1)).repeat(),
+                                            |mut label, delta| {
+                                                let text = match delta {
+                                                    d if d < 0.25 => "Waiting for Confirmation",
+                                                    d if d < 0.5 => "Waiting for Confirmation.",
+                                                    d if d < 0.75 => "Waiting for Confirmation..",
+                                                    _ => "Waiting for Confirmation...",
+                                                };
+                                                label.set_text(text);
+                                                label
+                                            },
+                                        )
+                                        .with_animation(
+                                            "pulsating-label",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.6, 1.)),
+                                            |label, delta| label.map_element(|label| label.alpha(delta)),
+                                        ),
+                                )
                                 .child(
                                     h_flex()
                                         .gap_0p5()
@@ -2448,7 +2524,7 @@ impl ActiveThread {
         };
 
         div()
-            .pt_1()
+            .pt_2()
             .px_2p5()
             .child(
                 h_flex()
