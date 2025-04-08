@@ -5,7 +5,7 @@ use util::ResultExt;
 use worktree::Worktree;
 
 use collections::HashMap;
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
+use gpui::{AppContext as _, Context, Entity, EventEmitter, Task};
 use settings::Settings as _;
 
 use crate::{
@@ -26,17 +26,12 @@ pub enum ProjectEnvironmentEvent {
 impl EventEmitter<ProjectEnvironmentEvent> for ProjectEnvironment {}
 
 impl ProjectEnvironment {
-    // FIXME move cx.new outside
-    pub fn new(
-        _worktree_store: &Entity<WorktreeStore>,
-        cli_environment: Option<HashMap<String, String>>,
-        cx: &mut App,
-    ) -> Entity<Self> {
-        cx.new(|_| Self {
+    pub fn new(cli_environment: Option<HashMap<String, String>>) -> Self {
+        Self {
             cli_environment,
             environments: Default::default(),
             environment_error_messages: Default::default(),
-        })
+        }
     }
 
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
