@@ -3,7 +3,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Context as _;
 use async_task::Runnable;
 use flume::Sender;
 use parking::Parker;
@@ -114,7 +113,7 @@ impl PlatformDispatcher for WindowsDispatcher {
                 // 2. we are on a background thread.
                 // It is not safe to drop something !Send on the wrong thread, and
                 // the app will exit soon anyway, so we must forget the runnable.
-                mem::forget(runnable);
+                std::mem::forget(runnable);
             }
         }
     }
