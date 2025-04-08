@@ -156,7 +156,21 @@ impl Tool for BashTool {
 
             // Read one more byte to determine whether the output was truncated
             let mut buffer = vec![0; LIMIT + 1];
-            let bytes_read = reader.read(&mut buffer).await?;
+            let mut bytes_read = 0;
+
+            // Read until we reach the limit
+            loop {
+                let read = reader.read(&mut buffer).await?;
+                if read == 0 {
+                    break;
+                }
+
+                bytes_read += read;
+                if bytes_read > LIMIT {
+                    bytes_read = LIMIT + 1;
+                    break;
+                }
+            }
 
             // Repeatedly fill the output reader's buffer without copying it.
             loop {
