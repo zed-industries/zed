@@ -16,7 +16,7 @@ use util::markdown::MarkdownString;
 /// If the model requests to read a file whose size exceeds this, then
 /// the tool will return an error along with the model's symbol outline,
 /// and suggest trying again using line ranges from the outline.
-const MAX_FILE_SIZE_TO_READ: usize = 4096;
+const MAX_FILE_SIZE_TO_READ: usize = 16 * 1024;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
