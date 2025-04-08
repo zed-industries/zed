@@ -152,7 +152,16 @@ impl Tool for BatchTool {
     }
 
     fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool {
-        true
+        serde_json::from_value::<BatchToolInput>(input.clone())
+            .map(|input| {
+                let working_set = ToolWorkingSet::default();
+                input.invocations.iter().any(|invocation| {
+                    working_set
+                        .tool(&invocation.name, cx)
+                        .map_or(false, |tool| tool.needs_confirmation(&invocation.input, cx))
+                })
+            })
+            .unwrap_or(false)
     }
 
     fn description(&self) -> String {
