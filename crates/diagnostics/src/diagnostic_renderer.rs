@@ -194,7 +194,7 @@ impl DiagnosticRenderer {
         buffer_id: BufferId,
         editor: WeakEntity<Editor>,
         cx: &mut AsyncWindowContext,
-    ) -> Result<BlockProperties<Anchor>> {
+    ) -> BlockProperties<Anchor> {
         let mut editor_line_height = px(0.);
         let mut text_style = None;
         let markdown = cx.new(|cx| {
@@ -209,21 +209,7 @@ impl DiagnosticRenderer {
                 color: Some(cx.theme().colors().editor_foreground),
                 ..Default::default()
             });
-            let markdown_style = MarkdownStyle {
-                base_text_style: text_style.as_ref().unwrap().clone().into(),
-                selection_background_color: { cx.theme().players().local().selection },
-                link: TextStyleRefinement {
-                    underline: Some(gpui::UnderlineStyle {
-                        thickness: px(1.),
-                        color: Some(cx.theme().colors().editor_foreground),
-                        wavy: false,
-                    }),
-                    ..Default::default()
-                },
-                compact: true,
-                ..Default::default()
-            };
-            Markdown::new(SharedString::new(markdown), markdown_style, None, None, cx).open_url(
+            Markdown::new(SharedString::new(markdown), None, None, cx).open_url(
                 move |link, window, cx| {
                     editor
                         .update(cx, |editor, cx| {
@@ -233,37 +219,16 @@ impl DiagnosticRenderer {
                 },
             )
         })?;
-
-        markdown
-            .update(cx, |parsed, _| parsed.when_parsing_complete())?
-            .await
-            .ok();
-        let measured = cx.update(|window, cx| {
-            let mut d = div()
-                .max_w(px(600.))
-                .border_l_2()
-                .px_2()
-                .child(markdown.clone().into_any_element());
-            *d.text_style() = Some(text_style.clone().unwrap());
-            window.measure(
-                d.into_any_element(),
-                size(AvailableSpace::MinContent, AvailableSpace::MinContent),
-                cx,
-            )
-        })?;
         let block = DiagnosticBlock {
             severity,
             id,
             markdown,
         };
 
-        let lines = ((measured.height - px(1.)) / editor_line_height).ceil();
-        let lines = lines.min(4.);
-
         Ok(BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Below(position),
-            height: 4,
+            height: Some(1),
             render: Arc::new(move |bcx| block.render_block(measured.width + px(4.), lines, bcx)),
             priority: 0,
         })
