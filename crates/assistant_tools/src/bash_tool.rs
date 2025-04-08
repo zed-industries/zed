@@ -166,7 +166,7 @@ impl Tool for BashTool {
                 }
 
                 bytes_read += read;
-                if bytes_read >= LIMIT + 1 {
+                if bytes_read > LIMIT {
                     bytes_read = LIMIT + 1;
                     break;
                 }
