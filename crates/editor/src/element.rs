@@ -2316,9 +2316,13 @@ impl EditorElement {
         let mut delta = 1;
         let mut i = head_idx + 1;
         while i < buffer_rows.len() as u32 {
-            if buffer_rows[i as usize].buffer_row.is_some() {
+            if let Some(row_info) = buffer_rows[i as usize].buffer_row.as_ref() {
                 if rows.contains(&DisplayRow(i + start.0)) {
-                    relative_rows.insert(DisplayRow(i + start.0), delta);
+                    relative_rows.insert(
+                        DisplayRow(i + start.0),
+                        row_info
+                            .abs_diff(buffer_rows[head_idx as usize].buffer_row.unwrap_or(delta)),
+                    );
                 }
                 delta += 1;
             }
