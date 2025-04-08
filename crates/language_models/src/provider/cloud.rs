@@ -505,7 +505,8 @@ impl CloudLanguageModel {
 
         loop {
             let request_builder = http_client::Request::builder().method(Method::POST);
-            let request_builder = if let Ok(completions_url) = std::env::var("ZED_COMPLETIONS_URL") {
+            let request_builder = if let Ok(completions_url) = std::env::var("ZED_COMPLETIONS_URL")
+            {
                 request_builder.uri(completions_url)
             } else {
                 request_builder.uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
