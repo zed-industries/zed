@@ -31,7 +31,7 @@ body:
           1. Include settings.json, keymap.json, .editorconfig if relevant?
           2. Check your Zed.log for relevant errors? (please include!)
           3. Click Preview to ensure everything looks right?
-          4. Hide videos, large images and logs in ``` inside collapsable blocks:
+          4. Hide videos, large images and logs in ``` inside collapsible blocks:
 
         <details><summary>click to expand</summary>
 
