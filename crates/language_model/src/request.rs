@@ -2,7 +2,7 @@ use std::io::{Cursor, Write};
 use std::sync::Arc;
 
 use crate::role::Role;
-use crate::tool_output::ToolOutput;
+
 use crate::{LanguageModelToolUse, LanguageModelToolUseId};
 use base64::write::EncoderWriter;
 use gpui::{
@@ -165,13 +165,13 @@ impl LanguageModelImage {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LanguageModelToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub tool_name: Arc<str>,
     pub is_error: bool,
     pub content: Arc<str>,
-    pub tool_output: Option<Arc<dyn ToolOutput>>,
+    pub tool_output: Option<String>,
 }
 
 impl PartialEq for LanguageModelToolResult {
