@@ -306,7 +306,7 @@ pub enum BufferEvent {
 }
 
 /// The file associated with a buffer.
-pub trait File: Send + Sync {
+pub trait File: Send + Sync + Any {
     /// Returns the [`LocalFile`] associated with this file, if the
     /// file is local.
     fn as_local(&self) -> Option<&dyn LocalFile>;
@@ -335,9 +335,6 @@ pub trait File: Send + Sync {
     ///
     /// This is needed for looking up project-specific settings.
     fn worktree_id(&self, cx: &App) -> WorktreeId;
-
-    /// Converts this file into an [`Any`] trait object.
-    fn as_any(&self) -> &dyn Any;
 
     /// Converts this file into a protobuf message.
     fn to_proto(&self, cx: &App) -> rpc::proto::File;
@@ -4608,10 +4605,6 @@ impl File for TestFile {
 
     fn worktree_id(&self, _: &App) -> WorktreeId {
         WorktreeId::from_usize(0)
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        unimplemented!()
     }
 
     fn to_proto(&self, _: &App) -> rpc::proto::File {
