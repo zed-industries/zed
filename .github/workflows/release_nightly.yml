@@ -170,6 +170,49 @@ jobs:
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz
 
+  bundle-windows:
+    timeout-minutes: 60
+    name: Create a Windows bundle (.zip)
+    if: github.repository_owner == 'zed-industries'
+    runs-on: windows-latest
+    needs: tests
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      # Windows-specific secrets if needed (e.g., for code signing)
+      # WINDOWS_CODE_SIGNING_CERT: ${{ secrets.WINDOWS_CODE_SIGNING_CERT }} # Example
+      # WINDOWS_CODE_SIGNING_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PASSWORD }} # Example
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Set release channel to nightly
+        shell: pwsh
+        run: |
+          $version = git rev-parse --short HEAD
+          Write-Host "Publishing version: $version on release channel nightly"
+          Set-Content -Path crates/zed/RELEASE_CHANNEL -Value "nightly" -NoNewline
+
+      - name: Create Windows bundle
+        run: script/bundle-windows.ps1
+
+      - name: Upload Zed Nightly (Windows)
+        shell: bash
+        run: ./script/upload-nightly windows
+
   bundle-nix:
     timeout-minutes: 60
     name: (${{ matrix.system.os }}) Nix Build
@@ -227,6 +270,7 @@ jobs:
       - bundle-mac
       - bundle-linux-x86
       - bundle-linux-arm
+      - bundle-windows
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
