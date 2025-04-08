@@ -445,6 +445,8 @@ impl Vim {
         }
         let vim = cx.entity().clone();
         pane.update(cx, |pane, cx| {
+            let mut options = SearchOptions::REGEX;
+
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return;
             };
@@ -453,7 +455,6 @@ impl Vim {
                     return None;
                 }
 
-                let mut options = SearchOptions::REGEX;
                 if replacement.is_case_sensitive {
                     options.set(SearchOptions::CASE_SENSITIVE, true)
                 }
@@ -503,6 +504,13 @@ impl Vim {
                             cx,
                         )
                     });
+
+                    // Disable the `ONE_MATCH_PER_LINE` search option when finished, as
+                    // this is not properly supported outside of vim mode, and
+                    // not disabling it makes the "Replace All Matches" button
+                    // actually replace only the first match on each line.
+                    options.set(SearchOptions::ONE_MATCH_PER_LINE, false);
+                    search_bar.set_search_options(options, cx);
                 })?;
                 anyhow::Ok(())
             })

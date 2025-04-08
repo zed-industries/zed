@@ -1535,7 +1535,7 @@ impl SearchableItem for Editor {
         let text = self.buffer.read(cx);
         let text = text.snapshot(cx);
         let mut edits = vec![];
-        let mut last_point: Point = Point::default();
+        let mut last_point: Option<Point> = None;
 
         for m in matches {
             let point = m.start.to_point(&text);
@@ -1545,8 +1545,10 @@ impl SearchableItem for Editor {
             // match. If that's not the case and we're still replacing matches
             // in the same row/line, skip this match if the `one_match_per_line`
             // option is enabled.
-            if point.row != last_point.row {
-                last_point = point;
+            if last_point.is_none() {
+                last_point = Some(point);
+            } else if last_point.is_some() && point.row != last_point.unwrap().row {
+                last_point = Some(point);
             } else if query.one_match_per_line().is_some_and(|enabled| enabled) {
                 continue;
             }
