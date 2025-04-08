@@ -219,7 +219,7 @@ pub enum MarkdownEvent {
     Start(MarkdownTag),
     /// End of a tagged element.
     End(MarkdownTagEnd),
-    /// Text that uses the associated range from the mardown source.
+    /// Text that uses the associated range from the markdown source.
     Text,
     /// Text that differs from the markdown source - typically due to substitution of HTML entities
     /// and smart punctuation.
