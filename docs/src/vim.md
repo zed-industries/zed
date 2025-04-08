@@ -208,20 +208,18 @@ This table shows commands for managing windows, tabs, and panes. As commands don
 
 These ex commands open Zed's various panels and windows.
 
-| Command                           | Default Shortcut |
-| --------------------------------- | ---------------- |
-| Open the project panel            | `:E[xplore]`     |
-| Open the collaboration panel      | `:C[ollab]`      |
-| Open the chat panel               | `:Ch[at]`        |
-| Open the AI panel                 | `:A[I]`          |
-| Open the git panel                | `:G[it]`         |
-| Open the notifications panel      | `:No[tif]`       |
-| Open the feedback window          | `:fe[edback]`    |
-| Open the diagnostics window       | `:cl[ist]`       |
-| Open the terminal                 | `:te[rm]`        |
-| Open the extensions window        | `:Ext[ensions]`  |
-| List all marks                    | `:marks`         |
-| Display the contents of registers | `:reg[isters]`   |
+| Command                      | Default Shortcut |
+| ---------------------------- | ---------------- |
+| Open the project panel       | `:E[xplore]`     |
+| Open the collaboration panel | `:C[ollab]`      |
+| Open the chat panel          | `:Ch[at]`        |
+| Open the AI panel            | `:A[I]`          |
+| Open the git panel           | `:G[it]`         |
+| Open the notifications panel | `:No[tif]`       |
+| Open the feedback window     | `:fe[edback]`    |
+| Open the diagnostics window  | `:cl[ist]`       |
+| Open the terminal            | `:te[rm]`        |
+| Open the extensions window   | `:Ext[ensions]`  |
 
 ### Navigating diagnostics
 
