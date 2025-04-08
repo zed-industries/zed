@@ -177,9 +177,7 @@ pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
         }
     }
 
-    truncate_to_byte_limit(s, max_bytes);
-
-    ""
+    truncate_to_byte_limit(s, max_bytes)
 }
 
 #[test]
