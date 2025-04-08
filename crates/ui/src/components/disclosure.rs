@@ -91,7 +91,9 @@ impl Component for Disclosure {
     }
 
     fn description() -> Option<&'static str> {
-        Some("An interactive element used to show or hide content, typically used in expandable sections or tree-like structures.")
+        Some(
+            "An interactive element used to show or hide content, typically used in expandable sections or tree-like structures.",
+        )
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {

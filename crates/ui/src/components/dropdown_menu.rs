@@ -82,7 +82,9 @@ impl Component for DropdownMenu {
     }
 
     fn description() -> Option<&'static str> {
-        Some("A dropdown menu displays a list of actions or options. A dropdown menu is always activated by clicking a trigger (or via a keybinding).")
+        Some(
+            "A dropdown menu displays a list of actions or options. A dropdown menu is always activated by clicking a trigger (or via a keybinding).",
+        )
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {

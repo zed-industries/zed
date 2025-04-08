@@ -459,7 +459,9 @@ impl Component for KeyBinding {
     }
 
     fn description() -> Option<&'static str> {
-        Some("A component that displays a key binding, supporting different platform styles and vim mode.")
+        Some(
+            "A component that displays a key binding, supporting different platform styles and vim mode.",
+        )
     }
 
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {

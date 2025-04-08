@@ -165,7 +165,9 @@ impl Component for Divider {
     }
 
     fn description() -> Option<&'static str> {
-        Some("Visual separator used to create divisions between groups of content or sections in a layout.")
+        Some(
+            "Visual separator used to create divisions between groups of content or sections in a layout.",
+        )
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {

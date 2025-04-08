@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::{DerivePathStr, path_str};
 
-use crate::prelude::*;
 use crate::Color;
+use crate::prelude::*;
 
 #[derive(
     Debug,

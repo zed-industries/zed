@@ -228,7 +228,9 @@ impl Component for Tooltip {
     }
 
     fn description() -> Option<&'static str> {
-        Some("A tooltip that appears when hovering over an element, optionally showing a keybinding or additional metadata.")
+        Some(
+            "A tooltip that appears when hovering over an element, optionally showing a keybinding or additional metadata.",
+        )
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {

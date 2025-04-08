@@ -177,7 +177,9 @@ impl Component for Tab {
     }
 
     fn description() -> Option<&'static str> {
-        Some("A tab component that can be used in a tabbed interface, supporting different positions and states.")
+        Some(
+            "A tab component that can be used in a tabbed interface, supporting different positions and states.",
+        )
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {

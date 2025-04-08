@@ -271,7 +271,9 @@ impl Component for Icon {
     }
 
     fn description() -> Option<&'static str> {
-        Some("A versatile icon component that supports SVG and image-based icons with customizable size, color, and transformations.")
+        Some(
+            "A versatile icon component that supports SVG and image-based icons with customizable size, color, and transformations.",
+        )
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {

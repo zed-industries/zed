@@ -30,7 +30,9 @@ impl Component for DecoratedIcon {
     }
 
     fn description() -> Option<&'static str> {
-        Some("An icon with an optional decoration overlay (like an X, triangle, or dot) that can be positioned relative to the icon")
+        Some(
+            "An icon with an optional decoration overlay (like an X, triangle, or dot) that can be positioned relative to the icon",
+        )
     }
 
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
