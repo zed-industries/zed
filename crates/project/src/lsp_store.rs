@@ -5454,6 +5454,7 @@ impl LspStore {
                     if push_to_history {
                         buffer_handle.update(cx, |buffer, _| {
                             buffer.push_transaction(transaction.clone(), Instant::now());
+                            buffer.finalize_last_transaction();
                         })?;
                     }
                     Ok(Some(transaction))

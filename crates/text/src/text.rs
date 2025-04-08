@@ -1482,7 +1482,6 @@ impl Buffer {
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         self.history.push_transaction(transaction, now);
-        self.history.finalize_last_transaction();
     }
 
     pub fn edited_ranges_for_transaction_id<D>(
