@@ -1753,7 +1753,7 @@ impl ActiveThread {
             None
         };
 
-        div()
+        v_flex()
             .text_ui(cx)
             .gap_2()
             .children(
@@ -1840,14 +1840,15 @@ impl ActiveThread {
 
         let editor_bg = cx.theme().colors().panel_background;
 
-        div().pt_0p5().pb_2().map(|this| {
+        div().map(|this| {
             if pending {
                 this.v_flex()
+                    .mt_neg_2()
+                    .mb_1p5()
                     .child(
                         h_flex()
                             .group("disclosure-header")
                             .justify_between()
-                            .py_1()
                             .child(
                                 h_flex()
                                     .gap_1p5()
@@ -1940,10 +1941,12 @@ impl ActiveThread {
                                 .relative()
                                 .bg(editor_bg)
                                 .rounded_b_lg()
+                                .mt_2()
+                                .pl_4()
                                 .child(
                                     div()
                                         .id(("thinking-content", ix))
-                                        .h_20()
+                                        .max_h_20()
                                         .track_scroll(scroll_handle)
                                         .text_ui_sm(cx)
                                         .overflow_hidden()
@@ -1991,10 +1994,11 @@ impl ActiveThread {
                     })
             } else {
                 this.v_flex()
+                    .mt_neg_2()
                     .child(
                         h_flex()
                             .group("disclosure-header")
-                            .py_1()
+                            .pr_1()
                             .justify_between()
                             .opacity(0.8)
                             .hover(|style| style.opacity(1.))
@@ -2006,11 +2010,7 @@ impl ActiveThread {
                                             .size(IconSize::XSmall)
                                             .color(Color::Muted),
                                     )
-                                    .child(
-                                        Label::new("Thought Process")
-                                            .size(LabelSize::Small)
-                                            .buffer_font(cx),
-                                    ),
+                                    .child(Label::new("Thought Process").size(LabelSize::Small)),
                             )
                             .child(
                                 div().visible_on_hover("disclosure-header").child(
@@ -2073,6 +2073,7 @@ impl ActiveThread {
             .upgrade()
             .map(|workspace| workspace.read(cx).app_state().fs.clone());
         let needs_confirmation = matches!(&tool_use.status, ToolUseStatus::NeedsConfirmation);
+        let edit_tools = tool_use.needs_confirmation;
 
         let status_icons = div().child(match &tool_use.status {
             ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
@@ -2249,10 +2250,10 @@ impl ActiveThread {
         };
 
         div().map(|element| {
-            if !tool_use.needs_confirmation {
+            if !edit_tools {
                 element.child(
                     v_flex()
-                        .my_1p5()
+                        .my_2()
                         .child(
                             h_flex()
                                 .group("disclosure-header")
