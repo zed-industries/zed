@@ -1423,8 +1423,8 @@ impl Buffer {
             .collect()
     }
 
-    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
-        self.history.forget(transaction_id);
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        self.history.forget(transaction_id)
     }
 
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
