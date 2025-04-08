@@ -130,6 +130,7 @@ impl ToolUseState {
                                     tool_name: tool_use.clone(),
                                     is_error: tool_result.is_error,
                                     content: tool_result.content.clone(),
+                                    tool_output: None,
                                 },
                             );
                         }
@@ -152,6 +153,7 @@ impl ToolUseState {
                     tool_name: tool_use.name.clone(),
                     content: "Tool canceled by user".into(),
                     is_error: true,
+                    tool_output: None,
                 },
             );
             pending_tools.push(tool_use.clone());
@@ -341,6 +343,7 @@ impl ToolUseState {
                         tool_name,
                         content: tool_result.response_for_model().into(),
                         is_error: false,
+                        tool_output: Some(tool_result.clone()),
                     },
                 );
                 self.pending_tool_uses_by_id.remove(&tool_use_id)
@@ -353,6 +356,7 @@ impl ToolUseState {
                         tool_name,
                         content: err.to_string().into(),
                         is_error: true,
+                        tool_output: None,
                     },
                 );
 
@@ -427,6 +431,7 @@ impl ToolUseState {
                             } else {
                                 tool_result.content.clone()
                             },
+                            tool_output: tool_result.tool_output.clone(),
                         },
                     ));
                 }

@@ -5,7 +5,7 @@ use gpui::SharedString;
 use crate::ToolOutput;
 
 /// A simple implementation of ToolOutput that wraps a string.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StringToolOutput(SharedString);
 
 impl StringToolOutput {

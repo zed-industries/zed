@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::role::Role;
 use crate::{LanguageModelToolUse, LanguageModelToolUseId};
+use assistant_tool::assistant_tool::ToolOutput;
 use base64::write::EncoderWriter;
 use gpui::{
     App, AppContext as _, DevicePixels, Image, ObjectFit, RenderImage, SharedString, Size, Task,
@@ -164,13 +165,16 @@ impl LanguageModelImage {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct LanguageModelToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub tool_name: Arc<str>,
     pub is_error: bool,
     pub content: Arc<str>,
+    pub tool_output: Option<Arc<dyn ToolOutput>>,
 }
+
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum MessageContent {

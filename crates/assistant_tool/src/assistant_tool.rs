@@ -85,7 +85,7 @@ impl Debug for dyn Tool {
     }
 }
 
-pub trait ToolOutput: Send + Sync {
+pub trait ToolOutput: Send + Sync + std::fmt::Debug + PartialEq + Eq + std::hash::Hash + serde::Serialize + for<'de> serde::Deserialize<'de> {
     /// Returns a string that will be given to the model
     /// as the tool output.
     fn response_for_model(&self) -> SharedString;
