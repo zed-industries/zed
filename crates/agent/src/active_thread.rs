@@ -979,7 +979,6 @@ impl ActiveThread {
 
         let context_store = self.context_store.clone();
         let workspace = self.workspace.clone();
-
         let thread = self.thread.read(cx);
 
         // Get all the data we need from thread before we start using it in closures
@@ -988,10 +987,52 @@ impl ActiveThread {
 
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
-        let is_generating = has_tool_uses || thread.is_generating();
+        let is_generating = thread.is_generating();
+
+        let is_first_message = ix == 0;
+        let is_last_message = ix == self.messages.len() - 1;
+        let show_feedback = is_last_message && message.role != Role::User;
+
+        let generating_label = (is_generating && is_last_message).then(|| {
+            Label::new("Generating")
+                .color(Color::Muted)
+                .size(LabelSize::Small)
+                .with_animation(
+                    "generating-label",
+                    Animation::new(Duration::from_secs(1)).repeat(),
+                    |mut label, delta| {
+                        let text = match delta {
+                            d if d < 0.25 => "Generating",
+                            d if d < 0.5 => "Generating.",
+                            d if d < 0.75 => "Generating..",
+                            _ => "Generating...",
+                        };
+                        label.set_text(text);
+                        label
+                    },
+                )
+                .with_animation(
+                    "pulsating-label",
+                    Animation::new(Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(pulsating_between(0.6, 1.)),
+                    |label, delta| label.map_element(|label| label.alpha(delta)),
+                )
+        });
 
         // Don't render user messages that are just there for returning tool results.
         if message.role == Role::User && thread.message_has_tool_results(message_id) {
+            if let Some(generating_label) = generating_label {
+                return h_flex()
+                    .w_full()
+                    .h_6()
+                    .pl_4()
+                    .py_1p5()
+                    .pb_4()
+                    .child(generating_label)
+                    .into_any_element();
+            }
+
             return Empty.into_any();
         }
 
@@ -1002,9 +1043,6 @@ impl ActiveThread {
             .as_ref()
             .filter(|(id, _)| *id == message_id)
             .map(|(_, state)| state.editor.clone());
-
-        let first_message = ix == 0;
-        let show_feedback = ix == self.messages.len() - 1 && message.role != Role::User;
 
         let colors = cx.theme().colors();
         let active_color = colors.element_active;
@@ -1173,7 +1211,7 @@ impl ActiveThread {
             Role::User => v_flex()
                 .id(("message-container", ix))
                 .map(|this| {
-                    if first_message {
+                    if is_first_message {
                         this.pt_2()
                     } else {
                         this.pt_4()
@@ -1288,8 +1326,6 @@ impl ActiveThread {
                 .ml_2()
                 .pl_2()
                 .pr_4()
-                .pb_2p5()
-                .gap_2p5()
                 .border_l_1()
                 .border_color(cx.theme().colors().border_variant)
                 .children(message_content)
@@ -1379,27 +1415,18 @@ impl ActiveThread {
                         .child(ui::Divider::horizontal()),
                 )
             })
-            .when(first_message, |parent| {
+            .when(is_first_message, |parent| {
                 parent.child(self.render_rules_item(cx))
             })
             .child(styled_message)
-            .when(is_generating && ix == self.messages.len() - 1, |this| {
-                let thread = self.thread.read(cx);
-                let has_tools_needing_confirmation =
-                    thread.tools_needing_confirmation().next().is_some();
-
-                let label_text = if has_tools_needing_confirmation {
-                    "Waiting for confirmation…"
-                } else {
-                    "Generating…"
-                };
-
+            .when_some(generating_label, |this, generating_label| {
                 this.child(
-                    Label::new(label_text)
-                        .color(Color::Muted)
-                        .size(LabelSize::Small)
+                    h_flex()
+                        .h_6()
                         .ml_4()
-                        .mb_2(),
+                        .mb_4()
+                        .py_1p5()
+                        .child(generating_label),
                 )
             })
             .when(show_feedback && !is_generating, |parent| {
@@ -1419,8 +1446,8 @@ impl ActiveThread {
                                     cx.notify();
                                 }))
                                 .on_action(cx.listener(Self::confirm_editing_message))
+                                .my_3()
                                 .mx_4()
-                                .mb_3()
                                 .p_2()
                                 .rounded_md()
                                 .border_1()
@@ -1938,6 +1965,7 @@ impl ActiveThread {
             if !tool_use.needs_confirmation {
                 element.child(
                     v_flex()
+                        .my_1p5()
                         .child(
                             h_flex()
                                 .group("disclosure-header")
@@ -2009,6 +2037,7 @@ impl ActiveThread {
                 )
             } else {
                 v_flex()
+                    .mt_2()
                     .rounded_lg()
                     .border_1()
                     .border_color(self.tool_card_border_color(cx))
@@ -2111,7 +2140,7 @@ impl ActiveThread {
                                 .border_t_1()
                                 .border_color(self.tool_card_border_color(cx))
                                 .rounded_b_lg()
-                                .child(Label::new("Action Confirmation").color(Color::Muted).size(LabelSize::Small))
+                                .child(Label::new("Waiting for Confirmation…").color(Color::Muted).size(LabelSize::Small))
                                 .child(
                                     h_flex()
                                         .gap_0p5()
