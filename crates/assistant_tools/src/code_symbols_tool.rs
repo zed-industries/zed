@@ -339,10 +339,7 @@ async fn render_outline(
     Ok(output)
 }
 
-fn render_entries<'a>(
-    output: &mut String,
-    items: impl IntoIterator<Item = OutlineItem<Point>>,
-) -> u32 {
+fn render_entries(output: &mut String, items: impl IntoIterator<Item = OutlineItem<Point>>) -> u32 {
     let mut entries_rendered = 0;
 
     for item in items {
