@@ -1384,7 +1384,9 @@ impl Editor {
                     window,
                     |editor, _, event, window, cx| match event {
                         BreakpointStoreEvent::ActiveDebugLineChanged => {
-                            editor.go_to_active_debug_line(window, cx);
+                            if editor.go_to_active_debug_line(window, cx) {
+                                cx.stop_propagation();
+                            }
                         }
                         _ => {}
                     },
@@ -15910,8 +15912,9 @@ impl Editor {
         }
     }
 
-    pub fn go_to_active_debug_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let _ = maybe!({
+    // Returns true if the editor handled a go-to-line request
+    pub fn go_to_active_debug_line(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        maybe!({
             let breakpoint_store = self.breakpoint_store.as_ref()?;
 
             let Some((_, _, active_position)) =
@@ -15929,6 +15932,7 @@ impl Editor {
                 .read(cx)
                 .snapshot();
 
+            let mut handled = false;
             for (id, ExcerptRange { context, .. }) in self
                 .buffer
                 .read(cx)
@@ -15942,6 +15946,7 @@ impl Editor {
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let multibuffer_anchor = snapshot.anchor_in_excerpt(id, active_position)?;
 
+                handled = true;
                 self.clear_row_highlights::<DebugCurrentRowHighlight>();
                 self.go_to_line::<DebugCurrentRowHighlight>(
                     multibuffer_anchor,
@@ -15952,9 +15957,9 @@ impl Editor {
 
                 cx.notify();
             }
-
-            Some(())
-        });
+            handled.then_some(())
+        })
+        .is_some()
     }
 
     pub fn copy_file_name_without_extension(
