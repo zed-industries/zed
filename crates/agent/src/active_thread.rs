@@ -1223,7 +1223,7 @@ impl ActiveThread {
                     "generating-label",
                     vec![
                         Animation::new(Duration::from_secs(1)),
-                        Animation::new(Duration::from_secs(2)).repeat(),
+                        Animation::new(Duration::from_secs(1)).repeat(),
                     ],
                     |mut label, animation_ix, delta| {
                         match animation_ix {
