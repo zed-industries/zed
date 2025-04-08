@@ -85,7 +85,7 @@ struct DropdownMenuTrigger {
 impl DropdownMenuTrigger {
     pub fn new(label: LabelKind) -> Self {
         Self {
-            label: label.into(),
+            label,
             full_width: false,
             selected: false,
             disabled: false,
