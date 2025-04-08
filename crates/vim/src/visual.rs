@@ -386,8 +386,20 @@ impl Vim {
                                     || movement::right(map, selection.start) == selection.end;
 
                                 if expand_both_ways {
-                                    selection.start = range.start;
-                                    selection.end = range.end;
+                                    if selection.start == range.start
+                                        && selection.end == range.end
+                                        && object.always_expands_both_ways()
+                                    {
+                                        if let Some(range) =
+                                            object.range(map, selection.clone(), around)
+                                        {
+                                            selection.start = range.start;
+                                            selection.end = range.end;
+                                        }
+                                    } else {
+                                        selection.start = range.start;
+                                        selection.end = range.end;
+                                    }
                                 } else if selection.reversed {
                                     selection.start = range.start;
                                 } else {
@@ -1417,6 +1429,62 @@ mod test {
         cx.shared_state()
             .await
             .assert_eq("«ˇhello in a word» again.");
+    }
+
+    #[gpui::test]
+    async fn test_visual_object_expands(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "{
+                {
+               ˇ }
+            }
+            {
+            }
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("v l").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "{
+                {
+               « }ˇ»
+            }
+            {
+            }
+            "
+        });
+        cx.simulate_shared_keystrokes("a {").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "{
+                «{
+                }ˇ»
+            }
+            {
+            }
+            "
+        });
+        cx.simulate_shared_keystrokes("a {").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "«{
+                {
+                }
+            }ˇ»
+            {
+            }
+            "
+        });
+        // cx.simulate_shared_keystrokes("a {").await;
+        // cx.shared_state().await.assert_eq(indoc! {
+        //     "{
+        //         «{
+        //         }ˇ»
+        //     }
+        //     {
+        //     }
+        //     "
+        // });
     }
 
     #[gpui::test]
