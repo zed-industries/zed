@@ -8,7 +8,7 @@ use std::fmt::Formatter;
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{self, App, Entity, EntityId, SharedString, Task};
 use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -17,6 +17,14 @@ use project::Project;
 pub use crate::action_log::*;
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
+
+/// A rendered tool use containing styled markdown elements for UI representation.
+#[derive(Clone)]
+pub struct RenderedToolUse {
+    pub label: EntityId,
+    pub input: EntityId,
+    pub output: EntityId,
+}
 
 pub fn init(cx: &mut App) {
     ToolRegistry::default_global(cx);
@@ -57,6 +65,18 @@ pub trait Tool: 'static + Send + Sync {
 
     /// Returns markdown to be displayed in the UI for this tool.
     fn ui_text(&self, input: &serde_json::Value) -> String;
+
+    /// Returns a custom UI element to render the tool's output.
+    /// Returns None by default to indicate that rendering has not yet been
+    /// implemented for this tool, and the caller should do some default rendering.
+    fn render(
+        &self,
+        _rendered_tool_use: &RenderedToolUse,
+        _window: &mut gpui::Window,
+        _cx: &gpui::App,
+    ) -> Option<gpui::AnyElement> {
+        None
+    }
 
     /// Runs the tool with the provided input.
     fn run(

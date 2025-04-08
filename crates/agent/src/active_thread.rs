@@ -76,6 +76,16 @@ struct RenderedToolUse {
     output: Entity<Markdown>,
 }
 
+impl From<&RenderedToolUse> for assistant_tool::RenderedToolUse {
+    fn from(source: &RenderedToolUse) -> Self {
+        Self {
+            label: source.label.entity_id(),
+            input: source.input.entity_id(),
+            output: source.output.entity_id(),
+        }
+    }
+}
+
 impl RenderedMessage {
     fn from_segments(
         segments: &[MessageSegment],
@@ -2007,24 +2017,49 @@ impl ActiveThread {
                     results_content_container()
                         .border_t_1()
                         .border_color(self.tool_card_border_color(cx))
-                        .child(
-                            Label::new("Result")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .buffer_font(cx),
-                        )
                         .child(div().w_full().text_ui_sm(cx).children(
                             rendered_tool_use.as_ref().map(|rendered| {
-                                MarkdownElement::new(
-                                    rendered.output.clone(),
-                                    tool_use_markdown_style(window, cx),
-                                )
-                                .on_url_click({
-                                    let workspace = self.workspace.clone();
-                                    move |text, window, cx| {
-                                        open_markdown_link(text, workspace.clone(), window, cx);
+                                let tool_name = tool_use.name.to_string();
+                                let tool_registry = assistant_tool::ToolRegistry::global(cx);
+
+                                if let Some(tool) = tool_registry.tool(&tool_name) {
+                                    match tool.render(&rendered.into(), window, cx) {
+                                        Some(rendered) => rendered,
+                                        None => {
+                                            // Default to rendering the output as markdown
+                                            div()
+                                                .child(
+                                                    Label::new("Result")
+                                                        .size(LabelSize::XSmall)
+                                                        .color(Color::Muted)
+                                                        .buffer_font(cx),
+                                                )
+                                                .child(
+                                                    div().w_full().text_ui_sm(cx).child(
+                                                        MarkdownElement::new(
+                                                            rendered.output.clone(),
+                                                            tool_use_markdown_style(window, cx),
+                                                        )
+                                                        .on_url_click({
+                                                            let workspace = self.workspace.clone();
+                                                            move |text, window, cx| {
+                                                                open_markdown_link(
+                                                                    text,
+                                                                    workspace.clone(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            }
+                                                        }),
+                                                    ),
+                                                )
+                                                .into_any_element()
+                                        }
                                     }
-                                })
+                                } else {
+                                    log::error!("Tool not found: {tool_name}");
+                                    gpui::Empty.into_any_element()
+                                }
                             }),
                         )),
                 ),
@@ -2071,16 +2106,30 @@ impl ActiveThread {
                             div()
                                 .text_ui_sm(cx)
                                 .children(rendered_tool_use.as_ref().map(|rendered| {
-                                    MarkdownElement::new(
-                                        rendered.output.clone(),
-                                        tool_use_markdown_style(window, cx),
-                                    )
-                                    .on_url_click({
-                                        let workspace = self.workspace.clone();
-                                        move |text, window, cx| {
-                                            open_markdown_link(text, workspace.clone(), window, cx);
-                                        }
-                                    })
+                                    let tool_name = tool_use.name.to_string();
+                                    let tool_registry = assistant_tool::ToolRegistry::global(cx);
+
+                                    tool_registry
+                                        .tool(&tool_name)
+                                        .and_then(|tool| tool.render(&rendered.into(), window, cx))
+                                        .unwrap_or_else(|| {
+                                            MarkdownElement::new(
+                                                rendered.output.clone(),
+                                                tool_use_markdown_style(window, cx),
+                                            )
+                                            .on_url_click({
+                                                let workspace = self.workspace.clone();
+                                                move |text, window, cx| {
+                                                    open_markdown_link(
+                                                        text,
+                                                        workspace.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            })
+                                            .into_any_element()
+                                        })
                                 })),
                         ),
                 ),
