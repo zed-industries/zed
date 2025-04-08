@@ -1247,59 +1247,48 @@ mod preview {
 
             let (width, height) = (px(480.), px(320.));
 
-<<<<<<< HEAD
             Some(
                 v_flex()
                     .gap_6()
-                    .children(vec![example_group(vec![
-=======
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group(vec![
->>>>>>> main
-                        single_example(
-                            "No Repo",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(no_repo_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "No Changes",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(no_changes_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Unknown Upstream",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(unknown_upstream_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Ahead of Remote",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(ahead_of_upstream_state)
-                                .into_any_element(),
-                        ),
+                    .children(vec![
+                        example_group(vec![
+                            single_example(
+                                "No Repo",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(no_repo_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "No Changes",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(no_changes_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Unknown Upstream",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(unknown_upstream_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Ahead of Remote",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(ahead_of_upstream_state)
+                                    .into_any_element(),
+                            ),
+                        ])
+                        .vertical(),
                     ])
-<<<<<<< HEAD
-                    .vertical()])
                     .into_any_element(),
             )
-=======
-                    .vertical(),
-                ])
-                .into_any_element()
->>>>>>> main
         }
     }
 }

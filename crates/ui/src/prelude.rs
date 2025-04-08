@@ -8,12 +8,7 @@ pub use gpui::{
 };
 
 pub use component::{
-<<<<<<< HEAD
-    distributed_slice, example_group, example_group_with_title, single_example, Component,
-    ComponentScope,
-=======
-    ComponentPreview, ComponentScope, example_group, example_group_with_title, single_example,
->>>>>>> main
+    Component, ComponentScope, example_group, example_group_with_title, single_example,
 };
 pub use ui_macros::RegisterComponent;
 

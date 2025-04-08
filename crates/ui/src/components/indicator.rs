@@ -1,10 +1,5 @@
-<<<<<<< HEAD
-use crate::prelude::*;
-
 use super::AnyIcon;
-=======
-use crate::{AnyIcon, prelude::*};
->>>>>>> main
+use crate::prelude::*;
 
 #[derive(Default)]
 enum IndicatorKind {
@@ -95,7 +90,9 @@ impl Component for Indicator {
     }
 
     fn description() -> Option<&'static str> {
-        Some("Visual indicators used to represent status, notifications, or draw attention to specific elements.")
+        Some(
+            "Visual indicators used to represent status, notifications, or draw attention to specific elements.",
+        )
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {

@@ -1,9 +1,5 @@
-<<<<<<< HEAD
 use crate::component_prelude::*;
 use crate::prelude::*;
-=======
-use crate::{Avatar, prelude::*};
->>>>>>> main
 use gpui::{AnyElement, StyleRefinement};
 use smallvec::SmallVec;
 
@@ -97,7 +93,9 @@ impl Component for Facepile {
     }
 
     fn description() -> Option<&'static str> {
-        Some("Displays a collection of avatars or initials in a compact format. Often used to represent active collaborators or a subset of contributors.")
+        Some(
+            "Displays a collection of avatars or initials in a compact format. Often used to represent active collaborators or a subset of contributors.",
+        )
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {

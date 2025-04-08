@@ -1965,13 +1965,7 @@ dependencies = [
  "bitflags 2.9.0",
  "cexpr",
  "clang-sys",
-<<<<<<< HEAD
- "itertools 0.12.1",
- "log",
- "prettyplease",
-=======
  "itertools 0.13.0",
->>>>>>> main
  "proc-macro2",
  "quote",
  "regex",
@@ -4499,7 +4493,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strum",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -9591,7 +9585,7 @@ checksum = "fa59f025cde9c698fcb4fcb3533db4621795374065bee908215263488f2d2a1d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.90",
+ "syn 2.0.100",
 ]
 
 [[package]]

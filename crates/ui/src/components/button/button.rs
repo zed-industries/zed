@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 use crate::component_prelude::*;
-=======
-use component::{ComponentPreview, example_group_with_title, single_example};
->>>>>>> main
 use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::RegisterComponent;
 

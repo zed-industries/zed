@@ -1,4 +1,4 @@
-use crate::{component_prelude::*, v_flex, Label, LabelCommon};
+use crate::{Label, LabelCommon, component_prelude::*, v_flex};
 use documented::{DocumentedFields, DocumentedVariants};
 use gpui::{App, Hsla, IntoElement, ParentElement, Styled};
 use theme::ActiveTheme;
@@ -133,7 +133,7 @@ impl Component for Color {
         Some(Color::DOCS)
     }
 
-    fn preview(_window: &mut gpui::Window, cx: &mut App) -> Option<gpui::AnyElement> {
+    fn preview(_window: &mut gpui::Window, _cx: &mut App) -> Option<gpui::AnyElement> {
         Some(
             v_flex()
                 .gap_6()

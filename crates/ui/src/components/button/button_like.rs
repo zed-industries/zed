@@ -1,11 +1,8 @@
-<<<<<<< HEAD
 use documented::Documented;
-use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
-use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
-=======
-use gpui::{AnyElement, AnyView, ClickEvent, Hsla, Rems, transparent_black};
-use gpui::{CursorStyle, DefiniteLength, MouseButton, MouseDownEvent, MouseUpEvent, relative};
->>>>>>> main
+use gpui::{
+    AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, Hsla, MouseButton,
+    MouseDownEvent, MouseUpEvent, Rems, relative, transparent_black,
+};
 use smallvec::SmallVec;
 
 use crate::{DynamicSpacing, ElevationIndex, prelude::*};
