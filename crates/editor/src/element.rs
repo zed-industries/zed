@@ -8404,7 +8404,7 @@ enum CursorPopoverType {
 }
 
 pub fn scale_vertical_mouse_autoscroll_delta(delta: Pixels) -> f32 {
-    (delta.pow(1.5) / 100.0).into()
+    (delta.pow(1.2) / 100.0).min(px(3.0)).into()
 }
 
 fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
