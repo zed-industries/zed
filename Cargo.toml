@@ -396,7 +396,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
-async-tungstenite = "0.28"
+async-tungstenite = "0.29.1"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
@@ -453,8 +453,8 @@ indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
 jsonwebtoken = "9.3"
-jupyter-protocol = { version = "0.6.0" }
-jupyter-websocket-client = { version = "0.9.0" }
+jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
@@ -463,7 +463,7 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
 nanoid = "0.4"
-nbformat = { version = "0.10.0" }
+nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 nix = "0.29"
 objc = "0.2"
 open = "5.0.0"
@@ -501,7 +501,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = { version = "0.25.0", default-features = false, features = [
+runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"
@@ -661,7 +661,6 @@ features = [
 # TODO livekit https://github.com/RustAudio/cpal/pull/891
 [patch.crates-io]
 cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
-real-async-tls = { git = "https://github.com/zed-industries/async-tls", rev = "1e759a4b5e370f87dc15e40756ac4f8815b61d9d", package = "async-tls" }
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 
