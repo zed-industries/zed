@@ -201,7 +201,7 @@ impl ToolUseState {
 
             let (icon, needs_confirmation) = if let Some(tool) = self.tools.tool(&tool_use.name, cx)
             {
-                (tool.icon(), tool.needs_confirmation())
+                (tool.icon(), tool.needs_confirmation(&tool_use.input, cx))
             } else {
                 (IconName::Cog, false)
             };
