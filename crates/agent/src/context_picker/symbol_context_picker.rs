@@ -285,12 +285,17 @@ fn find_matching_symbol(symbol: &Symbol, candidates: &[DocumentSymbol]) -> Optio
     }
 }
 
+pub struct SymbolMatch {
+    pub mat: StringMatch,
+    pub symbol: Symbol,
+}
+
 pub(crate) fn search_symbols(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
-) -> Task<Result<Vec<(StringMatch, Symbol)>>> {
+) -> Task<Result<Vec<SymbolMatch>>> {
     let symbols_task = workspace.update(cx, |workspace, cx| {
         workspace
             .project()
@@ -347,19 +352,19 @@ pub(crate) fn search_symbols(
                 for position in &mut mat.positions {
                     *position += filter_start;
                 }
-                (mat, symbol)
+                SymbolMatch { mat, symbol }
             })
             .collect())
     })
 }
 
 fn compute_symbol_entries(
-    symbols: Vec<(StringMatch, Symbol)>,
+    symbols: Vec<SymbolMatch>,
     context_store: &ContextStore,
     cx: &App,
 ) -> Vec<SymbolEntry> {
     let mut symbol_entries = Vec::with_capacity(symbols.len());
-    for (_, symbol) in symbols {
+    for SymbolMatch { symbol, .. } in symbols {
         let symbols_for_path = context_store.included_symbols_by_path().get(&symbol.path);
         let is_included = if let Some(symbols_for_path) = symbols_for_path {
             let mut is_included = false;
