@@ -376,7 +376,7 @@ fn render_markdown_code_block(
                 .cursor_pointer()
                 .rounded_sm()
                 .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
-                .tooltip(Tooltip::text("Jump to file"))
+                .tooltip(Tooltip::text("Jump to File"))
                 .children(
                     file_icons::FileIcons::get_icon(&path_range.path, cx)
                         .map(Icon::from_path)
@@ -456,6 +456,7 @@ fn render_markdown_code_block(
         .contains(&(message_id, ix));
 
     let codeblock_header = h_flex()
+        .group("codeblock_header")
         .p_1()
         .gap_1()
         .justify_between()
@@ -465,45 +466,47 @@ fn render_markdown_code_block(
         .rounded_t_md()
         .children(label)
         .child(
-            IconButton::new(
-                ("copy-markdown-code", ix),
-                if codeblock_was_copied {
-                    IconName::Check
-                } else {
-                    IconName::Copy
-                },
-            )
-            .icon_color(Color::Muted)
-            .shape(ui::IconButtonShape::Square)
-            .tooltip(Tooltip::text("Copy Code"))
-            .on_click({
-                let active_thread = active_thread.clone();
-                let parsed_markdown = parsed_markdown.clone();
-                move |_event, _window, cx| {
-                    active_thread.update(cx, |this, cx| {
-                        this.copied_code_block_ids.insert((message_id, ix));
+            div().visible_on_hover("codeblock_header").child(
+                IconButton::new(
+                    ("copy-markdown-code", ix),
+                    if codeblock_was_copied {
+                        IconName::Check
+                    } else {
+                        IconName::Copy
+                    },
+                )
+                .icon_color(Color::Muted)
+                .shape(ui::IconButtonShape::Square)
+                .tooltip(Tooltip::text("Copy Code"))
+                .on_click({
+                    let active_thread = active_thread.clone();
+                    let parsed_markdown = parsed_markdown.clone();
+                    move |_event, _window, cx| {
+                        active_thread.update(cx, |this, cx| {
+                            this.copied_code_block_ids.insert((message_id, ix));
 
-                        let code =
-                            without_fences(&parsed_markdown.source()[codeblock_range.clone()])
-                                .to_string();
+                            let code =
+                                without_fences(&parsed_markdown.source()[codeblock_range.clone()])
+                                    .to_string();
 
-                        cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                            cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
 
-                        cx.spawn(async move |this, cx| {
-                            cx.background_executor().timer(Duration::from_secs(2)).await;
+                            cx.spawn(async move |this, cx| {
+                                cx.background_executor().timer(Duration::from_secs(2)).await;
 
-                            cx.update(|cx| {
-                                this.update(cx, |this, cx| {
-                                    this.copied_code_block_ids.remove(&(message_id, ix));
-                                    cx.notify();
+                                cx.update(|cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.copied_code_block_ids.remove(&(message_id, ix));
+                                        cx.notify();
+                                    })
                                 })
+                                .ok();
                             })
-                            .ok();
-                        })
-                        .detach();
-                    });
-                }
-            }),
+                            .detach();
+                        });
+                    }
+                }),
+            ),
         );
 
     v_flex()
