@@ -1,7 +1,4 @@
-use futures::{
-    FutureExt,
-    future::{Shared, WeakShared},
-};
+use futures::{FutureExt, future::Shared};
 use language::Buffer;
 use std::{path::Path, sync::Arc};
 use util::ResultExt;
@@ -13,13 +10,12 @@ use settings::Settings as _;
 
 use crate::{
     project_settings::{DirenvSettings, ProjectSettings},
-    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+    worktree_store::WorktreeStore,
 };
 
 pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
-    // FIXME the weak was not a good idea, go back to using strongs and find a different way to clean them up
-    environments: HashMap<Arc<Path>, WeakShared<Task<Option<HashMap<String, String>>>>>,
+    environments: HashMap<Arc<Path>, Shared<Task<Option<HashMap<String, String>>>>>,
     environment_error_messages: HashMap<Arc<Path>, EnvironmentErrorMessage>,
 }
 
@@ -30,26 +26,16 @@ pub enum ProjectEnvironmentEvent {
 impl EventEmitter<ProjectEnvironmentEvent> for ProjectEnvironment {}
 
 impl ProjectEnvironment {
+    // FIXME move cx.new outside
     pub fn new(
-        worktree_store: &Entity<WorktreeStore>,
+        _worktree_store: &Entity<WorktreeStore>,
         cli_environment: Option<HashMap<String, String>>,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|cx| {
-            cx.subscribe(worktree_store, |this: &mut Self, _, event, _| {
-                if let WorktreeStoreEvent::WorktreeRemoved(_, _) = event {
-                    this.environments.retain(|_, weak| weak.upgrade().is_some());
-                    this.environment_error_messages
-                        .retain(|abs_path, _| this.environments.contains_key(abs_path));
-                }
-            })
-            .detach();
-
-            Self {
-                cli_environment,
-                environments: Default::default(),
-                environment_error_messages: Default::default(),
-            }
+        cx.new(|_| Self {
+            cli_environment,
+            environments: Default::default(),
+            environment_error_messages: Default::default(),
         })
     }
 
@@ -151,21 +137,10 @@ impl ProjectEnvironment {
             return Task::ready(Some(cli_environment)).shared();
         }
 
-        if let Some(existing) = self
-            .environments
-            .get(&abs_path)
-            .and_then(|weak| weak.upgrade())
-        {
-            existing
-        } else {
-            let env = get_directory_env_impl(abs_path.clone(), cx).shared();
-            self.environments.insert(
-                abs_path.clone(),
-                env.downgrade()
-                    .expect("environment task has not been polled yet"),
-            );
-            env
-        }
+        self.environments
+            .entry(abs_path.clone())
+            .or_insert_with(|| get_directory_env_impl(abs_path.clone(), cx).shared())
+            .clone()
     }
 }
 
