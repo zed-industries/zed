@@ -424,6 +424,7 @@ actions!(
         ToggleGitBlameInline,
         OpenGitBlameCommit,
         ToggleIndentGuides,
+        ToggleSemanticTokens,
         ToggleInlayHints,
         ToggleInlineDiagnostics,
         ToggleEditPrediction,

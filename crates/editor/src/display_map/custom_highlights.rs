@@ -42,7 +42,6 @@ impl<'a> CustomHighlightsChunks<'a> {
             buffer_chunks: multibuffer_snapshot.chunks(range.clone(), language_aware),
             buffer_chunk: None,
             offset: range.start,
-
             text_highlights,
             highlight_endpoints: create_highlight_endpoints(
                 &range,

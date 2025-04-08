@@ -699,3 +699,33 @@ message LanguageServerIdForName {
 message LanguageServerIdForNameResponse {
     optional uint64 server_id = 1;
 }
+
+message SemanticTokensRangeRequest {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor start = 3;
+    Anchor end = 4;
+    repeated VectorClockEntry version = 5;
+}
+
+message SemanticTokensFullRequest {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message SemanticToken {
+  Anchor start = 1;
+  Anchor end = 2;
+  string token = 3;
+  repeated string modifiers = 4;
+}
+
+message SemanticTokensResponse {
+  repeated SemanticToken tokens = 1;
+  repeated VectorClockEntry version = 2;
+}
+
+message RefreshSemanticTokens {
+    uint64 project_id = 1;
+}

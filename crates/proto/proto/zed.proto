@@ -369,15 +369,20 @@ message Envelope {
         RemoveRepository remove_repository = 329;
 
         GetDocumentSymbols get_document_symbols = 330;
-        GetDocumentSymbolsResponse get_document_symbols_response = 331;
 
-        LanguageServerIdForName language_server_id_for_name = 332;
-        LanguageServerIdForNameResponse language_server_id_for_name_response = 333; // current max
+        LanguageServerIdForName language_server_id_for_name = 331;
+        LanguageServerIdForNameResponse language_server_id_for_name_response = 332;
 
-        LoadCommitDiff load_commit_diff = 334;
-        LoadCommitDiffResponse load_commit_diff_response = 335;
+        LoadCommitDiff load_commit_diff = 333;
+        LoadCommitDiffResponse load_commit_diff_response = 334;
 
-        StopLanguageServers stop_language_servers = 336; // current max
+        StopLanguageServers stop_language_servers = 335;
+
+        GetDocumentSymbolsResponse get_document_symbols_response = 336;
+        SemanticTokensFullRequest semantic_tokens_full_request = 337;
+        SemanticTokensResponse semantic_tokens_response = 338;
+        RefreshSemanticTokens refresh_semantic_tokens = 339;
+        SemanticTokensRangeRequest semantic_tokens_range_request = 340;  // current max
     }
 
     reserved 87 to 88;

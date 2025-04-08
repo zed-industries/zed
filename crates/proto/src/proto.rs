@@ -300,6 +300,10 @@ messages!(
     (GitDiff, Background),
     (GitDiffResponse, Background),
     (GitInit, Background),
+    (SemanticTokensFullRequest, Background),
+    (SemanticTokensRangeRequest, Background),
+    (SemanticTokensResponse, Background),
+    (RefreshSemanticTokens, Background),
 );
 
 request_messages!(
@@ -457,6 +461,9 @@ request_messages!(
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
     (ToggleBreakpoint, Ack),
+    (SemanticTokensFullRequest, SemanticTokensResponse),
+    (SemanticTokensRangeRequest, SemanticTokensResponse),
+    (RefreshSemanticTokens, Ack),
 );
 
 entity_messages!(

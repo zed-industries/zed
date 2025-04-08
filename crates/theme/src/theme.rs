@@ -31,6 +31,7 @@ use gpui::{
     App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
     WindowBackgroundAppearance, px,
 };
+use indexmap::IndexMap;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -191,30 +192,19 @@ impl ThemeFamily {
         };
         refined_accent_colors.merge(&theme.style.accents);
 
-        let syntax_highlights = theme
-            .style
-            .syntax
-            .iter()
-            .map(|(syntax_token, highlight)| {
-                (
-                    syntax_token.clone(),
-                    HighlightStyle {
-                        color: highlight
-                            .color
-                            .as_ref()
-                            .and_then(|color| try_parse_color(color).ok()),
-                        background_color: highlight
-                            .background_color
-                            .as_ref()
-                            .and_then(|color| try_parse_color(color).ok()),
-                        font_style: highlight.font_style.map(Into::into),
-                        font_weight: highlight.font_weight.map(Into::into),
-                        ..Default::default()
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
+        let syntax_highlights = refine_highlights(&theme.style.syntax);
         let syntax_theme = SyntaxTheme::merge(Arc::new(SyntaxTheme::default()), syntax_highlights);
+        let default_token = TokenHighlight::from(syntax_theme.clone()).import(
+            &theme
+                .style
+                .modifiers
+                .as_ref()
+                .map_or(vec![], refine_highlights),
+        );
+        let tokens_theme = SemanticTheme::from(syntax_theme.clone()).import(
+            default_token,
+            &theme.style.tokens.as_ref().map_or(vec![], refine_tokens),
+        );
 
         let window_background_appearance = theme
             .style
@@ -234,9 +224,64 @@ impl ThemeFamily {
                 status: refined_status_colors,
                 player: refined_player_colors,
                 syntax: syntax_theme,
+                tokens: Arc::new(tokens_theme),
             },
         }
     }
+}
+
+fn refine_tokens(map: &IndexMap<String, TokenHighlightContent>) -> Vec<(String, TokenHighlight)> {
+    map.iter()
+        .map(|(id, highlight)| {
+            let token = highlight.token.clone().unwrap_or_default();
+            (
+                id.clone(),
+                TokenHighlight {
+                    style: HighlightStyle {
+                        color: token
+                            .color
+                            .as_ref()
+                            .and_then(|color| try_parse_color(color).ok()),
+                        background_color: token
+                            .background_color
+                            .as_ref()
+                            .and_then(|color| try_parse_color(color).ok()),
+                        font_style: token.font_style.map(Into::into),
+                        font_weight: token.font_weight.map(Into::into),
+                        ..Default::default()
+                    },
+                    highlights: refine_highlights(&highlight.modifiers.clone().unwrap_or_default())
+                        .into_iter()
+                        .collect(),
+                },
+            )
+        })
+        .collect::<Vec<_>>()
+}
+
+fn refine_highlights(
+    map: &IndexMap<String, HighlightStyleContent>,
+) -> Vec<(String, HighlightStyle)> {
+    map.iter()
+        .map(|(id, highlight)| {
+            (
+                id.clone(),
+                HighlightStyle {
+                    color: highlight
+                        .color
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok()),
+                    background_color: highlight
+                        .background_color
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok()),
+                    font_style: highlight.font_style.map(Into::into),
+                    font_weight: highlight.font_weight.map(Into::into),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect::<Vec<_>>()
 }
 
 /// Refines a [ThemeFamilyContent] and it's [ThemeContent]s into a [ThemeFamily].
@@ -300,6 +345,12 @@ impl Theme {
     #[inline(always)]
     pub fn colors(&self) -> &ThemeColors {
         &self.styles.colors
+    }
+
+    /// Returns the [`SemanticTheme`] for the semantic tokens theme.
+    #[inline(always)]
+    pub fn tokens(&self) -> &Arc<SemanticTheme> {
+        &self.styles.tokens
     }
 
     /// Returns the [`SyntaxTheme`] for the theme.

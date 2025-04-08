@@ -295,6 +295,7 @@ pub enum Event {
     HostReshared,
     Reshared,
     Rejoined,
+    RefreshSemanticTokens,
     RefreshInlayHints,
     RefreshCodeLens,
     RevealInProjectPanel(ProjectEntryId),
@@ -353,6 +354,13 @@ pub struct InlayHint {
     pub padding_right: bool,
     pub tooltip: Option<InlayHintTooltip>,
     pub resolve_state: ResolveState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticToken {
+    pub range: Range<Anchor>,
+    pub r#type: lsp::SemanticTokenType,
+    pub modifiers: Vec<lsp::SemanticTokenModifier>,
 }
 
 /// The user's intent behind a given completion confirmation
@@ -2708,6 +2716,7 @@ impl Project {
                     return;
                 };
             }
+            LspStoreEvent::RefreshSemanticTokens => cx.emit(Event::RefreshSemanticTokens),
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
             LspStoreEvent::LanguageServerPrompt(prompt) => {
@@ -3528,6 +3537,32 @@ impl Project {
     ) -> Task<Result<Option<Transaction>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.on_type_format(buffer, position, trigger, push_to_history, cx)
+        })
+    }
+
+    pub fn semantic_tokens_range(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<SemanticToken>>> {
+        let buffer = buffer_handle.read(cx);
+        let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens_range(buffer_handle, range, cx)
+        })
+    }
+
+    pub fn semantic_tokens_full(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<SemanticToken>>> {
+        let buffer = buffer_handle.read(cx);
+        let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens_full(buffer_handle, range, cx)
         })
     }
 
@@ -4707,6 +4742,31 @@ impl Project {
         cx: &'a App,
     ) -> impl 'a + Iterator<Item = (LanguageServerId, LanguageServerName)> {
         self.lsp_store.read(cx).supplementary_language_servers()
+    }
+
+    pub fn any_language_server_supports_semantic_tokens(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> bool {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .any(|(_, server)| server.capabilities().semantic_tokens_provider.is_some())
+        })
+    }
+
+    pub fn any_language_server_supports_semantic_tokens_range(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> bool {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .any(|(_, server)| server.capabilities().semantic_tokens_provider.is_some_and(|provider| match provider {
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(semantic_tokens_options) => semantic_tokens_options.range.unwrap_or_default(),
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(semantic_tokens_registration_options) => semantic_tokens_registration_options.semantic_tokens_options.range.unwrap_or_default(),
+                }))
+        })
     }
 
     pub fn any_language_server_supports_inlay_hints(&self, buffer: &Buffer, cx: &mut App) -> bool {

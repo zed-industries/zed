@@ -92,6 +92,14 @@ pub struct ThemeStyleContent {
     /// The styles for syntax nodes.
     #[serde(default)]
     pub syntax: IndexMap<String, HighlightStyleContent>,
+
+    /// The styles for semantic token nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<IndexMap<String, TokenHighlightContent>>,
+
+    /// The styles for semantic modifiers nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modifiers: Option<IndexMap<String, HighlightStyleContent>>,
 }
 
 impl ThemeStyleContent {
@@ -1446,6 +1454,15 @@ impl From<FontWeightContent> for FontWeight {
             FontWeightContent::Black => FontWeight::BLACK,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(default)]
+pub struct TokenHighlightContent {
+    #[serde(deserialize_with = "treat_error_as_none")]
+    pub token: Option<HighlightStyleContent>,
+    #[serde(deserialize_with = "treat_error_as_none")]
+    pub modifiers: Option<IndexMap<String, HighlightStyleContent>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
