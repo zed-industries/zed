@@ -698,7 +698,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 if (is_near_rounded_corner) {
                     let radians = atan2(corner_center_to_point.y,
                                         corner_center_to_point.x);
-                    let corner_t = radians * corner_radius * dash_velocity;
+                    let corner_t = radians * corner_radius;
 
                     if (center_to_point.x >= 0.0) {
                         if (center_to_point.y < 0.0) {
@@ -706,12 +706,12 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                             // Subtracted because radians is pi/2 to 0 when
                             // going clockwise around the top right corner,
                             // since the y axis has been flipped
-                            t = upto_r - corner_t;
+                            t = upto_r - corner_t * dash_velocity;
                         } else {
                             dash_velocity = corner_dash_velocity_br;
                             // Added because radians is 0 to pi/2 when going
                             // clockwise around the bottom-right corner
-                            t = upto_br + corner_t;
+                            t = upto_br + corner_t * dash_velocity;
                         }
                     } else {
                         if (center_to_point.y >= 0.0) {
@@ -719,13 +719,13 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                             // Subtracted because radians is pi/2 to 0 when
                             // going clockwise around the bottom-left corner,
                             // since the x axis has been flipped
-                            t = upto_l - corner_t;
+                            t = upto_l - corner_t * dash_velocity;
                         } else {
                             dash_velocity = corner_dash_velocity_tl;
                             // Added because radians is 0 to pi/2 when going
                             // clockwise around the top-left corner, since both
                             // axis were flipped
-                            t = upto_tl + corner_t;
+                            t = upto_tl + corner_t * dash_velocity;
                         }
                     }
                 } else {
