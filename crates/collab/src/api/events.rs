@@ -161,16 +161,22 @@ pub async fn post_crash(
                 "description": description,
                 "backtrace": summary,
             });
-            SnowflakeRow::new(
+            let row = SnowflakeRow::new(
                 "Crash Reported",
                 None,
                 false,
                 Some(installation_id),
                 properties,
-            )
-            .write(&Some(kinesis_client), &Some(stream))
-            .await
-            .log_err();
+            );
+            let data = serde_json::to_vec(&row)?;
+            kinesis_client
+                .put_record()
+                .stream_name(stream)
+                .partition_key(row.insert_id.unwrap_or_default())
+                .data(data.into())
+                .send()
+                .await
+                .log_err();
         }
     }
 
@@ -364,16 +370,22 @@ pub async fn post_panic(
                 "description": panic.payload,
                 "backtrace": backtrace,
             });
-            SnowflakeRow::new(
+            let row = SnowflakeRow::new(
                 "Panic Reported",
                 None,
                 false,
                 panic.installation_id.clone(),
                 properties,
-            )
-            .write(&Some(kinesis_client), &Some(stream))
-            .await
-            .log_err();
+            );
+            let data = serde_json::to_vec(&row)?;
+            kinesis_client
+                .put_record()
+                .stream_name(stream)
+                .partition_key(row.insert_id.unwrap_or_default())
+                .data(data.into())
+                .send()
+                .await
+                .log_err();
         }
     }
 
