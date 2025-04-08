@@ -205,9 +205,8 @@ impl ComponentPreview {
             if let Some(components) = scope_groups.remove(scope) {
                 if !components.is_empty() {
                     entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
-
                     let mut sorted_components = components;
-                    sorted_components.sort_by(|a, b| a.sort_name().cmp(&b.sort_name()));
+                    sorted_components.sort_by_key(|component| component.sort_name());
 
                     for component in sorted_components {
                         entries.push(PreviewEntry::Component(component));
@@ -220,9 +219,8 @@ impl ComponentPreview {
             if !components.is_empty() {
                 entries.push(PreviewEntry::Separator);
                 entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
-
                 let mut sorted_components = components.clone();
-                sorted_components.sort_by(|a, b| a.sort_name().cmp(&b.sort_name()));
+                sorted_components.sort_by_key(|c| c.sort_name());
 
                 for component in sorted_components {
                     entries.push(PreviewEntry::Component(component.clone()));
