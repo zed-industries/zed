@@ -280,7 +280,7 @@ impl LocalLspStore {
                     let initialization_params = cx.update(|cx| {
                         let mut params = language_server.default_initialize_params(cx);
                         params.initialization_options = initialization_options;
-                        adapter.adapter.prepare_initialize_params(params)
+                        adapter.adapter.prepare_initialize_params(params, cx)
                     })??;
 
                     Self::setup_lsp_messages(
@@ -3428,8 +3428,9 @@ impl LspStore {
 
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::OpenDocs>);
-        client
-            .add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::GetLspRunnables>);
+        client.add_entity_request_handler(
+            Self::handle_lsp_command::<lsp_ext_command::GetLspRunnables>,
+        );
         client.add_entity_request_handler(
             Self::handle_lsp_command::<lsp_ext_command::SwitchSourceHeader>,
         );

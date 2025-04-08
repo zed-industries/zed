@@ -8,8 +8,10 @@ use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
+use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
+use settings::Settings as _;
 use smol::fs::{self};
 use std::fmt::Display;
 use std::{
@@ -479,17 +481,23 @@ impl LspAdapter for RustLspAdapter {
     fn prepare_initialize_params(
         &self,
         mut original: InitializeParams,
+        cx: &App,
     ) -> Result<InitializeParams> {
-        // TODO kb allow to disable this
-        let experimental = json!({
-            "runnables": {
-                "kinds": [ "cargo", "shell" ],
-            },
-        });
-        if let Some(ref mut original_experimental) = original.capabilities.experimental {
-            merge_json_value_into(experimental, original_experimental);
-        } else {
-            original.capabilities.experimental = Some(experimental);
+        let enable_lsp_tasks = ProjectSettings::get_global(cx)
+            .lsp
+            .get(&SERVER_NAME)
+            .map_or(false, |s| s.enable_lsp_tasks);
+        if enable_lsp_tasks {
+            let experimental = json!({
+                "runnables": {
+                    "kinds": [ "cargo", "shell" ],
+                },
+            });
+            if let Some(ref mut original_experimental) = original.capabilities.experimental {
+                merge_json_value_into(experimental, original_experimental);
+            } else {
+                original.capabilities.experimental = Some(experimental);
+            }
         }
         Ok(original)
     }

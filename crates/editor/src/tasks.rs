@@ -3,7 +3,8 @@ use crate::Editor;
 use collections::HashMap;
 use gpui::{App, Task, Window};
 use lsp::LanguageServerName;
-use project::Location;
+use project::{Location, project_settings::ProjectSettings};
+use settings::Settings as _;
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{BufferId, ToOffset, ToPoint};
 
@@ -74,6 +75,8 @@ impl Editor {
     }
 
     pub fn lsp_task_sources(&self, cx: &App) -> HashMap<LanguageServerName, Vec<BufferId>> {
+        let lsp_settings = &ProjectSettings::get_global(cx).lsp;
+
         self.buffer()
             .read(cx)
             .all_buffers()
@@ -84,8 +87,15 @@ impl Editor {
                     .language()?
                     .context_provider()?
                     .lsp_task_source()?;
-                let buffer_id = buffer.read(cx).remote_id();
-                Some((lsp_tasks_source, buffer_id))
+                if lsp_settings
+                    .get(&lsp_tasks_source)
+                    .map_or(true, |s| s.enable_lsp_tasks)
+                {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    Some((lsp_tasks_source, buffer_id))
+                } else {
+                    None
+                }
             })
             .fold(
                 HashMap::default(),
