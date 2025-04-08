@@ -17659,6 +17659,7 @@ dependencies = [
  "indexmap",
  "inout",
  "itertools 0.12.1",
+ "itertools 0.13.0",
  "lazy_static",
  "libc",
  "libsqlite3-sys",
