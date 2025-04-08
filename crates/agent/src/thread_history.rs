@@ -452,12 +452,7 @@ impl RenderOnce for PastThread {
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
                             .tooltip(move |window, cx| {
-                                Tooltip::for_action(
-                                    "Delete Thread",
-                                    &RemoveSelectedThread,
-                                    window,
-                                    cx,
-                                )
+                                Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
                             })
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
@@ -559,12 +554,7 @@ impl RenderOnce for PastContext {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .tooltip(move |window, cx| {
-                            Tooltip::for_action(
-                                "Delete Prompt Editor",
-                                &RemoveSelectedThread,
-                                window,
-                                cx,
-                            )
+                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
                         })
                         .on_click({
                             let assistant_panel = self.assistant_panel.clone();
