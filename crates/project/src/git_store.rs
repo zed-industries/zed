@@ -3632,7 +3632,6 @@ impl Repository {
                 .upgrade()
                 .ok_or_else(|| anyhow!("missing project environment"))?
                 .update(cx, |project_environment, cx| {
-                    log::info!("local git store loading environment for repository {work_directory_abs_path:?}");
                     project_environment.get_directory_environment(work_directory_abs_path.clone(), cx)
                 })?
                 .await
