@@ -193,6 +193,7 @@ pub fn components() -> AllComponents {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ComponentScope {
+    Agent,
     Collaboration,
     DataDisplay,
     Editor,
@@ -212,6 +213,7 @@ pub enum ComponentScope {
 impl Display for ComponentScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ComponentScope::Agent => write!(f, "Agent"),
             ComponentScope::Collaboration => write!(f, "Collaboration"),
             ComponentScope::DataDisplay => write!(f, "Data Display"),
             ComponentScope::Editor => write!(f, "Editor"),
