@@ -2,10 +2,15 @@ use gpui::{ClickEvent, Corner, CursorStyle, Entity, MouseButton};
 
 use crate::{ContextMenu, PopoverMenu, prelude::*};
 
+enum LabelKind {
+    Text(SharedString),
+    Element(AnyElement),
+}
+
 #[derive(IntoElement)]
 pub struct DropdownMenu {
     id: ElementId,
-    label: SharedString,
+    label: LabelKind,
     menu: Entity<ContextMenu>,
     full_width: bool,
     disabled: bool,
@@ -19,7 +24,21 @@ impl DropdownMenu {
     ) -> Self {
         Self {
             id: id.into(),
-            label: label.into(),
+            label: LabelKind::Text(label.into()),
+            menu,
+            full_width: false,
+            disabled: false,
+        }
+    }
+
+    pub fn new_with_element(
+        id: impl Into<ElementId>,
+        label: AnyElement,
+        menu: Entity<ContextMenu>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: LabelKind::Element(label),
             menu,
             full_width: false,
             disabled: false,
@@ -55,7 +74,7 @@ impl RenderOnce for DropdownMenu {
 
 #[derive(IntoElement)]
 struct DropdownMenuTrigger {
-    label: SharedString,
+    label: LabelKind,
     full_width: bool,
     selected: bool,
     disabled: bool,
@@ -64,9 +83,9 @@ struct DropdownMenuTrigger {
 }
 
 impl DropdownMenuTrigger {
-    pub fn new(label: impl Into<SharedString>) -> Self {
+    pub fn new(label: LabelKind) -> Self {
         Self {
-            label: label.into(),
+            label,
             full_width: false,
             selected: false,
             disabled: false,
@@ -135,11 +154,16 @@ impl RenderOnce for DropdownMenuTrigger {
                     el.cursor_pointer()
                 }
             })
-            .child(Label::new(self.label).color(if disabled {
-                Color::Disabled
-            } else {
-                Color::Default
-            }))
+            .child(match self.label {
+                LabelKind::Text(text) => Label::new(text)
+                    .color(if disabled {
+                        Color::Disabled
+                    } else {
+                        Color::Default
+                    })
+                    .into_any_element(),
+                LabelKind::Element(element) => element,
+            })
             .child(
                 Icon::new(IconName::ChevronUpDown)
                     .size(IconSize::XSmall)
