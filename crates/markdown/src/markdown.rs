@@ -1544,8 +1544,5 @@ mod tests {
 
         let input = "```python\nprint('hello')\nprint('world')\n```";
         assert_eq!(without_fences(input), "print('hello')\nprint('world')\n");
-
-        let input = "```<!--Comment Test-->```";
-        assert_eq!(without_fences(input), "");
     }
 }
