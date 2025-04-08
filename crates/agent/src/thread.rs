@@ -1038,7 +1038,9 @@ impl Thread {
         {
             last_user_message
                 .content
-                .push(MessageContent::Text(SYSTEM_PROMPT_REMINDER.to_string()));
+                .push(MessageContent::Text(system_prompt_reminder(
+                    &self.prompt_builder,
+                )));
         }
 
         request
@@ -1853,7 +1855,11 @@ impl Thread {
     }
 }
 
-pub const SYSTEM_PROMPT_REMINDER: &str = "\n\nIn your response, make sure to remember and follow my instructions about how to format code blocks (and don't mention that you are remembering it, just follow the instructions).";
+pub fn system_prompt_reminder(prompt_builder: &prompt_store::PromptBuilder) -> String {
+    prompt_builder
+        .generate_assistant_system_prompt_reminder()
+        .unwrap_or_default()
+}
 
 #[derive(Debug, Clone)]
 pub enum ThreadError {
@@ -1924,7 +1930,7 @@ mod tests {
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store) =
+        let (_workspace, _thread_store, thread, context_store, prompt_builder) =
             setup_test_environment(cx, project.clone()).await;
 
         add_file_to_context(&project, &context_store, "test/code.rs", cx)
@@ -1978,11 +1984,14 @@ fn main() {{
         });
 
         assert_eq!(request.messages.len(), 1);
-        let expected_full_message = format!(
+        let actual_message = request.messages[0].string_contents();
+        let expected_content = format!(
             "{}Please explain this code{}",
-            expected_context, SYSTEM_PROMPT_REMINDER
+            expected_context,
+            system_prompt_reminder(&prompt_builder)
         );
-        assert_eq!(request.messages[0].string_contents(), expected_full_message);
+
+        assert_eq!(actual_message, expected_content);
     }
 
     #[gpui::test]
@@ -1999,7 +2008,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, thread, context_store) =
+        let (_, _thread_store, thread, context_store, _prompt_builder) =
             setup_test_environment(cx, project.clone()).await;
 
         // Open files individually
@@ -2099,7 +2108,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, thread, _context_store) =
+        let (_, _thread_store, thread, _context_store, prompt_builder) =
             setup_test_environment(cx, project.clone()).await;
 
         // Insert user message without any context (empty context vector)
@@ -2125,10 +2134,13 @@ fn main() {{
         });
 
         assert_eq!(request.messages.len(), 1);
-        assert_eq!(
-            request.messages[0].string_contents(),
-            "What is the best way to learn Rust?"
+        let actual_message = request.messages[0].string_contents();
+        let expected_content = format!(
+            "What is the best way to learn Rust?{}",
+            system_prompt_reminder(&prompt_builder)
         );
+
+        assert_eq!(actual_message, expected_content);
 
         // Add second message, also without context
         let message2_id = thread.update(cx, |thread, cx| {
@@ -2145,14 +2157,17 @@ fn main() {{
         });
 
         assert_eq!(request.messages.len(), 2);
-        assert_eq!(
-            request.messages[0].string_contents(),
-            "What is the best way to learn Rust?"
+        // First message should be the system prompt
+        assert_eq!(request.messages[0].role, Role::User);
+
+        // Second message should be the user message with prompt reminder
+        let actual_message = request.messages[1].string_contents();
+        let expected_content = format!(
+            "Are there any good books?{}",
+            system_prompt_reminder(&prompt_builder)
         );
-        assert_eq!(
-            request.messages[1].string_contents(),
-            "Are there any good books?"
-        );
+
+        assert_eq!(actual_message, expected_content);
     }
 
     #[gpui::test]
@@ -2165,7 +2180,7 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store) =
+        let (_workspace, _thread_store, thread, context_store, prompt_builder) =
             setup_test_environment(cx, project.clone()).await;
 
         // Open buffer and add it to context
@@ -2225,11 +2240,14 @@ fn main() {{
         // The last message should be the stale buffer notification
         assert_eq!(last_message.role, Role::User);
 
-        // Check the exact content of the message
-        let expected_content = "These files changed since last read:\n- code.rs\n";
+        let actual_message = last_message.string_contents();
+        let expected_content = format!(
+            "These files changed since last read:\n- code.rs\n{}",
+            system_prompt_reminder(&prompt_builder)
+        );
+
         assert_eq!(
-            last_message.string_contents(),
-            expected_content,
+            actual_message, expected_content,
             "Last message should be exactly the stale buffer notification"
         );
     }
@@ -2267,24 +2285,27 @@ fn main() {{
         Entity<ThreadStore>,
         Entity<Thread>,
         Entity<ContextStore>,
+        Arc<PromptBuilder>,
     ) {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+
         let thread_store = cx.update(|_, cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
+            ThreadStore::new(project.clone(), Arc::default(), prompt_builder.clone(), cx).unwrap()
         });
 
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
 
-        (workspace, thread_store, thread, context_store)
+        (
+            workspace,
+            thread_store,
+            thread,
+            context_store,
+            prompt_builder,
+        )
     }
 
     async fn add_file_to_context(
