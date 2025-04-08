@@ -25,8 +25,8 @@ use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, Pixels,
-    SharedString, StyledText, Task, TaskLabel, TextStyle, Window,
+    App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
+    Task, TaskLabel, TextStyle,
 };
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
@@ -43,14 +43,13 @@ use std::{
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
-    fmt,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, Range},
     path::{Path, PathBuf},
-    rc, str,
+    rc,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
     vec,
@@ -483,45 +482,6 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
-    /// An optional recipe for how the chunk should be presented.
-    pub renderer: Option<ChunkRenderer>,
-}
-
-/// A recipe for how the chunk should be presented.
-#[derive(Clone)]
-pub struct ChunkRenderer {
-    /// creates a custom element to represent this chunk.
-    pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
-    /// If true, the element is constrained to the shaped width of the text.
-    pub constrain_width: bool,
-}
-
-pub struct ChunkRendererContext<'a, 'b> {
-    pub window: &'a mut Window,
-    pub context: &'b mut App,
-    pub max_width: Pixels,
-}
-
-impl fmt::Debug for ChunkRenderer {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ChunkRenderer")
-            .field("constrain_width", &self.constrain_width)
-            .finish()
-    }
-}
-
-impl Deref for ChunkRendererContext<'_, '_> {
-    type Target = App;
-
-    fn deref(&self) -> &Self::Target {
-        self.context
-    }
-}
-
-impl DerefMut for ChunkRendererContext<'_, '_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.context
-    }
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
@@ -1321,7 +1281,7 @@ impl Buffer {
             this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
-                    this.apply_diff(diff, true, cx);
+                    this.apply_diff(diff, cx);
                     tx.send(this.finalize_last_transaction().cloned()).ok();
                     this.has_conflict = false;
                     this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
@@ -1882,14 +1842,7 @@ impl Buffer {
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.
-    ///
-    /// If `atomic` is true, the diff will be applied as a single edit.
-    pub fn apply_diff(
-        &mut self,
-        diff: Diff,
-        atomic: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<TransactionId> {
+    pub fn apply_diff(&mut self, diff: Diff, cx: &mut Context<Self>) -> Option<TransactionId> {
         let snapshot = self.snapshot();
         let mut edits_since = snapshot.edits_since::<usize>(&diff.base_version).peekable();
         let mut delta = 0;
@@ -1919,17 +1872,7 @@ impl Buffer {
 
         self.start_transaction();
         self.text.set_line_ending(diff.line_ending);
-        if atomic {
-            self.edit(adjusted_edits, None, cx);
-        } else {
-            let mut delta = 0isize;
-            for (range, new_text) in adjusted_edits {
-                let adjusted_range =
-                    (range.start as isize + delta) as usize..(range.end as isize + delta) as usize;
-                delta += new_text.len() as isize - range.len() as isize;
-                self.edit([(adjusted_range, new_text)], None, cx);
-            }
-        }
+        self.edit(adjusted_edits, None, cx);
         self.end_transaction(cx)
     }
 
@@ -2267,7 +2210,12 @@ impl Buffer {
                         original_indent_columns,
                     } = &mode
                     {
-                        original_indent_column = Some(
+                        original_indent_column = Some(if new_text.starts_with('\n') {
+                            indent_size_for_text(
+                                new_text[range_of_insertion_to_indent.clone()].chars(),
+                            )
+                            .len
+                        } else {
                             original_indent_columns
                                 .get(ix)
                                 .copied()
@@ -2277,8 +2225,8 @@ impl Buffer {
                                         new_text[range_of_insertion_to_indent.clone()].chars(),
                                     )
                                     .len
-                                }),
-                        );
+                                })
+                        });
 
                         // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
@@ -2933,7 +2881,7 @@ impl BufferSnapshot {
             if let Some(range_to_truncate) = indent_ranges
                 .iter_mut()
                 .filter(|indent_range| indent_range.contains(&outdent_position))
-                .last()
+                .next_back()
             {
                 range_to_truncate.end = outdent_position;
             }
@@ -4177,10 +4125,10 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn words_in_range(&self, query: WordsQuery) -> HashMap<String, Range<Anchor>> {
+    pub fn words_in_range(&self, query: WordsQuery) -> BTreeMap<String, Range<Anchor>> {
         let query_str = query.fuzzy_contents;
         if query_str.map_or(false, |query| query.is_empty()) {
-            return HashMap::default();
+            return BTreeMap::default();
         }
 
         let classifier = CharClassifier::new(self.language.clone().map(|language| LanguageScope {
@@ -4192,7 +4140,7 @@ impl BufferSnapshot {
         let query_chars = query_str.map(|query| query.chars().collect::<Vec<_>>());
         let query_len = query_chars.as_ref().map_or(0, |query| query.len());
 
-        let mut words = HashMap::default();
+        let mut words = BTreeMap::default();
         let mut current_word_start_ix = None;
         let mut chunk_ix = query.range.start;
         for chunk in self.chunks(query.range, false) {

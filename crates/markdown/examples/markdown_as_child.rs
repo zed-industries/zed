@@ -1,12 +1,10 @@
 use assets::Assets;
-use gpui::size;
 use gpui::{Application, Entity, KeyBinding, Length, StyleRefinement, WindowOptions, rgb};
 use language::{LanguageRegistry, language_settings::AllLanguageSettings};
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use node_runtime::NodeRuntime;
 use settings::SettingsStore;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use theme::LoadThemes;
 use ui::div;
 use ui::prelude::*;
@@ -37,6 +35,21 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
+        let _ = cx.open_window(WindowOptions::default(), |_, cx| {
+            cx.new(|cx| {
+                let markdown = cx.new(|cx| Markdown::new(MARKDOWN_EXAMPLE.into(), None, None, cx));
+
+                HelloWorld { markdown }
+            })
+        });
+    });
+}
+struct HelloWorld {
+    markdown: Entity<Markdown>,
+}
+
+impl Render for HelloWorld {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let markdown_style = MarkdownStyle {
             base_text_style: gpui::TextStyle {
                 font_family: "Zed Mono".into(),
@@ -86,47 +99,7 @@ pub fn main() {
             heading: Default::default(),
             ..Default::default()
         };
-        let window = cx
-            .open_window(WindowOptions::default(), |_, cx| {
-                cx.new(|cx| {
-                    let markdown = cx.new(|cx| {
-                        Markdown::new(
-                            MARKDOWN_EXAMPLE.into(),
-                            markdown_style.clone(),
-                            None,
-                            None,
-                            cx,
-                        )
-                    });
 
-                    HelloWorld { markdown }
-                })
-            })
-            .unwrap();
-
-        let markdown =
-            cx.new(|cx| Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, cx));
-        cx.spawn(async move |cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(100))
-                .await;
-            window
-                .update(cx, |_, window, cx| {
-                    let now = Instant::now();
-                    dbg!(window.measure(markdown, size(px(600.), px(1000.)).into(), cx));
-                    dbg!(now.elapsed());
-                })
-                .unwrap();
-        })
-        .detach();
-    });
-}
-struct HelloWorld {
-    markdown: Entity<Markdown>,
-}
-
-impl Render for HelloWorld {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .bg(rgb(0x2e7d32))
@@ -138,6 +111,10 @@ impl Render for HelloWorld {
             .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
-            .child(div().child(self.markdown.clone()).p_20())
+            .child(
+                div()
+                    .child(MarkdownElement::new(self.markdown.clone(), markdown_style))
+                    .p_20(),
+            )
     }
 }

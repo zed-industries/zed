@@ -77,11 +77,6 @@ pub struct TerminalAssistantPromptContext {
     pub user_prompt: String,
 }
 
-#[derive(Serialize)]
-pub struct ProjectSlashCommandPromptContext {
-    pub context_buffer: String,
-}
-
 pub struct PromptLoadingParams<'a> {
     pub fs: Arc<dyn Fs>,
     pub repo_path: Option<PathBuf>,
@@ -241,7 +236,11 @@ impl PromptBuilder {
 
     fn register_built_in_templates(handlebars: &mut Handlebars) -> Result<()> {
         for path in Assets.list("prompts")? {
-            if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
+            if let Some(id) = path
+                .split('/')
+                .next_back()
+                .and_then(|s| s.strip_suffix(".hbs"))
+            {
                 if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
                     log::debug!("Registering built-in prompt template: {}", id);
                     let prompt = String::from_utf8_lossy(prompt.as_ref());
@@ -370,15 +369,5 @@ impl PromptBuilder {
 
     pub fn generate_suggest_edits_prompt(&self) -> Result<String, RenderError> {
         self.handlebars.lock().render("suggest_edits", &())
-    }
-
-    pub fn generate_project_slash_command_prompt(
-        &self,
-        context_buffer: String,
-    ) -> Result<String, RenderError> {
-        self.handlebars.lock().render(
-            "project_slash_command",
-            &ProjectSlashCommandPromptContext { context_buffer },
-        )
     }
 }

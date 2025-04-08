@@ -14,10 +14,8 @@ path = "src/assistant_tools.rs"
 [dependencies]
 anyhow.workspace = true
 assistant_tool.workspace = true
-clock.workspace = true
 chrono.workspace = true
 collections.workspace = true
-feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 html_to_markdown.workspace = true
@@ -25,24 +23,19 @@ http_client.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
-log.workspace = true
 lsp.workspace = true
 project.workspace = true
 regex.workspace = true
-release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings.workspace = true
-theme.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace.workspace = true
 worktree.workspace = true
 open = { workspace = true }
+workspace-hack.workspace = true
 
 [dev-dependencies]
-clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

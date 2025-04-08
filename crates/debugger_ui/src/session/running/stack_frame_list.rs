@@ -87,13 +87,13 @@ impl StackFrameList {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn entries(&self) -> &Vec<StackFrameEntry> {
+    #[cfg(test)]
+    pub(crate) fn entries(&self) -> &Vec<StackFrameEntry> {
         &self.entries
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn flatten_entries(&self) -> Vec<dap::StackFrame> {
+    #[cfg(test)]
+    pub(crate) fn flatten_entries(&self) -> Vec<dap::StackFrame> {
         self.entries
             .iter()
             .flat_map(|frame| match frame {
@@ -115,8 +115,8 @@ impl StackFrameList {
             .unwrap_or_default()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn dap_stack_frames(&self, cx: &mut App) -> Vec<dap::StackFrame> {
+    #[cfg(test)]
+    pub(crate) fn dap_stack_frames(&self, cx: &mut App) -> Vec<dap::StackFrame> {
         self.stack_frames(cx)
             .into_iter()
             .map(|stack_frame| stack_frame.dap.clone())

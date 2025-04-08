@@ -8,3 +8,4 @@ excluded_rules = [
     "prefer-big-int",
     "prefer-bigint-over-int",
 ]
+pg_version = "15.0"

@@ -212,7 +212,7 @@ impl GitBlame {
         let git_store = project.read(cx).git_store().clone();
         let git_store_subscription =
             cx.subscribe(&git_store, move |this, _, event, cx| match event {
-                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated, _)
+                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
                 | GitStoreEvent::RepositoryAdded(_)
                 | GitStoreEvent::RepositoryRemoved(_) => {
                     log::debug!("Status of git repositories updated. Regenerating blame data...",);
@@ -436,7 +436,9 @@ impl GitBlame {
         }
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
-        let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
+        let blame = self.project.update(cx, |project, cx| {
+            project.blame_buffer(&self.buffer, None, cx)
+        });
         let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
         self.task = cx.spawn(async move |this, cx| {

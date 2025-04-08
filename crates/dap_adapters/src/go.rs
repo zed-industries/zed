@@ -83,16 +83,25 @@ impl DebugAdapter for GoDebugAdapter {
     }
 
     fn request_args(&self, config: &DebugTaskDefinition) -> Value {
-        match &config.request {
+        let mut args = match &config.request {
             dap::DebugRequestType::Attach(attach_config) => {
                 json!({
-                    "processId": attach_config.process_id
+                    "processId": attach_config.process_id,
                 })
             }
             dap::DebugRequestType::Launch(launch_config) => json!({
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
+                "args": launch_config.args
             }),
+        };
+
+        let map = args.as_object_mut().unwrap();
+
+        if let Some(stop_on_entry) = config.stop_on_entry {
+            map.insert("stopOnEntry".into(), stop_on_entry.into());
         }
+
+        args
     }
 }
