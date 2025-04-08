@@ -1925,7 +1925,7 @@ impl ActiveThread {
                     .when(!is_open, |this| {
                         let gradient_overlay = div()
                             .rounded_b_lg()
-                            .h_20()
+                            .h_full()
                             .absolute()
                             .w_full()
                             .bottom_0()
@@ -2034,6 +2034,11 @@ impl ActiveThread {
                         div()
                             .id(("thinking-content", ix))
                             .relative()
+                            .mt_1p5()
+                            .ml_1p5()
+                            .pl_2p5()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant)
                             .text_ui_sm(cx)
                             .when(is_open, |this| {
                                 this.child(
