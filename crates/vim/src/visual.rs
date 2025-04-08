@@ -386,7 +386,9 @@ impl Vim {
                                     || movement::right(map, selection.start) == selection.end;
 
                                 if expand_both_ways {
-                                    if selection.start == range.start && selection.end == range.end
+                                    if selection.start == range.start
+                                        && selection.end == range.end
+                                        && object.always_expands_both_ways()
                                     {
                                         if let Some(range) =
                                             object.range(map, selection.clone(), around)
