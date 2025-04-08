@@ -356,7 +356,6 @@ impl ToolUseState {
                         truncated.len(),
                         truncated
                     )
-                    .into()
                 };
 
                 self.tool_results.insert(
