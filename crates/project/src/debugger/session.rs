@@ -832,7 +832,12 @@ pub enum SessionEvent {
     Threads,
 }
 
+pub(crate) enum SessionStateEvent {
+    Shutdown,
+}
+
 impl EventEmitter<SessionEvent> for Session {}
+impl EventEmitter<SessionStateEvent> for Session {}
 
 // local session will send breakpoint updates to DAP for all new breakpoints
 // remote side will only send breakpoint updates when it is a breakpoint created by that peer
@@ -1552,6 +1557,8 @@ impl Session {
                 cx,
             )
         };
+
+        cx.emit(SessionStateEvent::Shutdown);
 
         cx.background_spawn(async move {
             let _ = task.await;

@@ -81,7 +81,6 @@ impl DebugSession {
         }
     }
 
-    #[expect(unused)]
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
         match &self.mode {
             DebugSessionState::Running(state) => state.update(cx, |state, cx| state.shutdown(cx)),
@@ -110,32 +109,19 @@ impl DebugSession {
     }
 
     pub(crate) fn label_element(&self, cx: &App) -> AnyElement {
-        let (icon, label, color) = match &self.mode {
+        let label = self.label(cx);
+
+        let (icon, color) = match &self.mode {
             DebugSessionState::Running(state) => {
                 if state.read(cx).session().read(cx).is_terminated() {
-                    (
-                        Some(Indicator::dot().color(Color::Error)),
-                        "Terminated",
-                        Color::Error,
-                    )
+                    (Some(Indicator::dot().color(Color::Error)), Color::Error)
                 } else {
                     match state.read(cx).thread_status(cx).unwrap_or_default() {
                         project::debugger::session::ThreadStatus::Stopped => (
                             Some(Indicator::dot().color(Color::Conflict)),
-                            state
-                                .read_with(cx, |state, cx| state.thread_status(cx))
-                                .map(|status| status.label())
-                                .unwrap_or("Stopped"),
                             Color::Conflict,
                         ),
-                        _ => (
-                            Some(Indicator::dot().color(Color::Success)),
-                            state
-                                .read_with(cx, |state, cx| state.thread_status(cx))
-                                .map(|status| status.label())
-                                .unwrap_or("Running"),
-                            Color::Success,
-                        ),
+                        _ => (Some(Indicator::dot().color(Color::Success)), Color::Success),
                     }
                 }
             }

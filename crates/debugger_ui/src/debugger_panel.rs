@@ -12,8 +12,8 @@ use dap::{
 };
 use futures::{SinkExt as _, channel::mpsc};
 use gpui::{
-    Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity, actions,
+    Action, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Subscription, Task, WeakEntity, actions,
 };
 use project::{
     Project,
@@ -336,6 +336,30 @@ impl DebugPanel {
         })
     }
 
+    fn close_session(&mut self, entity_id: EntityId, cx: &mut Context<Self>) {
+        let Some(session) = self
+            .sessions
+            .iter()
+            .find(|other| entity_id == other.entity_id())
+        else {
+            return;
+        };
+
+        session.update(cx, |session, cx| session.shutdown(cx));
+
+        self.sessions.retain(|other| entity_id != other.entity_id());
+
+        if let Some(active_session_id) = self
+            .active_session
+            .as_ref()
+            .map(|session| session.entity_id())
+        {
+            if active_session_id == entity_id {
+                self.active_session = self.sessions.first().cloned();
+            }
+        }
+    }
+
     fn sessions_drop_down_menu(
         &self,
         active_session: &Entity<DebugSession>,
@@ -344,9 +368,9 @@ impl DebugPanel {
     ) -> DropdownMenu {
         let sessions = self.sessions.clone();
         let weak = cx.weak_entity();
-        let label = active_session.read(cx).label(cx);
+        let label = active_session.read(cx).label_element(cx);
 
-        DropdownMenu::new(
+        DropdownMenu::new_with_element(
             "debugger-session-list",
             label,
             ContextMenu::build(window, cx, move |mut this, _, _| {
@@ -360,7 +384,6 @@ impl DebugPanel {
                             move |_, cx| {
                                 weak_session
                                     .read_with(cx, |session, cx| {
-                                        let session_id = session.session_id(cx);
                                         h_flex()
                                             .w_full()
                                             .justify_between()
@@ -375,38 +398,7 @@ impl DebugPanel {
                                                     let weak = weak.clone();
                                                     move |_, _, cx| {
                                                         weak.update(cx, |panel, cx| {
-                                                            panel.sessions.retain(|other| {
-                                                                weak_id != other.entity_id()
-                                                            });
-
-                                                            if let Some(active_session_id) = panel
-                                                                .active_session
-                                                                .as_ref()
-                                                                .map(|session| session.entity_id())
-                                                            {
-                                                                if active_session_id == weak_id {
-                                                                    panel.active_session = panel
-                                                                        .sessions
-                                                                        .first()
-                                                                        .cloned();
-                                                                }
-                                                            }
-
-                                                            if let Some(dap_store) = panel
-                                                                .project
-                                                                .read_with(cx, |project, _| {
-                                                                    project.dap_store().clone()
-                                                                })
-                                                                .ok()
-                                                            {
-                                                                dap_store
-                                                                    .update(cx, |dap_store, cx| {
-                                                                        dap_store.shutdown_session(
-                                                                            session_id, cx,
-                                                                        )
-                                                                    })
-                                                                    .detach_and_log_err(cx);
-                                                            }
+                                                            panel.close_session(weak_id, cx);
                                                         })
                                                         .ok();
                                                     }
