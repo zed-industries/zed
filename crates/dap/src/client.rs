@@ -346,7 +346,7 @@ mod tests {
                 path_format: Some(InitializeRequestArgumentsPathFormat::Path),
                 supports_variable_type: Some(true),
                 supports_variable_paging: Some(false),
-                supports_run_in_terminal_request: Some(true),
+                supports_run_in_terminal_request: Some(false),
                 supports_memory_references: Some(true),
                 supports_progress_reporting: Some(false),
                 supports_invalidated_event: Some(false),
