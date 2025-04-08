@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::code_symbols_tool::file_outline;
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
 use gpui::{App, Entity, Task};
 use itertools::Itertools;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -89,7 +89,7 @@ impl Tool for ReadFileTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<Arc<dyn ToolOutput>>> {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -115,9 +115,9 @@ impl Tool for ReadFileTool {
                     let lines = text.split('\n').skip(start - 1);
                     if let Some(end) = input.end_line {
                         let count = end.saturating_sub(start).max(1); // Ensure at least 1 line
-                        Itertools::intersperse(lines.take(count), "\n").collect()
+                        Itertools::intersperse(lines.take(count), "\n").collect::<String>()
                     } else {
-                        Itertools::intersperse(lines, "\n").collect()
+                        Itertools::intersperse(lines, "\n").collect::<String>()
                     }
                 })?;
 
@@ -125,7 +125,7 @@ impl Tool for ReadFileTool {
                     log.buffer_read(buffer, cx);
                 })?;
 
-                Ok(result)
+                Ok(StringToolOutput::new(result))
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
                 let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
@@ -138,13 +138,13 @@ impl Tool for ReadFileTool {
                         log.buffer_read(buffer, cx);
                     })?;
 
-                    Ok(result)
+                    Ok(StringToolOutput::new(result))
                 } else {
                     // File is too big, so return an error with the outline
                     // and a suggestion to read again with line numbers.
                     let outline = file_outline(project, file_path, action_log, None, 0, cx).await?;
 
-                    Ok(format!("This file was too big to read all at once. Here is an outline of its symbols:\n\n{outline}\n\nUsing the line numbers in this outline, you can call this tool again while specifying the start_line and end_line fields to see the implementations of symbols in the outline."))
+                    Ok(StringToolOutput::new(format!("This file was too big to read all at once. Here is an outline of its symbols:\n\n{outline}\n\nUsing the line numbers in this outline, you can call this tool again while specifying the start_line and end_line fields to see the implementations of symbols in the outline.")))
                 }
             }
         })

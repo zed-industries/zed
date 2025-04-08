@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -90,7 +90,7 @@ impl Tool for MovePathTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<Arc<dyn ToolOutput>>> {
         let input = match serde_json::from_value::<MovePathToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -116,10 +116,10 @@ impl Tool for MovePathTool {
 
         cx.background_spawn(async move {
             match rename_task.await {
-                Ok(_) => Ok(format!(
+                Ok(_) => Ok(StringToolOutput::new(format!(
                     "Moved {} to {}",
                     input.source_path, input.destination_path
-                )),
+                ))),
                 Err(err) => Err(anyhow!(
                     "Failed to move {} to {}: {}",
                     input.source_path,

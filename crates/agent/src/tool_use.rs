@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{Tool, ToolWorkingSet};
+use assistant_tool::{Tool, ToolOutput, ToolWorkingSet};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
@@ -330,7 +330,7 @@ impl ToolUseState {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
-        output: Result<String>,
+        output: Result<Arc<dyn ToolOutput>>,
     ) -> Option<PendingToolUse> {
         match output {
             Ok(tool_result) => {
@@ -339,7 +339,7 @@ impl ToolUseState {
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
                         tool_name,
-                        content: tool_result.into(),
+                        content: tool_result.response_for_model().into(),
                         is_error: false,
                     },
                 );

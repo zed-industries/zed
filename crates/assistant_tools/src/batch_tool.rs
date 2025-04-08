@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, Tool, ToolWorkingSet, StringToolOutput, ToolOutput};
 use futures::future::join_all;
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -210,7 +210,7 @@ impl Tool for BatchTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<Arc<dyn ToolOutput>>> {
         let input = match serde_json::from_value::<BatchToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -280,7 +280,7 @@ impl Tool for BatchTool {
                 match result {
                     Ok(output) => {
                         formatted_results
-                            .push_str(&format!("Tool '{}' result:\n{}\n\n", tool_name, output));
+                            .push_str(&format!("Tool '{}' result:\n{}\n\n", tool_name, output.response_for_model()));
                     }
                     Err(err) => {
                         error_occurred = true;
@@ -295,7 +295,7 @@ impl Tool for BatchTool {
                     .push_str("Note: Some tool invocations failed. See individual results above.");
             }
 
-            Ok(formatted_results.trim().to_string())
+            Ok(StringToolOutput::new(formatted_results.trim().to_string()))
         })
     }
 }

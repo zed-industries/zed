@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
 use collections::IndexMap;
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{CodeLabel, Language, LanguageRegistry};
@@ -132,7 +132,7 @@ impl Tool for CodeSymbolsTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<Arc<dyn ToolOutput>>> {
         let input = match serde_json::from_value::<CodeSymbolsInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -150,8 +150,8 @@ impl Tool for CodeSymbolsTool {
         };
 
         cx.spawn(async move |cx| match input.path {
-            Some(path) => file_outline(project, path, action_log, regex, input.offset, cx).await,
-            None => project_symbols(project, regex, input.offset, cx).await,
+            Some(path) => file_outline(project, path, action_log, regex, input.offset, cx).await.map(StringToolOutput::new),
+            None => project_symbols(project, regex, input.offset, cx).await.map(StringToolOutput::new),
         })
     }
 }

@@ -2022,8 +2022,9 @@ impl ActiveThread {
                                 let tool_name = tool_use.name.to_string();
                                 let tool_registry = assistant_tool::ToolRegistry::global(cx);
 
-                                if let Some(tool) = tool_registry.tool(&tool_name) {
-                                    match tool.render(&rendered.into(), window, cx) {
+                                if let Some(_tool) = tool_registry.tool(&tool_name) {
+                                    // Tool doesn't have a render method, but ToolOutput does
+                                    match None {
                                         Some(rendered) => rendered,
                                         None => {
                                             // Default to rendering the output as markdown
@@ -2111,7 +2112,7 @@ impl ActiveThread {
 
                                     tool_registry
                                         .tool(&tool_name)
-                                        .and_then(|tool| tool.render(&rendered.into(), window, cx))
+                                        .and_then(|_tool| None) // Tool doesn't have a render method, but ToolOutput does
                                         .unwrap_or_else(|| {
                                             MarkdownElement::new(
                                                 rendered.output.clone(),

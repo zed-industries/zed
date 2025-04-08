@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -71,7 +71,7 @@ impl Tool for PathSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<Arc<dyn ToolOutput>>> {
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
             Ok(input) => (input.offset, input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -110,7 +110,7 @@ impl Tool for PathSearchTool {
             }
 
             if matches.is_empty() {
-                Ok(format!("No paths in the project matched the glob {glob:?}"))
+                Ok(StringToolOutput::new(format!("No paths in the project matched the glob {glob:?}")))
             } else {
                 // Sort to group entries in the same directory together.
                 matches.sort();
@@ -134,7 +134,7 @@ impl Tool for PathSearchTool {
                     matches.join("\n")
                 };
 
-                Ok(response)
+                Ok(StringToolOutput::new(response))
             }
         })
     }

@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
 use gpui::{App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -74,7 +74,7 @@ impl Tool for BashTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<Arc<dyn ToolOutput>>> {
         let input: BashToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -137,16 +137,16 @@ impl Tool for BashTool {
 
             if output.status.success() {
                 if output_string.is_empty() {
-                    Ok("Command executed successfully.".to_string())
+                    Ok(StringToolOutput::new("Command executed successfully."))
                 } else {
-                    Ok(output_string)
+                    Ok(StringToolOutput::new(output_string))
                 }
             } else {
-                Ok(format!(
+                Ok(StringToolOutput::new(format!(
                     "Command failed with exit code {}\n{}",
                     output.status.code().unwrap_or(-1),
                     &output_string
-                ))
+                )))
             }
         })
     }

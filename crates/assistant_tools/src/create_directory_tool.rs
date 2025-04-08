@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -68,7 +68,7 @@ impl Tool for CreateDirectoryTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<Arc<dyn ToolOutput>>> {
         let input = match serde_json::from_value::<CreateDirectoryToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -87,7 +87,7 @@ impl Tool for CreateDirectoryTool {
                 .await
                 .map_err(|err| anyhow!("Unable to create directory {destination_path}: {err}"))?;
 
-            Ok(format!("Created directory {destination_path}"))
+            Ok(StringToolOutput::new(format!("Created directory {destination_path}")))
         })
     }
 }

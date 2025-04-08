@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
 use gpui::{App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -77,7 +77,7 @@ impl Tool for ListDirectoryTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<Arc<dyn ToolOutput>>> {
         let input = match serde_json::from_value::<ListDirectoryToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -101,7 +101,7 @@ impl Tool for ListDirectoryTool {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            return Task::ready(Ok(output));
+            return Task::ready(Ok(StringToolOutput::new(output)));
         }
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
@@ -133,8 +133,8 @@ impl Tool for ListDirectoryTool {
             .unwrap();
         }
         if output.is_empty() {
-            return Task::ready(Ok(format!("{} is empty.", input.path)));
+            return Task::ready(Ok(StringToolOutput::new(format!("{} is empty.", input.path))));
         }
-        Task::ready(Ok(output))
+        Task::ready(Ok(StringToolOutput::new(output)))
     }
 }

@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -83,7 +83,7 @@ impl Tool for DiagnosticsTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<Arc<dyn ToolOutput>>> {
         match serde_json::from_value::<DiagnosticsToolInput>(input)
             .ok()
             .and_then(|input| input.path)
@@ -120,9 +120,9 @@ impl Tool for DiagnosticsTool {
                     }
 
                     if output.is_empty() {
-                        Ok("File doesn't have errors or warnings!".to_string())
+                        Ok(StringToolOutput::new("File doesn't have errors or warnings!"))
                     } else {
-                        Ok(output)
+                        Ok(StringToolOutput::new(output))
                     }
                 })
             }
@@ -155,9 +155,9 @@ impl Tool for DiagnosticsTool {
                 });
 
                 if has_diagnostics {
-                    Task::ready(Ok(output))
+                    Task::ready(Ok(StringToolOutput::new(output)))
                 } else {
-                    Task::ready(Ok("No errors or warnings found in the project.".to_string()))
+                    Task::ready(Ok(StringToolOutput::new("No errors or warnings found in the project.")))
                 }
             }
         }

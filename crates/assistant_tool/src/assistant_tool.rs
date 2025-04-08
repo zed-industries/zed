@@ -1,4 +1,5 @@
 mod action_log;
+mod string_tool_output;
 mod tool_registry;
 mod tool_working_set;
 
@@ -15,6 +16,7 @@ use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
 
 pub use crate::action_log::*;
+pub use crate::string_tool_output::*;
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
 
@@ -66,6 +68,28 @@ pub trait Tool: 'static + Send + Sync {
     /// Returns markdown to be displayed in the UI for this tool.
     fn ui_text(&self, input: &serde_json::Value) -> String;
 
+    /// Runs the tool with the provided input.
+    fn run(
+        self: Arc<Self>,
+        input: serde_json::Value,
+        messages: &[LanguageModelRequestMessage],
+        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
+        cx: &mut App,
+    ) -> Task<Result<Arc<dyn ToolOutput>>>;
+}
+
+impl Debug for dyn Tool {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tool").field("name", &self.name()).finish()
+    }
+}
+
+pub trait ToolOutput: Send + Sync {
+    /// Returns a string that will be given to the model
+    /// as the tool output.
+    fn response_for_model(&self) -> SharedString;
+
     /// Returns a custom UI element to render the tool's output.
     /// Returns None by default to indicate that rendering has not yet been
     /// implemented for this tool, and the caller should do some default rendering.
@@ -77,20 +101,10 @@ pub trait Tool: 'static + Send + Sync {
     ) -> Option<gpui::AnyElement> {
         None
     }
-
-    /// Runs the tool with the provided input.
-    fn run(
-        self: Arc<Self>,
-        input: serde_json::Value,
-        messages: &[LanguageModelRequestMessage],
-        project: Entity<Project>,
-        action_log: Entity<ActionLog>,
-        cx: &mut App,
-    ) -> Task<Result<String>>;
 }
 
-impl Debug for dyn Tool {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Tool").field("name", &self.name()).finish()
+impl ToolOutput for SharedString {
+    fn response_for_model(&self) -> SharedString {
+        self.clone()
     }
 }
