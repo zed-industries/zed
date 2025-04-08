@@ -993,6 +993,8 @@ impl ActiveThread {
         let is_last_message = ix == self.messages.len() - 1;
         let show_feedback = is_last_message && message.role != Role::User;
 
+        let needs_confirmation = tool_uses.iter().any(|tool_use| tool_use.needs_confirmation);
+
         let generating_label = (is_generating && is_last_message).then(|| {
             Label::new("Generating")
                 .color(Color::Muted)
@@ -1025,10 +1027,10 @@ impl ActiveThread {
             if let Some(generating_label) = generating_label {
                 return h_flex()
                     .w_full()
-                    .h_6()
-                    .pl_4()
+                    .h_10()
                     .py_1p5()
-                    .pb_4()
+                    .pl_4()
+                    .pb_3()
                     .child(generating_label)
                     .into_any_element();
             }
@@ -1419,14 +1421,16 @@ impl ActiveThread {
                 parent.child(self.render_rules_item(cx))
             })
             .child(styled_message)
-            .when_some(generating_label, |this, generating_label| {
+            .when(!needs_confirmation && generating_label.is_some(), |this| {
                 this.child(
                     h_flex()
-                        .h_6()
-                        .ml_4()
+                        // .debug_bg_red()
+                        .h_8()
+                        .mt_2()
                         .mb_4()
+                        .ml_4()
                         .py_1p5()
-                        .child(generating_label),
+                        .child(generating_label.unwrap()),
                 )
             })
             .when(show_feedback && !is_generating, |parent| {
@@ -2037,7 +2041,7 @@ impl ActiveThread {
                 )
             } else {
                 v_flex()
-                    .mt_2()
+                    .my_3()
                     .rounded_lg()
                     .border_1()
                     .border_color(self.tool_card_border_color(cx))
@@ -2140,7 +2144,32 @@ impl ActiveThread {
                                 .border_t_1()
                                 .border_color(self.tool_card_border_color(cx))
                                 .rounded_b_lg()
-                                .child(Label::new("Waiting for Confirmation…").color(Color::Muted).size(LabelSize::Small))
+                                .child(
+                                    Label::new("Waiting for Confirmation…")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small)
+                                        .with_animation(
+                                            "generating-label",
+                                            Animation::new(Duration::from_secs(1)).repeat(),
+                                            |mut label, delta| {
+                                                let text = match delta {
+                                                    d if d < 0.25 => "Waiting for Confirmation",
+                                                    d if d < 0.5 => "Waiting for Confirmation.",
+                                                    d if d < 0.75 => "Waiting for Confirmation..",
+                                                    _ => "Waiting for Confirmation...",
+                                                };
+                                                label.set_text(text);
+                                                label
+                                            },
+                                        )
+                                        .with_animation(
+                                            "pulsating-label",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.6, 1.)),
+                                            |label, delta| label.map_element(|label| label.alpha(delta)),
+                                        ),
+                                )
                                 .child(
                                     h_flex()
                                         .gap_0p5()
