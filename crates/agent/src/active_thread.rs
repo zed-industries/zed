@@ -25,6 +25,7 @@ use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelToolUs
 use markdown::parser::CodeBlockKind;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown, without_fences};
 use project::ProjectItem as _;
+use rope::Point;
 use settings::{Settings as _, update_settings_file};
 use std::ops::Range;
 use std::path::Path;
@@ -58,7 +59,7 @@ pub struct ActiveThread {
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
     notifications: Vec<WindowHandle<AgentNotification>>,
-    copied_code_block_ids: HashSet<usize>,
+    copied_code_block_ids: HashSet<(MessageId, usize)>,
     _subscriptions: Vec<Subscription>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     feedback_message_editor: Option<Entity<Editor>>,
@@ -289,7 +290,8 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
 }
 
 fn render_markdown_code_block(
-    id: usize,
+    message_id: MessageId,
+    ix: usize,
     kind: &CodeBlockKind,
     parsed_markdown: &ParsedMarkdown,
     codeblock_range: Range<usize>,
@@ -366,7 +368,7 @@ fn render_markdown_code_block(
             };
 
             h_flex()
-                .id(("code-block-header-label", id))
+                .id(("code-block-header-label", ix))
                 .w_full()
                 .max_w_full()
                 .px_1()
@@ -397,8 +399,40 @@ fn render_markdown_code_block(
                                         .read(cx)
                                         .find_project_path(&path_range.path, cx)
                                     {
-                                        workspace
-                                            .open_path(project_path, None, true, window, cx)
+                                        let target = path_range.range.as_ref().map(|range| {
+                                            Point::new(
+                                                // Line number is 1-based
+                                                range.start.line.saturating_sub(1),
+                                                range.start.col.unwrap_or(0),
+                                            )
+                                        });
+                                        let open_task = workspace.open_path(
+                                            project_path,
+                                            None,
+                                            true,
+                                            window,
+                                            cx,
+                                        );
+                                        window
+                                            .spawn(cx, async move |cx| {
+                                                let item = open_task.await?;
+                                                if let Some(target) = target {
+                                                    if let Some(active_editor) =
+                                                        item.downcast::<Editor>()
+                                                    {
+                                                        active_editor
+                                                            .downgrade()
+                                                            .update_in(cx, |editor, window, cx| {
+                                                                editor
+                                                                    .go_to_singleton_buffer_point(
+                                                                        target, window, cx,
+                                                                    );
+                                                            })
+                                                            .log_err();
+                                                    }
+                                                }
+                                                anyhow::Ok(())
+                                            })
                                             .detach_and_log_err(cx);
                                     }
                                 }
@@ -416,7 +450,10 @@ fn render_markdown_code_block(
         .element_background
         .blend(cx.theme().colors().editor_foreground.opacity(0.01));
 
-    let codeblock_was_copied = active_thread.read(cx).copied_code_block_ids.contains(&id);
+    let codeblock_was_copied = active_thread
+        .read(cx)
+        .copied_code_block_ids
+        .contains(&(message_id, ix));
 
     let codeblock_header = h_flex()
         .p_1()
@@ -429,7 +466,7 @@ fn render_markdown_code_block(
         .children(label)
         .child(
             IconButton::new(
-                ("copy-markdown-code", id),
+                ("copy-markdown-code", ix),
                 if codeblock_was_copied {
                     IconName::Check
                 } else {
@@ -444,7 +481,7 @@ fn render_markdown_code_block(
                 let parsed_markdown = parsed_markdown.clone();
                 move |_event, _window, cx| {
                     active_thread.update(cx, |this, cx| {
-                        this.copied_code_block_ids.insert(id);
+                        this.copied_code_block_ids.insert((message_id, ix));
 
                         let code =
                             without_fences(&parsed_markdown.source()[codeblock_range.clone()])
@@ -457,7 +494,7 @@ fn render_markdown_code_block(
 
                             cx.update(|cx| {
                                 this.update(cx, |this, cx| {
-                                    this.copied_code_block_ids.remove(&id);
+                                    this.copied_code_block_ids.remove(&(message_id, ix));
                                     cx.notify();
                                 })
                             })
@@ -1699,6 +1736,7 @@ impl ActiveThread {
                                         let active_thread = cx.entity();
                                         move |id, kind, parsed_markdown, range, window, cx| {
                                             render_markdown_code_block(
+                                                message_id,
                                                 id,
                                                 kind,
                                                 parsed_markdown,
