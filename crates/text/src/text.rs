@@ -1427,6 +1427,10 @@ impl Buffer {
         self.history.forget(transaction_id)
     }
 
+    pub fn get_transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.history.transaction(transaction_id)
+    }
+
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         self.history.merge_transactions(transaction, destination);
     }
