@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 # Based on the template in: https://docs.digitalocean.com/reference/api/spaces-api/
-bash -euo pipefail
+set -euo pipefail
 source script/lib/blob-store.sh
 
-allowed_targets=("linux-targz" "macos")
+allowed_targets=("linux-targz" "macos" "windows")
 is_allowed_target() {
     for val in "${allowed_targets[@]}"; do
         if [[ "$1" == "$val" ]]; then
@@ -18,45 +18,68 @@ if [[ -n "${1:-}" ]]; then
     if is_allowed_target "$1"; then
         target="$1"
     else
-        echo "Error: Target '$1' is not allowed"
-        echo "Usage: $0 [${allowed_targets[*]}]"
+        echo "Error: Target '$1' is not allowed" >&2 # Use stderr for errors
+        echo "Usage: $0 [$(IFS=\| ; echo "${allowed_targets[*]}")]" >&2
         exit 1
     fi
 else
-echo "Error: Target is not specified"
-echo "Usage: $0 [${allowed_targets[*]}]"
-exit 1
+    echo "Error: Target is not specified" >&2
+    echo "Usage: $0 [$(IFS=\| ; echo "${allowed_targets[*]}")]" >&2
+    exit 1
 fi
 echo "Uploading nightly for target: $target"
 
 bucket_name="zed-nightly-host"
 
 sha=$(git rev-parse HEAD)
-echo ${sha} > target/latest-sha
+echo "${sha}" > target/latest-sha
 
-find target -type f -name "zed-remote-server-*.gz" -print0 | while IFS= read -r -d '' file_to_upload; do
-    upload_to_blob_store $bucket_name "$file_to_upload" "nightly/$(basename "$file_to_upload")"
+find target -maxdepth 1 -type f -name "zed-remote-server-*.gz" -print0 | while IFS= read -r -d '' file_to_upload; do
+    echo "Uploading server artifact: $(basename "$file_to_upload")"
+    upload_to_blob_store "$bucket_name" "$file_to_upload" "nightly/$(basename "$file_to_upload")"
     rm -f "$file_to_upload"
 done
 
 case "$target" in
     macos)
-        upload_to_blob_store $bucket_name "target/aarch64-apple-darwin/release/Zed.dmg" "nightly/Zed-aarch64.dmg"
-        upload_to_blob_store $bucket_name "target/x86_64-apple-darwin/release/Zed.dmg" "nightly/Zed-x86_64.dmg"
-        upload_to_blob_store $bucket_name "target/latest-sha" "nightly/latest-sha"
+        echo "Processing macos target..."
+        upload_to_blob_store "$bucket_name" "target/aarch64-apple-darwin/release/Zed.dmg" "nightly/Zed-aarch64.dmg"
+        upload_to_blob_store "$bucket_name" "target/x86_64-apple-darwin/release/Zed.dmg" "nightly/Zed-x86_64.dmg"
+        upload_to_blob_store "$bucket_name" "target/latest-sha" "nightly/latest-sha"
         rm -f "target/aarch64-apple-darwin/release/Zed.dmg" "target/x86_64-apple-darwin/release/Zed.dmg" "target/release/Zed.dmg"
         rm -f "target/latest-sha"
         ;;
+
     linux-targz)
-        find . -type f -name "zed-*.tar.gz" -print0 | while IFS= read -r -d '' file_to_upload; do
-            upload_to_blob_store $bucket_name "$file_to_upload" "nightly/$(basename "$file_to_upload")"
+        echo "Processing linux-targz target..."
+        find . -maxdepth 1 -type f -name "zed-*.tar.gz" -print0 | while IFS= read -r -d '' file_to_upload; do
+            echo "Uploading Linux artifact: $(basename "$file_to_upload")"
+            upload_to_blob_store "$bucket_name" "$file_to_upload" "nightly/$(basename "$file_to_upload")"
             rm -f "$file_to_upload"
         done
-        upload_to_blob_store $bucket_name "target/latest-sha" "nightly/latest-sha-linux-targz"
+        upload_to_blob_store "$bucket_name" "target/latest-sha" "nightly/latest-sha-linux-targz"
         rm -f "target/latest-sha"
         ;;
+
+    windows)
+        echo "Processing windows target..."
+        windows_zip="target/zed-windows-x86_64.zip"
+        if [[ -f "$windows_zip" ]]; then
+            echo "Uploading Windows artifact: $(basename "$windows_zip")"
+            upload_to_blob_store "$bucket_name" "$windows_zip" "nightly/$(basename "$windows_zip")"
+            rm -f "$windows_zip"
+        else
+            echo "Error: Windows artifact '$windows_zip' not found!" >&2
+            exit 1 # Fail if the expected artifact isn't there
+        fi
+        upload_to_blob_store "$bucket_name" "target/latest-sha" "nightly/latest-sha-windows"
+        rm -f "target/latest-sha"
+        ;;
+
     *)
-        echo "Error: Unknown target '$target'"
+        echo "Error: Unknown target '$target'" >&2
         exit 1
         ;;
 esac
+
+echo "Upload process for target '$target' completed."
