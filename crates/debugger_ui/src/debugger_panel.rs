@@ -535,23 +535,67 @@ impl DebugPanel {
                             this.child(DropdownMenu::new(
                                 "debugger-session-list",
                                 label,
-                                ContextMenu::build(window, cx, move |mut this, _, cx| {
-                                    for item in sessions {
-                                        let weak = weak.clone();
-                                        this = this.entry(
-                                            session.read(cx).label(cx),
-                                            None,
-                                            move |window, cx| {
-                                                weak.update(cx, |panel, cx| {
-                                                    panel.activate_session(
-                                                        item.clone(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
+                                ContextMenu::build(window, cx, move |mut this, _, _| {
+                                    for session in sessions.into_iter() {
+                                        let weak_session = session.downgrade();
+                                        let weak_id = weak_session.entity_id();
+
+
+                                        this = this.custom_entry(
+                                            {
+                                                let weak = weak.clone();
+                                            move |_, cx| {
+                                                weak_session
+                                                    .read_with(cx, |session, cx| {
+                                                        let session_id = session.session_id(cx);
+                                                        h_flex()
+                                                            .w_full()
+                                                            .justify_between()
+                                                            .child(session.label_element(cx))
+                                                            .child(
+                                                                IconButton::new(
+                                                                    "close-debug-session",
+                                                                    IconName::Close,
+                                                                )
+                                                                .icon_size(IconSize::Small)
+                                                                .on_click({
+                                                                    let weak = weak.clone();
+                                                                    move |_, _, cx| {
+                                                                        weak.update(cx, |panel, cx| {
+                                                                            panel.sessions.retain(|other| weak_id != other.entity_id());
+
+                                                                            if let Some(active_session_id) = panel.active_session.as_ref().map(|session| session.entity_id()) {
+                                                                                if active_session_id == weak_id {
+                                                                                    panel.active_session = panel.sessions.first().cloned();
+                                                                                }
+                                                                            }
+
+
+                                                                            if let Some(dap_store) = panel.project.read_with(cx, |project, _| project.dap_store().clone()).ok() {
+                                                                                dap_store.update(cx, |dap_store, cx| dap_store.shutdown_session(session_id, cx)).detach_and_log_err(cx);
+                                                                            }
+                                                                        }).ok();
+                                                                    }
+                                                                }),
+                                                            )
+                                                            .into_any_element()
+                                                    })
+                                                    .unwrap_or_else(|_| div().into_any_element())
+                                            }},
+                                            {
+                                                let weak = weak.clone();
+                                                move |window, cx| {
+                                                    weak.update(cx, |panel, cx| {
+                                                        panel.activate_session(
+                                                            session.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                                }
                                             },
-                                        );
+                                            );
                                     }
                                     this
                                 }),

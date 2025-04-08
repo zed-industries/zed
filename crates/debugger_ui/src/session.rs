@@ -7,7 +7,7 @@ use project::debugger::{dap_store::DapStore, session::Session};
 use project::worktree_store::WorktreeStore;
 use rpc::proto::{self, PeerId};
 use running::RunningState;
-use ui::prelude::*;
+use ui::{Indicator, prelude::*};
 use workspace::{
     FollowableItem, ViewId, Workspace,
     item::{self, Item},
@@ -107,6 +107,46 @@ impl DebugSession {
             .as_local()
             .expect("Remote Debug Sessions are not implemented yet")
             .label()
+    }
+
+    pub(crate) fn label_element(&self, cx: &App) -> AnyElement {
+        let (icon, label, color) = match &self.mode {
+            DebugSessionState::Running(state) => {
+                if state.read(cx).session().read(cx).is_terminated() {
+                    (
+                        Some(Indicator::dot().color(Color::Error)),
+                        "Terminated",
+                        Color::Error,
+                    )
+                } else {
+                    match state.read(cx).thread_status(cx).unwrap_or_default() {
+                        project::debugger::session::ThreadStatus::Stopped => (
+                            Some(Indicator::dot().color(Color::Conflict)),
+                            state
+                                .read_with(cx, |state, cx| state.thread_status(cx))
+                                .map(|status| status.label())
+                                .unwrap_or("Stopped"),
+                            Color::Conflict,
+                        ),
+                        _ => (
+                            Some(Indicator::dot().color(Color::Success)),
+                            state
+                                .read_with(cx, |state, cx| state.thread_status(cx))
+                                .map(|status| status.label())
+                                .unwrap_or("Running"),
+                            Color::Success,
+                        ),
+                    }
+                }
+            }
+        };
+
+        h_flex()
+            .gap_2()
+            .when_some(icon, |this, indicator| this.child(indicator))
+            .justify_between()
+            .child(Label::new(label).color(color))
+            .into_any_element()
     }
 }
 
