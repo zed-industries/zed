@@ -1029,6 +1029,16 @@ impl Thread {
 
         self.attached_tracked_files_state(&mut request.messages, cx);
 
+        // Add reminder to the last user message about code blocks
+        if let Some(last_user_message) = request
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|msg| msg.role == Role::User)
+        {
+            last_user_message.content.push(MessageContent::Text("\n\nIn your response, make sure to remember and follow my instructions about how to format code blocks (and don't mention that you are remembering it, just follow the instructions).".to_string()));
+        }
+
         request
     }
 
