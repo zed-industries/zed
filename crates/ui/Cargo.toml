@@ -28,11 +28,8 @@ strum.workspace = true
 theme.workspace = true
 ui_macros.workspace = true
 util.workspace = true
-<<<<<<< HEAD
 documented = "0.9.1"
-=======
 workspace-hack.workspace = true
->>>>>>> main
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
