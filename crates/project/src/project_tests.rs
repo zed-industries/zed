@@ -459,6 +459,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
                 active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
                 active_worktree_context: None,
                 other_worktree_contexts: Vec::new(),
+                lsp_task_sources: HashMap::default(),
+                latest_selection: None,
             },
             cx,
         )
@@ -481,6 +483,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
                     worktree_context
                 })),
                 other_worktree_contexts: Vec::new(),
+                lsp_task_sources: HashMap::default(),
+                latest_selection: None,
             },
             cx,
         )
@@ -797,7 +801,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path!("/dir/test3.rs")).unwrap(),),
+        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path!("/dir/test3.rs")).unwrap()),
     );
     assert_eq!(
         fake_json_server

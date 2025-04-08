@@ -131,7 +131,7 @@ pub use proposed_changes_editor::{
 };
 use smallvec::smallvec;
 use std::{cell::OnceCell, iter::Peekable};
-use task::{ResolvedTask, TaskTemplate, TaskVariables};
+use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
 
 pub use lsp::CompletionContext;
 use lsp::{
@@ -140,6 +140,7 @@ use lsp::{
 };
 
 use language::BufferSnapshot;
+pub use lsp_ext::lsp_tasks;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, RowInfo,
@@ -12449,12 +12450,13 @@ impl Editor {
             return Task::ready(());
         }
         let project = self.project.as_ref().map(Entity::downgrade);
-        cx.spawn_in(window, async move |this, cx| {
+        let task_sources = self.lsp_task_sources(cx);
+        cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
                 return;
             };
-            let Ok(display_snapshot) = this.update(cx, |this, cx| {
+            let Ok(display_snapshot) = editor.update(cx, |this, cx| {
                 this.display_map.update(cx, |map, cx| map.snapshot(cx))
             }) else {
                 return;
@@ -12477,15 +12479,77 @@ impl Editor {
                     }
                 })
                     .await;
+            let Ok(lsp_tasks) =
+                cx.update(|_, cx| crate::lsp_tasks(project.clone(), &task_sources, None, cx))
+            else {
+                return;
+            };
+            let lsp_tasks = lsp_tasks.await;
+
+            let Ok(mut lsp_tasks_by_rows) = cx.update(|_, cx| {
+                lsp_tasks
+                    .into_iter()
+                    .flat_map(|(kind, tasks)| {
+                        tasks.into_iter().filter_map(move |(location, task)| {
+                            Some((kind.clone(), location?, task))
+                        })
+                    })
+                    .fold(HashMap::default(), |mut acc, (kind, location, task)| {
+                        let buffer = location.target.buffer;
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        let offset = display_snapshot.buffer_snapshot.excerpts().find_map(
+                            |(excerpt_id, snapshot, _)| {
+                                if snapshot.remote_id() == buffer_snapshot.remote_id() {
+                                    display_snapshot
+                                        .buffer_snapshot
+                                        .anchor_in_excerpt(excerpt_id, location.target.range.start)
+                                } else {
+                                    None
+                                }
+                            },
+                        );
+                        if let Some(offset) = offset {
+                            let task_buffer_range =
+                                location.target.range.to_point(&buffer_snapshot);
+                            let context_buffer_range =
+                                task_buffer_range.to_offset(&buffer_snapshot);
+                            let context_range = BufferOffset(context_buffer_range.start)
+                                ..BufferOffset(context_buffer_range.end);
+
+                            acc.entry((buffer_snapshot.remote_id(), task_buffer_range.start.row))
+                                .or_insert_with(|| RunnableTasks {
+                                    templates: Vec::new(),
+                                    offset,
+                                    column: task_buffer_range.start.column,
+                                    extra_variables: HashMap::default(),
+                                    context_range,
+                                })
+                                .templates
+                                .push((kind, task.original_task().clone()));
+                        }
+
+                        acc
+                    })
+            }) else {
+                return;
+            };
 
             let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
-            this.update(cx, |this, _| {
-                this.clear_tasks();
-                for (key, value) in rows {
-                    this.insert_tasks(key, value);
-                }
-            })
-            .ok();
+            editor
+                .update(cx, |editor, _| {
+                    editor.clear_tasks();
+                    for (key, mut value) in rows {
+                        if let Some(lsp_tasks) = lsp_tasks_by_rows.remove(&key) {
+                            value.templates.extend(lsp_tasks.templates);
+                        }
+
+                        editor.insert_tasks(key, value);
+                    }
+                    for (key, value) in lsp_tasks_by_rows {
+                        editor.insert_tasks(key, value);
+                    }
+                })
+                .ok();
         })
     }
     fn fetch_runnable_ranges(
@@ -12500,7 +12564,7 @@ impl Editor {
         snapshot: DisplaySnapshot,
         runnable_ranges: Vec<RunnableRange>,
         mut cx: AsyncWindowContext,
-    ) -> Vec<((BufferId, u32), RunnableTasks)> {
+    ) -> Vec<((BufferId, BufferRow), RunnableTasks)> {
         runnable_ranges
             .into_iter()
             .filter_map(|mut runnable| {
@@ -12557,11 +12621,9 @@ impl Editor {
             )
         });
 
-        let tags = mem::take(&mut runnable.tags);
-        let mut tags: Vec<_> = tags
+        let mut templates_with_tags = mem::take(&mut runnable.tags)
             .into_iter()
-            .flat_map(|tag| {
-                let tag = tag.0.clone();
+            .flat_map(|RunnableTag(tag)| {
                 inventory
                     .as_ref()
                     .into_iter()
@@ -12578,20 +12640,20 @@ impl Editor {
                     })
             })
             .sorted_by_key(|(kind, _)| kind.to_owned())
-            .collect();
-        if let Some((leading_tag_source, _)) = tags.first() {
+            .collect::<Vec<_>>();
+        if let Some((leading_tag_source, _)) = templates_with_tags.first() {
             // Strongest source wins; if we have worktree tag binding, prefer that to
             // global and language bindings;
             // if we have a global binding, prefer that to language binding.
-            let first_mismatch = tags
+            let first_mismatch = templates_with_tags
                 .iter()
                 .position(|(tag_source, _)| tag_source != leading_tag_source);
             if let Some(index) = first_mismatch {
-                tags.truncate(index);
+                templates_with_tags.truncate(index);
             }
         }
 
-        tags
+        templates_with_tags
     }
 
     pub fn move_to_enclosing_bracket(

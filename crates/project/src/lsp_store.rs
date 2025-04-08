@@ -280,7 +280,7 @@ impl LocalLspStore {
                     let initialization_params = cx.update(|cx| {
                         let mut params = language_server.default_initialize_params(cx);
                         params.initialization_options = initialization_options;
-                        adapter.adapter.prepare_initialize_params(params)
+                        adapter.adapter.prepare_initialize_params(params, cx)
                     })??;
 
                     Self::setup_lsp_messages(
@@ -3428,6 +3428,9 @@ impl LspStore {
 
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::OpenDocs>);
+        client.add_entity_request_handler(
+            Self::handle_lsp_command::<lsp_ext_command::GetLspRunnables>,
+        );
         client.add_entity_request_handler(
             Self::handle_lsp_command::<lsp_ext_command::SwitchSourceHeader>,
         );
@@ -8368,7 +8371,6 @@ impl LspStore {
         self.buffer_store.update(cx, |buffer_store, cx| {
             for buffer in buffer_store.buffers() {
                 buffer.update(cx, |buffer, cx| {
-                    // TODO kb clean inlays
                     buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
                     buffer.set_completion_triggers(server_id, Default::default(), cx);
                 });
