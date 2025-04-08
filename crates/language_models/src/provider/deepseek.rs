@@ -1,8 +1,16 @@
 use anyhow::{Context as _, Result, anyhow};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::Stream;
+
+// The existing futures import should look like:
+use futures::{
+    future::BoxFuture,
+    stream::BoxStream,
+    FutureExt,
+    StreamExt
+};
 use gpui::{
     AnyView, AppContext as _, AsyncApp, Entity, FontStyle, Subscription, Task, TextStyle,
     WhiteSpace,
@@ -11,8 +19,10 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, RateLimiter, Role,
+    StopReason,
 };
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -237,7 +247,7 @@ pub struct DeepSeekLanguageModel {
 }
 
 impl DeepSeekLanguageModel {
-    fn stream_completion(
+    fn stream_completion_internal(
         &self,
         request: deepseek::Request,
         cx: &AsyncApp,
@@ -262,6 +272,111 @@ impl DeepSeekLanguageModel {
     }
 }
 
+fn map_deepseek_to_events(
+    stream: BoxStream<'static, Result<deepseek::StreamResponse>>,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    #[derive(Default)]
+    struct RawToolCall {
+        id: String,
+        name: String,
+        arguments: String,
+    }
+
+    struct State {
+        stream: BoxStream<'static, Result<deepseek::StreamResponse>>,
+        tool_calls_by_index: HashMap<usize, RawToolCall>,
+    }
+
+    futures::stream::unfold(
+        State {
+            stream,
+            tool_calls_by_index: HashMap::default(),
+        },
+        |mut state| async move {
+            while let Some(response) = state.stream.next().await {
+                match response {
+                    Ok(response) => {
+                        let mut events = Vec::new();
+                        for choice in response.choices {
+                            let delta = choice.delta;
+                            let finish_reason = choice.finish_reason;
+
+                            if let Some(content) = delta.content {
+                                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                            }
+
+                            if let Some(tool_calls) = delta.tool_calls {
+                                for tool_call in tool_calls {
+                                    let index = tool_call.index;
+                                    let entry = state
+                                        .tool_calls_by_index
+                                        .entry(index)
+                                        .or_default();
+
+                                    if let Some(id) = tool_call.id {
+                                        entry.id = id;
+                                    }
+
+                                    if let Some(function) = tool_call.function {
+                                        if let Some(name) = function.name {
+                                            entry.name = name;
+                                        }
+                                        if let Some(arguments) = function.arguments {
+                                            entry.arguments.push_str(&arguments);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let Some(reason) = finish_reason {
+                                match reason.as_str() {
+                                    "stop" => {
+                                        events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                            StopReason::EndTurn,
+                                        )));
+                                    }
+                                    "tool_calls" => {
+                                        let tool_events = state
+                                            .tool_calls_by_index
+                                            .drain()
+                                            .map(|(_, tool_call)| {
+                                                match serde_json::from_str(&tool_call.arguments) {
+                                                    Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                                        LanguageModelToolUse {
+                                                            id: tool_call.id.into(),
+                                                            name: tool_call.name.into(),
+                                                            input,
+                                                        }
+                                                    )),
+                                                    Err(e) => Err(anyhow::anyhow!("Failed to parse tool call arguments: {}", e)),
+                                                }
+                                            })
+                                            .collect::<Vec<_>>();
+                                        events.extend(tool_events);
+                                        events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                            StopReason::ToolUse,
+                                        )));
+                                    }
+                                    _ => {
+                                        log::error!("Unexpected finish reason: {}", reason);
+                                        events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                            StopReason::EndTurn,
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+                        return Some((events, state));
+                    }
+                    Err(err) => return Some((vec![Err(err)], state)),
+                }
+            }
+            None
+        },
+    )
+    .flat_map(futures::stream::iter)
+}
+
 impl LanguageModel for DeepSeekLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -280,7 +395,10 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        matches!(
+            self.model,
+            deepseek::Model::Chat | deepseek::Model::Reasoner
+        )
     }
 
     fn telemetry_id(&self) -> String {
@@ -326,33 +444,16 @@ impl LanguageModel for DeepSeekLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        let request = into_deepseek(
+        let deepseek_request = into_deepseek(
             request,
             self.model.id().to_string(),
             self.max_output_tokens(),
         );
-        let stream = self.stream_completion(request, cx);
+        let stream = self.stream_completion_internal(deepseek_request, cx);
 
         async move {
             let stream = stream.await?;
-            Ok(stream
-                .map(|result| {
-                    result.and_then(|response| {
-                        response
-                            .choices
-                            .first()
-                            .ok_or_else(|| anyhow!("Empty response"))
-                            .map(|choice| {
-                                choice
-                                    .delta
-                                    .content
-                                    .clone()
-                                    .unwrap_or_default()
-                                    .map(LanguageModelCompletionEvent::Text)
-                            })
-                    })
-                })
-                .boxed())
+            Ok(map_deepseek_to_events(stream).boxed())
         }
         .boxed()
     }
@@ -364,84 +465,67 @@ pub fn into_deepseek(
     max_output_tokens: Option<u32>,
 ) -> deepseek::Request {
     let is_reasoner = model == "deepseek-reasoner";
-
+    let is_chat = model == "deepseek-chat";
     let len = request.messages.len();
-    let merged_messages =
-        request
-            .messages
-            .into_iter()
-            .fold(Vec::with_capacity(len), |mut acc, msg| {
-                let role = msg.role;
-                let content = msg.string_contents();
-
-                if is_reasoner {
-                    if let Some(last_msg) = acc.last_mut() {
-                        match (last_msg, role) {
-                            (deepseek::RequestMessage::User { content: last }, Role::User) => {
-                                last.push(' ');
-                                last.push_str(&content);
-                                return acc;
-                            }
-
-                            (
-                                deepseek::RequestMessage::Assistant {
-                                    content: last_content,
-                                    ..
-                                },
-                                Role::Assistant,
-                            ) => {
-                                *last_content = last_content
-                                    .take()
-                                    .map(|c| {
-                                        let mut s =
-                                            String::with_capacity(c.len() + content.len() + 1);
-                                        s.push_str(&c);
-                                        s.push(' ');
-                                        s.push_str(&content);
-                                        s
-                                    })
-                                    .or(Some(content));
-
-                                return acc;
-                            }
-                            _ => {}
-                        }
+    let merged_messages = request.messages.into_iter().fold(Vec::with_capacity(len), |mut acc, msg| {
+        let role = msg.role;
+        let content = msg.string_contents();
+        if is_reasoner {
+            if let Some(last_msg) = acc.last_mut() {
+                match (last_msg, role) {
+                    (deepseek::RequestMessage::User { content: last }, Role::User) => {
+                        last.push(' ');
+                        last.push_str(&content);
+                        return acc;
                     }
+                    (deepseek::RequestMessage::Assistant { content: last_content, .. }, Role::Assistant) => {
+                        *last_content = last_content.take().map(|c| {
+                            let mut s = String::with_capacity(c.len() + content.len() + 1);
+                            s.push_str(&c);
+                            s.push(' ');
+                            s.push_str(&content);
+                            s
+                        }).or(Some(content));
+                        return acc;
+                    }
+                    _ => {}
                 }
-
-                acc.push(match role {
-                    Role::User => deepseek::RequestMessage::User { content },
-                    Role::Assistant => deepseek::RequestMessage::Assistant {
-                        content: Some(content),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => deepseek::RequestMessage::System { content },
-                });
-                acc
-            });
-
+            }
+        }
+        acc.push(match role {
+            Role::User => deepseek::RequestMessage::User { content },
+            Role::Assistant => deepseek::RequestMessage::Assistant {
+                content: Some(content),
+                tool_calls: Vec::new(),
+            },
+            Role::System => deepseek::RequestMessage::System { content },
+        });
+        acc
+    });
     deepseek::Request {
         model,
         messages: merged_messages,
         stream: true,
         max_tokens: max_output_tokens,
-        temperature: if is_reasoner {
+        temperature: if is_chat {
+            Some(0.0)
+        } else if is_reasoner {
             None
         } else {
             request.temperature
         },
         response_format: None,
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| deepseek::ToolDefinition::Function {
+        tools: if is_chat {
+            request.tools.into_iter().map(|tool| deepseek::ToolDefinition::Function {
                 function: deepseek::FunctionDefinition {
                     name: tool.name,
                     description: Some(tool.description),
                     parameters: Some(tool.input_schema),
                 },
-            })
-            .collect(),
+            }).collect()
+        } else {
+            Vec::new()
+        },
     }
 }
 
