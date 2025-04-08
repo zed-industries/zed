@@ -351,6 +351,7 @@ impl Render for MessageEditor {
         let total_token_usage = thread.total_token_usage(cx);
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
+        let is_edit_changes_expanded = self.edits_expanded;
 
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
@@ -416,12 +417,12 @@ impl Render for MessageEditor {
                         .child(
                             h_flex()
                                 .id("edits-container")
+                                .cursor_pointer()
                                 .p_1p5()
                                 .justify_between()
-                                .when(self.edits_expanded, |this| {
+                                .when(is_edit_changes_expanded, |this| {
                                     this.border_b_1().border_color(border_color)
                                 })
-                                .cursor_pointer()
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.handle_review_click(window, cx)
                                 }))
@@ -431,7 +432,7 @@ impl Render for MessageEditor {
                                         .child(
                                             Disclosure::new(
                                                 "edits-disclosure",
-                                                self.edits_expanded,
+                                                is_edit_changes_expanded,
                                             )
                                             .on_click(
                                                 cx.listener(|this, _ev, _window, cx| {
@@ -481,9 +482,9 @@ impl Render for MessageEditor {
                                         })),
                                 ),
                         )
-                        .when(self.edits_expanded, |parent| {
+                        .when(is_edit_changes_expanded, |parent| {
                             parent.child(
-                                v_flex().bg(cx.theme().colors().editor_background).children(
+                                v_flex().children(
                                     changed_buffers.into_iter().enumerate().flat_map(
                                         |(index, (buffer, _diff))| {
                                             let file = buffer.read(cx).file()?;
@@ -497,7 +498,7 @@ impl Render for MessageEditor {
                                                 } else {
                                                     Some(
                                                         Label::new(format!(
-                                                            "{}{}",
+                                                            "/{}{}",
                                                             parent_str,
                                                             std::path::MAIN_SEPARATOR_STR
                                                         ))
@@ -525,70 +526,105 @@ impl Render for MessageEditor {
                                                         .size(IconSize::Small)
                                                 });
 
-                                            let element = div()
+                                            let hover_color = cx.theme()
+                                                .colors()
+                                                .element_background
+                                                .blend(cx.theme().colors().editor_foreground.opacity(0.025));
+
+                                            let overlay_gradient = linear_gradient(
+                                                90.,
+                                                linear_color_stop(
+                                                    editor_bg_color,
+                                                    1.,
+                                                ),
+                                                linear_color_stop(
+                                                    editor_bg_color
+                                                        .opacity(0.2),
+                                                    0.,
+                                                ),
+                                            );
+
+                                            let overlay_gradient_hover = linear_gradient(
+                                                90.,
+                                                linear_color_stop(
+                                                    hover_color,
+                                                    1.,
+                                                ),
+                                                linear_color_stop(
+                                                    hover_color
+                                                        .opacity(0.2),
+                                                    0.,
+                                                ),
+                                            );
+
+                                            let element = h_flex()
+                                                .group("edited-code")
+                                                .id(("file-container", index))
+                                                .cursor_pointer()
                                                 .relative()
                                                 .py_1()
-                                                .px_2()
+                                                .pl_2()
+                                                .pr_1()
+                                                .gap_2()
+                                                .justify_between()
+                                                .bg(cx.theme().colors().editor_background)
+                                                .hover(|style| style.bg(hover_color))
                                                 .when(index + 1 < changed_buffers_count, |parent| {
                                                     parent.border_color(border_color).border_b_1()
                                                 })
                                                 .child(
                                                     h_flex()
-                                                        .gap_2()
-                                                        .justify_between()
+                                                        .id("file-name")
+                                                        .pr_8()
+                                                        .gap_1p5()
+                                                        .max_w_full()
+                                                        .overflow_x_scroll()
+                                                        .child(file_icon)
                                                         .child(
                                                             h_flex()
-                                                                .id(("file-container", index))
-                                                                .pr_8()
-                                                                .gap_1p5()
-                                                                .max_w_full()
-                                                                .overflow_x_scroll()
-                                                                .cursor_pointer()
-                                                                .on_click({
-                                                                    let buffer = buffer.clone();
-                                                                    cx.listener(move |this, _, window, cx| {
-                                                                        this.handle_file_click(buffer.clone(), window, cx);
-                                                                    })
-                                                                })
-                                                                .tooltip(
-                                                                    Tooltip::text(format!("Review {}", path.display()))
-                                                                )
-                                                                .child(file_icon)
-                                                                .child(
-                                                                    h_flex()
-                                                                        .children(parent_label)
-                                                                        .children(name_label),
-                                                                ) // TODO: show lines changed
-                                                                .child(
-                                                                    Label::new("+")
-                                                                        .color(Color::Created),
-                                                                )
-                                                                .child(
-                                                                    Label::new("-")
-                                                                        .color(Color::Deleted),
-                                                                ),
+                                                                .gap_0p5()
+                                                                .children(name_label)
+                                                                .children(parent_label)
+                                                        ) // TODO: show lines changed
+                                                        .child(
+                                                            Label::new("+")
+                                                                .color(Color::Created),
                                                         )
                                                         .child(
-                                                            div()
-                                                                .h_full()
-                                                                .absolute()
-                                                                .w_8()
-                                                                .bottom_0()
-                                                                .right_0()
-                                                                .bg(linear_gradient(
-                                                                    90.,
-                                                                    linear_color_stop(
-                                                                        editor_bg_color,
-                                                                        1.,
-                                                                    ),
-                                                                    linear_color_stop(
-                                                                        editor_bg_color
-                                                                            .opacity(0.2),
-                                                                        0.,
-                                                                    ),
-                                                                )),
+                                                            Label::new("-")
+                                                                .color(Color::Deleted),
                                                         ),
-                                                );
+                                                )
+                                                .child(
+                                                    div().visible_on_hover("edited-code").child(
+                                                        Button::new("review", "Review")
+                                                            .label_size(LabelSize::Small)
+                                                            .on_click({
+                                                                let buffer = buffer.clone();
+                                                                cx.listener(move |this, _, window, cx| {
+                                                                    this.handle_file_click(buffer.clone(), window, cx);
+                                                                })
+                                                            })
+                                                    )
+                                                )
+                                                .child(
+                                                    div()
+                                                        .id("gradient-overlay")
+                                                        .absolute()
+                                                        .h_5_6()
+                                                        .w_12()
+                                                        .bottom_0()
+                                                        .right(px(52.))
+                                                        .bg(overlay_gradient)
+                                                        .group_hover("edited-code", |style| style.bg(overlay_gradient_hover))
+                                                    ,
+                                                )
+                                                .on_click({
+                                                    let buffer = buffer.clone();
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.handle_file_click(buffer.clone(), window, cx);
+                                                    })
+                                                });
 
                                             Some(element)
                                         },

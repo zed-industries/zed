@@ -270,7 +270,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                     .clone()
             });
 
-            assert_eq!(client.id(), active_session.read(cx).session_id(cx).unwrap());
+            assert_eq!(client.id(), active_session.read(cx).session_id(cx));
             assert_eq!(
                 ThreadId(1),
                 running_state.read(cx).selected_thread_id().unwrap()
@@ -307,7 +307,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                     .clone()
             });
 
-            assert_eq!(client.id(), active_session.read(cx).session_id(cx).unwrap());
+            assert_eq!(client.id(), active_session.read(cx).session_id(cx));
             assert_eq!(
                 ThreadId(1),
                 running_state.read(cx).selected_thread_id().unwrap()

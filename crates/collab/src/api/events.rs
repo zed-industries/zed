@@ -149,6 +149,37 @@ pub async fn post_crash(
         "crash report"
     );
 
+    if let Some(kinesis_client) = app.kinesis_client.clone() {
+        if let Some(stream) = app.config.kinesis_stream.clone() {
+            let properties = json!({
+                "app_version": report.header.app_version,
+                "os_version": report.header.os_version,
+                "os_name": "macOS",
+                "bundle_id": report.header.bundle_id,
+                "incident_id": report.header.incident_id,
+                "installation_id": installation_id,
+                "description": description,
+                "backtrace": summary,
+            });
+            let row = SnowflakeRow::new(
+                "Crash Reported",
+                None,
+                false,
+                Some(installation_id),
+                properties,
+            );
+            let data = serde_json::to_vec(&row)?;
+            kinesis_client
+                .put_record()
+                .stream_name(stream)
+                .partition_key(row.insert_id.unwrap_or_default())
+                .data(data.into())
+                .send()
+                .await
+                .log_err();
+        }
+    }
+
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
         let payload = slack::WebhookBody::new(|w| {
             w.add_section(|s| s.text(slack::Text::markdown(description)))
@@ -314,6 +345,8 @@ pub async fn post_panic(
             .ok();
     }
 
+    let backtrace = panic.backtrace.join("\n");
+
     tracing::error!(
         service = "client",
         version = %panic.app_version,
@@ -322,9 +355,39 @@ pub async fn post_panic(
         incident_id = %incident_id,
         installation_id = %panic.installation_id.clone().unwrap_or_default(),
         description = %panic.payload,
-        backtrace = %panic.backtrace.join("\n"),
+        backtrace = %backtrace,
         "panic report"
     );
+
+    if let Some(kinesis_client) = app.kinesis_client.clone() {
+        if let Some(stream) = app.config.kinesis_stream.clone() {
+            let properties = json!({
+                "app_version": panic.app_version,
+                "os_name": panic.os_name,
+                "os_version": panic.os_version,
+                "incident_id": incident_id,
+                "installation_id": panic.installation_id,
+                "description": panic.payload,
+                "backtrace": backtrace,
+            });
+            let row = SnowflakeRow::new(
+                "Panic Reported",
+                None,
+                false,
+                panic.installation_id.clone(),
+                properties,
+            );
+            let data = serde_json::to_vec(&row)?;
+            kinesis_client
+                .put_record()
+                .stream_name(stream)
+                .partition_key(row.insert_id.unwrap_or_default())
+                .data(data.into())
+                .send()
+                .await
+                .log_err();
+        }
+    }
 
     let backtrace = if panic.backtrace.len() > 25 {
         let total = panic.backtrace.len();
@@ -711,7 +774,7 @@ pub struct SnowflakeRow {
 impl SnowflakeRow {
     pub fn new(
         event_type: impl Into<String>,
-        metrics_id: Uuid,
+        metrics_id: Option<Uuid>,
         is_staff: bool,
         system_id: Option<String>,
         event_properties: serde_json::Value,
@@ -720,7 +783,7 @@ impl SnowflakeRow {
             time: chrono::Utc::now(),
             event_type: event_type.into(),
             device_id: system_id,
-            user_id: Some(metrics_id.to_string()),
+            user_id: metrics_id.map(|id| id.to_string()),
             insert_id: Some(uuid::Uuid::new_v4().to_string()),
             event_properties,
             user_properties: Some(json!({"is_staff": is_staff})),
