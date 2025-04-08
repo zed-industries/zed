@@ -178,6 +178,26 @@ impl DebugPanel {
         self.active_session.clone()
     }
 
+    fn set_active_session(
+        &mut self,
+        session: Option<Entity<DebugSession>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_session = session;
+        let session_id = self
+            .active_session
+            .as_ref()
+            .map(|session| session.read(cx).session_id(cx));
+
+        let _ = self.project.update(cx, |project, cx| {
+            project.dap_store().update(cx, |dap_store, _| {
+                dap_store.active_session_id = session_id;
+            })
+        });
+
+        cx.notify();
+    }
+
     pub fn debug_panel_items_by_client(
         &self,
         client_id: &SessionId,
@@ -355,7 +375,7 @@ impl DebugPanel {
             .map(|session| session.entity_id())
         {
             if active_session_id == entity_id {
-                self.active_session = self.sessions.first().cloned();
+                self.set_active_session(self.sessions.first().cloned(), cx);
             }
         }
     }
@@ -674,8 +694,7 @@ impl DebugPanel {
                 });
             }
         });
-        self.active_session = Some(session_item);
-        cx.notify();
+        self.set_active_session(Some(session_item), cx);
     }
 }
 

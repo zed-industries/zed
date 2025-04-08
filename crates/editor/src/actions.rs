@@ -420,6 +420,7 @@ actions!(
         DisableBreakpoint,
         EnableBreakpoint,
         EditLogBreakpoint,
+        DebuggerRunToCursor,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
         OpenGitBlameCommit,

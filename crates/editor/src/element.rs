@@ -520,6 +520,17 @@ impl EditorElement {
         register_action(editor, window, Editor::insert_uuid_v7);
         register_action(editor, window, Editor::open_selections_in_multibuffer);
         if cx.has_flag::<Debugger>() {
+            if editor.read(cx).project.as_ref().map_or(false, |project| {
+                project
+                    .read(cx)
+                    .dap_store()
+                    .read(cx)
+                    .active_session_id
+                    .is_some()
+            }) {
+                register_action(editor, window, Editor::debugger_run_to_cursor);
+            }
+
             register_action(editor, window, Editor::toggle_breakpoint);
             register_action(editor, window, Editor::edit_log_breakpoint);
             register_action(editor, window, Editor::enable_breakpoint);

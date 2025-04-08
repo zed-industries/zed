@@ -1,5 +1,5 @@
 use super::{
-    breakpoint_store::BreakpointStore,
+    breakpoint_store::{self, BreakpointStore, SourceBreakpoint},
     locator_store::LocatorStore,
     session::{self, Session, SessionStateEvent},
 };
@@ -23,7 +23,7 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
-use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
+use language::{BinaryStatus, Buffer, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
@@ -43,6 +43,7 @@ use std::{
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
 use task::{DebugAdapterConfig, DebugRequestDisposition};
+use text::Point;
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -104,6 +105,7 @@ pub struct DapStore {
     mode: DapStoreMode,
     downstream_client: Option<(AnyProtoClient, u64)>,
     breakpoint_store: Entity<BreakpointStore>,
+    pub active_session_id: Option<SessionId>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
 }
 
@@ -181,6 +183,7 @@ impl DapStore {
             }),
             downstream_client: None,
             breakpoint_store,
+            active_session_id: None,
             sessions: Default::default(),
         }
     }
@@ -199,6 +202,7 @@ impl DapStore {
             downstream_client: None,
             breakpoint_store,
             sessions: Default::default(),
+            active_session_id: None,
         }
     }
 
@@ -318,6 +322,32 @@ impl DapStore {
         .await;
 
         Ok(())
+    }
+
+    pub fn run_to_position(
+        &mut self,
+        buffer: Entity<Buffer>,
+        breakpoint: Point,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let session_id = self.active_session_id?;
+
+        let source_breakpoint = SourceBreakpoint {
+            row: breakpoint.row,
+            path: breakpoint_store::BreakpointStore::abs_path_from_buffer(&buffer, cx)?,
+            message: None,
+            condition: None,
+            hit_condition: None,
+            state: breakpoint_store::BreakpointState::Enabled,
+        };
+
+        self.sessions
+            .get_mut(&session_id)?
+            .update(cx, |session, cx| {
+                session.run_to_position(source_breakpoint, cx)
+            });
+
+        Some(())
     }
 
     pub fn new_session(

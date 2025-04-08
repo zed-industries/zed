@@ -508,6 +508,9 @@ impl RunningState {
         }
 
         self.thread_id = Some(thread_id);
+        self.session.update(cx, |session, _| {
+            session.set_active_thread_state(Some(thread_id));
+        });
 
         self.stack_frame_list
             .update(cx, |list, cx| list.refresh(cx));
