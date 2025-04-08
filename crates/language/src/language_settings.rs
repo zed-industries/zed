@@ -370,7 +370,7 @@ fn default_words_completion_mode() -> WordsCompletionMode {
 }
 
 fn default_lsp_insert_mode() -> LspInsertMode {
-    LspInsertMode::Insert
+    LspInsertMode::ReplaceSuffix
 }
 
 fn default_lsp_fetch_timeout_ms() -> u64 {
