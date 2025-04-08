@@ -7876,7 +7876,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -12221,8 +12221,7 @@ dependencies = [
 [[package]]
 name = "rustls"
 version = "0.23.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "822ee9188ac4ec04a2f0531e55d035fb2de73f18b41a63c70c2712503b6fb13c"
+source = "git+https://github.com/ConradIrwin/rustls?rev=fa9c96ea259d6ce69445de54755401fa197e63cd#fa9c96ea259d6ce69445de54755401fa197e63cd"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -14684,8 +14683,7 @@ dependencies = [
 [[package]]
 name = "tokio-rustls"
 version = "0.26.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e727b36a1a0e8b74c376ac2211e40c2c8af09fb4013c60d910495810f008e9b"
+source = "git+https://github.com/ConradIrwin/tokio-rustls?rev=f544a5d2f2eff8b2dd5527bd7dc78c854c218d06#f544a5d2f2eff8b2dd5527bd7dc78c854c218d06"
 dependencies = [
  "rustls 0.23.25",
  "tokio",
