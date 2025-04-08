@@ -7616,6 +7616,7 @@ dependencies = [
  "base64 0.22.1",
  "client",
  "collections",
+ "erased-serde",
  "futures 0.3.31",
  "google_ai",
  "gpui",
