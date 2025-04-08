@@ -12,7 +12,10 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
-use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
+use language::{
+    ContextProvider, File, Language, LanguageToolchainStore, Location,
+    language_settings::language_settings,
+};
 use lsp::{LanguageServerId, LanguageServerName};
 use settings::{InvalidSettingsError, TaskKind, parse_json_with_comments};
 use task::{
@@ -162,6 +165,11 @@ impl Inventory {
         });
         let global_tasks = self.global_templates_from_settings();
         let language_tasks = language
+            .filter(|language| {
+                language_settings(Some(language.name()), file.as_ref(), cx)
+                    .tasks
+                    .enabled
+            })
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
@@ -235,6 +243,11 @@ impl Inventory {
         let global_tasks = self.global_templates_from_settings();
 
         let language_tasks = language
+            .filter(|language| {
+                language_settings(Some(language.name()), file.as_ref(), cx)
+                    .tasks
+                    .enabled
+            })
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
