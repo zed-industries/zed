@@ -468,6 +468,11 @@ impl Vim {
                         search_bar.is_contains_uppercase(&search),
                     );
                 }
+
+                if !replacement.should_replace_all {
+                    options.set(SearchOptions::ONE_MATCH_PER_LINE, true);
+                }
+
                 search_bar.set_replacement(Some(&replacement.replacement), cx);
                 Some(search_bar.search(&search, Some(options), window, cx))
             });
@@ -476,13 +481,8 @@ impl Vim {
             cx.spawn_in(window, async move |_, cx| {
                 search.await?;
                 search_bar.update_in(cx, |search_bar, window, cx| {
-                    if replacement.should_replace_all {
-                        search_bar.select_last_match(window, cx);
-                        search_bar.replace_all(&Default::default(), window, cx);
-                    } else {
-                        search_bar.select_first_match(window, cx);
-                        search_bar.replace_next(&Default::default(), window, cx);
-                    }
+                    search_bar.select_last_match(window, cx);
+                    search_bar.replace_all(&Default::default(), window, cx);
 
                     cx.spawn(async move |_, cx| {
                         cx.background_executor()

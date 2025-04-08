@@ -96,6 +96,7 @@ impl Tool for RegexSearchTool {
             false,
             false,
             false,
+            false,
             PathMatcher::default(),
             PathMatcher::default(),
             None,

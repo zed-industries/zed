@@ -1056,21 +1056,6 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn select_first_match(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        if let Some(searchable_item) = self.active_searchable_item.as_ref() {
-            if let Some(matches) = self
-                .searchable_items_with_matches
-                .get(&searchable_item.downgrade())
-            {
-                if matches.is_empty() {
-                    return;
-                }
-
-                self.active_match_index = Some(0);
-            }
-        }
-    }
-
     pub fn select_last_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(searchable_item) = self.active_searchable_item.as_ref() {
             if let Some(matches) = self
@@ -1246,6 +1231,8 @@ impl BufferSearchBar {
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
                             self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                             false,
+                            self.search_options
+                                .contains(SearchOptions::ONE_MATCH_PER_LINE),
                             Default::default(),
                             Default::default(),
                             None,
@@ -1436,7 +1423,7 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut Context<Self>) {
+    fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut Context<Self>) {
         let mut should_propagate = true;
         if !self.dismissed && self.active_search.is_some() {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
