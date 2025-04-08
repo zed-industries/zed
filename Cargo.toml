@@ -429,7 +429,6 @@ dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "be69a0
 derive_more = "0.99.17"
 dirs = "4.0"
 ec4rs = "1.1"
-erased-serde = "0.4.6"
 emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"

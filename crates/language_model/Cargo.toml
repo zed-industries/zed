@@ -19,7 +19,6 @@ test-support = []
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 base64.workspace = true
-erased-serde.workspace = true
 client.workspace = true
 collections.workspace = true
 futures.workspace = true
