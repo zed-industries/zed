@@ -825,7 +825,6 @@ impl Motion {
         goal: SelectionGoal,
         maybe_times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
-        forced_motion: bool,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
         let times = maybe_times.unwrap_or(1);
         use Motion::*;
@@ -1185,7 +1184,7 @@ impl Motion {
             ),
         };
 
-        (new_point != point || infallible || forced_motion).then_some((new_point, goal))
+        (new_point != point || infallible).then_some((new_point, goal))
     }
 
     // Get the range value after self is applied to the specified selection.
@@ -1195,7 +1194,6 @@ impl Motion {
         selection: Selection<DisplayPoint>,
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
-        forced_motion: bool,
     ) -> Option<(Range<DisplayPoint>, MotionKind)> {
         if let Motion::ZedSearchResult {
             prior_selections,
@@ -1230,17 +1228,11 @@ impl Motion {
             selection.goal,
             times,
             text_layout_details,
-            forced_motion,
         )?;
         let mut selection = selection.clone();
         selection.set_head(new_head, goal);
 
-        let mut kind = match (self.default_kind(), forced_motion) {
-            (MotionKind::Linewise, true) => MotionKind::Exclusive,
-            (MotionKind::Inclusive, true) => MotionKind::Exclusive,
-            (MotionKind::Exclusive, true) => MotionKind::Inclusive,
-            (kind, false) => kind,
-        };
+        let mut kind = self.default_kind();
 
         if let Motion::NextWordStart {
             ignore_punctuation: _,
@@ -1312,15 +1304,8 @@ impl Motion {
         selection: &mut Selection<DisplayPoint>,
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
-        forced_motion: bool,
     ) -> Option<MotionKind> {
-        let (range, kind) = self.range(
-            map,
-            selection.clone(),
-            times,
-            text_layout_details,
-            forced_motion,
-        )?;
+        let (range, kind) = self.range(map, selection.clone(), times, text_layout_details)?;
         selection.start = range.start;
         selection.end = range.end;
         Some(kind)
@@ -3842,153 +3827,31 @@ mod test {
 
     #[gpui::test]
     async fn test_inclusive_delete(cx: &mut gpui::TestAppContext) {
-        let mut nbtcx = NeovimBackedTestContext::new(cx).await;
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        nbtcx
-            .set_shared_state(indoc! {"
-             ˇthe quick brown fox
-             jumped over the lazy dog"})
+        cx.set_shared_state(indoc! {"
+            ˇthe quick brown fox
+            jumped over the lazy dog"})
             .await;
-        nbtcx.simulate_shared_keystrokes("d v 0").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
-             ˇhe quick brown fox
-             jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-
-        nbtcx
-            .set_shared_state(indoc! {"
+        cx.simulate_shared_keystrokes("d v 0").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇhe quick brown fox
+            jumped over the lazy dog"});
+        cx.set_shared_state(indoc! {"
             the quick bˇrown fox
             jumped over the lazy dog"})
             .await;
-        nbtcx.simulate_shared_keystrokes("d v 0").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
+        cx.simulate_shared_keystrokes("d v 0").await;
+        cx.shared_state().await.assert_eq(indoc! {"
             ˇown fox
             jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-
-        nbtcx
-            .set_shared_state(indoc! {"
+        cx.set_shared_state(indoc! {"
             the quick brown foxˇ
             jumped over the lazy dog"})
             .await;
-        nbtcx.simulate_shared_keystrokes("d v 0").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
+        cx.simulate_shared_keystrokes("d v 0").await;
+        cx.shared_state().await.assert_eq(indoc! {"
             ˇ
             jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-    }
-
-    #[gpui::test]
-    async fn test_inclusive_yank(cx: &mut gpui::TestAppContext) {
-        let mut nbtcx = NeovimBackedTestContext::new(cx).await;
-
-        nbtcx
-            .set_shared_state(indoc! {"
-               ˇthe quick brown fox
-               jumped over the lazy dog"})
-            .await;
-        nbtcx.simulate_shared_keystrokes("y v j p").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
-               the quick brown fox
-               ˇthe quick brown fox
-               jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-
-        nbtcx
-            .set_shared_state(indoc! {"
-              the quick bˇrown fox
-              jumped over the lazy dog"})
-            .await;
-        nbtcx.simulate_shared_keystrokes("y v j p").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
-              the quick brˇrown fox
-              jumped overown fox
-              jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-
-        nbtcx
-            .set_shared_state(indoc! {"
-             the quick brown foxˇ
-             jumped over the lazy dog"})
-            .await;
-        nbtcx.simulate_shared_keystrokes("y v j p").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
-             the quick brown foxˇx
-             jumped over the la
-             jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-
-        nbtcx
-            .set_shared_state(indoc! {"
-             the quick brown fox
-             ˇjumped over the lazy dog"})
-            .await;
-        nbtcx.simulate_shared_keystrokes("y v k p").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
-             the quick brown fox
-             ˇthe quick brown fox
-             jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-
-        nbtcx
-            .set_shared_state(indoc! {"
-             the quick brown fox
-             jumped oveˇr the lazy dog"})
-            .await;
-        nbtcx.simulate_shared_keystrokes("y v k p").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
-             the quick bˇbrown fox
-             jumped ovrown fox
-             jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-
-        nbtcx
-            .set_shared_state(indoc! {"
-             the quick brown fox
-             jumped over the lazy dogˇ"})
-            .await;
-        nbtcx.simulate_shared_keystrokes("y v k p").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
-             the quick brown foxˇx
-             jumped over the laxy do
-             jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-    }
-
-    #[gpui::test]
-    async fn test_inclusive_to_exclusive_delete(cx: &mut gpui::TestAppContext) {
-        let mut nbtcx = NeovimBackedTestContext::new(cx).await;
-
-        nbtcx
-            .set_shared_state(indoc! {"
-              ˇthe quick brown fox
-              jumped over the lazy dog"})
-            .await;
-        nbtcx.simulate_shared_keystrokes("d v e").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
-              ˇe quick brown fox
-              jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-
-        nbtcx
-            .set_shared_state(indoc! {"
-              the quick bˇrown fox
-              jumped over the lazy dog"})
-            .await;
-        nbtcx.simulate_shared_keystrokes("d v e").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
-              the quick bˇn fox
-              jumped over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
-
-        nbtcx
-            .set_shared_state(indoc! {"
-             the quick brown foxˇ
-             jumped over the lazy dog"})
-            .await;
-        nbtcx.simulate_shared_keystrokes("d v e").await;
-        nbtcx.shared_state().await.assert_eq(indoc! {"
-        the quick brown foˇd over the lazy dog"});
-        assert_eq!(nbtcx.cx.forced_motion(), false);
     }
 }
