@@ -2664,6 +2664,62 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
 }
 
 #[gpui::test]
+async fn test_edits_from_lsp_with_replacement_followed_by_adjacent_insertion(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let text = "Path()";
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.rs": text
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Simulate the language server sending us a pair of edits at the same location,
+    // with an insertion following a replacement (which violates the LSP spec).
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                &buffer,
+                [
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+                        new_text: "Path".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                        new_text: "from path import Path\n\n\n".into(),
+                    },
+                ],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(edits, None, cx);
+        assert_eq!(buffer.text(), "from path import Path\n\n\nPath()")
+    });
+}
+
+#[gpui::test]
 async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
