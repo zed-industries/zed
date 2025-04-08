@@ -1,9 +1,11 @@
 use std::cell::RefCell;
+use std::cmp;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
@@ -14,8 +16,10 @@ use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
 use rope::Point;
+use smol::future::FutureExt;
 use text::{Anchor, ToPoint};
 use ui::prelude::*;
+use util::ResultExt;
 use workspace::Workspace;
 
 use crate::context_picker::file_context_picker::search_files;
@@ -52,34 +56,20 @@ impl Match {
     }
 }
 
-pub struct ContextPickerCompletionProvider {
+struct ContextPickerCompletionProviderState {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
-    editor: WeakEntity<Editor>,
+    pending_symbols_task: Option<(String, Task<Vec<SymbolMatch>>)>,
 }
 
-impl ContextPickerCompletionProvider {
-    pub fn new(
-        workspace: WeakEntity<Workspace>,
-        context_store: WeakEntity<ContextStore>,
-        thread_store: Option<WeakEntity<ThreadStore>>,
-        editor: WeakEntity<Editor>,
-    ) -> Self {
-        Self {
-            workspace,
-            context_store,
-            thread_store,
-            editor,
-        }
-    }
-
+impl ContextPickerCompletionProviderState {
     fn search(
-        &self,
+        &mut self,
         mode: Option<ContextPickerMode>,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Task<Vec<Match>> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(Vec::new());
@@ -103,7 +93,6 @@ impl ContextPickerCompletionProvider {
                 cx.background_spawn(async move {
                     search_symbols_task
                         .await
-                        .unwrap_or_default()
                         .into_iter()
                         .map(Match::Symbol)
                         .collect()
@@ -178,17 +167,93 @@ impl ContextPickerCompletionProvider {
 
                     Task::ready(matches)
                 } else {
+                    if self.pending_symbols_task.is_none() {
+                        self.pending_symbols_task = Some((
+                            query.clone(),
+                            search_symbols(
+                                query.clone(),
+                                cancellation_flag.clone(),
+                                &workspace,
+                                cx,
+                            ),
+                        ));
+                    }
+
                     let search_files_task =
                         search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
-                    cx.background_spawn(async move {
-                        search_files_task
+                    cx.spawn(async move |this, cx| {
+                        let mut matches = search_files_task
                             .await
                             .into_iter()
                             .map(Match::File)
-                            .collect()
+                            .collect::<Vec<_>>();
+
+                        let search_symbols_task = this
+                            .update(cx, |this, _| this.pending_symbols_task.take())
+                            .log_err()
+                            .flatten();
+
+                        if let Some((old_query, search_symbols_task)) = search_symbols_task {
+                            if query.starts_with(&old_query) {
+                                match cx.background_executor().block_with_timeout(
+                                    Duration::from_millis(100),
+                                    search_symbols_task,
+                                ) {
+                                    Ok(symbols) => {
+                                        matches.extend(symbols.into_iter().map(Match::Symbol));
+                                        matches.sort_by(|a, b| {
+                                            b.score()
+                                                .partial_cmp(&a.score())
+                                                .unwrap_or(cmp::Ordering::Equal)
+                                        });
+                                    }
+                                    Err(pending_task) => {
+                                        let pending_task = cx.background_spawn(pending_task);
+                                        this.update(cx, |this, _| {
+                                            this.pending_symbols_task =
+                                                Some((query.clone(), pending_task));
+                                        })
+                                        .log_err();
+                                    }
+                                }
+                            }
+                        }
+                        matches
                     })
                 }
             }
+        }
+    }
+}
+
+pub struct ContextPickerCompletionProvider {
+    workspace: WeakEntity<Workspace>,
+    context_store: WeakEntity<ContextStore>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    editor: WeakEntity<Editor>,
+    state: Entity<ContextPickerCompletionProviderState>,
+}
+
+impl ContextPickerCompletionProvider {
+    pub fn new(
+        workspace: WeakEntity<Workspace>,
+        context_store: WeakEntity<ContextStore>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        editor: WeakEntity<Editor>,
+        cx: &mut App,
+    ) -> Self {
+        let state = cx.new(|_| ContextPickerCompletionProviderState {
+            workspace: workspace.clone(),
+            context_store: context_store.clone(),
+            thread_store: thread_store.clone(),
+            pending_symbols_task: None,
+        });
+        Self {
+            workspace,
+            context_store,
+            thread_store,
+            editor,
+            state,
         }
     }
 
@@ -482,10 +547,9 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             return Task::ready(Ok(None));
         };
 
-        let Some(workspace) = self.workspace.upgrade() else {
-            return Task::ready(Ok(None));
-        };
-        let Some(context_store) = self.context_store.upgrade() else {
+        let Some((workspace, context_store)) =
+            self.workspace.upgrade().zip(self.context_store.upgrade())
+        else {
             return Task::ready(Ok(None));
         };
 
@@ -500,7 +564,9 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let MentionCompletion { mode, argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
 
-        let search_task = self.search(mode, query, Arc::<AtomicBool>::default(), cx);
+        let search_task = self.state.update(cx, |state, cx| {
+            state.search(mode, query, Arc::<AtomicBool>::default(), cx)
+        });
 
         cx.spawn(async move |_, cx| {
             let matches = search_task.await;
@@ -889,6 +955,7 @@ mod tests {
                 context_store.downgrade(),
                 None,
                 editor_entity,
+                cx,
             ))));
         });
 

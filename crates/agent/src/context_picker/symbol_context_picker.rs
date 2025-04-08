@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, AppContext, DismissEvent, Entity, FocusHandle, Focusable, Stateful, Task, WeakEntity,
@@ -119,11 +119,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         let search_task = search_symbols(query, Arc::<AtomicBool>::default(), &workspace, cx);
         let context_store = self.context_store.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let symbols = search_task
-                .await
-                .context("Failed to load symbols")
-                .log_err()
-                .unwrap_or_default();
+            let symbols = search_task.await;
 
             let symbol_entries = context_store
                 .read_with(cx, |context_store, cx| {
@@ -295,7 +291,7 @@ pub(crate) fn search_symbols(
     cancellation_flag: Arc<AtomicBool>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
-) -> Task<Result<Vec<SymbolMatch>>> {
+) -> Task<Vec<SymbolMatch>> {
     let symbols_task = workspace.update(cx, |workspace, cx| {
         workspace
             .project()
@@ -303,19 +299,28 @@ pub(crate) fn search_symbols(
     });
     let project = workspace.read(cx).project().clone();
     cx.spawn(async move |cx| {
-        let symbols = symbols_task.await?;
-        let (visible_match_candidates, external_match_candidates): (Vec<_>, Vec<_>) = project
-            .update(cx, |project, cx| {
-                symbols
-                    .iter()
-                    .enumerate()
-                    .map(|(id, symbol)| StringMatchCandidate::new(id, &symbol.label.filter_text()))
-                    .partition(|candidate| {
-                        project
-                            .entry_for_path(&symbols[candidate.id].path, cx)
-                            .map_or(false, |e| !e.is_ignored)
-                    })
-            })?;
+        let Some(symbols) = symbols_task.await.log_err() else {
+            return Vec::new();
+        };
+        let Some((visible_match_candidates, external_match_candidates)): Option<(Vec<_>, Vec<_>)> =
+            project
+                .update(cx, |project, cx| {
+                    symbols
+                        .iter()
+                        .enumerate()
+                        .map(|(id, symbol)| {
+                            StringMatchCandidate::new(id, &symbol.label.filter_text())
+                        })
+                        .partition(|candidate| {
+                            project
+                                .entry_for_path(&symbols[candidate.id].path, cx)
+                                .map_or(false, |e| !e.is_ignored)
+                        })
+                })
+                .log_err()
+        else {
+            return Vec::new();
+        };
 
         const MAX_MATCHES: usize = 100;
         let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
@@ -344,7 +349,7 @@ pub(crate) fn search_symbols(
         let mut matches = visible_matches;
         matches.append(&mut external_matches);
 
-        Ok(matches
+        matches
             .into_iter()
             .map(|mut mat| {
                 let symbol = symbols[mat.candidate_id].clone();
@@ -354,7 +359,7 @@ pub(crate) fn search_symbols(
                 }
                 SymbolMatch { mat, symbol }
             })
-            .collect())
+            .collect()
     })
 }
 

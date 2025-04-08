@@ -80,12 +80,13 @@ impl MessageEditor {
         });
 
         let editor_entity = editor.downgrade();
-        editor.update(cx, |editor, _| {
+        editor.update(cx, |editor, cx| {
             editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
                 workspace.clone(),
                 context_store.downgrade(),
                 Some(thread_store.clone()),
                 editor_entity,
+                cx,
             ))));
         });
 
