@@ -16,7 +16,6 @@ use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
 use rope::Point;
-use smol::future::FutureExt;
 use text::{Anchor, ToPoint};
 use ui::prelude::*;
 use util::ResultExt;
