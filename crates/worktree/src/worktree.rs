@@ -3136,11 +3136,33 @@ async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     let contents = fs.load(abs_path).await?;
     let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
+
     let mut builder = GitignoreBuilder::new(parent);
     for line in contents.lines() {
         builder.add_line(Some(abs_path.into()), line)?;
     }
-    Ok(builder.build()?)
+
+    builder.build()?;
+
+    let mut combined_builder = GitignoreBuilder::new(parent);
+
+    let home = home_dir();
+    if !home.as_os_str().is_empty() {
+        let global_ignore_path = home.join(".config/git/ignore");
+        if let Ok(global_contents) = fs.load(&global_ignore_path).await {
+            for line in global_contents.lines() {
+                // Ignore errors for global gitignore entries, as we don't want to block
+                // local gitignore functionality if the global one has issues
+                let _ = combined_builder.add_line(Some(global_ignore_path.clone()), line);
+            }
+        }
+    }
+
+    for line in contents.lines() {
+        combined_builder.add_line(Some(abs_path.into()), line)?;
+    }
+
+    Ok(combined_builder.build()?)
 }
 
 impl Deref for Worktree {
