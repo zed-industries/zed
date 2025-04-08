@@ -1607,17 +1607,25 @@ impl Editor {
         }
         this.tasks_update_task = Some(this.refresh_runnables(window, cx));
         this._subscriptions.extend(project_subscriptions);
-        this._subscriptions
-            .push(cx.subscribe_self(|editor, e: &EditorEvent, cx| {
+
+        this._subscriptions.push(cx.subscribe_in(
+            &cx.entity(),
+            window,
+            |editor, _, e: &EditorEvent, window, cx| {
                 if let EditorEvent::SelectionsChanged { local } = e {
                     if *local {
                         let new_anchor = editor.scroll_manager.anchor();
+                        let snapshot = editor.snapshot(window, cx);
                         editor.update_restoration_data(cx, move |data| {
-                            data.scroll_anchor = new_anchor;
+                            data.scroll_position = (
+                                new_anchor.top_row(&snapshot.buffer_snapshot),
+                                new_anchor.offset,
+                            );
                         });
                     }
                 }
-            }));
+            },
+        ));
 
         this.end_selection(window, cx);
         this.scroll_manager.show_scrollbars(window, cx);
@@ -2367,22 +2375,30 @@ impl Editor {
         if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
-        if local && self.is_singleton(cx) {
-            let inmemory_selections = selections.iter().map(|s| s.range()).collect();
-            self.update_restoration_data(cx, |data| {
-                data.selections = inmemory_selections;
-            });
+        if local {
+            if let Some((_, _, buffer_snapshot)) = buffer.as_singleton() {
+                let inmemory_selections = selections
+                    .iter()
+                    .map(|s| {
+                        text::ToPoint::to_point(&s.range().start.text_anchor, buffer_snapshot)
+                            ..text::ToPoint::to_point(&s.range().end.text_anchor, buffer_snapshot)
+                    })
+                    .collect();
+                self.update_restoration_data(cx, |data| {
+                    data.selections = inmemory_selections;
+                });
 
-            if WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
-            {
-                if let Some(workspace_id) =
-                    self.workspace.as_ref().and_then(|workspace| workspace.1)
+                if WorkspaceSettings::get(None, cx).restore_on_startup
+                    != RestoreOnStartupBehavior::None
                 {
-                    let snapshot = self.buffer().read(cx).snapshot(cx);
-                    let selections = selections.clone();
-                    let background_executor = cx.background_executor().clone();
-                    let editor_id = cx.entity().entity_id().as_u64() as ItemId;
-                    self.serialize_selections = cx.background_spawn(async move {
+                    if let Some(workspace_id) =
+                        self.workspace.as_ref().and_then(|workspace| workspace.1)
+                    {
+                        let snapshot = self.buffer().read(cx).snapshot(cx);
+                        let selections = selections.clone();
+                        let background_executor = cx.background_executor().clone();
+                        let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+                        self.serialize_selections = cx.background_spawn(async move {
                     background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
                     let db_selections = selections
                         .iter()
@@ -2399,6 +2415,7 @@ impl Editor {
                         .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
                         .log_err();
                 });
+                    }
                 }
             }
         }
@@ -2407,18 +2424,27 @@ impl Editor {
     }
 
     fn folds_did_change(&mut self, cx: &mut Context<Self>) {
-        if !self.is_singleton(cx)
-            || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
-        {
+        use text::ToOffset as _;
+        use text::ToPoint as _;
+
+        if WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None {
             return;
         }
 
-        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let Some(singleton) = self.buffer().read(cx).as_singleton() else {
+            return;
+        };
+
+        let snapshot = singleton.read(cx).snapshot();
         let inmemory_folds = self.display_map.update(cx, |display_map, cx| {
-            display_map
-                .snapshot(cx)
-                .folds_in_range(0..snapshot.len())
-                .map(|fold| fold.range.deref().clone())
+            let display_snapshot = display_map.snapshot(cx);
+
+            display_snapshot
+                .folds_in_range(0..display_snapshot.buffer_snapshot.len())
+                .map(|fold| {
+                    fold.range.start.text_anchor.to_point(&snapshot)
+                        ..fold.range.end.text_anchor.to_point(&snapshot)
+                })
                 .collect()
         });
         self.update_restoration_data(cx, |data| {
@@ -2436,8 +2462,8 @@ impl Editor {
                 .folds_in_range(0..snapshot.len())
                 .map(|fold| {
                     (
-                        fold.range.start.to_offset(&snapshot),
-                        fold.range.end.to_offset(&snapshot),
+                        fold.range.start.text_anchor.to_offset(&snapshot),
+                        fold.range.end.text_anchor.to_offset(&snapshot),
                     )
                 })
                 .collect()
