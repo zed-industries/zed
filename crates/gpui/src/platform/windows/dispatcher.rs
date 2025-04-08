@@ -95,7 +95,7 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
         match self.main_sender.send(runnable) {
-            Ok(_) => {
+            Ok(_) => unsafe {
                 PostThreadMessageW(
                     self.main_thread_id_win32,
                     WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
@@ -103,7 +103,7 @@ impl PlatformDispatcher for WindowsDispatcher {
                     LPARAM(0),
                 )
                 .log_err();
-            }
+            },
             Err(runnable) => {
                 // NOTE: Runnable may wrap a Future that is !Send.
                 //
