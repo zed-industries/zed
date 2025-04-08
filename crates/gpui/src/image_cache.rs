@@ -65,6 +65,11 @@ impl ImageCache {
         }))
     }
 
+    /// Load an image from the given source.
+    ///
+    /// The image will be cached and returned as a `RenderImage`.
+    /// Returns `None` during loading - the image loads in background.
+    /// When loaded, call `cx.notify()` to refresh the UI.
     pub fn load(
         &self,
         source: &Resource,
