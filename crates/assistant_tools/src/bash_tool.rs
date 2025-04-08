@@ -2,7 +2,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use futures::io::BufReader;
-use futures::{AsyncBufReadExt, AsyncReadExt};
+use futures::{AsyncBufReadExt, AsyncReadExt, FutureExt};
 use gpui::{App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -123,7 +123,7 @@ impl Tool for BashTool {
             worktree.read(cx).abs_path()
         };
 
-        cx.spawn(async move |_| {
+        cx.spawn(async move |cx| {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
             let command = format!("({}) 2>&1", input.command);
 
@@ -158,14 +158,33 @@ impl Tool for BashTool {
             let mut buffer = vec![0; LIMIT + 1];
             let bytes_read = reader.read(&mut buffer).await?;
 
+            let mut timer = cx
+                .background_executor()
+                .timer(std::time::Duration::from_secs(10))
+                .fuse();
+
             // Repeatedly fill the output reader's buffer without copying it.
             loop {
-                let skipped_bytes = reader.fill_buf().await?;
-                if skipped_bytes.is_empty() {
-                    break;
+                let mut skipped_bytes = reader.fill_buf().fuse();
+
+                futures::select! {
+                    skipped_bytes = skipped_bytes => {
+                        let skipped_bytes = skipped_bytes?;
+                        if skipped_bytes.is_empty() {
+                            break;
+                        }
+                        let skipped_bytes_len = skipped_bytes.len();
+                        reader.consume_unpin(skipped_bytes_len);
+
+                        timer = cx
+                            .background_executor()
+                            .timer(std::time::Duration::from_secs(10))
+                            .fuse();
+                    }
+                    _ = timer => {
+                        return Err(anyhow!("Command timed out. Output so far:\n{}", String::from_utf8_lossy(&buffer[..bytes_read])));
+                    }
                 }
-                let skipped_bytes_len = skipped_bytes.len();
-                reader.consume_unpin(skipped_bytes_len);
             }
 
             let output_bytes = &buffer[..bytes_read];
