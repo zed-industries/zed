@@ -1707,7 +1707,6 @@ mod tests {
             ],
         );
 
-<<<<<<< HEAD
         // Smart quotes.
         assert_mappings(&render_markdown("\"", cx), vec![vec![(0, 0), (3, 1)]]);
         assert_mappings(
@@ -1770,12 +1769,5 @@ mod tests {
                 );
             }
         }
-=======
-        let input = "```python\nprint('hello')\nprint('world')\n```";
-        assert_eq!(without_fences(input), "print('hello')\nprint('world')\n");
-
-        let input = "```<!--Comment Test-->```";
-        assert_eq!(without_fences(input), "");
->>>>>>> c0355b6d9b (removing html comments)
     }
 }
