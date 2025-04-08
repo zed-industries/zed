@@ -2901,20 +2901,35 @@ impl LocalLspStore {
                         .await?;
 
                     let transaction = buffer_to_edit.update(cx, |buffer, cx| {
-                        buffer.finalize_last_transaction();
+                        let is_formatting = this.read_with(cx, |lsp_store, _| {
+                            lsp_store
+                                .as_local()
+                                .map_or(false, |local| !local.buffers_being_formatted.is_empty())
+                        });
+                        // finalizing last transaction breaks workspace edits recieved due to
+                        // code actions that are run as part of formatting because formatting
+                        // groups transactions from format steps together to allow undoing all formatting with
+                        // a single undo, and to bail when the user modifies the buffer during formatting
+                        // finalizing the transaction prevents the necessary grouping from happening
+                        if !is_formatting {
+                            buffer.finalize_last_transaction();
+                        }
                         buffer.start_transaction();
                         for (range, text) in edits {
                             buffer.edit([(range, text)], None, cx);
                         }
-                        let transaction = if buffer.end_transaction(cx).is_some() {
-                            let transaction = buffer.finalize_last_transaction().unwrap().clone();
-                            if !push_to_history {
-                                buffer.forget_transaction(transaction.id);
+
+                        let transaction = buffer.end_transaction(cx).and_then(|transaction_id| {
+                            if push_to_history {
+                                if !is_formatting {
+                                    // see comment above about finalizing during formatting
+                                    buffer.finalize_last_transaction();
+                                }
+                                buffer.get_transaction(transaction_id).cloned()
+                            } else {
+                                buffer.forget_transaction(transaction_id)
                             }
-                            Some(transaction)
-                        } else {
-                            None
-                        };
+                        });
 
                         transaction
                     })?;
