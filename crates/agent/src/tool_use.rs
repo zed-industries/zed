@@ -334,7 +334,7 @@ impl ToolUseState {
         output: Result<String>,
         cx: &App,
     ) -> Option<PendingToolUse> {
-        telemetry::event!("Agent: tool finished", tool_name, success = output.is_ok());
+        telemetry::event!("Agent Tool finished", tool_name, success = output.is_ok());
 
         match output {
             Ok(tool_result) => {
