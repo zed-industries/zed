@@ -1323,6 +1323,7 @@ impl GitStore {
                 .as_ref()
                 .is_some_and(|set| set.is_upgradable());
 
+            log::debug!("update diffs for repo path {}", repo_path.0.display());
             let update = (
                 buffer,
                 repo_path,
@@ -1370,15 +1371,15 @@ impl GitStore {
                             };
 
                             // Avoid triggering a diff update if the base text has not changed.
-                            if let Some((current_index, current_head)) =
-                                current_index_text.as_ref().zip(current_head_text.as_ref())
-                            {
-                                if current_index.as_deref() == index_text.as_ref()
-                                    && current_head.as_deref() == head_text.as_ref()
-                                {
-                                    continue;
-                                }
-                            }
+                            // if let Some((current_index, current_head)) =
+                            //     current_index_text.as_ref().zip(current_head_text.as_ref())
+                            // {
+                            //     if current_index.as_deref() == index_text.as_ref()
+                            //         && current_head.as_deref() == head_text.as_ref()
+                            //     {
+                            //         continue;
+                            //     }
+                            // }
 
                             let diff_bases_change =
                                 match (current_index_text.is_some(), current_head_text.is_some()) {
@@ -2312,8 +2313,11 @@ impl BufferDiffState {
             let mut rx = self.recalculating_tx.subscribe();
             return Some(async move {
                 loop {
+                    log::debug!(">>>>>>> check is_recalculating");
                     let is_recalculating = rx.recv().await;
+                    log::debug!("<<<<<<< check is_recalculating");
                     if is_recalculating != Some(true) {
+                        log::debug!("no longer recalculating");
                         break;
                     }
                 }
@@ -2444,6 +2448,7 @@ impl BufferDiffState {
                 }
             })?;
             if cancel {
+                log::debug!("returning early because superseded by a staging operation");
                 return Ok(());
             }
 
@@ -2476,6 +2481,7 @@ impl BufferDiffState {
                     this.index_changed = false;
                     this.head_changed = false;
                     this.language_changed = false;
+                    log::debug!("completed recalculation");
                     *this.recalculating_tx.borrow_mut() = false;
                 })?;
             }
