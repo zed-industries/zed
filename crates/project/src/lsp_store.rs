@@ -1583,13 +1583,14 @@ impl LocalLspStore {
 
                             let describe_code_action = |action: &CodeAction| {
                                 format!(
-                                    "code action '{}' with title \"{}\"",
+                                    "code action '{}' with title \"{}\" on server {}",
                                     action
                                         .lsp_action
                                         .action_kind()
                                         .unwrap_or("unknown".into())
                                         .as_str(),
-                                    action.lsp_action.title()
+                                    action.lsp_action.title(),
+                                    server.name(),
                                 )
                             };
 
@@ -1620,11 +1621,13 @@ impl LocalLspStore {
                                 );
                                 continue 'actions;
                             }
-                            if let Some(_) = action.lsp_action.command() {
+                            if let Some(action_command) = action.lsp_action.command() {
                                 zlog::warn!(
                                     logger =>
-                                    "Code actions with commands are not supported while formatting. Skipping {}",
+                                    "Code actions with commands are not supported while formatting. Skipping {} due to command '{}' with title \"{}\"",
                                     describe_code_action(&action),
+                                    action_command.command,
+                                    action_command.title,
                                 );
                                 continue 'actions;
                             }
