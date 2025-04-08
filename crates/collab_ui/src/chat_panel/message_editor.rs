@@ -309,7 +309,7 @@ impl MessageEditor {
             .map(|mat| {
                 let (new_text, label) = completion_fn(&mat);
                 Completion {
-                    old_range: range.clone(),
+                    replace_range: range.clone(),
                     new_text,
                     label,
                     icon_path: None,

@@ -106,7 +106,7 @@ impl ContextPickerCompletionProvider {
                 .iter()
                 .map(|mode| {
                     Completion {
-                        old_range: source_range.clone(),
+                        replace_range: source_range.clone(),
                         new_text: format!("@{} ", mode.mention_prefix()),
                         label: CodeLabel::plain(mode.label().to_string(), None),
                         icon_path: Some(mode.icon().path().into()),
@@ -160,7 +160,7 @@ impl ContextPickerCompletionProvider {
         let new_text = MentionLink::for_thread(&thread_entry);
         let new_text_len = new_text.len();
         Completion {
-            old_range: source_range.clone(),
+            replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(thread_entry.summary.to_string(), None),
             documentation: None,
@@ -205,7 +205,7 @@ impl ContextPickerCompletionProvider {
         let new_text = MentionLink::for_fetch(&url_to_fetch);
         let new_text_len = new_text.len();
         Completion {
-            old_range: source_range.clone(),
+            replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
@@ -287,7 +287,7 @@ impl ContextPickerCompletionProvider {
         let new_text = MentionLink::for_file(&file_name, &full_path);
         let new_text_len = new_text.len();
         Completion {
-            old_range: source_range.clone(),
+            replace_range: source_range.clone(),
             new_text,
             label,
             documentation: None,
@@ -350,7 +350,7 @@ impl ContextPickerCompletionProvider {
         let new_text = MentionLink::for_symbol(&symbol.name, &full_path);
         let new_text_len = new_text.len();
         Some(Completion {
-            old_range: source_range.clone(),
+            replace_range: source_range.clone(),
             new_text,
             label,
             documentation: None,
