@@ -12486,11 +12486,66 @@ impl Editor {
             };
             let lsp_tasks = lsp_tasks.await;
 
+            let Ok(mut lsp_tasks_by_rows) = cx.update(|_, cx| {
+                lsp_tasks
+                    .into_iter()
+                    .flat_map(|(kind, tasks)| {
+                        tasks.into_iter().filter_map(move |(location, task)| {
+                            Some((kind.clone(), location?, task))
+                        })
+                    })
+                    .fold(HashMap::default(), |mut acc, (kind, location, task)| {
+                        let buffer = location.target.buffer;
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        let offset = display_snapshot.buffer_snapshot.excerpts().find_map(
+                            |(excerpt_id, snapshot, _)| {
+                                if snapshot.remote_id() == buffer_snapshot.remote_id() {
+                                    display_snapshot
+                                        .buffer_snapshot
+                                        .anchor_in_excerpt(excerpt_id, location.target.range.start)
+                                } else {
+                                    None
+                                }
+                            },
+                        );
+                        if let Some(offset) = offset {
+                            let task_buffer_range =
+                                location.target.range.to_point(&buffer_snapshot);
+                            let context_buffer_range =
+                                task_buffer_range.to_offset(&buffer_snapshot);
+                            let context_range = BufferOffset(context_buffer_range.start)
+                                ..BufferOffset(context_buffer_range.end);
+
+                            acc.entry((buffer_snapshot.remote_id(), task_buffer_range.start.row))
+                                .or_insert_with(|| RunnableTasks {
+                                    templates: Vec::new(),
+                                    offset,
+                                    column: task_buffer_range.start.column,
+                                    extra_variables: HashMap::default(),
+                                    context_range,
+                                })
+                                .templates
+                                .push((kind, task.original_task().clone()));
+                        }
+
+                        acc
+                    })
+            }) else {
+                return;
+            };
+
             let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
             editor
                 .update(cx, |editor, _| {
                     editor.clear_tasks();
-                    for (key, value) in rows {
+                    for (key, mut value) in rows {
+                        if let Some(lsp_tasks) = lsp_tasks_by_rows.remove(&key) {
+                            value.templates.extend(lsp_tasks.templates);
+                        }
+
+                        editor.insert_tasks(key, value);
+                    }
+                    for (key, value) in lsp_tasks_by_rows {
                         editor.insert_tasks(key, value);
                     }
                 })

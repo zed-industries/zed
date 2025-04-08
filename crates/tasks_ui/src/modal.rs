@@ -233,13 +233,13 @@ impl PickerDelegate for TasksModalDelegate {
 
                     cx.spawn(async move |picker, cx| {
                         let Ok(lsp_tasks) = workspace.update(cx, |workspace, cx| {
+                            // TODO kb need to filter out the ones for latest selection only, otherwise it's too many?
                             editor::lsp_tasks(workspace.project().clone(), &lsp_task_sources, cx)
                         }) else {
                             return Vec::new();
                         };
 
                         let lsp_tasks = lsp_tasks.await;
-                        dbg!(lsp_tasks);
                         picker
                             .update(cx, |picker, _| {
                                 picker.delegate.last_used_candidate_index = if used.is_empty() {
@@ -249,6 +249,13 @@ impl PickerDelegate for TasksModalDelegate {
                                 };
 
                                 let mut new_candidates = used;
+                                new_candidates.extend(lsp_tasks.into_iter().flat_map(
+                                    |(kind, tasks_with_locations)| {
+                                        tasks_with_locations
+                                            .into_iter()
+                                            .map(move |(_, task)| (kind.clone(), task))
+                                    },
+                                ));
                                 new_candidates.extend(current);
                                 let match_candidates =
                                     string_match_candidates(&new_candidates, task_type);
