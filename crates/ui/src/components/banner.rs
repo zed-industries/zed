@@ -28,8 +28,7 @@ pub enum Severity {
 ///             .icon_position(IconPosition::End),
 ///     )
 /// ```
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "Notification")]
+#[derive(IntoElement, RegisterComponent)]
 pub struct Banner {
     severity: Severity,
     children: Option<AnyElement>,
@@ -137,8 +136,12 @@ impl RenderOnce for Banner {
     }
 }
 
-impl ComponentPreview for Banner {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+impl Component for Banner {
+    fn scope() -> ComponentScope {
+        ComponentScope::Notification
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         let severity_examples = vec![
             single_example(
                 "Default",
@@ -185,8 +188,10 @@ impl ComponentPreview for Banner {
             ),
         ];
 
-        example_group(severity_examples)
-            .vertical()
-            .into_any_element()
+        Some(
+            example_group(severity_examples)
+                .vertical()
+                .into_any_element(),
+        )
     }
 }

@@ -3331,6 +3331,15 @@ checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
 name = "convert_case"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "convert_case"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
@@ -4459,6 +4468,32 @@ dependencies = [
  "settings",
  "util",
  "workspace-hack",
+]
+
+[[package]]
+name = "documented"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc6db32f0995bc4553d2de888999075acd0dbeef75ba923503f6a724263dc6f3"
+dependencies = [
+ "documented-macros",
+ "phf",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "documented-macros"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a394bb35929b58f9a5fd418f7c6b17a4b616efcc1e53e6995ca123948f87e5fa"
+dependencies = [
+ "convert_case 0.6.0",
+ "itertools 0.13.0",
+ "optfield",
+ "proc-macro2",
+ "quote",
+ "strum",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -7875,7 +7910,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -9540,6 +9575,17 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "optfield"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa59f025cde9c698fcb4fcb3533db4621795374065bee908215263488f2d2a1d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -15349,6 +15395,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "component",
+ "documented",
  "gpui",
  "icons",
  "itertools 0.14.0",
@@ -17614,6 +17661,7 @@ dependencies = [
  "indexmap",
  "inout",
  "itertools 0.12.1",
+ "itertools 0.13.0",
  "lazy_static",
  "libc",
  "libsqlite3-sys",
