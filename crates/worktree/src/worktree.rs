@@ -3284,11 +3284,11 @@ impl language::File for File {
 
 impl language::LocalFile for File {
     fn abs_path(&self, cx: &App) -> PathBuf {
-        let worktree_path = &self.worktree.read(cx).as_local().unwrap().abs_path;
+        let worktree_path = &self.worktree.read(cx).abs_path();
         if self.path.as_ref() == Path::new("") {
-            worktree_path.as_path().to_path_buf()
+            worktree_path.to_path_buf()
         } else {
-            worktree_path.as_path().join(&self.path)
+            worktree_path.join(&self.path)
         }
     }
 
