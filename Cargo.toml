@@ -413,7 +413,7 @@ naga = { version = "23.1.0", features = ["wgsl-in"] }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
-cargo_toml = "0.21"
+cargo_toml = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
