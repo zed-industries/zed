@@ -215,12 +215,13 @@ mod tests {
     use super::*;
     use alacritty_terminal::{
         event::VoidListener,
+        grid::Cursor,
         index::{Boundary, Point as AlacPoint},
         term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
     };
     use itertools::Itertools;
-    use std::{cmp, iter, ops::RangeInclusive, path::PathBuf};
+    use std::{cmp, ops::RangeInclusive, path::PathBuf};
     use util::paths::PathWithPosition;
 
     fn re_test(re: &str, hay: &str, expected: Vec<&str>) {
@@ -302,230 +303,6 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-    #[derive(Debug)]
-    struct ExpectedHyperlink {
-        hovered_grid_point: AlacPoint,
-        hovered_grid_char: char,
-        hyperlink_match: RangeInclusive<AlacPoint>,
-        // It is only used in derive(Debug)
-        #[allow(dead_code)]
-        path_capture_group: RangeInclusive<AlacPoint>,
-        path_with_position: PathWithPosition,
-    }
-
-    fn build_term_from_test_lines<'a>(
-        term_size: TermSize,
-        test_lines: &(impl IntoIterator<Item = &'a str> + Clone),
-    ) -> (Term<VoidListener>, ExpectedHyperlink) {
-        let mut term = Term::new(Config::default(), &term_size, VoidListener);
-
-        enum MatchState {
-            MatchScan,
-            Match(AlacPoint),
-            Done,
-        }
-
-        enum CapturesState {
-            PathScan,
-            Path(AlacPoint),
-            RowScan,
-            ColumnScan,
-            Done,
-        }
-
-        let mut hovered_grid_point = AlacPoint::default();
-        let mut hyperlink_match =
-            AlacPoint::new(Line(0), Column(0))..=AlacPoint::new(Line(0), Column(0));
-        let mut path_capture_group =
-            AlacPoint::new(Line(0), Column(0))..=AlacPoint::new(Line(0), Column(0));
-        let mut path_with_position = PathWithPosition::from_path(PathBuf::new());
-        let mut match_state = MatchState::MatchScan;
-        let mut captures_state = CapturesState::PathScan;
-        let mut last_input_point = AlacPoint::new(Line(0), Column(0));
-        for text in test_lines.clone().into_iter() {
-            let text = text.chars().collect_vec();
-
-            let parse_u32 = |index: &mut usize,
-                             last_input_point: &mut AlacPoint,
-                             term: Option<&mut Term<VoidListener>>|
-             -> u32 {
-                *index += 1;
-                let mut number = String::new();
-                for c in &text[*index..] {
-                    if c.is_digit(10) {
-                        number.push(*c);
-                    } else {
-                        break;
-                    }
-                }
-                *index += number.len();
-                if let Some(term) = term {
-                    for c in number.chars() {
-                        if !term.grid().cursor.input_needs_wrap {
-                            *last_input_point = term.grid().cursor.point;
-                        } else {
-                            *last_input_point = AlacPoint::new(
-                                Line(term.grid().cursor.point.line.0 + 1),
-                                Column(0),
-                            );
-                        }
-                        term.input(c)
-                    }
-                }
-                number.parse::<u32>().unwrap()
-            };
-
-            let mut index = 0;
-            while index < text.len() {
-                match text[index] {
-                    '«' | '»' => {
-                        captures_state = match captures_state {
-                            CapturesState::PathScan => {
-                                let hovered_grid_offset =
-                                    parse_u32(&mut index, &mut last_input_point, None) as usize;
-                                hovered_grid_point = term.grid().cursor.point.add(
-                                    &term,
-                                    Boundary::Grid,
-                                    hovered_grid_offset,
-                                );
-                                let next_input_point = if !term.grid().cursor.input_needs_wrap {
-                                    term.grid().cursor.point
-                                } else {
-                                    AlacPoint::new(
-                                        Line(term.grid().cursor.point.line.0 + 1),
-                                        Column(0),
-                                    )
-                                };
-                                CapturesState::Path(next_input_point)
-                            }
-                            CapturesState::Path(start_point) => {
-                                path_capture_group = start_point..=last_input_point;
-                                path_with_position = PathWithPosition::from_path(PathBuf::from(
-                                    &term.bounds_to_string(
-                                        path_capture_group.start().clone(),
-                                        path_capture_group.end().clone(),
-                                    ),
-                                ));
-                                index += 1;
-                                CapturesState::RowScan
-                            }
-                            CapturesState::RowScan => {
-                                path_with_position.row = Some(parse_u32(
-                                    &mut index,
-                                    &mut last_input_point,
-                                    Some(&mut term),
-                                ));
-                                index += 1;
-                                CapturesState::ColumnScan
-                            }
-                            CapturesState::ColumnScan => {
-                                path_with_position.column = Some(parse_u32(
-                                    &mut index,
-                                    &mut last_input_point,
-                                    Some(&mut term),
-                                ));
-                                index += 1;
-                                CapturesState::Done
-                            }
-                            CapturesState::Done => {
-                                panic!("Extra '«', '»'")
-                            }
-                        }
-                    }
-                    '‹' | '›' => {
-                        match_state = match match_state {
-                            MatchState::MatchScan => {
-                                index += 1;
-                                let next_input_point = if !term.grid().cursor.input_needs_wrap {
-                                    term.grid().cursor.point
-                                } else {
-                                    AlacPoint::new(
-                                        Line(term.grid().cursor.point.line.0 + 1),
-                                        Column(0),
-                                    )
-                                };
-                                MatchState::Match(next_input_point)
-                            }
-                            MatchState::Match(start_point) => {
-                                hyperlink_match = start_point..=last_input_point;
-                                index += 1;
-                                MatchState::Done
-                            }
-                            MatchState::Done => {
-                                panic!("Extra '‹', '›'")
-                            }
-                        }
-                    }
-                    _ => {
-                        if !term.grid().cursor.input_needs_wrap {
-                            last_input_point = term.grid().cursor.point;
-                        } else {
-                            last_input_point = AlacPoint::new(
-                                Line(term.grid().cursor.point.line.0 + 1),
-                                Column(0),
-                            );
-                        }
-                        term.input(text[index]);
-                        index += 1
-                    }
-                }
-            }
-            term.input('\n');
-        }
-
-        let hovered_grid_char = term.grid().index(hovered_grid_point).c;
-
-        (
-            term,
-            ExpectedHyperlink {
-                hovered_grid_point,
-                hovered_grid_char,
-                hyperlink_match,
-                path_capture_group,
-                path_with_position,
-            },
-        )
-    }
-
-    fn print_renderable_content(term: &Term<VoidListener>) {
-        let header = format!(
-            "      {}",
-            String::from_iter(iter::repeat_n('=', term.columns()))
-        );
-        print!("{}", header);
-        for cell in term.renderable_content().display_iter {
-            if cell.point.column.0 == 0 {
-                print!("\n[{:>3}] ", cell.point.line.to_string());
-            }
-            if cell
-                .flags
-                .intersects(Flags::LEADING_WIDE_CHAR_SPACER | Flags::WIDE_CHAR_SPACER)
-            {
-                continue;
-            }
-            print!("{}", cell.c);
-        }
-        println!("\n{}", header);
-    }
-
-    fn print_hyperlink_and_match(path_with_position: &PathWithPosition, path_match: &Match) {
-        print!("Path «{}»", &path_with_position.path.to_string_lossy());
-        if let Some(row) = path_with_position.row {
-            print!(", line = {row}");
-            if let Some(column) = path_with_position.column {
-                print!(", column = {column}");
-            }
-        }
-
-        println!(
-            ", at grid cells ({}, {})..=({}, {})",
-            path_match.start().line.0,
-            path_match.start().column.0,
-            path_match.end().line.0,
-            path_match.end().column.0,
-        )
-    }
-
     /// **`‹›`** := **hyperlink** match
     ///
     /// **`«NNaaaaa»`** := **path** capture group
@@ -546,33 +323,7 @@ mod tests {
                     (state.0 + line_chars, cmp::max(state.1, line_chars))
                 });
             for columns in $mininum_columns..longest_line_chars + 1 {
-                println!("\n\nTesting with {columns} terminal columns:");
-                let screen_lines = total_chars / columns + 2;
-                let (mut term, expected_hyperlink) = build_term_from_test_lines(
-                    TermSize::new(columns, screen_lines), &test_lines);
-                print_renderable_content(&term);
-                println!("Hovered at ({}, {}) ({})",
-                    expected_hyperlink.hovered_grid_point.line.0,
-                    expected_hyperlink.hovered_grid_point.column.0,
-                    expected_hyperlink.hovered_grid_char
-                );
-                print!("Expected: ");
-                print_hyperlink_and_match(&expected_hyperlink.path_with_position, &expected_hyperlink.hyperlink_match);
-                let mut hyperlink_finder = HyperlinkFinder::new();
-                if let Some((
-                    MaybeNavigationTarget::PathLike(PathLikeTarget { maybe_path, .. }),
-                    hyperlink_match,
-                )) = hyperlink_finder
-                    .find_from_grid_point(expected_hyperlink.hovered_grid_point, &mut term)
-                {
-                    print!("Actual  : ");
-                    let path_with_position = PathWithPosition::parse_str(&maybe_path);
-                    print_hyperlink_and_match(&path_with_position, &hyperlink_match);
-                    assert_eq!(path_with_position, expected_hyperlink.path_with_position);
-                    assert_eq!(hyperlink_match, expected_hyperlink.hyperlink_match);
-                } else {
-                    assert!(false, "No hyperlink found")
-                }
+                test_hyperlink(columns, total_chars, &test_lines);
             }
         }};
     }
@@ -615,7 +366,7 @@ mod tests {
     // a clear repro case.
     fn wide_chars() {
         // Rust paths
-        test_hyperlink!(4 @ "‹«1/例/cool.rs»›");
+        test_hyperlink!(4 @ "‹«2/例/cool.rs»›");
         test_hyperlink!(4 @ "‹«1/例/cool.rs»›");
         test_hyperlink!(4 @ "‹«1/例/cool.rs»:«4»›");
         test_hyperlink!(4 @ "‹«1/例/cool.rs»:«4»:«2»›");
@@ -696,5 +447,259 @@ mod tests {
         test_hyperlink!("‹«8/awesome.🔥»› is some good Mojo!"); // Hovered on: '.'
         test_hyperlink!("‹«9/awesome.🔥»› is some good Mojo!"); // Hovered on: '🔥' (WIDE_CHAR cell)
         test_hyperlink!("‹«10/awesome.🔥»› is some good Mojo!"); // Hovered on: '🔥' (WIDE_CHAR_SPACER cell)
+    }
+
+    struct ExpectedHyperlink {
+        hovered_grid_point: AlacPoint,
+        path_with_position: PathWithPosition,
+        hyperlink_match: RangeInclusive<AlacPoint>,
+    }
+
+    fn build_term_from_test_lines<'a>(
+        term_size: TermSize,
+        test_lines: &(impl IntoIterator<Item = &'a str> + Clone),
+    ) -> (Term<VoidListener>, ExpectedHyperlink) {
+        enum MatchState {
+            MatchScan,
+            Match(AlacPoint),
+            Done,
+        }
+
+        enum CapturesState {
+            PathScan,
+            Path(AlacPoint),
+            RowScan,
+            ColumnScan,
+            Done,
+        }
+
+        fn input_point_from_cursor<T>(cursor: &Cursor<T>) -> AlacPoint {
+            cursor
+                .input_needs_wrap
+                .then_some(AlacPoint::new(Line(cursor.point.line.0 + 1), Column(0)))
+                .unwrap_or(cursor.point)
+        }
+
+        let mut hovered_grid_point = AlacPoint::default();
+        let mut hyperlink_match = AlacPoint::default()..=AlacPoint::default();
+        let mut path_with_position = PathWithPosition::from_path(PathBuf::new());
+        let mut match_state = MatchState::MatchScan;
+        let mut captures_state = CapturesState::PathScan;
+        let mut last_input_point = AlacPoint::default();
+
+        let mut term = Term::new(Config::default(), &term_size, VoidListener);
+
+        for text in test_lines.clone().into_iter() {
+            let text = text.chars().collect_vec();
+
+            let parse_u32 = |index: &mut usize,
+                             last_input_point: &mut AlacPoint,
+                             term: Option<&mut Term<VoidListener>>|
+             -> u32 {
+                *index += 1;
+                let number = text[*index..]
+                    .iter()
+                    .take_while(|c| c.is_digit(10))
+                    .collect::<String>();
+                *index += number.len();
+
+                if let Some(term) = term {
+                    for c in number.chars() {
+                        *last_input_point = input_point_from_cursor(&term.grid().cursor);
+                        term.input(c)
+                    }
+                }
+
+                number.parse::<u32>().unwrap()
+            };
+
+            let mut index = 0;
+            while index < text.len() {
+                match text[index] {
+                    '«' | '»' => {
+                        captures_state = match captures_state {
+                            CapturesState::PathScan => {
+                                let cursor = &term.grid().cursor;
+                                let offset = parse_u32(&mut index, &mut last_input_point, None);
+                                hovered_grid_point =
+                                    cursor.point.add(&term, Boundary::Grid, offset as usize);
+                                CapturesState::Path(input_point_from_cursor(cursor))
+                            }
+                            CapturesState::Path(start_point) => {
+                                path_with_position = PathWithPosition::from_path(PathBuf::from(
+                                    &term.bounds_to_string(
+                                        start_point.clone(),
+                                        last_input_point.clone(),
+                                    ),
+                                ));
+                                index += 1;
+                                CapturesState::RowScan
+                            }
+                            CapturesState::RowScan => {
+                                let offset =
+                                    parse_u32(&mut index, &mut last_input_point, Some(&mut term));
+                                path_with_position.row = Some(offset);
+                                index += 1;
+                                CapturesState::ColumnScan
+                            }
+                            CapturesState::ColumnScan => {
+                                let offset =
+                                    parse_u32(&mut index, &mut last_input_point, Some(&mut term));
+                                path_with_position.column = Some(offset);
+                                index += 1;
+                                CapturesState::Done
+                            }
+                            CapturesState::Done => {
+                                panic!("Extra '«', '»'")
+                            }
+                        }
+                    }
+                    '‹' | '›' => {
+                        match_state = match match_state {
+                            MatchState::MatchScan => {
+                                index += 1;
+                                MatchState::Match(input_point_from_cursor(&term.grid().cursor))
+                            }
+                            MatchState::Match(start_point) => {
+                                hyperlink_match = start_point..=last_input_point;
+                                index += 1;
+                                MatchState::Done
+                            }
+                            MatchState::Done => {
+                                panic!("Extra '‹', '›'")
+                            }
+                        }
+                    }
+                    _ => {
+                        last_input_point = input_point_from_cursor(&term.grid().cursor);
+                        term.input(text[index]);
+                        index += 1
+                    }
+                }
+            }
+            term.input('\n');
+        }
+
+        (
+            term,
+            ExpectedHyperlink {
+                hovered_grid_point,
+                path_with_position,
+                hyperlink_match,
+            },
+        )
+    }
+
+    fn format_renderable_content(
+        term: &Term<VoidListener>,
+        expected_hyperlink: &ExpectedHyperlink,
+    ) -> String {
+        let mut first_header_row = String::new();
+        let mut second_header_row = String::new();
+        let mut marker_header_row = String::new();
+        for index in 0..term.columns() {
+            let remainder = index % 10;
+            first_header_row.push_str(
+                &(index > 0 && remainder == 0)
+                    .then_some((index / 10).to_string())
+                    .unwrap_or(" ".into()),
+            );
+            second_header_row += &remainder.to_string();
+            marker_header_row.push(
+                (index == expected_hyperlink.hovered_grid_point.column.0)
+                    .then_some('↓')
+                    .unwrap_or(' '),
+            );
+        }
+        let mut result = format!("\n      [{}]\n", first_header_row);
+        result += &format!("      [{}]\n", second_header_row);
+        result += &format!("       {}", marker_header_row);
+
+        let spacers: Flags = Flags::LEADING_WIDE_CHAR_SPACER | Flags::WIDE_CHAR_SPACER;
+        for cell in term
+            .renderable_content()
+            .display_iter
+            .filter(|cell| !cell.flags.intersects(spacers))
+        {
+            if cell.point.column.0 == 0 {
+                let prefix = (cell.point.line == expected_hyperlink.hovered_grid_point.line)
+                    .then_some('→')
+                    .unwrap_or(' ');
+                result += &format!("\n{prefix}[{:>3}] ", cell.point.line.to_string());
+            }
+
+            result.push(cell.c);
+        }
+
+        result
+    }
+
+    fn check_path_with_position_and_match(
+        term: &Term<VoidListener>,
+        expected_hyperlink: &ExpectedHyperlink,
+        path_with_position: &PathWithPosition,
+        hyperlink_match: &Match,
+    ) {
+        let format_path_with_position_and_match =
+            |path_with_position: &PathWithPosition, hyperlink_match: &Match| {
+                let mut result = format!("Path = «{}»", &path_with_position.path.to_string_lossy());
+                if let Some(row) = path_with_position.row {
+                    result += &format!(", line = {row}");
+                    if let Some(column) = path_with_position.column {
+                        result += &format!(", column = {column}");
+                    }
+                }
+
+                result += &format!(
+                    ", at grid cells ({}, {})..=({}, {})",
+                    hyperlink_match.start().line.0,
+                    hyperlink_match.start().column.0,
+                    hyperlink_match.end().line.0,
+                    hyperlink_match.end().column.0,
+                );
+
+                result
+            };
+
+        assert_eq!(
+            format_path_with_position_and_match(
+                &expected_hyperlink.path_with_position,
+                &expected_hyperlink.hyperlink_match
+            ),
+            format_path_with_position_and_match(path_with_position, hyperlink_match),
+            "{}",
+            format_renderable_content(term, expected_hyperlink)
+        );
+    }
+
+    fn test_hyperlink<'a>(
+        columns: usize,
+        total_chars: usize,
+        test_lines: &(impl IntoIterator<Item = &'a str> + Clone),
+    ) {
+        let screen_lines = total_chars / columns + 2;
+        let term_size = TermSize::new(columns, screen_lines);
+        let (mut term, expected_hyperlink) = build_term_from_test_lines(term_size, test_lines);
+        let mut hyperlink_finder = HyperlinkFinder::new();
+        if let Some((
+            MaybeNavigationTarget::PathLike(PathLikeTarget { maybe_path, .. }),
+            hyperlink_match,
+        )) =
+            hyperlink_finder.find_from_grid_point(expected_hyperlink.hovered_grid_point, &mut term)
+        {
+            let path_with_position = PathWithPosition::parse_str(&maybe_path);
+            check_path_with_position_and_match(
+                &term,
+                &expected_hyperlink,
+                &path_with_position,
+                &hyperlink_match,
+            );
+        } else {
+            assert!(
+                false,
+                "No hyperlink found\n{}",
+                format_renderable_content(&term, &expected_hyperlink)
+            )
+        }
     }
 }
