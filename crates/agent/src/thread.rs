@@ -3,6 +3,7 @@ use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
 
+use agent_rules::load_worktree_rules_file;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
@@ -21,13 +22,11 @@ use language_model::{
 };
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use project::{Project, Worktree};
-use prompt_store::{
-    AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
-};
+use prompt_store::{AssistantSystemPromptContext, PromptBuilder, WorktreeInfoForSystemPrompt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
+use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
 
 use crate::context::{AssistantContext, ContextId, format_context_as_string};
@@ -854,67 +853,36 @@ impl Thread {
         let root_name = worktree.root_name().into();
         let abs_path = worktree.abs_path();
 
-        // Note that Cline supports `.clinerules` being a directory, but that is not currently
-        // supported. This doesn't seem to occur often in GitHub repositories.
-        const RULES_FILE_NAMES: [&'static str; 6] = [
-            ".rules",
-            ".cursorrules",
-            ".windsurfrules",
-            ".clinerules",
-            ".github/copilot-instructions.md",
-            "CLAUDE.md",
-        ];
-        let selected_rules_file = RULES_FILE_NAMES
-            .into_iter()
-            .filter_map(|name| {
-                worktree
-                    .entry_for_path(name)
-                    .filter(|entry| entry.is_file())
-                    .map(|entry| (entry.path.clone(), worktree.absolutize(&entry.path)))
-            })
-            .next();
-
-        if let Some((rel_rules_path, abs_rules_path)) = selected_rules_file {
-            cx.spawn(async move |_| {
-                let rules_file_result = maybe!(async move {
-                    let abs_rules_path = abs_rules_path?;
-                    let text = fs.load(&abs_rules_path).await.with_context(|| {
-                        format!("Failed to load assistant rules file {:?}", abs_rules_path)
-                    })?;
-                    anyhow::Ok(RulesFile {
-                        rel_path: rel_rules_path,
-                        abs_path: abs_rules_path.into(),
-                        text: text.trim().to_string(),
-                    })
-                })
-                .await;
-                let (rules_file, rules_file_error) = match rules_file_result {
-                    Ok(rules_file) => (Some(rules_file), None),
-                    Err(err) => (
-                        None,
-                        Some(ThreadError::Message {
-                            header: "Error loading rules file".into(),
-                            message: format!("{err}").into(),
-                        }),
-                    ),
-                };
-                let worktree_info = WorktreeInfoForSystemPrompt {
-                    root_name,
-                    abs_path,
-                    rules_file,
-                };
-                (worktree_info, rules_file_error)
-            })
-        } else {
-            Task::ready((
+        let rules_task = load_worktree_rules_file(fs, worktree, cx);
+        let Some(rules_task) = rules_task else {
+            return Task::ready((
                 WorktreeInfoForSystemPrompt {
                     root_name,
                     abs_path,
                     rules_file: None,
                 },
                 None,
-            ))
-        }
+            ));
+        };
+
+        cx.spawn(async move |_| {
+            let (rules_file, rules_file_error) = match rules_task.await {
+                Ok(rules_file) => (Some(rules_file), None),
+                Err(err) => (
+                    None,
+                    Some(ThreadError::Message {
+                        header: "Error loading rules file".into(),
+                        message: format!("{err}").into(),
+                    }),
+                ),
+            };
+            let worktree_info = WorktreeInfoForSystemPrompt {
+                root_name,
+                abs_path,
+                rules_file,
+            };
+            (worktree_info, rules_file_error)
+        })
     }
 
     pub fn send_to_model(
