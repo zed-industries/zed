@@ -38,6 +38,7 @@ use language::{
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
+use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset, split_repository_update},
@@ -83,14 +84,13 @@ struct SharedDiffs {
     uncommitted: Option<Entity<BufferDiff>>,
 }
 
-#[derive(Default)]
 struct BufferDiffState {
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
     language_registry: Option<Arc<LanguageRegistry>>,
-    diff_updated_futures: Vec<oneshot::Sender<()>>,
+    recalculating_tx: postage::watch::Sender<bool>,
     hunk_staging_operation_count: usize,
 
     head_text: Option<Arc<String>>,
@@ -551,7 +551,7 @@ impl GitStore {
                     diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
                 {
                     return cx.background_executor().spawn(async move {
-                        task.await?;
+                        task.await;
                         Ok(unstaged_diff)
                     });
                 }
@@ -608,7 +608,7 @@ impl GitStore {
                     diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
                 {
                     return cx.background_executor().spawn(async move {
-                        task.await?;
+                        task.await;
                         Ok(uncommitted_diff)
                     });
                 }
@@ -697,10 +697,13 @@ impl GitStore {
                     }
                 }
 
-                let rx = diff_state.diff_bases_changed(text_snapshot, diff_bases_change, 0, cx);
+                diff_state.diff_bases_changed(text_snapshot, diff_bases_change, 0, cx);
+                let rx = diff_state.wait_for_recalculation();
 
                 anyhow::Ok(async move {
-                    rx.await.ok();
+                    if let Some(rx) = rx {
+                        rx.await;
+                    }
                     Ok(diff)
                 })
             })
@@ -1223,13 +1226,14 @@ impl GitStore {
         for buffer in buffers {
             if let Some(diff_state) = self.diffs.get_mut(&buffer.read(cx).remote_id()) {
                 let buffer = buffer.read(cx).text_snapshot();
-                futures.push(diff_state.update(cx, |diff_state, cx| {
+                diff_state.update(cx, |diff_state, cx| {
                     diff_state.recalculate_diffs(
                         buffer,
                         diff_state.hunk_staging_operation_count,
                         cx,
-                    )
-                }));
+                    );
+                    futures.extend(diff_state.wait_for_recalculation());
+                });
             }
         }
         async move {
@@ -1444,7 +1448,7 @@ impl GitStore {
                                             client.send(message).log_err();
                                         }
 
-                                        let _ = diff_state.diff_bases_changed(
+                                        diff_state.diff_bases_changed(
                                             buffer.text_snapshot(),
                                             diff_bases_change,
                                             hunk_staging_operation_count,
@@ -2295,7 +2299,7 @@ impl BufferDiffState {
             },
         };
 
-        let _ = self.diff_bases_changed(
+        self.diff_bases_changed(
             buffer,
             diff_bases_change,
             self.hunk_staging_operation_count,
@@ -2303,13 +2307,20 @@ impl BufferDiffState {
         );
     }
 
-    pub fn wait_for_recalculation(&mut self) -> Option<oneshot::Receiver<()>> {
-        if self.diff_updated_futures.is_empty() {
-            return None;
+    pub fn wait_for_recalculation(&mut self) -> Option<impl Future<Output = ()> + use<>> {
+        if *self.recalculating_tx.borrow() {
+            let mut rx = self.recalculating_tx.subscribe();
+            return Some(async move {
+                loop {
+                    let is_recalculating = rx.recv().await;
+                    if is_recalculating != Some(true) {
+                        break;
+                    }
+                }
+            });
+        } else {
+            None
         }
-        let (tx, rx) = oneshot::channel();
-        self.diff_updated_futures.push(tx);
-        Some(rx)
     }
 
     fn diff_bases_changed(
@@ -2318,7 +2329,7 @@ impl BufferDiffState {
         diff_bases_change: DiffBasesChange,
         prev_hunk_staging_operation_count: usize,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<()> {
+    ) {
         match diff_bases_change {
             DiffBasesChange::SetIndex(index) => {
                 self.index_text = index.map(|mut index| {
@@ -2366,10 +2377,10 @@ impl BufferDiffState {
         buffer: text::BufferSnapshot,
         prev_hunk_staging_operation_count: usize,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<()> {
+    ) {
         log::debug!("recalculate diffs");
-        let (tx, rx) = oneshot::channel();
-        self.diff_updated_futures.push(tx);
+
+        *self.recalculating_tx.borrow_mut() = true;
 
         let language = self.language.clone();
         let language_registry = self.language_registry.clone();
@@ -2424,10 +2435,15 @@ impl BufferDiffState {
                 }
             }
 
-            if this.update(cx, |this, _| {
-                this.hunk_staging_operation_count > prev_hunk_staging_operation_count
-            })? {
-                eprintln!("early return");
+            let cancel = this.update(cx, |this, _| {
+                if this.hunk_staging_operation_count > prev_hunk_staging_operation_count {
+                    *this.recalculating_tx.borrow_mut() = false;
+                    true
+                } else {
+                    false
+                }
+            })?;
+            if cancel {
                 return Ok(());
             }
 
@@ -2460,16 +2476,31 @@ impl BufferDiffState {
                     this.index_changed = false;
                     this.head_changed = false;
                     this.language_changed = false;
-                    for tx in this.diff_updated_futures.drain(..) {
-                        tx.send(()).ok();
-                    }
+                    *this.recalculating_tx.borrow_mut() = false;
                 })?;
             }
 
             Ok(())
         }));
+    }
+}
 
-        rx
+impl Default for BufferDiffState {
+    fn default() -> Self {
+        Self {
+            unstaged_diff: Default::default(),
+            uncommitted_diff: Default::default(),
+            recalculate_diff_task: Default::default(),
+            language: Default::default(),
+            language_registry: Default::default(),
+            recalculating_tx: postage::watch::channel_with(false).0,
+            hunk_staging_operation_count: Default::default(),
+            head_text: Default::default(),
+            index_text: Default::default(),
+            head_changed: Default::default(),
+            index_changed: Default::default(),
+            language_changed: Default::default(),
+        }
     }
 }
 
