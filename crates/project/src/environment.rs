@@ -2,8 +2,10 @@ use futures::{
     FutureExt,
     future::{Shared, WeakShared},
 };
+use language::Buffer;
 use std::{path::Path, sync::Arc};
 use util::ResultExt;
+use worktree::Worktree;
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
@@ -16,6 +18,7 @@ use crate::{
 
 pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
+    // FIXME the weak was not a good idea, go back to using strongs and find a different way to clean them up
     environments: HashMap<Arc<Path>, WeakShared<Task<Option<HashMap<String, String>>>>>,
     environment_error_messages: HashMap<Arc<Path>, EnvironmentErrorMessage>,
 }
@@ -73,38 +76,80 @@ impl ProjectEnvironment {
         cx.emit(ProjectEnvironmentEvent::ErrorsUpdated);
     }
 
-    /// Returns the project environment, if possible.
-    /// If the project was opened from the CLI, then the inherited CLI environment is returned.
-    /// If it wasn't opened from the CLI, and an absolute path is given, then a shell is spawned in
-    /// that directory, to get environment variables as if the user has `cd`'d there.
-    pub(crate) fn get_environment(
+    pub(crate) fn get_buffer_environment(
         &mut self,
-        abs_path: Option<Arc<Path>>,
-        cx: &Context<Self>,
+        buffer: Entity<Buffer>,
+        worktree_store: Entity<WorktreeStore>,
+        cx: &mut Context<Self>,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if cfg!(any(test, feature = "test-support")) {
             return Task::ready(Some(HashMap::default())).shared();
         }
 
         if let Some(cli_environment) = self.get_cli_environment() {
-            return cx
-                .spawn(async move |_, _| {
-                    let path = cli_environment
-                        .get("PATH")
-                        .map(|path| path.as_str())
-                        .unwrap_or_default();
-                    log::info!(
-                        "using project environment variables from CLI. PATH={:?}",
-                        path
-                    );
-                    Some(cli_environment)
-                })
-                .shared();
+            log::info!("using project environment variables from CLI");
+            return Task::ready(Some(cli_environment)).shared();
         }
 
-        let Some(abs_path) = abs_path else {
+        let Some(worktree) = buffer
+            .read(cx)
+            .file()
+            .map(|f| f.worktree_id(cx))
+            .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
+        else {
             return Task::ready(None).shared();
         };
+
+        self.get_worktree_environment(worktree, cx)
+    }
+
+    pub(crate) fn get_worktree_environment(
+        &mut self,
+        worktree: Entity<Worktree>,
+        cx: &mut Context<Self>,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        if cfg!(any(test, feature = "test-support")) {
+            return Task::ready(Some(HashMap::default())).shared();
+        }
+
+        if let Some(cli_environment) = self.get_cli_environment() {
+            log::info!("using project environment variables from CLI");
+            return Task::ready(Some(cli_environment)).shared();
+        }
+
+        let mut abs_path = worktree.read(cx).abs_path();
+        if !worktree.read(cx).is_local() {
+            log::error!(
+                "attempted to get project environment for a non-local worktree at {abs_path:?}"
+            );
+            return Task::ready(None).shared();
+        } else if worktree.read(cx).is_single_file() {
+            let Some(parent) = abs_path.parent() else {
+                return Task::ready(None).shared();
+            };
+            abs_path = parent.into();
+        }
+
+        self.get_directory_environment(abs_path, cx)
+    }
+
+    /// Returns the project environment, if possible.
+    /// If the project was opened from the CLI, then the inherited CLI environment is returned.
+    /// If it wasn't opened from the CLI, and an absolute path is given, then a shell is spawned in
+    /// that directory, to get environment variables as if the user has `cd`'d there.
+    pub(crate) fn get_directory_environment(
+        &mut self,
+        abs_path: Arc<Path>,
+        cx: &mut Context<Self>,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        if cfg!(any(test, feature = "test-support")) {
+            return Task::ready(Some(HashMap::default())).shared();
+        }
+
+        if let Some(cli_environment) = self.get_cli_environment() {
+            log::info!("using project environment variables from CLI");
+            return Task::ready(Some(cli_environment)).shared();
+        }
 
         if let Some(existing) = self
             .environments
@@ -113,7 +158,7 @@ impl ProjectEnvironment {
         {
             existing
         } else {
-            let env = get_directory_env(abs_path.clone(), cx).shared();
+            let env = get_directory_env_impl(abs_path.clone(), cx).shared();
             self.environments.insert(
                 abs_path.clone(),
                 env.downgrade()
@@ -338,7 +383,7 @@ async fn load_shell_environment(
     (Some(parsed_env), direnv_error)
 }
 
-fn get_directory_env(
+fn get_directory_env_impl(
     abs_path: Arc<Path>,
     cx: &Context<ProjectEnvironment>,
 ) -> Task<Option<HashMap<String, String>>> {
@@ -368,10 +413,7 @@ fn get_directory_env(
 
         if let Some(error) = error_message {
             this.update(cx, |this, cx| {
-                log::error!(
-                    "error fetching environment for path {abs_path:?}: {}",
-                    error
-                );
+                log::error!("{error}",);
                 this.environment_error_messages.insert(abs_path, error);
                 cx.emit(ProjectEnvironmentEvent::ErrorsUpdated)
             })
