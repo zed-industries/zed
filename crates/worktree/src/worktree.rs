@@ -1172,6 +1172,31 @@ impl Worktree {
     pub fn is_single_file(&self) -> bool {
         self.root_dir().is_none()
     }
+
+    /// For visible worktrees, returns the path with the worktree name as the first component.
+    /// Otherwise, returns an absolute path.
+    pub fn full_path(&self, worktree_relative_path: &Path) -> PathBuf {
+        let mut full_path = PathBuf::new();
+
+        if self.is_visible() {
+            full_path.push(self.root_name());
+        } else {
+            let path = self.abs_path();
+
+            if self.is_local() && path.starts_with(home_dir().as_path()) {
+                full_path.push("~");
+                full_path.push(path.strip_prefix(home_dir().as_path()).unwrap());
+            } else {
+                full_path.push(path)
+            }
+        }
+
+        if worktree_relative_path.components().next().is_some() {
+            full_path.push(&worktree_relative_path);
+        }
+
+        full_path
+    }
 }
 
 impl LocalWorktree {
@@ -3229,27 +3254,7 @@ impl language::File for File {
     }
 
     fn full_path(&self, cx: &App) -> PathBuf {
-        let mut full_path = PathBuf::new();
-        let worktree = self.worktree.read(cx);
-
-        if worktree.is_visible() {
-            full_path.push(worktree.root_name());
-        } else {
-            let path = worktree.abs_path();
-
-            if worktree.is_local() && path.starts_with(home_dir().as_path()) {
-                full_path.push("~");
-                full_path.push(path.strip_prefix(home_dir().as_path()).unwrap());
-            } else {
-                full_path.push(path)
-            }
-        }
-
-        if self.path.components().next().is_some() {
-            full_path.push(&self.path);
-        }
-
-        full_path
+        self.worktree.read(cx).full_path(&self.path)
     }
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
