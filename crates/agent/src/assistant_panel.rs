@@ -855,9 +855,11 @@ impl AssistantPanel {
                 if is_empty {
                     Label::new(Thread::DEFAULT_SUMMARY.clone())
                         .truncate()
+                        .ml_2()
                         .into_any_element()
                 } else if summary.is_none() {
                     Label::new(LOADING_SUMMARY_PLACEHOLDER)
+                        .ml_2()
                         .truncate()
                         .into_any_element()
                 } else {
@@ -873,7 +875,7 @@ impl AssistantPanel {
                     })
                     .unwrap_or_else(|| SharedString::from(LOADING_SUMMARY_PLACEHOLDER));
 
-                Label::new(title).truncate().into_any_element()
+                Label::new(title).ml_2().truncate().into_any_element()
             }
             ActiveView::History => Label::new("History").truncate().into_any_element(),
             ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
@@ -910,23 +912,25 @@ impl AssistantPanel {
 
         let go_back_button = match &self.active_view {
             ActiveView::History | ActiveView::Configuration => Some(
-                IconButton::new("go-back", IconName::ArrowLeft)
-                    .icon_size(IconSize::Small)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.go_back(&workspace::GoBack, window, cx);
-                    }))
-                    .tooltip({
-                        let focus_handle = focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Go Back",
-                                &workspace::GoBack,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    }),
+                div().pl_1().child(
+                    IconButton::new("go-back", IconName::ArrowLeft)
+                        .icon_size(IconSize::Small)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.go_back(&workspace::GoBack, window, cx);
+                        }))
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Go Back",
+                                    &workspace::GoBack,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        }),
+                ),
             ),
             _ => None,
         };
@@ -944,8 +948,7 @@ impl AssistantPanel {
             .child(
                 h_flex()
                     .w_full()
-                    .pl_2()
-                    .gap_2()
+                    .gap_1()
                     .children(go_back_button)
                     .child(self.render_title_view(window, cx)),
             )
