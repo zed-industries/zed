@@ -1,13 +1,13 @@
 mod signature_help;
 
 use crate::{
+    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, DocumentSymbol, Hover,
+    HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
+    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent,
+    PrepareRenameResponse, ProjectTransaction, ResolveState,
     lsp_store::{LocalLspStore, LspStore},
-    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
-    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
-    InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent, PrepareRenameResponse,
-    ProjectTransaction, ResolveState,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
@@ -15,11 +15,14 @@ use collections::HashSet;
 use futures::future;
 use gpui::{App, AsyncApp, Entity};
 use language::{
-    language_settings::{language_settings, InlayHintKind, LanguageSettings},
+    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
+    language_settings::{
+        AllLanguageSettings, InlayHintKind, LanguageSettings, LspInsertMode, language_settings,
+    },
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
-    OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp,
 };
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,
@@ -27,8 +30,9 @@ use lsp::{
     LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
     ServerCapabilities,
 };
+use settings::Settings as _;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
-use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Reverse, mem, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
 pub use signature_help::SignatureHelp;
@@ -199,6 +203,9 @@ pub(crate) struct GetDocumentHighlights {
     pub position: PointUtf16,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct GetDocumentSymbols;
+
 #[derive(Clone, Debug)]
 pub(crate) struct GetSignatureHelp {
     pub position: PointUtf16,
@@ -232,6 +239,19 @@ pub(crate) struct OnTypeFormatting {
 #[derive(Debug)]
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct GetCodeLens;
+
+impl GetCodeLens {
+    pub(crate) fn can_resolve_lens(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .code_lens_provider
+            .as_ref()
+            .and_then(|code_lens_options| code_lens_options.resolve_provider)
+            .unwrap_or(false)
+    }
 }
 
 #[derive(Debug)]
@@ -1476,6 +1496,205 @@ impl LspCommand for GetDocumentHighlights {
 }
 
 #[async_trait(?Send)]
+impl LspCommand for GetDocumentSymbols {
+    type Response = Vec<DocumentSymbol>;
+    type LspRequest = lsp::request::DocumentSymbolRequest;
+    type ProtoRequest = proto::GetDocumentSymbols;
+
+    fn display_name(&self) -> &str {
+        "Get document symbols"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .document_symbol_provider
+            .is_some()
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::DocumentSymbolParams> {
+        Ok(lsp::DocumentSymbolParams {
+            text_document: make_text_document_identifier(path)?,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        lsp_symbols: Option<lsp::DocumentSymbolResponse>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> Result<Vec<DocumentSymbol>> {
+        let Some(lsp_symbols) = lsp_symbols else {
+            return Ok(Vec::new());
+        };
+
+        let symbols: Vec<_> = match lsp_symbols {
+            lsp::DocumentSymbolResponse::Flat(symbol_information) => symbol_information
+                .into_iter()
+                .map(|lsp_symbol| DocumentSymbol {
+                    name: lsp_symbol.name,
+                    kind: lsp_symbol.kind,
+                    range: range_from_lsp(lsp_symbol.location.range),
+                    selection_range: range_from_lsp(lsp_symbol.location.range),
+                    children: Vec::new(),
+                })
+                .collect(),
+            lsp::DocumentSymbolResponse::Nested(nested_responses) => {
+                fn convert_symbol(lsp_symbol: lsp::DocumentSymbol) -> DocumentSymbol {
+                    DocumentSymbol {
+                        name: lsp_symbol.name,
+                        kind: lsp_symbol.kind,
+                        range: range_from_lsp(lsp_symbol.range),
+                        selection_range: range_from_lsp(lsp_symbol.selection_range),
+                        children: lsp_symbol
+                            .children
+                            .map(|children| {
+                                children.into_iter().map(convert_symbol).collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default(),
+                    }
+                }
+                nested_responses.into_iter().map(convert_symbol).collect()
+            }
+        };
+        Ok(symbols)
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDocumentSymbols {
+        proto::GetDocumentSymbols {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::GetDocumentSymbols,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        Ok(Self)
+    }
+
+    fn response_to_proto(
+        response: Vec<DocumentSymbol>,
+        _: &mut LspStore,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut App,
+    ) -> proto::GetDocumentSymbolsResponse {
+        let symbols = response
+            .into_iter()
+            .map(|symbol| {
+                fn convert_symbol_to_proto(symbol: DocumentSymbol) -> proto::DocumentSymbol {
+                    proto::DocumentSymbol {
+                        name: symbol.name.clone(),
+                        kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
+                        start: Some(proto::PointUtf16 {
+                            row: symbol.range.start.0.row,
+                            column: symbol.range.start.0.column,
+                        }),
+                        end: Some(proto::PointUtf16 {
+                            row: symbol.range.end.0.row,
+                            column: symbol.range.end.0.column,
+                        }),
+                        selection_start: Some(proto::PointUtf16 {
+                            row: symbol.selection_range.start.0.row,
+                            column: symbol.selection_range.start.0.column,
+                        }),
+                        selection_end: Some(proto::PointUtf16 {
+                            row: symbol.selection_range.end.0.row,
+                            column: symbol.selection_range.end.0.column,
+                        }),
+                        children: symbol
+                            .children
+                            .into_iter()
+                            .map(convert_symbol_to_proto)
+                            .collect(),
+                    }
+                }
+                convert_symbol_to_proto(symbol)
+            })
+            .collect::<Vec<_>>();
+
+        proto::GetDocumentSymbolsResponse { symbols }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetDocumentSymbolsResponse,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> Result<Vec<DocumentSymbol>> {
+        let mut symbols = Vec::with_capacity(message.symbols.len());
+        for serialized_symbol in message.symbols {
+            fn deserialize_symbol_with_children(
+                serialized_symbol: proto::DocumentSymbol,
+            ) -> Result<DocumentSymbol> {
+                let kind =
+                    unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
+
+                let start = serialized_symbol
+                    .start
+                    .ok_or_else(|| anyhow!("invalid start"))?;
+                let end = serialized_symbol
+                    .end
+                    .ok_or_else(|| anyhow!("invalid end"))?;
+
+                let selection_start = serialized_symbol
+                    .selection_start
+                    .ok_or_else(|| anyhow!("invalid selection start"))?;
+                let selection_end = serialized_symbol
+                    .selection_end
+                    .ok_or_else(|| anyhow!("invalid selection end"))?;
+
+                Ok(DocumentSymbol {
+                    name: serialized_symbol.name,
+                    kind,
+                    range: Unclipped(PointUtf16::new(start.row, start.column))
+                        ..Unclipped(PointUtf16::new(end.row, end.column)),
+                    selection_range: Unclipped(PointUtf16::new(
+                        selection_start.row,
+                        selection_start.column,
+                    ))
+                        ..Unclipped(PointUtf16::new(selection_end.row, selection_end.column)),
+                    children: serialized_symbol
+                        .children
+                        .into_iter()
+                        .filter_map(|symbol| deserialize_symbol_with_children(symbol).ok())
+                        .collect::<Vec<_>>(),
+                })
+            }
+
+            symbols.push(deserialize_symbol_with_children(serialized_symbol)?);
+        }
+
+        Ok(symbols)
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetDocumentSymbols) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
 impl LspCommand for GetSignatureHelp {
     type Response = Option<SignatureHelp>;
     type LspRequest = lsp::SignatureHelpRequest;
@@ -1869,7 +2088,7 @@ impl LspCommand for GetCompletions {
             .map(Arc::new);
 
         let mut completion_edits = Vec::new();
-        buffer.update(&mut cx, |buffer, _cx| {
+        buffer.update(&mut cx, |buffer, cx| {
             let snapshot = buffer.snapshot();
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
 
@@ -1877,11 +2096,16 @@ impl LspCommand for GetCompletions {
             completions.retain(|lsp_completion| {
                 let lsp_edit = lsp_completion.text_edit.clone().or_else(|| {
                     let default_text_edit = lsp_defaults.as_deref()?.edit_range.as_ref()?;
+                    let new_text = lsp_completion
+                        .insert_text
+                        .as_ref()
+                        .unwrap_or(&lsp_completion.label)
+                        .clone();
                     match default_text_edit {
                         CompletionListItemDefaultsEditRange::Range(range) => {
                             Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                                 range: *range,
-                                new_text: lsp_completion.label.clone(),
+                                new_text,
                             }))
                         }
                         CompletionListItemDefaultsEditRange::InsertAndReplace {
@@ -1889,7 +2113,7 @@ impl LspCommand for GetCompletions {
                             replace,
                         } => Some(lsp::CompletionTextEdit::InsertAndReplace(
                             lsp::InsertReplaceEdit {
-                                new_text: lsp_completion.label.clone(),
+                                new_text,
                                 insert: *insert,
                                 replace: *replace,
                             },
@@ -1901,7 +2125,16 @@ impl LspCommand for GetCompletions {
                     // If the language server provides a range to overwrite, then
                     // check that the range is valid.
                     Some(completion_text_edit) => {
-                        match parse_completion_text_edit(&completion_text_edit, &snapshot) {
+                        let completion_mode = AllLanguageSettings::get_global(cx)
+                            .defaults
+                            .completions
+                            .lsp_insert_mode;
+
+                        match parse_completion_text_edit(
+                            &completion_text_edit,
+                            &snapshot,
+                            completion_mode,
+                        ) {
                             Some(edit) => edit,
                             None => return false,
                         }
@@ -1952,6 +2185,7 @@ impl LspCommand for GetCompletions {
                                 .clone()
                         };
 
+                        // We already know text_edit is None here
                         let text = lsp_completion
                             .insert_text
                             .as_ref()
@@ -2081,6 +2315,7 @@ impl LspCommand for GetCompletions {
 pub(crate) fn parse_completion_text_edit(
     edit: &lsp::CompletionTextEdit,
     snapshot: &BufferSnapshot,
+    completion_mode: LspInsertMode,
 ) -> Option<(Range<Anchor>, String)> {
     match edit {
         lsp::CompletionTextEdit::Edit(edit) => {
@@ -2099,7 +2334,55 @@ pub(crate) fn parse_completion_text_edit(
         }
 
         lsp::CompletionTextEdit::InsertAndReplace(edit) => {
-            let range = range_from_lsp(edit.replace);
+            let replace = match completion_mode {
+                LspInsertMode::Insert => false,
+                LspInsertMode::Replace => true,
+                LspInsertMode::ReplaceSubsequence => {
+                    let range_to_replace = range_from_lsp(edit.replace);
+
+                    let start = snapshot.clip_point_utf16(range_to_replace.start, Bias::Left);
+                    let end = snapshot.clip_point_utf16(range_to_replace.end, Bias::Left);
+                    if start != range_to_replace.start.0 || end != range_to_replace.end.0 {
+                        false
+                    } else {
+                        let mut completion_text = edit.new_text.chars();
+
+                        let mut text_to_replace = snapshot.chars_for_range(
+                            snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                        );
+
+                        // is `text_to_replace` a subsequence of `completion_text`
+                        text_to_replace.all(|needle_ch| {
+                            completion_text.any(|haystack_ch| haystack_ch == needle_ch)
+                        })
+                    }
+                }
+                LspInsertMode::ReplaceSuffix => {
+                    let range_after_cursor = lsp::Range {
+                        start: edit.insert.end,
+                        end: edit.replace.end,
+                    };
+                    let range_after_cursor = range_from_lsp(range_after_cursor);
+
+                    let start = snapshot.clip_point_utf16(range_after_cursor.start, Bias::Left);
+                    let end = snapshot.clip_point_utf16(range_after_cursor.end, Bias::Left);
+                    if start != range_after_cursor.start.0 || end != range_after_cursor.end.0 {
+                        false
+                    } else {
+                        let text_after_cursor = snapshot
+                            .text_for_range(
+                                snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                            )
+                            .collect::<String>();
+                        edit.new_text.ends_with(&text_after_cursor)
+                    }
+                }
+            };
+
+            let range = range_from_lsp(match replace {
+                true => edit.replace,
+                false => edit.insert,
+            });
 
             let start = snapshot.clip_point_utf16(range.start, Bias::Left);
             let end = snapshot.clip_point_utf16(range.end, Bias::Left);
@@ -2229,18 +2512,18 @@ impl LspCommand for GetCodeActions {
             .unwrap_or_default()
             .into_iter()
             .filter_map(|entry| {
-                let lsp_action = match entry {
+                let (lsp_action, resolved) = match entry {
                     lsp::CodeActionOrCommand::CodeAction(lsp_action) => {
                         if let Some(command) = lsp_action.command.as_ref() {
                             if !available_commands.contains(&command.command) {
                                 return None;
                             }
                         }
-                        LspAction::Action(Box::new(lsp_action))
+                        (LspAction::Action(Box::new(lsp_action)), false)
                     }
                     lsp::CodeActionOrCommand::Command(command) => {
                         if available_commands.contains(&command.command) {
-                            LspAction::Command(command)
+                            (LspAction::Command(command), true)
                         } else {
                             return None;
                         }
@@ -2259,6 +2542,7 @@ impl LspCommand for GetCodeActions {
                     server_id,
                     range: self.range.clone(),
                     lsp_action,
+                    resolved,
                 })
             })
             .collect())
@@ -2943,14 +3227,14 @@ impl LspCommand for InlayHints {
             };
 
             let buffer = buffer.clone();
-            cx.spawn(move |mut cx| async move {
+            cx.spawn(async move |cx| {
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
                     &buffer,
                     server_id,
                     resolve_state,
                     force_no_type_left_padding,
-                    &mut cx,
+                    cx,
                 )
                 .await
             })
@@ -3033,6 +3317,152 @@ impl LspCommand for InlayHints {
     }
 
     fn buffer_id_from_proto(message: &proto::InlayHints) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetCodeLens {
+    type Response = Vec<CodeAction>;
+    type LspRequest = lsp::CodeLensRequest;
+    type ProtoRequest = proto::GetCodeLens;
+
+    fn display_name(&self) -> &str {
+        "Code Lens"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .code_lens_provider
+            .as_ref()
+            .map_or(false, |code_lens_options| {
+                code_lens_options.resolve_provider.unwrap_or(false)
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::CodeLensParams> {
+        Ok(lsp::CodeLensParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: file_path_to_lsp_url(path)?,
+            },
+            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
+            partial_result_params: lsp::PartialResultParams::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::CodeLens>>,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<Vec<CodeAction>> {
+        let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        let language_server = cx.update(|cx| {
+            lsp_store
+                .read(cx)
+                .language_server_for_id(server_id)
+                .with_context(|| {
+                    format!("Missing the language server that just returned a response {server_id}")
+                })
+        })??;
+        let server_capabilities = language_server.capabilities();
+        let available_commands = server_capabilities
+            .execute_command_provider
+            .as_ref()
+            .map(|options| options.commands.as_slice())
+            .unwrap_or_default();
+        Ok(message
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|code_lens| {
+                code_lens
+                    .command
+                    .as_ref()
+                    .is_none_or(|command| available_commands.contains(&command.command))
+            })
+            .map(|code_lens| {
+                let code_lens_range = range_from_lsp(code_lens.range);
+                let start = snapshot.clip_point_utf16(code_lens_range.start, Bias::Left);
+                let end = snapshot.clip_point_utf16(code_lens_range.end, Bias::Right);
+                let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                CodeAction {
+                    server_id,
+                    range,
+                    lsp_action: LspAction::CodeLens(code_lens),
+                    resolved: false,
+                }
+            })
+            .collect())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetCodeLens {
+        proto::GetCodeLens {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::GetCodeLens,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        Ok(Self)
+    }
+
+    fn response_to_proto(
+        response: Vec<CodeAction>,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::GetCodeLensResponse {
+        proto::GetCodeLensResponse {
+            lens_actions: response
+                .iter()
+                .map(LspStore::serialize_code_action)
+                .collect(),
+            version: serialize_version(buffer_version),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetCodeLensResponse,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<Vec<CodeAction>> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        message
+            .lens_actions
+            .into_iter()
+            .map(LspStore::deserialize_code_action)
+            .collect::<Result<Vec<_>>>()
+            .context("deserializing proto code lens response")
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetCodeLens) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

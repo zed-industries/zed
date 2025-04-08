@@ -1,7 +1,7 @@
 use crate::{
-    black, fill, point, px, size, App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
-    WrappedLineLayout,
+    App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result, SharedString, StrikethroughStyle,
+    TextAlign, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill, point, px,
+    size,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -153,6 +153,36 @@ impl WrappedLine {
 
         Ok(())
     }
+
+    /// Paint the background of line of text to the window.
+    pub fn paint_background(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        bounds: Option<Bounds<Pixels>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        let align_width = match bounds {
+            Some(bounds) => Some(bounds.size.width),
+            None => self.layout.wrap_width,
+        };
+
+        paint_line_background(
+            origin,
+            &self.layout.unwrapped_layout,
+            line_height,
+            align,
+            align_width,
+            &self.decoration_runs,
+            &self.wrap_boundaries,
+            window,
+            cx,
+        )?;
+
+        Ok(())
+    }
 }
 
 fn paint_line(
@@ -196,11 +226,15 @@ fn paint_line(
         );
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
+        let mut first_glyph_x = origin.x;
         for (run_ix, run) in layout.runs.iter().enumerate() {
             max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
+                if glyph_ix == 0 && run_ix == 0 {
+                    first_glyph_x = glyph_origin.x;
+                }
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
@@ -355,7 +389,7 @@ fn paint_line(
             }
         }
 
-        let mut last_line_end_x = origin.x + layout.width;
+        let mut last_line_end_x = first_glyph_x + layout.width;
         if let Some(boundary) = wrap_boundaries.last() {
             let run = &layout.runs[boundary.run_ix];
             let glyph = &run.glyphs[boundary.glyph_ix];

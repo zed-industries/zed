@@ -3,12 +3,12 @@ use crate::{
     Entity, Focusable, ForegroundExecutor, Global, PromptLevel, Render, Reservation, Result, Task,
     VisualContext, Window, WindowHandle,
 };
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use std::{future::Future, rc::Weak};
 
-use super::Context;
+use super::{Context, WeakEntity};
 
 /// An async-friendly version of [App] with a static lifetime so it can be held across `await` points in async code.
 /// You're provided with an instance when calling [App::spawn], and you can also create one with [App::to_async].
@@ -25,7 +25,7 @@ impl AppContext for AsyncApp {
 
     fn new<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         let app = self
             .app
@@ -47,7 +47,7 @@ impl AppContext for AsyncApp {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Result<Entity<T>> {
         let app = self
             .app
@@ -60,7 +60,7 @@ impl AppContext for AsyncApp {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Self::Result<R> {
         let app = self
             .app
@@ -173,12 +173,14 @@ impl AsyncApp {
 
     /// Schedule a future to be polled in the background.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
+    pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
         R: 'static,
     {
-        self.foreground_executor.spawn(f(self.clone()))
+        let mut cx = self.clone();
+        self.foreground_executor
+            .spawn(async move { f(&mut cx).await })
     }
 
     /// Determine whether global state of the specified type has been assigned.
@@ -229,6 +231,19 @@ impl AsyncApp {
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app = app.borrow_mut();
         Ok(app.update(|cx| cx.update_global(update)))
+    }
+
+    /// Run something using this entity and cx, when the returned struct is dropped
+    pub fn on_drop<T: 'static, Callback: FnOnce(&mut T, &mut Context<T>) + 'static>(
+        &self,
+        entity: &WeakEntity<T>,
+        f: Callback,
+    ) -> util::Deferred<impl FnOnce() + use<T, Callback>> {
+        let entity = entity.clone();
+        let mut cx = self.clone();
+        util::defer(move || {
+            entity.update(&mut cx, f).ok();
+        })
     }
 }
 
@@ -299,12 +314,14 @@ impl AsyncWindowContext {
     /// Schedule a future to be executed on the main thread. This is used for collecting
     /// the results of background tasks and updating the UI.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
+    pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(&mut AsyncWindowContext) -> R + 'static,
         R: 'static,
     {
-        self.foreground_executor.spawn(f(self.clone()))
+        let mut cx = self.clone();
+        self.foreground_executor
+            .spawn(async move { f(&mut cx).await })
     }
 
     /// Present a platform dialog.
@@ -328,7 +345,7 @@ impl AsyncWindowContext {
 impl AppContext for AsyncWindowContext {
     type Result<T> = Result<T>;
 
-    fn new<T>(&mut self, build_entity: impl FnOnce(&mut Context<'_, T>) -> T) -> Result<Entity<T>>
+    fn new<T>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Result<Entity<T>>
     where
         T: 'static,
     {
@@ -342,7 +359,7 @@ impl AppContext for AsyncWindowContext {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.window
             .update(self, |_, _, cx| cx.insert_entity(reservation, build_entity))
@@ -351,7 +368,7 @@ impl AppContext for AsyncWindowContext {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Result<R> {
         self.window
             .update(self, |_, _, cx| cx.update_entity(handle, update))

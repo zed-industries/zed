@@ -133,13 +133,13 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
             return;
         };
 
-        self.pending_refresh = Some(cx.spawn(|this, mut cx| async move {
+        self.pending_refresh = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
             }
 
             while let Some(()) = completion.updates.next().await {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.completion_id = Some(completion.id);
                     this.buffer_id = Some(buffer_handle.entity_id());
                     this.file_extension = buffer_handle.read(cx).file().and_then(|file| {

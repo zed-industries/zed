@@ -1,3 +1,4 @@
+use crate::platform::scap_screen_capture::scap_screen_sources;
 use core::str;
 use std::{
     cell::RefCell,
@@ -8,13 +9,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use calloop::{
-    generic::{FdWrapper, Generic},
-    EventLoop, LoopHandle, RegistrationToken,
-};
-
 use anyhow::Context as _;
+use calloop::{
+    EventLoop, LoopHandle, RegistrationToken,
+    generic::{FdWrapper, Generic},
+};
 use collections::HashMap;
+use futures::channel::oneshot;
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
@@ -30,38 +31,37 @@ use x11rb::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
         ConnectionExt as _, EventMask, KeyPressEvent,
     },
-    protocol::{randr, render, xinput, xkb, xproto, Event},
+    protocol::{Event, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
-use xim::{x11rb::X11rbClient, AttributeName, Client, InputStyle};
+use xim::{AttributeName, Client, InputStyle, x11rb::X11rbClient};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
-    button_or_scroll_from_event_detail, get_valuator_axis_index, modifiers_from_state,
-    pressed_button_from_mask, ButtonOrScroll, ScrollDirection,
+    ButtonOrScroll, ScrollDirection, button_or_scroll_from_event_detail, get_valuator_axis_index,
+    modifiers_from_state, pressed_button_from_mask,
 };
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
 
 use crate::platform::{
+    LinuxCommon, PlatformWindow,
     blade::BladeContext,
     linux::{
-        get_xkb_compose_state, is_within_click_distance, open_uri_internal,
+        LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal,
         platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-        LinuxClient,
     },
-    LinuxCommon, PlatformWindow,
 };
 use crate::{
-    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
-    Platform, PlatformDisplay, PlatformInput, Point, RequestFrameOptions, ScaledPixels,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform, PlatformDisplay,
+    PlatformInput, Point, RequestFrameOptions, ScaledPixels, ScreenCaptureSource, ScrollDelta,
+    Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -1328,6 +1328,16 @@ impl LinuxClient for X11Client {
         ))
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        true
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        scap_screen_sources(&self.0.borrow().common.foreground_executor)
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -1438,13 +1448,16 @@ impl LinuxClient for X11Client {
         let cursor = match state.cursor_cache.get(&style) {
             Some(cursor) => *cursor,
             None => {
-                let Some(cursor) = state
-                    .cursor_handle
-                    .load_cursor(&state.xcb_connection, &style.to_icon_name())
-                    .log_err()
-                else {
+                let Some(cursor) = (match style {
+                    CursorStyle::None => create_invisible_cursor(&state.xcb_connection).log_err(),
+                    _ => state
+                        .cursor_handle
+                        .load_cursor(&state.xcb_connection, &style.to_icon_name())
+                        .log_err(),
+                }) else {
                     return;
                 };
+
                 state.cursor_cache.insert(style, cursor);
                 cursor
             }
@@ -1937,4 +1950,20 @@ fn make_scroll_wheel_event(
         modifiers,
         touch_phase: TouchPhase::default(),
     }
+}
+
+fn create_invisible_cursor(
+    connection: &XCBConnection,
+) -> anyhow::Result<crate::platform::linux::x11::client::xproto::Cursor> {
+    let empty_pixmap = connection.generate_id()?;
+    let root = connection.setup().roots[0].root;
+    connection.create_pixmap(1, empty_pixmap, root, 1, 1)?;
+
+    let cursor = connection.generate_id()?;
+    connection.create_cursor(cursor, empty_pixmap, empty_pixmap, 0, 0, 0, 0, 0, 0, 0, 0)?;
+
+    connection.free_pixmap(empty_pixmap)?;
+
+    connection.flush()?;
+    Ok(cursor)
 }

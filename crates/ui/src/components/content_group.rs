@@ -1,6 +1,10 @@
 use crate::component_prelude::*;
 use crate::prelude::*;
+<<<<<<< HEAD
 
+=======
+use component::{ComponentPreview, example_group, single_example};
+>>>>>>> main
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 

@@ -3,8 +3,8 @@ use std::sync::OnceLock;
 
 use crate::stories::*;
 use anyhow::anyhow;
-use clap::builder::PossibleValue;
 use clap::ValueEnum;
+use clap::builder::PossibleValue;
 use gpui::AnyView;
 use strum::{EnumIter, EnumString, IntoEnumIterator};
 use ui::prelude::*;

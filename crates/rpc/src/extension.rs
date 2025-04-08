@@ -31,6 +31,7 @@ pub struct ExtensionApiManifest {
     Deserialize,
     EnumString,
     strum::Display,
+    strum::EnumIter,
 )]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]

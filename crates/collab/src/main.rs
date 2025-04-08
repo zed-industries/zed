@@ -1,22 +1,22 @@
 use anyhow::anyhow;
 use axum::headers::HeaderMapExt;
 use axum::{
+    Extension, Router,
     extract::MatchedPath,
     http::{Request, Response},
     routing::get,
-    Extension, Router,
 };
 
-use collab::api::billing::sync_llm_usage_with_stripe_periodically;
 use collab::api::CloudflareIpCountryHeader;
+use collab::api::billing::sync_llm_usage_with_stripe_periodically;
 use collab::llm::{db::LlmDatabase, log_usage_periodically};
 use collab::migrations::run_database_migrations;
 use collab::user_backfiller::spawn_user_backfiller;
-use collab::{api::billing::poll_stripe_events_periodically, llm::LlmState, ServiceMode};
 use collab::{
-    api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
-    rpc::ResultExt, AppState, Config, RateLimiter, Result,
+    AppState, Config, RateLimiter, Result, api::fetch_extensions_from_blob_store_periodically, db,
+    env, executor::Executor, rpc::ResultExt,
 };
+use collab::{ServiceMode, api::billing::poll_stripe_events_periodically, llm::LlmState};
 use db::Database;
 use std::{
     env::args,
@@ -29,9 +29,9 @@ use std::{
 use tokio::signal::unix::SignalKind;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{
-    filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt, Layer,
+    Layer, filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt,
 };
-use util::{maybe, ResultExt as _};
+use util::{ResultExt as _, maybe};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");

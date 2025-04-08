@@ -144,7 +144,8 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 }
 
 /// `#[gpui::test]` can be used to annotate test functions that run with GPUI support.
-/// it supports both synchronous and asynchronous tests, and can provide you with
+///
+/// It supports both synchronous and asynchronous tests, and can provide you with
 /// as many `TestAppContext` instances as you need.
 /// The output contains a `#[test]` annotation so this can be used with any existing
 /// test harness (`cargo test` or `cargo-nextest`).
@@ -160,11 +161,25 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 /// Using the same `StdRng` for behavior in your test will allow you to exercise a wide
 /// variety of scenarios and interleavings just by changing the seed.
 ///
-/// `#[gpui::test]` also takes three different arguments:
-/// - `#[gpui::test(iterations=10)]` will run the test ten times with a different initial SEED.
-/// - `#[gpui::test(retries=3)]` will run the test up to four times if it fails to try and make it pass.
-/// - `#[gpui::test(on_failure="crate::test::report_failure")]` will call the specified function after the
+/// # Arguments
+///
+/// - `#[gpui::test]` with no arguments runs once with the seed `0` or `SEED` env var if set.
+/// - `#[gpui::test(seed = 10)]` runs once with the seed `10`.
+/// - `#[gpui::test(seeds(10, 20, 30))]` runs three times with seeds `10`, `20`, and `30`.
+/// - `#[gpui::test(iterations = 5)]` runs five times, providing as seed the values in the range `0..5`.
+/// - `#[gpui::test(retries = 3)]` runs up to four times if it fails to try and make it pass.
+/// - `#[gpui::test(on_failure = "crate::test::report_failure")]` will call the specified function after the
 ///    tests fail so that you can write out more detail about the failure.
+///
+/// You can combine `iterations = ...` with `seeds(...)`:
+/// - `#[gpui::test(iterations = 5, seed = 10)]` is equivalent to `#[gpui::test(seeds(0, 1, 2, 3, 4, 10))]`.
+/// - `#[gpui::test(iterations = 5, seeds(10, 20, 30)]` is equivalent to `#[gpui::test(seeds(0, 1, 2, 3, 4, 10, 20, 30))]`.
+/// - `#[gpui::test(seeds(10, 20, 30), iterations = 5]` is equivalent to `#[gpui::test(seeds(0, 1, 2, 3, 4, 10, 20, 30))]`.
+///
+/// # Environment Variables
+///
+/// - `SEED`: sets a seed for the first run
+/// - `ITERATIONS`: forces the value of the `iterations` argument
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     test::test(args, function)

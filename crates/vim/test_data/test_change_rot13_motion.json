@@ -1,0 +1,23 @@
+{"Put":{"state":"ˇabc def"}}
+{"Key":"g"}
+{"Key":"?"}
+{"Key":"w"}
+{"Get":{"state":"ˇnop def","mode":"Normal"}}
+{"Key":"g"}
+{"Key":"?"}
+{"Key":"w"}
+{"Get":{"state":"ˇabc def","mode":"Normal"}}
+{"Key":"."}
+{"Get":{"state":"ˇnop def","mode":"Normal"}}
+{"Put":{"state":"abˇc def"}}
+{"Key":"g"}
+{"Key":"?"}
+{"Key":"i"}
+{"Key":"w"}
+{"Get":{"state":"ˇnop def","mode":"Normal"}}
+{"Key":"."}
+{"Get":{"state":"ˇabc def","mode":"Normal"}}
+{"Key":"g"}
+{"Key":"?"}
+{"Key":"$"}
+{"Get":{"state":"ˇnop qrs","mode":"Normal"}}

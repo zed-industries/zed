@@ -1,6 +1,10 @@
+<<<<<<< HEAD
 use crate::prelude::*;
 
 use super::AnyIcon;
+=======
+use crate::{AnyIcon, prelude::*};
+>>>>>>> main
 
 #[derive(Default)]
 enum IndicatorKind {

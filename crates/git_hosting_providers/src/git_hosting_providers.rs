@@ -1,25 +1,29 @@
 mod providers;
+mod settings;
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
-use git::repository::GitRepository;
+use anyhow::{Result, anyhow};
 use git::GitHostingProviderRegistry;
+use git::repository::GitRepository;
 use gpui::App;
 use url::Url;
 use util::maybe;
 
 pub use crate::providers::*;
+pub use crate::settings::*;
 
 /// Initializes the Git hosting providers.
-pub fn init(cx: &App) {
+pub fn init(cx: &mut App) {
+    crate::settings::init(cx);
+
     let provider_registry = GitHostingProviderRegistry::global(cx);
-    provider_registry.register_hosting_provider(Arc::new(Bitbucket));
+    provider_registry.register_hosting_provider(Arc::new(Bitbucket::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(Chromium));
     provider_registry.register_hosting_provider(Arc::new(Codeberg));
     provider_registry.register_hosting_provider(Arc::new(Gitee));
-    provider_registry.register_hosting_provider(Arc::new(Github::new()));
-    provider_registry.register_hosting_provider(Arc::new(Gitlab::new()));
+    provider_registry.register_hosting_provider(Arc::new(Github::public_instance()));
+    provider_registry.register_hosting_provider(Arc::new(Gitlab::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(Sourcehut));
 }
 

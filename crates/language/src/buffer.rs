@@ -1,11 +1,14 @@
 pub use crate::{
+    Grammar, Language, LanguageRegistry,
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    proto, Grammar, Language, LanguageRegistry,
+    proto,
 };
 use crate::{
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
-    language_settings::{language_settings, LanguageSettings},
+    language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
     syntax_map::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
@@ -13,10 +16,8 @@ use crate::{
     },
     task_context::RunnableRange,
     text_diff::text_diff,
-    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
-    TreeSitterOptions,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
@@ -24,8 +25,8 @@ use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, Pixels,
-    SharedString, StyledText, Task, TaskLabel, TextStyle, Window,
+    App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
+    Task, TaskLabel, TextStyle,
 };
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
@@ -42,14 +43,13 @@ use std::{
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
-    fmt,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, Range},
     path::{Path, PathBuf},
-    rc, str,
+    rc,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
     vec,
@@ -66,7 +66,7 @@ pub use text::{
 use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{debug_panic, maybe, RangeExt};
+use util::{RangeExt, debug_panic, maybe};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -306,7 +306,7 @@ pub enum BufferEvent {
 }
 
 /// The file associated with a buffer.
-pub trait File: Send + Sync {
+pub trait File: Send + Sync + Any {
     /// Returns the [`LocalFile`] associated with this file, if the
     /// file is local.
     fn as_local(&self) -> Option<&dyn LocalFile>;
@@ -335,9 +335,6 @@ pub trait File: Send + Sync {
     ///
     /// This is needed for looking up project-specific settings.
     fn worktree_id(&self, cx: &App) -> WorktreeId;
-
-    /// Converts this file into an [`Any`] trait object.
-    fn as_any(&self) -> &dyn Any;
 
     /// Converts this file into a protobuf message.
     fn to_proto(&self, cx: &App) -> rpc::proto::File;
@@ -482,45 +479,6 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
-    /// An optional recipe for how the chunk should be presented.
-    pub renderer: Option<ChunkRenderer>,
-}
-
-/// A recipe for how the chunk should be presented.
-#[derive(Clone)]
-pub struct ChunkRenderer {
-    /// creates a custom element to represent this chunk.
-    pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
-    /// If true, the element is constrained to the shaped width of the text.
-    pub constrain_width: bool,
-}
-
-pub struct ChunkRendererContext<'a, 'b> {
-    pub window: &'a mut Window,
-    pub context: &'b mut App,
-    pub max_width: Pixels,
-}
-
-impl fmt::Debug for ChunkRenderer {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ChunkRenderer")
-            .field("constrain_width", &self.constrain_width)
-            .finish()
-    }
-}
-
-impl Deref for ChunkRendererContext<'_, '_> {
-    type Target = App;
-
-    fn deref(&self) -> &Self::Target {
-        self.context
-    }
-}
-
-impl DerefMut for ChunkRendererContext<'_, '_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.context
-    }
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
@@ -989,7 +947,7 @@ impl Buffer {
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
-    ) -> impl Future<Output = BufferSnapshot> {
+    ) -> impl Future<Output = BufferSnapshot> + use<> {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
@@ -1304,8 +1262,8 @@ impl Buffer {
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
-        self.reload_task = Some(cx.spawn(|this, mut cx| async move {
-            let Some((new_mtime, new_text)) = this.update(&mut cx, |this, cx| {
+        self.reload_task = Some(cx.spawn(async move |this, cx| {
+            let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
                 Some((file.disk_state().mtime(), file.load(cx)))
             })?
@@ -1315,9 +1273,9 @@ impl Buffer {
 
             let new_text = new_text.await?;
             let diff = this
-                .update(&mut cx, |this, cx| this.diff(new_text.clone(), cx))?
+                .update(cx, |this, cx| this.diff(new_text.clone(), cx))?
                 .await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
                     this.apply_diff(diff, cx);
@@ -1499,9 +1457,9 @@ impl Buffer {
                 self.reparse = None;
             }
             Err(parse_task) => {
-                self.reparse = Some(cx.spawn(move |this, mut cx| async move {
+                self.reparse = Some(cx.spawn(async move |this, cx| {
                     let new_syntax_map = parse_task.await;
-                    this.update(&mut cx, move |this, cx| {
+                    this.update(cx, move |this, cx| {
                         let grammar_changed =
                             this.language.as_ref().map_or(true, |current_language| {
                                 !Arc::ptr_eq(&language, current_language)
@@ -1557,6 +1515,13 @@ impl Buffer {
         self.send_operation(op, true, cx);
     }
 
+    pub fn get_diagnostics(&self, server_id: LanguageServerId) -> Option<&DiagnosticSet> {
+        let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
+            return None;
+        };
+        Some(&self.diagnostics[idx].1)
+    }
+
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
         if let Some(indent_sizes) = self.compute_autoindents() {
             let indent_sizes = cx.background_spawn(indent_sizes);
@@ -1566,9 +1531,9 @@ impl Buffer {
             {
                 Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
                 Err(indent_sizes) => {
-                    self.pending_autoindent = Some(cx.spawn(|this, mut cx| async move {
+                    self.pending_autoindent = Some(cx.spawn(async move |this, cx| {
                         let indent_sizes = indent_sizes.await;
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             this.apply_autoindents(indent_sizes, cx);
                         })
                         .ok();
@@ -1580,7 +1545,9 @@ impl Buffer {
         }
     }
 
-    fn compute_autoindents(&self) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>>> {
+    fn compute_autoindents(
+        &self,
+    ) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>> + use<>> {
         let max_rows_between_yields = 100;
         let snapshot = self.snapshot();
         if snapshot.syntax.is_empty() || self.autoindent_requests.is_empty() {
@@ -1873,8 +1840,6 @@ impl Buffer {
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.
     pub fn apply_diff(&mut self, diff: Diff, cx: &mut Context<Self>) -> Option<TransactionId> {
-        // Check for any edits to the buffer that have occurred since this diff
-        // was computed.
         let snapshot = self.snapshot();
         let mut edits_since = snapshot.edits_since::<usize>(&diff.base_version).peekable();
         let mut delta = 0;
@@ -1928,13 +1893,14 @@ impl Buffer {
         if self.capability == Capability::ReadOnly {
             return false;
         }
-        if self.has_conflict || self.has_unsaved_edits() {
+        if self.has_conflict {
             return true;
         }
         match self.file.as_ref().map(|f| f.disk_state()) {
-            Some(DiskState::New) => !self.is_empty(),
-            Some(DiskState::Deleted) => true,
-            _ => false,
+            Some(DiskState::New) | Some(DiskState::Deleted) => {
+                !self.is_empty() && self.has_unsaved_edits()
+            }
+            _ => self.has_unsaved_edits(),
         }
     }
 
@@ -1955,7 +1921,7 @@ impl Buffer {
                 }
                 None => true,
             },
-            DiskState::Deleted => true,
+            DiskState::Deleted => false,
         }
     }
 
@@ -2059,23 +2025,26 @@ impl Buffer {
     }
 
     /// Waits for the buffer to receive operations with the given timestamps.
-    pub fn wait_for_edits(
+    pub fn wait_for_edits<It: IntoIterator<Item = clock::Lamport>>(
         &mut self,
-        edit_ids: impl IntoIterator<Item = clock::Lamport>,
-    ) -> impl Future<Output = Result<()>> {
+        edit_ids: It,
+    ) -> impl Future<Output = Result<()>> + use<It> {
         self.text.wait_for_edits(edit_ids)
     }
 
     /// Waits for the buffer to receive the operations necessary for resolving the given anchors.
-    pub fn wait_for_anchors(
+    pub fn wait_for_anchors<It: IntoIterator<Item = Anchor>>(
         &mut self,
-        anchors: impl IntoIterator<Item = Anchor>,
-    ) -> impl 'static + Future<Output = Result<()>> {
+        anchors: It,
+    ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         self.text.wait_for_anchors(anchors)
     }
 
     /// Waits for the buffer to receive operations up to the given version.
-    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_version(
+        &mut self,
+        version: clock::Global,
+    ) -> impl Future<Output = Result<()>> + use<> {
         self.text.wait_for_version(version)
     }
 
@@ -2160,8 +2129,10 @@ impl Buffer {
     {
         // Skip invalid edits and coalesce contiguous ones.
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
+
         for (range, new_text) in edits_iter {
             let mut range = range.start.to_offset(self)..range.end.to_offset(self);
+
             if range.start > range.end {
                 mem::swap(&mut range.start, &mut range.end);
             }
@@ -2236,7 +2207,12 @@ impl Buffer {
                         original_indent_columns,
                     } = &mode
                     {
-                        original_indent_column = Some(
+                        original_indent_column = Some(if new_text.starts_with('\n') {
+                            indent_size_for_text(
+                                new_text[range_of_insertion_to_indent.clone()].chars(),
+                            )
+                            .len
+                        } else {
                             original_indent_columns
                                 .get(ix)
                                 .copied()
@@ -2246,8 +2222,8 @@ impl Buffer {
                                         new_text[range_of_insertion_to_indent.clone()].chars(),
                                     )
                                     .len
-                                }),
-                        );
+                                })
+                        });
 
                         // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
@@ -2902,7 +2878,7 @@ impl BufferSnapshot {
             if let Some(range_to_truncate) = indent_ranges
                 .iter_mut()
                 .filter(|indent_range| indent_range.contains(&outdent_position))
-                .last()
+                .next_back()
             {
                 range_to_truncate.end = outdent_position;
             }
@@ -3712,47 +3688,49 @@ impl BufferSnapshot {
 
         let mut captures = Vec::<(Range<usize>, TextObject)>::new();
 
-        iter::from_fn(move || loop {
-            while let Some(capture) = captures.pop() {
-                if capture.0.overlaps(&range) {
-                    return Some(capture);
-                }
-            }
-
-            let mat = matches.peek()?;
-
-            let Some(config) = configs[mat.grammar_index].as_ref() else {
-                matches.advance();
-                continue;
-            };
-
-            for capture in mat.captures {
-                let Some(ix) = config
-                    .text_objects_by_capture_ix
-                    .binary_search_by_key(&capture.index, |e| e.0)
-                    .ok()
-                else {
-                    continue;
-                };
-                let text_object = config.text_objects_by_capture_ix[ix].1;
-                let byte_range = capture.node.byte_range();
-
-                let mut found = false;
-                for (range, existing) in captures.iter_mut() {
-                    if existing == &text_object {
-                        range.start = range.start.min(byte_range.start);
-                        range.end = range.end.max(byte_range.end);
-                        found = true;
-                        break;
+        iter::from_fn(move || {
+            loop {
+                while let Some(capture) = captures.pop() {
+                    if capture.0.overlaps(&range) {
+                        return Some(capture);
                     }
                 }
 
-                if !found {
-                    captures.push((byte_range, text_object));
-                }
-            }
+                let mat = matches.peek()?;
 
-            matches.advance();
+                let Some(config) = configs[mat.grammar_index].as_ref() else {
+                    matches.advance();
+                    continue;
+                };
+
+                for capture in mat.captures {
+                    let Some(ix) = config
+                        .text_objects_by_capture_ix
+                        .binary_search_by_key(&capture.index, |e| e.0)
+                        .ok()
+                    else {
+                        continue;
+                    };
+                    let text_object = config.text_objects_by_capture_ix[ix].1;
+                    let byte_range = capture.node.byte_range();
+
+                    let mut found = false;
+                    for (range, existing) in captures.iter_mut() {
+                        if existing == &text_object {
+                            range.start = range.start.min(byte_range.start);
+                            range.end = range.end.max(byte_range.end);
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if !found {
+                        captures.push((byte_range, text_object));
+                    }
+                }
+
+                matches.advance();
+            }
         })
     }
 
@@ -3891,91 +3869,93 @@ impl BufferSnapshot {
             .map(|grammar| grammar.runnable_config.as_ref())
             .collect::<Vec<_>>();
 
-        iter::from_fn(move || loop {
-            let mat = syntax_matches.peek()?;
+        iter::from_fn(move || {
+            loop {
+                let mat = syntax_matches.peek()?;
 
-            let test_range = test_configs[mat.grammar_index].and_then(|test_configs| {
-                let mut run_range = None;
-                let full_range = mat.captures.iter().fold(
-                    Range {
-                        start: usize::MAX,
-                        end: 0,
-                    },
-                    |mut acc, next| {
-                        let byte_range = next.node.byte_range();
-                        if acc.start > byte_range.start {
-                            acc.start = byte_range.start;
-                        }
-                        if acc.end < byte_range.end {
-                            acc.end = byte_range.end;
-                        }
-                        acc
-                    },
-                );
-                if full_range.start > full_range.end {
-                    // We did not find a full spanning range of this match.
-                    return None;
+                let test_range = test_configs[mat.grammar_index].and_then(|test_configs| {
+                    let mut run_range = None;
+                    let full_range = mat.captures.iter().fold(
+                        Range {
+                            start: usize::MAX,
+                            end: 0,
+                        },
+                        |mut acc, next| {
+                            let byte_range = next.node.byte_range();
+                            if acc.start > byte_range.start {
+                                acc.start = byte_range.start;
+                            }
+                            if acc.end < byte_range.end {
+                                acc.end = byte_range.end;
+                            }
+                            acc
+                        },
+                    );
+                    if full_range.start > full_range.end {
+                        // We did not find a full spanning range of this match.
+                        return None;
+                    }
+                    let extra_captures: SmallVec<[_; 1]> =
+                        SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
+                            test_configs
+                                .extra_captures
+                                .get(capture.index as usize)
+                                .cloned()
+                                .and_then(|tag_name| match tag_name {
+                                    RunnableCapture::Named(name) => {
+                                        Some((capture.node.byte_range(), name))
+                                    }
+                                    RunnableCapture::Run => {
+                                        let _ = run_range.insert(capture.node.byte_range());
+                                        None
+                                    }
+                                })
+                        }));
+                    let run_range = run_range?;
+                    let tags = test_configs
+                        .query
+                        .property_settings(mat.pattern_index)
+                        .iter()
+                        .filter_map(|property| {
+                            if *property.key == *"tag" {
+                                property
+                                    .value
+                                    .as_ref()
+                                    .map(|value| RunnableTag(value.to_string().into()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    let extra_captures = extra_captures
+                        .into_iter()
+                        .map(|(range, name)| {
+                            (
+                                name.to_string(),
+                                self.text_for_range(range.clone()).collect::<String>(),
+                            )
+                        })
+                        .collect();
+                    // All tags should have the same range.
+                    Some(RunnableRange {
+                        run_range,
+                        full_range,
+                        runnable: Runnable {
+                            tags,
+                            language: mat.language,
+                            buffer: self.remote_id(),
+                        },
+                        extra_captures,
+                        buffer_id: self.remote_id(),
+                    })
+                });
+
+                syntax_matches.advance();
+                if test_range.is_some() {
+                    // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
+                    // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
+                    return test_range;
                 }
-                let extra_captures: SmallVec<[_; 1]> =
-                    SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
-                        test_configs
-                            .extra_captures
-                            .get(capture.index as usize)
-                            .cloned()
-                            .and_then(|tag_name| match tag_name {
-                                RunnableCapture::Named(name) => {
-                                    Some((capture.node.byte_range(), name))
-                                }
-                                RunnableCapture::Run => {
-                                    let _ = run_range.insert(capture.node.byte_range());
-                                    None
-                                }
-                            })
-                    }));
-                let run_range = run_range?;
-                let tags = test_configs
-                    .query
-                    .property_settings(mat.pattern_index)
-                    .iter()
-                    .filter_map(|property| {
-                        if *property.key == *"tag" {
-                            property
-                                .value
-                                .as_ref()
-                                .map(|value| RunnableTag(value.to_string().into()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                let extra_captures = extra_captures
-                    .into_iter()
-                    .map(|(range, name)| {
-                        (
-                            name.to_string(),
-                            self.text_for_range(range.clone()).collect::<String>(),
-                        )
-                    })
-                    .collect();
-                // All tags should have the same range.
-                Some(RunnableRange {
-                    run_range,
-                    full_range,
-                    runnable: Runnable {
-                        tags,
-                        language: mat.language,
-                        buffer: self.remote_id(),
-                    },
-                    extra_captures,
-                    buffer_id: self.remote_id(),
-                })
-            });
-
-            syntax_matches.advance();
-            if test_range.is_some() {
-                // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
-                // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
-                return test_range;
             }
         })
     }
@@ -4060,11 +4040,7 @@ impl BufferSnapshot {
                         .then(a.diagnostic.severity.cmp(&b.diagnostic.severity))
                         // and stabilize order with group_id
                         .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
-                    if reversed {
-                        cmp.reverse()
-                    } else {
-                        cmp
-                    }
+                    if reversed { cmp.reverse() } else { cmp }
                 })?;
             iterators[next_ix]
                 .next()
@@ -4146,13 +4122,10 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn words_in_range(
-        &self,
-        query: Option<&str>,
-        range: Range<usize>,
-    ) -> HashMap<String, Range<Anchor>> {
-        if query.map_or(false, |query| query.is_empty()) {
-            return HashMap::default();
+    pub fn words_in_range(&self, query: WordsQuery) -> BTreeMap<String, Range<Anchor>> {
+        let query_str = query.fuzzy_contents;
+        if query_str.map_or(false, |query| query.is_empty()) {
+            return BTreeMap::default();
         }
 
         let classifier = CharClassifier::new(self.language.clone().map(|language| LanguageScope {
@@ -4161,13 +4134,13 @@ impl BufferSnapshot {
         }));
 
         let mut query_ix = 0;
-        let query = query.map(|query| query.chars().collect::<Vec<_>>());
-        let query_len = query.as_ref().map_or(0, |query| query.len());
+        let query_chars = query_str.map(|query| query.chars().collect::<Vec<_>>());
+        let query_len = query_chars.as_ref().map_or(0, |query| query.len());
 
-        let mut words = HashMap::default();
+        let mut words = BTreeMap::default();
         let mut current_word_start_ix = None;
-        let mut chunk_ix = range.start;
-        for chunk in self.chunks(range, false) {
+        let mut chunk_ix = query.range.start;
+        for chunk in self.chunks(query.range, false) {
             for (i, c) in chunk.text.char_indices() {
                 let ix = chunk_ix + i;
                 if classifier.is_word(c) {
@@ -4175,12 +4148,9 @@ impl BufferSnapshot {
                         current_word_start_ix = Some(ix);
                     }
 
-                    if let Some(query) = &query {
+                    if let Some(query_chars) = &query_chars {
                         if query_ix < query_len {
-                            let query_c = query.get(query_ix).expect(
-                                "query_ix is a vec of chars, which we access only if before the end",
-                            );
-                            if c.to_lowercase().eq(query_c.to_lowercase()) {
+                            if c.to_lowercase().eq(query_chars[query_ix].to_lowercase()) {
                                 query_ix += 1;
                             }
                         }
@@ -4189,10 +4159,16 @@ impl BufferSnapshot {
                 } else if let Some(word_start) = current_word_start_ix.take() {
                     if query_ix == query_len {
                         let word_range = self.anchor_before(word_start)..self.anchor_after(ix);
-                        words.insert(
-                            self.text_for_range(word_start..ix).collect::<String>(),
-                            word_range,
-                        );
+                        let mut word_text = self.text_for_range(word_start..ix).peekable();
+                        let first_char = word_text
+                            .peek()
+                            .and_then(|first_chunk| first_chunk.chars().next());
+                        // Skip empty and "words" starting with digits as a heuristic to reduce useless completions
+                        if !query.skip_digits
+                            || first_char.map_or(true, |first_char| !first_char.is_digit(10))
+                        {
+                            words.insert(word_text.collect(), word_range);
+                        }
                     }
                 }
                 query_ix = 0;
@@ -4202,6 +4178,15 @@ impl BufferSnapshot {
 
         words
     }
+}
+
+pub struct WordsQuery<'a> {
+    /// Only returns words with all chars from the fuzzy string in them.
+    pub fuzzy_contents: Option<&'a str>,
+    /// Skips words that start with a digit.
+    pub skip_digits: bool,
+    /// Buffer offset range, to look for words.
+    pub range: Range<usize>,
 }
 
 fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
@@ -4318,7 +4303,10 @@ impl<'a> BufferChunks<'a> {
             } else {
                 // We cannot obtain new highlights for a language-aware buffer iterator, as we don't have a buffer snapshot.
                 // Seeking such BufferChunks is not supported.
-                debug_assert!(false, "Attempted to seek on a language-aware buffer iterator without associated buffer snapshot");
+                debug_assert!(
+                    false,
+                    "Attempted to seek on a language-aware buffer iterator without associated buffer snapshot"
+                );
             }
 
             highlights.captures.set_byte_range(self.range.clone());
@@ -4619,10 +4607,6 @@ impl File for TestFile {
         WorktreeId::from_usize(0)
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        unimplemented!()
-    }
-
     fn to_proto(&self, _: &App) -> rpc::proto::File {
         unimplemented!()
     }
@@ -4655,22 +4639,24 @@ pub(crate) fn contiguous_ranges(
 ) -> impl Iterator<Item = Range<u32>> {
     let mut values = values;
     let mut current_range: Option<Range<u32>> = None;
-    std::iter::from_fn(move || loop {
-        if let Some(value) = values.next() {
-            if let Some(range) = &mut current_range {
-                if value == range.end && range.len() < max_len {
-                    range.end += 1;
-                    continue;
+    std::iter::from_fn(move || {
+        loop {
+            if let Some(value) = values.next() {
+                if let Some(range) = &mut current_range {
+                    if value == range.end && range.len() < max_len {
+                        range.end += 1;
+                        continue;
+                    }
                 }
-            }
 
-            let prev_range = current_range.clone();
-            current_range = Some(value..(value + 1));
-            if prev_range.is_some() {
-                return prev_range;
+                let prev_range = current_range.clone();
+                current_range = Some(value..(value + 1));
+                if prev_range.is_some() {
+                    return prev_range;
+                }
+            } else {
+                return current_range.take();
             }
-        } else {
-            return current_range.take();
         }
     })
 }
@@ -4718,21 +4704,25 @@ impl CharClassifier {
     }
 
     pub fn kind_with(&self, c: char, ignore_punctuation: bool) -> CharKind {
-        if c.is_whitespace() {
-            return CharKind::Whitespace;
-        } else if c.is_alphanumeric() || c == '_' {
+        if c.is_alphanumeric() || c == '_' {
             return CharKind::Word;
         }
 
         if let Some(scope) = &self.scope {
-            if let Some(characters) = scope.word_characters() {
+            let characters = if self.for_completion {
+                scope.completion_query_characters()
+            } else {
+                scope.word_characters()
+            };
+            if let Some(characters) = characters {
                 if characters.contains(&c) {
-                    if c == '-' && !self.for_completion && !ignore_punctuation {
-                        return CharKind::Punctuation;
-                    }
                     return CharKind::Word;
                 }
             }
+        }
+
+        if c.is_whitespace() {
+            return CharKind::Whitespace;
         }
 
         if ignore_punctuation {

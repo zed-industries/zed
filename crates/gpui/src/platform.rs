@@ -26,14 +26,20 @@ mod test;
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(all(
+    any(target_os = "linux", target_os = "freebsd"),
+    any(feature = "wayland", feature = "x11"),
+))]
+pub(crate) mod scap_screen_capture;
+
 use crate::{
-    point, Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
-    GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window, DEFAULT_WINDOW_SIZE,
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
+    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
+    Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
+    SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window, point,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_task::Runnable;
 use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
@@ -73,6 +79,11 @@ pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::TestScreenCaptureSource;
+
+/// Returns a background executor for the current platform.
+pub fn background_executor() -> BackgroundExecutor {
+    current_platform(true).background_executor()
+}
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
@@ -153,6 +164,7 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    fn is_screen_capture_supported(&self) -> bool;
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
@@ -241,13 +253,14 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 /// A source of on-screen video content that can be captured.
 pub trait ScreenCaptureSource {
     /// Returns the video resolution of this source.
-    fn resolution(&self) -> Result<Size<Pixels>>;
+    fn resolution(&self) -> Result<Size<DevicePixels>>;
 
     /// Start capture video from this source, invoking the given callback
     /// with each frame.
     fn stream(
         &self,
-        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+        foreground_executor: &ForegroundExecutor,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
 }
 
@@ -378,6 +391,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_maximized(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
+    fn resize(&mut self, size: Size<Pixels>);
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
@@ -1228,6 +1242,9 @@ pub enum CursorStyle {
     /// A cursor indicating that the operation will result in a context menu
     /// corresponds to the CSS cursor value `context-menu`
     ContextualMenu,
+
+    /// Hide the cursor
+    None,
 }
 
 impl Default for CursorStyle {
@@ -1298,11 +1315,7 @@ impl ClipboardItem {
             }
         }
 
-        if any_entries {
-            Some(answer)
-        } else {
-            None
-        }
+        if any_entries { Some(answer) } else { None }
     }
 
     /// If this item is one ClipboardEntry::String, returns its metadata.
@@ -1324,6 +1337,44 @@ impl ClipboardItem {
     /// Get owned versions of the item's entries
     pub fn into_entries(self) -> impl Iterator<Item = ClipboardEntry> {
         self.entries.into_iter()
+    }
+}
+
+impl From<ClipboardString> for ClipboardEntry {
+    fn from(value: ClipboardString) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<String> for ClipboardEntry {
+    fn from(value: String) -> Self {
+        Self::from(ClipboardString::from(value))
+    }
+}
+
+impl From<Image> for ClipboardEntry {
+    fn from(value: Image) -> Self {
+        Self::Image(value)
+    }
+}
+
+impl From<ClipboardEntry> for ClipboardItem {
+    fn from(value: ClipboardEntry) -> Self {
+        Self {
+            entries: vec![value],
+        }
+    }
+}
+
+impl From<String> for ClipboardItem {
+    fn from(value: String) -> Self {
+        Self::from(ClipboardEntry::from(value))
+    }
+}
+
+impl From<Image> for ClipboardItem {
+    fn from(value: Image) -> Self {
+        Self::from(ClipboardEntry::from(value))
     }
 }
 
@@ -1493,5 +1544,14 @@ impl ClipboardString {
         let mut hasher = SeaHasher::new();
         text.hash(&mut hasher);
         hasher.finish()
+    }
+}
+
+impl From<String> for ClipboardString {
+    fn from(value: String) -> Self {
+        Self {
+            text: value,
+            metadata: None,
+        }
     }
 }

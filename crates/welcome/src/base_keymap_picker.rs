@@ -1,16 +1,16 @@
 use super::base_keymap_setting::BaseKeymap;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, WeakEntity,
-    Window,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, WeakEntity, Window,
+    actions,
 };
 use picker::{Picker, PickerDelegate};
 use project::Fs;
-use settings::{update_settings_file, Settings};
+use settings::{Settings, update_settings_file};
 use std::sync::Arc;
-use ui::{prelude::*, ListItem, ListItemSpacing};
+use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ui::HighlightedLabel, ModalView, Workspace};
+use workspace::{ModalView, Workspace, ui::HighlightedLabel};
 
 actions!(welcome, [ToggleBaseKeymapSelector]);
 
@@ -130,7 +130,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             .map(|(id, name)| StringMatchCandidate::new(id, name))
             .collect::<Vec<_>>();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -154,7 +154,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.delegate.matches = matches;
                 this.delegate.selected_index = this
                     .delegate

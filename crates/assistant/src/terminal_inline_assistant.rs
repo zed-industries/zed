@@ -1,39 +1,39 @@
 use crate::{AssistantPanel, AssistantPanelEvent, DEFAULT_CONTEXT_LINES};
 use anyhow::{Context as _, Result};
-use assistant_context_editor::{humanize_token_count, RequestType};
+use assistant_context_editor::{RequestType, humanize_token_count};
 use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{
-    actions::{MoveDown, MoveUp, SelectAll},
     Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
+    actions::{MoveDown, MoveUp, SelectAll},
 };
 use fs::Fs;
-use futures::{channel::mpsc, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, Subscription, Task,
     TextStyle, UpdateGlobal, WeakEntity,
 };
 use language::Buffer;
 use language_model::{
-    report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    Role, report_assistant_event,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use prompt_store::PromptBuilder;
-use settings::{update_settings_file, Settings};
+use settings::{Settings, update_settings_file};
 use std::{
     cmp,
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{prelude::*, text_for_action, IconButtonShape, Tooltip};
+use ui::{IconButtonShape, Tooltip, prelude::*, text_for_action};
 use util::ResultExt;
-use workspace::{notifications::NotificationId, Toast, Workspace};
+use workspace::{Toast, Workspace, notifications::NotificationId};
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -318,11 +318,13 @@ impl TerminalInlineAssistant {
                 })
                 .log_err();
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            if let Some(ConfiguredModel { model, .. }) =
+                LanguageModelRegistry::read_global(cx).inline_assistant_model()
+            {
                 let codegen = assist.codegen.read(cx);
                 let executor = cx.background_executor().clone();
                 report_assistant_event(
-                    AssistantEvent {
+                    AssistantEventData {
                         conversation_id: None,
                         kind: AssistantKind::InlineTerminal,
                         message_id: codegen.message_id.clone(),
@@ -652,8 +654,8 @@ impl Render for PromptEditor {
                                 format!(
                                     "Using {}",
                                     LanguageModelRegistry::read_global(cx)
-                                        .active_model()
-                                        .map(|model| model.name().0)
+                                        .inline_assistant_model()
+                                        .map(|inline_assistant| inline_assistant.model.name().0)
                                         .unwrap_or_else(|| "No model selected".into()),
                                 ),
                                 None,
@@ -720,7 +722,6 @@ impl PromptEditor {
                 },
                 prompt_buffer,
                 None,
-                false,
                 window,
                 cx,
             );
@@ -823,10 +824,12 @@ impl PromptEditor {
 
     fn count_tokens(&mut self, cx: &mut Context<Self>) {
         let assist_id = self.id;
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        else {
             return;
         };
-        self.pending_token_count = cx.spawn(|this, mut cx| async move {
+        self.pending_token_count = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_secs(1)).await;
             let request =
                 cx.update_global(|inline_assistant: &mut TerminalInlineAssistant, cx| {
@@ -834,7 +837,7 @@ impl PromptEditor {
                 })??;
 
             let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.token_count = Some(token_count);
                 cx.notify();
             })
@@ -981,7 +984,9 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let model = LanguageModelRegistry::read_global(cx)
+            .inline_assistant_model()?
+            .model;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -1132,7 +1137,9 @@ impl Codegen {
     }
 
     pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut Context<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        else {
             return;
         };
 
@@ -1141,7 +1148,7 @@ impl Codegen {
         let telemetry = self.telemetry.clone();
         self.status = CodegenStatus::Pending;
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
-        self.generation = cx.spawn(|this, mut cx| async move {
+        self.generation = cx.spawn(async move |this, cx| {
             let model_telemetry_id = model.telemetry_id();
             let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, &cx).await;
@@ -1176,7 +1183,7 @@ impl Codegen {
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
                         report_assistant_event(
-                            AssistantEvent {
+                            AssistantEventData {
                                 conversation_id: None,
                                 kind: AssistantKind::InlineTerminal,
                                 message_id,
@@ -1198,12 +1205,12 @@ impl Codegen {
                     }
                 });
 
-                this.update(&mut cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.message_id = message_id;
                 })?;
 
                 while let Some(hunk) = hunks_rx.next().await {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if let Some(transaction) = &mut this.transaction {
                             transaction.push(hunk, cx);
                             cx.notify();
@@ -1217,7 +1224,7 @@ impl Codegen {
 
             let result = generate.await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if let Err(error) = result {
                     this.status = CodegenStatus::Error(error);
                 } else {

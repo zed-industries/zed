@@ -1,9 +1,14 @@
+<<<<<<< HEAD
 use documented::Documented;
 use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
+=======
+use gpui::{AnyElement, AnyView, ClickEvent, Hsla, Rems, transparent_black};
+use gpui::{CursorStyle, DefiniteLength, MouseButton, MouseDownEvent, MouseUpEvent, relative};
+>>>>>>> main
 use smallvec::SmallVec;
 
-use crate::{prelude::*, DynamicSpacing, ElevationIndex};
+use crate::{DynamicSpacing, ElevationIndex, prelude::*};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
 pub trait SelectableButton: Toggleable {
@@ -360,6 +365,7 @@ pub struct ButtonLike {
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
     cursor_style: CursorStyle,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_right_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -380,6 +386,7 @@ impl ButtonLike {
             children: SmallVec::new(),
             cursor_style: CursorStyle::PointingHand,
             on_click: None,
+            on_right_click: None,
             layer: None,
         }
     }
@@ -397,13 +404,21 @@ impl ButtonLike {
         self
     }
 
-    pub(crate) fn height(mut self, height: DefiniteLength) -> Self {
+    pub fn height(mut self, height: DefiniteLength) -> Self {
         self.height = Some(height);
         self
     }
 
     pub(crate) fn rounding(mut self, rounding: impl Into<Option<ButtonLikeRounding>>) -> Self {
         self.rounding = rounding.into();
+        self
+    }
+
+    pub fn on_right_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_right_click = Some(Box::new(handler));
         self
     }
 }
@@ -529,6 +544,37 @@ impl RenderOnce for ButtonLike {
                     .hover(|hover| hover.bg(style.hovered(self.layer, cx).background))
                     .active(|active| active.bg(style.active(cx).background))
             })
+            .when_some(
+                self.on_right_click.filter(|_| !self.disabled),
+                |this, on_right_click| {
+                    this.on_mouse_down(MouseButton::Right, |_event, window, cx| {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    })
+                    .on_mouse_up(
+                        MouseButton::Right,
+                        move |event, window, cx| {
+                            cx.stop_propagation();
+                            let click_event = ClickEvent {
+                                down: MouseDownEvent {
+                                    button: MouseButton::Right,
+                                    position: event.position,
+                                    modifiers: event.modifiers,
+                                    click_count: 1,
+                                    first_mouse: false,
+                                },
+                                up: MouseUpEvent {
+                                    button: MouseButton::Right,
+                                    position: event.position,
+                                    modifiers: event.modifiers,
+                                    click_count: 1,
+                                },
+                            };
+                            (on_right_click)(&click_event, window, cx)
+                        },
+                    )
+                },
+            )
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {

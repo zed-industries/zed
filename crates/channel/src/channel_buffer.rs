@@ -5,8 +5,8 @@ use collections::HashMap;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::proto::serialize_version;
 use rpc::{
-    proto::{self, PeerId},
     AnyProtoClient, TypedEnvelope,
+    proto::{self, PeerId},
 };
 use std::{sync::Arc, time::Duration};
 use text::BufferId;
@@ -47,7 +47,7 @@ impl ChannelBuffer {
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         channel_store: Entity<ChannelStore>,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let response = client
             .request(proto::JoinChannelBuffer {
@@ -66,7 +66,7 @@ impl ChannelBuffer {
             let capability = channel_store.read(cx).channel_capability(channel.id);
             language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
         })?;
-        buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
+        buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
@@ -201,14 +201,14 @@ impl ChannelBuffer {
         }
     }
 
-    pub fn acknowledge_buffer_version(&mut self, cx: &mut Context<'_, ChannelBuffer>) {
+    pub fn acknowledge_buffer_version(&mut self, cx: &mut Context<ChannelBuffer>) {
         let buffer = self.buffer.read(cx);
         let version = buffer.version();
         let buffer_id = buffer.remote_id().into();
         let client = self.client.clone();
         let epoch = self.epoch();
 
-        self.acknowledge_task = Some(cx.spawn(move |_, cx| async move {
+        self.acknowledge_task = Some(cx.spawn(async move |_, cx| {
             cx.background_executor()
                 .timer(ACKNOWLEDGE_DEBOUNCE_INTERVAL)
                 .await;

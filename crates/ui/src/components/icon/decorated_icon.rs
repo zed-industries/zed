@@ -1,6 +1,6 @@
 use gpui::{AnyElement, IntoElement, Point};
 
-use crate::{prelude::*, IconDecoration, IconDecorationKind};
+use crate::{IconDecoration, IconDecorationKind, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct DecoratedIcon {

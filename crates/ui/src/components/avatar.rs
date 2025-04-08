@@ -1,7 +1,11 @@
 use crate::prelude::*;
 
+<<<<<<< HEAD
 use documented::Documented;
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
+=======
+use gpui::{AnyElement, Hsla, ImageSource, Img, IntoElement, Styled, img};
+>>>>>>> main
 
 /// An element that renders a user avatar with customizable appearance options.
 ///

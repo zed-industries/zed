@@ -1,22 +1,22 @@
 mod registrar;
 
 use crate::{
-    search_bar::render_nav_button, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll,
-    ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
+    SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex,
+    ToggleReplace, ToggleSelection, ToggleWholeWord, search_bar::render_nav_button,
 };
 use any_vec::AnyVec;
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    actions::{Backtab, Tab},
     DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
+    actions::{Backtab, Tab},
 };
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, Action, App, ClickEvent, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
-    Render, ScrollHandle, Styled, Subscription, Task, TextStyle, Window,
+    Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
+    Styled, Subscription, Task, TextStyle, Window, actions, div, impl_actions,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -31,14 +31,14 @@ use theme::ThemeSettings;
 use zed_actions::outline::ToggleOutline;
 
 use ui::{
-    h_flex, prelude::*, utils::SearchInputWidth, IconButton, IconButtonShape, IconName, Tooltip,
-    BASE_REM_SIZE_IN_PX,
+    BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
+    utils::SearchInputWidth,
 };
 use util::ResultExt;
 use workspace::{
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::ItemHandle,
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 pub use registrar::DivRegistrar;
@@ -693,13 +693,13 @@ impl BufferSearchBar {
                 query_buffer.set_language_registry(languages.clone());
             });
 
-            cx.spawn(|buffer_search_bar, mut cx| async move {
+            cx.spawn(async move |buffer_search_bar, cx| {
                 let regex_language = languages
                     .language_for_name("regex")
                     .await
                     .context("loading regex language")?;
                 buffer_search_bar
-                    .update(&mut cx, |buffer_search_bar, cx| {
+                    .update(cx, |buffer_search_bar, cx| {
                         buffer_search_bar.regex_language = Some(regex_language);
                         buffer_search_bar.adjust_query_regex_language(cx);
                     })
@@ -848,9 +848,9 @@ impl BufferSearchBar {
             .map(|suggestion| self.search(&suggestion, Some(self.default_options), window, cx));
 
         if let Some(search) = search {
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 search.await?;
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update_in(cx, |this, window, cx| {
                     this.activate_current_match(window, cx)
                 })
             })
@@ -936,12 +936,12 @@ impl BufferSearchBar {
         self.update_matches(!updated, window, cx)
     }
 
-    fn render_search_option_button(
+    fn render_search_option_button<Action: Fn(&ClickEvent, &mut Window, &mut App) + 'static>(
         &self,
         option: SearchOptions,
         focus_handle: FocusHandle,
-        action: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
+        action: Action,
+    ) -> impl IntoElement + use<Action> {
         let is_active = self.search_options.contains(option);
         option.as_button(is_active, focus_handle, action)
     }
@@ -1097,9 +1097,9 @@ impl BufferSearchBar {
                 self.editor_needed_width = width;
                 cx.notify();
 
-                cx.spawn_in(window, |this, mut cx| async move {
+                cx.spawn_in(window, async move |this, cx| {
                     search.await?;
-                    this.update_in(&mut cx, |this, window, cx| {
+                    this.update_in(cx, |this, window, cx| {
                         this.activate_current_match(window, cx)
                     })
                 })
@@ -1271,10 +1271,10 @@ impl BufferSearchBar {
                 let matches = active_searchable_item.find_matches(query, window, cx);
 
                 let active_searchable_item = active_searchable_item.downgrade();
-                self.pending_search = Some(cx.spawn_in(window, |this, mut cx| async move {
+                self.pending_search = Some(cx.spawn_in(window, async move |this, cx| {
                     let matches = matches.await;
 
-                    this.update_in(&mut cx, |this, window, cx| {
+                    this.update_in(cx, |this, window, cx| {
                         if let Some(active_searchable_item) =
                             WeakSearchableItemHandle::upgrade(active_searchable_item.as_ref(), cx)
                         {
@@ -1521,7 +1521,7 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer, SearchSettings};
+    use editor::{DisplayPoint, Editor, MultiBuffer, SearchSettings, display_map::DisplayRow};
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
@@ -2678,7 +2678,7 @@ mod tests {
                 ],
                 cx,
             );
-            Editor::for_multibuffer(multibuffer, None, false, window, cx)
+            Editor::for_multibuffer(multibuffer, None, window, cx)
         });
 
         let search_bar = cx.new_window_entity(|window, cx| {

@@ -5,10 +5,10 @@ use std::any::TypeId;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
-use gpui::{actions, App, Entity, EventEmitter, FocusHandle, Focusable};
+use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, actions};
 use ui::prelude::*;
-use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
+use workspace::item::{Item, ItemEvent};
 
 use crate::appearance_settings_controls::AppearanceSettingsControls;
 

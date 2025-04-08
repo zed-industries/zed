@@ -2,7 +2,7 @@
 mod context_tests;
 
 use crate::patch::{AssistantEdit, AssistantPatch, AssistantPatchStatus};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
@@ -12,17 +12,17 @@ use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RemoveOptions};
-use futures::{future::Shared, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
     Task,
 };
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    report_assistant_event, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolUseId, MaxMonthlySpendReachedError,
-    MessageContent, PaymentRequiredError, Role, StopReason,
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
+    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
+    Role, StopReason, report_assistant_event,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -31,7 +31,7 @@ use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
-    cmp::{max, Ordering},
+    cmp::{Ordering, max},
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -40,10 +40,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -162,6 +162,11 @@ pub enum ContextOperation {
         section: SlashCommandOutputSection<language::Anchor>,
         version: clock::Global,
     },
+    ThoughtProcessOutputSectionAdded {
+        timestamp: clock::Lamport,
+        section: ThoughtProcessOutputSection<language::Anchor>,
+        version: clock::Global,
+    },
     BufferOperation(language::Operation),
 }
 
@@ -256,6 +261,20 @@ impl ContextOperation {
                         message.timestamp.context("missing timestamp")?,
                     ),
                     error_message: message.error_message,
+                    version: language::proto::deserialize_version(&message.version),
+                })
+            }
+            proto::context_operation::Variant::ThoughtProcessOutputSectionAdded(message) => {
+                let section = message.section.context("missing section")?;
+                Ok(Self::ThoughtProcessOutputSectionAdded {
+                    timestamp: language::proto::deserialize_timestamp(
+                        message.timestamp.context("missing timestamp")?,
+                    ),
+                    section: ThoughtProcessOutputSection {
+                        range: language::proto::deserialize_anchor_range(
+                            section.range.context("invalid range")?,
+                        )?,
+                    },
                     version: language::proto::deserialize_version(&message.version),
                 })
             }
@@ -370,6 +389,27 @@ impl ContextOperation {
                     },
                 )),
             },
+            Self::ThoughtProcessOutputSectionAdded {
+                timestamp,
+                section,
+                version,
+            } => proto::ContextOperation {
+                variant: Some(
+                    proto::context_operation::Variant::ThoughtProcessOutputSectionAdded(
+                        proto::context_operation::ThoughtProcessOutputSectionAdded {
+                            timestamp: Some(language::proto::serialize_timestamp(*timestamp)),
+                            section: Some({
+                                proto::ThoughtProcessOutputSection {
+                                    range: Some(language::proto::serialize_anchor_range(
+                                        section.range.clone(),
+                                    )),
+                                }
+                            }),
+                            version: language::proto::serialize_version(version),
+                        },
+                    ),
+                ),
+            },
             Self::BufferOperation(operation) => proto::ContextOperation {
                 variant: Some(proto::context_operation::Variant::BufferOperation(
                     proto::context_operation::BufferOperation {
@@ -387,7 +427,8 @@ impl ContextOperation {
             Self::UpdateSummary { summary, .. } => summary.timestamp,
             Self::SlashCommandStarted { id, .. } => id.0,
             Self::SlashCommandOutputSectionAdded { timestamp, .. }
-            | Self::SlashCommandFinished { timestamp, .. } => *timestamp,
+            | Self::SlashCommandFinished { timestamp, .. }
+            | Self::ThoughtProcessOutputSectionAdded { timestamp, .. } => *timestamp,
             Self::BufferOperation(_) => {
                 panic!("reading the timestamp of a buffer operation is not supported")
             }
@@ -402,7 +443,8 @@ impl ContextOperation {
             | Self::UpdateSummary { version, .. }
             | Self::SlashCommandStarted { version, .. }
             | Self::SlashCommandOutputSectionAdded { version, .. }
-            | Self::SlashCommandFinished { version, .. } => version,
+            | Self::SlashCommandFinished { version, .. }
+            | Self::ThoughtProcessOutputSectionAdded { version, .. } => version,
             Self::BufferOperation(_) => {
                 panic!("reading the version of a buffer operation is not supported")
             }
@@ -418,6 +460,8 @@ pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
+    StartedThoughtProcess(Range<language::Anchor>),
+    EndedThoughtProcess(language::Anchor),
     PatchesUpdated {
         removed: Vec<Range<language::Anchor>>,
         updated: Vec<Range<language::Anchor>>,
@@ -495,6 +539,17 @@ impl MessageMetadata {
             _ => false,
         };
         result
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThoughtProcessOutputSection<T> {
+    pub range: Range<T>,
+}
+
+impl ThoughtProcessOutputSection<language::Anchor> {
+    pub fn is_valid(&self, buffer: &language::TextBuffer) -> bool {
+        self.range.start.is_valid(buffer) && !self.range.to_offset(buffer).is_empty()
     }
 }
 
@@ -580,6 +635,7 @@ pub struct AssistantContext {
     edits_since_last_parse: language::Subscription,
     slash_commands: Arc<SlashCommandWorkingSet>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+    thought_process_output_sections: Vec<ThoughtProcessOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
     contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
@@ -682,6 +738,7 @@ impl AssistantContext {
             parsed_slash_commands: Vec::new(),
             invoked_slash_commands: HashMap::default(),
             slash_command_output_sections: Vec::new(),
+            thought_process_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
             summary: None,
             pending_summary: Task::ready(None),
@@ -759,6 +816,18 @@ impl AssistantContext {
                             label: section.label.clone(),
                             metadata: section.metadata.clone(),
                         })
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            thought_process_output_sections: self
+                .thought_process_output_sections
+                .iter()
+                .filter_map(|section| {
+                    if section.is_valid(buffer) {
+                        let range = section.range.to_offset(buffer);
+                        Some(ThoughtProcessOutputSection { range })
                     } else {
                         None
                     }
@@ -957,6 +1026,16 @@ impl AssistantContext {
                         cx.emit(ContextEvent::SlashCommandOutputSectionAdded { section });
                     }
                 }
+                ContextOperation::ThoughtProcessOutputSectionAdded { section, .. } => {
+                    let buffer = self.buffer.read(cx);
+                    if let Err(ix) = self
+                        .thought_process_output_sections
+                        .binary_search_by(|probe| probe.range.cmp(&section.range, buffer))
+                    {
+                        self.thought_process_output_sections
+                            .insert(ix, section.clone());
+                    }
+                }
                 ContextOperation::SlashCommandFinished {
                     id,
                     error_message,
@@ -1018,6 +1097,9 @@ impl AssistantContext {
                 self.has_received_operations_for_anchor_range(output_range.clone(), cx)
             }
             ContextOperation::SlashCommandOutputSectionAdded { section, .. } => {
+                self.has_received_operations_for_anchor_range(section.range.clone(), cx)
+            }
+            ContextOperation::ThoughtProcessOutputSectionAdded { section, .. } => {
                 self.has_received_operations_for_anchor_range(section.range.clone(), cx)
             }
             ContextOperation::SlashCommandFinished { .. } => true,
@@ -1128,6 +1210,12 @@ impl AssistantContext {
         &self.slash_command_output_sections
     }
 
+    pub fn thought_process_output_sections(
+        &self,
+    ) -> &[ThoughtProcessOutputSection<language::Anchor>] {
+        &self.thought_process_output_sections
+    }
+
     pub fn contains_files(&self, cx: &App) -> bool {
         let buffer = self.buffer.read(cx);
         self.slash_command_output_sections.iter().any(|section| {
@@ -1144,9 +1232,9 @@ impl AssistantContext {
 
     fn set_language(&mut self, cx: &mut Context<Self>) {
         let markdown = self.language_registry.language_for_name("Markdown");
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let markdown = markdown.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.buffer
                     .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
             })
@@ -1184,11 +1272,11 @@ impl AssistantContext {
         // Assume it will be a Chat request, even though that takes fewer tokens (and risks going over the limit),
         // because otherwise you see in the UI that your empty message has a bunch of tokens already used.
         let request = self.to_completion_request(RequestType::Chat, cx);
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
         let debounce = self.token_count.is_some();
-        self.pending_token_count = cx.spawn(|this, mut cx| {
+        self.pending_token_count = cx.spawn(async move |this, cx| {
             async move {
                 if debounce {
                     cx.background_executor()
@@ -1196,14 +1284,17 @@ impl AssistantContext {
                         .await;
                 }
 
-                let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
-                this.update(&mut cx, |this, cx| {
+                let token_count = cx
+                    .update(|cx| model.model.count_tokens(request, cx))?
+                    .await?;
+                this.update(cx, |this, cx| {
                     this.token_count = Some(token_count);
-                    this.start_cache_warming(&model, cx);
+                    this.start_cache_warming(&model.model, cx);
                     cx.notify()
                 })
             }
             .log_err()
+            .await
         });
     }
 
@@ -1342,7 +1433,7 @@ impl AssistantContext {
         };
 
         let model = Arc::clone(model);
-        self.pending_cache_warming_task = cx.spawn(|this, mut cx| {
+        self.pending_cache_warming_task = cx.spawn(async move |this, cx| {
             async move {
                 match model.stream_completion(request, &cx).await {
                     Ok(mut stream) => {
@@ -1353,13 +1444,14 @@ impl AssistantContext {
                         log::warn!("Cache warming failed: {}", e);
                     }
                 };
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.update_cache_status_for_completion(cx);
                 })
                 .ok();
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         });
     }
 
@@ -1916,7 +2008,7 @@ impl AssistantContext {
             });
         self.reparse(cx);
 
-        let insert_output_task = cx.spawn(|this, mut cx| async move {
+        let insert_output_task = cx.spawn(async move |this, cx| {
             let run_command = async {
                 let mut stream = output.await?;
 
@@ -1933,7 +2025,7 @@ impl AssistantContext {
 
                 while let Some(event) = stream.next().await {
                     let event = event?;
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.buffer.update(cx, |buffer, _cx| {
                             buffer.finalize_last_transaction();
                             buffer.start_transaction()
@@ -2034,7 +2126,7 @@ impl AssistantContext {
                     })?;
                 }
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.buffer.update(cx, |buffer, cx| {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
@@ -2080,7 +2172,7 @@ impl AssistantContext {
 
             let command_result = run_command.await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let version = this.version.clone();
                 let timestamp = this.next_timestamp();
                 let Some(invoked_slash_command) = this.invoked_slash_commands.get_mut(&command_id)
@@ -2166,6 +2258,35 @@ impl AssistantContext {
         );
     }
 
+    fn insert_thought_process_output_section(
+        &mut self,
+        section: ThoughtProcessOutputSection<language::Anchor>,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer = self.buffer.read(cx);
+        let insertion_ix = match self
+            .thought_process_output_sections
+            .binary_search_by(|probe| probe.range.cmp(&section.range, buffer))
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        self.thought_process_output_sections
+            .insert(insertion_ix, section.clone());
+        // cx.emit(ContextEvent::ThoughtProcessOutputSectionAdded {
+        //     section: section.clone(),
+        // });
+        let version = self.version.clone();
+        let timestamp = self.next_timestamp();
+        self.push_op(
+            ContextOperation::ThoughtProcessOutputSectionAdded {
+                timestamp,
+                section,
+                version,
+            },
+            cx,
+        );
+    }
+
     pub fn completion_provider_changed(&mut self, cx: &mut Context<Self>) {
         self.count_remaining_tokens(cx);
     }
@@ -2185,14 +2306,16 @@ impl AssistantContext {
         cx: &mut Context<Self>,
     ) -> Option<MessageAnchor> {
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let provider = model_registry.active_provider()?;
-        let model = model_registry.active_model()?;
+        let model = model_registry.default_model()?;
         let last_message_id = self.get_last_valid_message_id(cx)?;
 
-        if !provider.is_authenticated(cx) {
+        if !model.provider.is_authenticated(cx) {
             log::info!("completion provider has no credentials");
             return None;
         }
+
+        let model = model.model;
+
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
@@ -2210,7 +2333,7 @@ impl AssistantContext {
         let pending_completion_id = post_inc(&mut self.completion_count);
 
         let task = cx.spawn({
-            |this, mut cx| async move {
+            async move |this, cx| {
                 let stream = model.stream_completion(request, &cx);
                 let assistant_message_id = assistant_message.id;
                 let mut response_latency = None;
@@ -2218,6 +2341,10 @@ impl AssistantContext {
                     let request_start = Instant::now();
                     let mut events = stream.await?;
                     let mut stop_reason = StopReason::EndTurn;
+                    let mut thought_process_stack = Vec::new();
+
+                    const THOUGHT_PROCESS_START_MARKER: &str = "<think>\n";
+                    const THOUGHT_PROCESS_END_MARKER: &str = "\n</think>";
 
                     while let Some(event) = events.next().await {
                         if response_latency.is_none() {
@@ -2225,7 +2352,10 @@ impl AssistantContext {
                         }
                         let event = event?;
 
-                        this.update(&mut cx, |this, cx| {
+                        let mut context_event = None;
+                        let mut thought_process_output_section = None;
+
+                        this.update(cx, |this, cx| {
                             let message_ix = this
                                 .message_anchors
                                 .iter()
@@ -2243,7 +2373,50 @@ impl AssistantContext {
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
-                                    LanguageModelCompletionEvent::Text(chunk) => {
+                                    LanguageModelCompletionEvent::Thinking(chunk) => {
+                                        if thought_process_stack.is_empty() {
+                                            let start =
+                                                buffer.anchor_before(message_old_end_offset);
+                                            thought_process_stack.push(start);
+                                            let chunk =
+                                                format!("{THOUGHT_PROCESS_START_MARKER}{chunk}{THOUGHT_PROCESS_END_MARKER}");
+                                            let chunk_len = chunk.len();
+                                            buffer.edit(
+                                                [(
+                                                    message_old_end_offset..message_old_end_offset,
+                                                    chunk,
+                                                )],
+                                                None,
+                                                cx,
+                                            );
+                                            let end = buffer
+                                                .anchor_before(message_old_end_offset + chunk_len);
+                                            context_event = Some(
+                                                ContextEvent::StartedThoughtProcess(start..end),
+                                            );
+                                        } else {
+                                            // This ensures that all the thinking chunks are inserted inside the thinking tag
+                                            let insertion_position =
+                                                message_old_end_offset - THOUGHT_PROCESS_END_MARKER.len();
+                                            buffer.edit(
+                                                [(insertion_position..insertion_position, chunk)],
+                                                None,
+                                                cx,
+                                            );
+                                        }
+                                    }
+                                    LanguageModelCompletionEvent::Text(mut chunk) => {
+                                        if let Some(start) = thought_process_stack.pop() {
+                                            let end = buffer.anchor_before(message_old_end_offset);
+                                            context_event =
+                                                Some(ContextEvent::EndedThoughtProcess(end));
+                                            thought_process_output_section =
+                                                Some(ThoughtProcessOutputSection {
+                                                    range: start..end,
+                                                });
+                                            chunk.insert_str(0, "\n\n");
+                                        }
+
                                         buffer.edit(
                                             [(
                                                 message_old_end_offset..message_old_end_offset,
@@ -2254,8 +2427,16 @@ impl AssistantContext {
                                         );
                                     }
                                     LanguageModelCompletionEvent::ToolUse(_) => {}
+                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
                                 }
                             });
+
+                            if let Some(section) = thought_process_output_section.take() {
+                                this.insert_thought_process_output_section(section, cx);
+                            }
+                            if let Some(context_event) = context_event.take() {
+                                cx.emit(context_event);
+                            }
 
                             cx.emit(ContextEvent::StreamedCompletion);
 
@@ -2263,7 +2444,7 @@ impl AssistantContext {
                         })?;
                         smol::future::yield_now().await;
                     }
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.pending_completions
                             .retain(|completion| completion.id != pending_completion_id);
                         this.summarize(false, cx);
@@ -2275,7 +2456,7 @@ impl AssistantContext {
 
                 let result = stream_completion.await;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     let error_message = if let Some(error) = result.as_ref().err() {
                         if error.is::<PaymentRequiredError>() {
                             cx.emit(ContextEvent::ShowPaymentRequiredError);
@@ -2317,7 +2498,7 @@ impl AssistantContext {
                         .language()
                         .map(|language| language.name());
                     report_assistant_event(
-                        AssistantEvent {
+                        AssistantEventData {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,
                             phase: AssistantPhase::Response,
@@ -2763,15 +2944,12 @@ impl AssistantContext {
     }
 
     pub fn summarize(&mut self, replace_old: bool, cx: &mut Context<Self>) {
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
-            return;
-        };
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
 
         if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_none()) {
-            if !provider.is_authenticated(cx) {
+            if !model.provider.is_authenticated(cx) {
                 return;
             }
 
@@ -2785,16 +2963,16 @@ impl AssistantContext {
                 cache: false,
             });
 
-            self.pending_summary = cx.spawn(|this, mut cx| {
+            self.pending_summary = cx.spawn(async move |this, cx| {
                 async move {
-                    let stream = model.stream_completion_text(request, &cx);
+                    let stream = model.model.stream_completion_text(request, &cx);
                     let mut messages = stream.await?;
 
                     let mut replaced = !replace_old;
                     while let Some(message) = messages.stream.next().await {
                         let text = message?;
                         let mut lines = text.lines();
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             let version = this.version.clone();
                             let timestamp = this.next_timestamp();
                             let summary = this.summary.get_or_insert(ContextSummary::default());
@@ -2818,7 +2996,7 @@ impl AssistantContext {
                         }
                     }
 
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         let version = this.version.clone();
                         let timestamp = this.next_timestamp();
                         if let Some(summary) = this.summary.as_mut() {
@@ -2836,6 +3014,7 @@ impl AssistantContext {
                     anyhow::Ok(())
                 }
                 .log_err()
+                .await
             });
         }
     }
@@ -2942,12 +3121,12 @@ impl AssistantContext {
             return;
         }
 
-        self.pending_save = cx.spawn(|this, mut cx| async move {
+        self.pending_save = cx.spawn(async move |this, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
 
-            let (old_path, summary) = this.read_with(&cx, |this, _| {
+            let (old_path, summary) = this.read_with(cx, |this, _| {
                 let path = this.path.clone();
                 let summary = if let Some(summary) = this.summary.as_ref() {
                     if summary.done {
@@ -2962,7 +3141,7 @@ impl AssistantContext {
             })?;
 
             if let Some(summary) = summary {
-                let context = this.read_with(&cx, |this, cx| this.serialize(cx))?;
+                let context = this.read_with(cx, |this, cx| this.serialize(cx))?;
                 let mut discriminant = 1;
                 let mut new_path;
                 loop {
@@ -2994,7 +3173,7 @@ impl AssistantContext {
                     }
                 }
 
-                this.update(&mut cx, |this, _| this.path = Some(new_path))?;
+                this.update(cx, |this, _| this.path = Some(new_path))?;
             }
 
             Ok(())
@@ -3123,6 +3302,8 @@ pub struct SavedContext {
     pub summary: String,
     pub slash_command_output_sections:
         Vec<assistant_slash_command::SlashCommandOutputSection<usize>>,
+    #[serde(default)]
+    pub thought_process_output_sections: Vec<ThoughtProcessOutputSection<usize>>,
 }
 
 impl SavedContext {
@@ -3224,6 +3405,20 @@ impl SavedContext {
             version.observe(timestamp);
         }
 
+        for section in self.thought_process_output_sections {
+            let timestamp = next_timestamp.tick();
+            operations.push(ContextOperation::ThoughtProcessOutputSectionAdded {
+                timestamp,
+                section: ThoughtProcessOutputSection {
+                    range: buffer.anchor_after(section.range.start)
+                        ..buffer.anchor_before(section.range.end),
+                },
+                version: version.clone(),
+            });
+
+            version.observe(timestamp);
+        }
+
         let timestamp = next_timestamp.tick();
         operations.push(ContextOperation::UpdateSummary {
             summary: ContextSummary {
@@ -3298,6 +3493,7 @@ impl SavedContextV0_3_0 {
                 .collect(),
             summary: self.summary,
             slash_command_output_sections: self.slash_command_output_sections,
+            thought_process_output_sections: Vec::new(),
         }
     }
 }

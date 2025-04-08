@@ -1,20 +1,20 @@
 use crate::{
-    display_map::{invisibles::is_invisible, InlayOffset, ToDisplayPoint},
-    hover_links::{InlayHighlight, RangeInEditor},
-    scroll::{Autoscroll, ScrollAmount},
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     Hover,
+    display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
+    hover_links::{InlayHighlight, RangeInEditor},
+    scroll::{Autoscroll, ScrollAmount},
 };
 use gpui::{
-    div, px, AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
+    AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
     Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement,
-    Window,
+    Window, div, px,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiOrSingleBufferOffsetRange, ToOffset};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
@@ -22,14 +22,14 @@ use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{prelude::*, theme_is_transparent, Scrollbar, ScrollbarState};
+use ui::{Scrollbar, ScrollbarState, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
-pub const MIN_POPOVER_LINE_HEIGHT: Pixels = px(4.);
+pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
@@ -149,18 +149,18 @@ pub fn hover_at_inlay(
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
 
-        let task = cx.spawn_in(window, |this, mut cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             async move {
                 cx.background_executor()
                     .timer(Duration::from_millis(hover_popover_delay))
                     .await;
-                this.update(&mut cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
+                let language_registry = project.update(cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
+                let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
 
                 let scroll_handle = ScrollHandle::new();
                 let hover_popover = InfoPopover {
@@ -172,7 +172,7 @@ pub fn hover_at_inlay(
                     anchor: None,
                 };
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     // TODO: no background highlights happen for inlays currently
                     this.hover_state.info_popovers = vec![hover_popover];
                     cx.notify();
@@ -181,6 +181,7 @@ pub fn hover_at_inlay(
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         });
 
         editor.hover_state.info_task = Some(task);
@@ -257,7 +258,7 @@ fn show_hover(
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
 
-    let task = cx.spawn_in(window, |this, mut cx| {
+    let task = cx.spawn_in(window, async move |this, cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
             let delay = if ignore_timeout {
@@ -309,7 +310,7 @@ fn show_hover(
                 let mut background_color: Option<Hsla> = None;
 
                 let parsed_content = cx
-                    .new_window_entity(|window, cx| {
+                    .new_window_entity(|_window, cx| {
                         let status_colors = cx.theme().status();
 
                         match local_diagnostic.diagnostic.severity {
@@ -334,32 +335,8 @@ fn show_hover(
                                 border_color = Some(status_colors.ignored_border);
                             }
                         };
-                        let settings = ThemeSettings::get_global(cx);
-                        let mut base_text_style = window.text_style();
-                        base_text_style.refine(&TextStyleRefinement {
-                            font_family: Some(settings.ui_font.family.clone()),
-                            font_fallbacks: settings.ui_font.fallbacks.clone(),
-                            font_size: Some(settings.ui_font_size(cx).into()),
-                            color: Some(cx.theme().colors().editor_foreground),
-                            background_color: Some(gpui::transparent_black()),
 
-                            ..Default::default()
-                        });
-                        let markdown_style = MarkdownStyle {
-                            base_text_style,
-                            selection_background_color: { cx.theme().players().local().selection },
-                            link: TextStyleRefinement {
-                                underline: Some(gpui::UnderlineStyle {
-                                    thickness: px(1.),
-                                    color: Some(cx.theme().colors().editor_foreground),
-                                    wavy: false,
-                                }),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        };
-                        Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
-                            .open_url(open_markdown_url)
+                        Markdown::new_text(SharedString::new(text), cx)
                     })
                     .ok();
 
@@ -375,7 +352,7 @@ fn show_hover(
                 None
             };
 
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
@@ -409,7 +386,7 @@ fn show_hover(
             } else {
                 Vec::new()
             };
-            let snapshot = this.update_in(&mut cx, |this, window, cx| this.snapshot(window, cx))?;
+            let snapshot = this.update_in(cx, |this, window, cx| this.snapshot(window, cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(
                 hovers_response.len() + if invisible_char.is_some() { 1 } else { 0 },
@@ -420,7 +397,7 @@ fn show_hover(
                     text: format!("Unicode character U+{:02X}", invisible as u32),
                     kind: HoverBlockKind::PlainText,
                 }];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
+                let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
                 let scroll_handle = ScrollHandle::new();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
@@ -459,8 +436,7 @@ fn show_hover(
 
                 let blocks = hover_result.contents;
                 let language = hover_result.language;
-                let parsed_content =
-                    parse_blocks(&blocks, &language_registry, language, &mut cx).await;
+                let parsed_content = parse_blocks(&blocks, &language_registry, language, cx).await;
                 let scroll_handle = ScrollHandle::new();
                 hover_highlights.push(range.clone());
                 info_popovers.push(InfoPopover {
@@ -473,7 +449,7 @@ fn show_hover(
                 });
             }
 
-            this.update_in(&mut cx, |editor, window, cx| {
+            this.update_in(cx, |editor, window, cx| {
                 if hover_highlights.is_empty() {
                     editor.clear_background_highlights::<HoverState>(cx);
                 } else {
@@ -493,6 +469,7 @@ fn show_hover(
             anyhow::Ok(())
         }
         .log_err()
+        .await
     });
 
     editor.hover_state.info_task = Some(task);
@@ -562,16 +539,13 @@ async fn parse_blocks(
         .join("\n\n");
 
     let rendered_block = cx
-        .new_window_entity(|window, cx| {
+        .new_window_entity(|_window, cx| {
             Markdown::new(
                 combined_text.into(),
-                hover_markdown_style(window, cx),
                 Some(language_registry.clone()),
                 fallback_language_name,
                 cx,
             )
-            .copy_code_block_buttons(false)
-            .open_url(open_markdown_url)
         })
         .ok();
 
@@ -642,7 +616,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
                         cx,
                     );
 
-                    cx.spawn_in(window, |_, mut cx| async move {
+                    cx.spawn_in(window, async move |_, cx| {
                         let item = task.await?;
                         // Ruby LSP uses URLs with #L1,1-4,4
                         // we'll just take the first number and assume it's a line number
@@ -664,7 +638,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
                         let Some(editor) = cx.update(|_, cx| item.act_as::<Editor>(cx))? else {
                             return Ok(());
                         };
-                        editor.update_in(&mut cx, |editor, window, cx| {
+                        editor.update_in(cx, |editor, window, cx| {
                             editor.change_selections(
                                 Some(Autoscroll::fit()),
                                 window,
@@ -703,6 +677,7 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
         // If there is a diagnostic, position the popovers based on that.
@@ -737,10 +712,10 @@ impl HoverState {
         let mut elements = Vec::new();
 
         if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
-            elements.push(diagnostic_popover.render(max_size, cx));
+            elements.push(diagnostic_popover.render(max_size, window, cx));
         }
         for info_popover in &mut self.info_popovers {
-            elements.push(info_popover.render(max_size, cx));
+            elements.push(info_popover.render(max_size, window, cx));
         }
 
         Some((point, elements))
@@ -780,6 +755,7 @@ impl InfoPopover {
     pub(crate) fn render(
         &mut self,
         max_size: Size<Pixels>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
@@ -805,7 +781,16 @@ impl InfoPopover {
                         .max_h(max_size.height)
                         .p_2()
                         .track_scroll(&self.scroll_handle)
-                        .child(markdown.clone()),
+                        .child(
+                            MarkdownElement::new(
+                                markdown.clone(),
+                                hover_markdown_style(window, cx),
+                            )
+                            .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                                copy_button: false,
+                            })
+                            .on_url_click(open_markdown_url),
+                        ),
                 )
                 .child(self.render_vertical_scrollbar(cx));
         }
@@ -867,11 +852,46 @@ pub struct DiagnosticPopover {
 }
 
 impl DiagnosticPopover {
-    pub fn render(&self, max_size: Size<Pixels>, cx: &mut Context<Editor>) -> AnyElement {
+    pub fn render(
+        &self,
+        max_size: Size<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut markdown_div = div().py_1().px_2();
         if let Some(markdown) = &self.parsed_content {
-            markdown_div = markdown_div.child(markdown.clone());
+            let settings = ThemeSettings::get_global(cx);
+            let mut base_text_style = window.text_style();
+            base_text_style.refine(&TextStyleRefinement {
+                font_family: Some(settings.ui_font.family.clone()),
+                font_fallbacks: settings.ui_font.fallbacks.clone(),
+                font_size: Some(settings.ui_font_size(cx).into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(gpui::transparent_black()),
+                ..Default::default()
+            });
+            let markdown_style = MarkdownStyle {
+                base_text_style,
+                selection_background_color: { cx.theme().players().local().selection },
+                link: TextStyleRefinement {
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: px(1.),
+                        color: Some(cx.theme().colors().editor_foreground),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            markdown_div = markdown_div.child(
+                MarkdownElement::new(markdown.clone(), markdown_style)
+                    .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                        copy_button: false,
+                    })
+                    .on_url_click(open_markdown_url),
+            );
         }
 
         if let Some(background_color) = &self.background_color {
@@ -917,17 +937,17 @@ impl DiagnosticPopover {
 mod tests {
     use super::*;
     use crate::{
+        InlayId, PointForPosition,
         actions::ConfirmCompletion,
         editor_tests::{handle_completion_request, init_test},
         hover_links::update_inlay_link_and_hover_points,
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
-        InlayId, PointForPosition,
     };
     use collections::BTreeSet;
     use gpui::App;
     use indoc::indoc;
-    use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
+    use language::{Diagnostic, DiagnosticSet, language_settings::InlayHintSettings};
     use lsp::LanguageServerId;
     use markdown::parser::MarkdownEvent;
     use smol::stream::StreamExt;
@@ -950,8 +970,10 @@ mod tests {
 
                 for (range, event) in slice.iter() {
                     match event {
-                        MarkdownEvent::Text(parsed) => rendered_text.push_str(parsed),
-                        MarkdownEvent::Code => rendered_text.push_str(&text[range.clone()]),
+                        MarkdownEvent::SubstitutedText(parsed) => rendered_text.push_str(parsed),
+                        MarkdownEvent::Text | MarkdownEvent::Code => {
+                            rendered_text.push_str(&text[range.clone()])
+                        }
                         _ => {}
                     }
                 }
@@ -1028,7 +1050,7 @@ mod tests {
                 fn test() { «println!»(); }
             "});
         let mut requests =
-            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
                 Ok(Some(lsp::Hover {
                     contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                         kind: lsp::MarkupKind::Markdown,
@@ -1108,7 +1130,9 @@ mod tests {
             "});
         let mut request = cx
             .lsp
-            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
+            .set_request_handler::<lsp::request::HoverRequest, _, _>(
+                |_, _| async move { Ok(None) },
+            );
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             let anchor = snapshot
@@ -1161,7 +1185,7 @@ mod tests {
             fn test() { «println!»(); }
         "});
         let mut requests =
-            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
                 Ok(Some(lsp::Hover {
                     contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                         kind: lsp::MarkupKind::Markdown,
@@ -1198,7 +1222,9 @@ mod tests {
         "});
         let mut request = cx
             .lsp
-            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
+            .set_request_handler::<lsp::request::HoverRequest, _, _>(
+                |_, _| async move { Ok(None) },
+            );
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             let anchor = snapshot
@@ -1248,7 +1274,7 @@ mod tests {
         });
 
         let mut requests =
-            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
                 Ok(Some(lsp::Hover {
                     contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                         kind: lsp::MarkupKind::Markdown,
@@ -1302,7 +1328,7 @@ mod tests {
         let symbol_range = cx.lsp_range(indoc! {"
             «fn» test() { println!(); }
         "});
-        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Array(vec![
                     lsp::MarkedString::String("regular text for hover to show".to_string()),
@@ -1368,7 +1394,7 @@ mod tests {
         let markdown_string = format!("\n```rust\n{code_str}```");
 
         let closure_markdown_string = markdown_string.clone();
-        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
             let future_markdown_string = closure_markdown_string.clone();
             async move {
                 Ok(Some(lsp::Hover {
@@ -1459,7 +1485,7 @@ mod tests {
         let range = cx.lsp_range(indoc! {"
             fn «test»() { println!(); }
         "});
-        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                     kind: lsp::MarkupKind::Markdown,
@@ -1496,13 +1522,14 @@ mod tests {
             }
         "});
 
-        cx.lsp.handle_request::<lsp::request::HoverRequest, _, _>({
-            |_, _| async move {
-                Ok(Some(lsp::Hover {
-                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                        kind: lsp::MarkupKind::Markdown,
-                        value: indoc!(
-                            r#"
+        cx.lsp
+            .set_request_handler::<lsp::request::HoverRequest, _, _>({
+                |_, _| async move {
+                    Ok(Some(lsp::Hover {
+                        contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                            kind: lsp::MarkupKind::Markdown,
+                            value: indoc!(
+                                r#"
                     ### function `errands_data_read`
 
                     ---
@@ -1514,13 +1541,13 @@ mod tests {
                     static char *errands_data_read()
                     ```
                     "#
-                        )
-                        .to_string(),
-                    }),
-                    range: None,
-                }))
-            }
-        });
+                            )
+                            .to_string(),
+                        }),
+                        range: None,
+                    }))
+                }
+            });
         cx.update_editor(|editor, window, cx| hover(editor, &Default::default(), window, cx));
         cx.run_until_parked();
 
@@ -1615,7 +1642,7 @@ mod tests {
         let entire_hint_label = ": TestNewType<TestStruct>";
         let closure_uri = uri.clone();
         cx.lsp
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let task_uri = closure_uri.clone();
                 async move {
                     assert_eq!(params.text_document.uri, task_uri);
@@ -1691,7 +1718,7 @@ mod tests {
 
         let resolve_closure_uri = uri.clone();
         cx.lsp
-            .handle_request::<lsp::request::InlayHintResolveRequest, _, _>(
+            .set_request_handler::<lsp::request::InlayHintResolveRequest, _, _>(
                 move |mut hint_to_resolve, _| {
                     let mut resolved_hint_positions = BTreeSet::new();
                     let task_uri = resolve_closure_uri.clone();

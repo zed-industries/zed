@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use gpui::IntoElement;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct AlertModal {

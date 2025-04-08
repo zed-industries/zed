@@ -1,4 +1,5 @@
 mod avatar;
+mod banner;
 mod button;
 mod content_group;
 mod context_menu;
@@ -37,6 +38,7 @@ mod tooltip;
 mod stories;
 
 pub use avatar::*;
+pub use banner::*;
 pub use button::*;
 pub use content_group::*;
 pub use context_menu::*;

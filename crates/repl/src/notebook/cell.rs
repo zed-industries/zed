@@ -3,18 +3,18 @@ use std::sync::Arc;
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
-use gpui::{prelude::*, App, Entity, Hsla, Task, TextStyleRefinement};
+use gpui::{App, Entity, Hsla, Task, TextStyleRefinement, prelude::*};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::{prelude::*, IconButtonShape};
+use ui::{IconButtonShape, prelude::*};
 use util::ResultExt;
 
 use crate::{
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
-    outputs::{plain::TerminalOutput, user_error::ErrorView, Output},
+    outputs::{Output, plain::TerminalOutput, user_error::ErrorView},
 };
 
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
@@ -132,14 +132,14 @@ impl Cell {
                         let languages = languages.clone();
                         let source = source.clone();
 
-                        cx.spawn_in(window, |this, mut cx| async move {
+                        cx.spawn_in(window, async move |this, cx| {
                             let parsed_markdown = cx
                                 .background_spawn(async move {
                                     parse_markdown(&source, None, Some(languages)).await
                                 })
                                 .await;
 
-                            this.update(&mut cx, |cell: &mut MarkdownCell, _| {
+                            this.update(cx, |cell: &mut MarkdownCell, _| {
                                 cell.parsed_markdown = Some(parsed_markdown);
                             })
                             .log_err();
@@ -177,7 +177,6 @@ impl Cell {
                         EditorMode::AutoHeight { max_lines: 1024 },
                         multi_buffer,
                         None,
-                        false,
                         window,
                         cx,
                     );
@@ -201,10 +200,10 @@ impl Cell {
                 });
 
                 let buffer = buffer.clone();
-                let language_task = cx.spawn_in(window, |this, mut cx| async move {
+                let language_task = cx.spawn_in(window, async move |this, cx| {
                     let language = notebook_language.await;
 
-                    buffer.update(&mut cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, cx| {
                         buffer.set_language(language.clone(), cx);
                     });
                 });

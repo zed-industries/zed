@@ -1,12 +1,16 @@
+<<<<<<< HEAD
 use crate::component_prelude::*;
+=======
+use component::{ComponentPreview, example_group_with_title, single_example};
+>>>>>>> main
 use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::RegisterComponent;
 
-use crate::{
-    prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding,
-    KeybindingPosition, TintColor,
-};
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label};
+use crate::{
+    Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, KeybindingPosition, TintColor,
+    prelude::*,
+};
 
 use super::button_icon::ButtonIcon;
 

@@ -406,6 +406,7 @@ where
         self.seek_internal(pos, bias, &mut (), cx)
     }
 
+    /// Advances the cursor and returns traversed items as a tree.
     #[track_caller]
     pub fn slice<Target>(
         &mut self,

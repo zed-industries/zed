@@ -1,4 +1,4 @@
-use crate::{prelude::*, LabelLike};
+use crate::{LabelLike, prelude::*};
 use gpui::StyleRefinement;
 
 /// A struct representing a label element in the UI.
@@ -50,6 +50,11 @@ impl Label {
             base: LabelLike::new(),
             label: label.into(),
         }
+    }
+
+    /// Sets the text of the [`Label`].
+    pub fn set_text(&mut self, text: impl Into<SharedString>) {
+        self.label = text.into();
     }
 }
 

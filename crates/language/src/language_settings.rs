@@ -5,23 +5,23 @@ use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
 use ec4rs::{
-    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
     Properties as EditorconfigProperties,
+    property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
 use schemars::{
-    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
+    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
 };
 use serde::{
-    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize,
+    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
 };
 use serde_json::Value;
 use settings::{
-    add_references_to_properties, Settings, SettingsLocation, SettingsSources, SettingsStore,
+    Settings, SettingsLocation, SettingsSources, SettingsStore, add_references_to_properties,
 };
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
@@ -61,7 +61,7 @@ pub fn all_language_settings<'a>(
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
     pub edit_predictions: EditPredictionSettings,
-    defaults: LanguageSettings,
+    pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
@@ -326,30 +326,55 @@ pub struct CompletionSettings {
     /// When fetching LSP completions, determines how long to wait for a response of a particular server.
     /// When set to 0, waits indefinitely.
     ///
-    /// Default: 500
-    #[serde(default = "lsp_fetch_timeout_ms")]
+    /// Default: 0
+    #[serde(default = "default_lsp_fetch_timeout_ms")]
     pub lsp_fetch_timeout_ms: u64,
+    /// Controls how LSP completions are inserted.
+    ///
+    /// Default: "replace_suffix"
+    #[serde(default = "default_lsp_insert_mode")]
+    pub lsp_insert_mode: LspInsertMode,
 }
 
 /// Controls how document's words are completed.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WordsCompletionMode {
-    /// Always fetch document's words for completions.
+    /// Always fetch document's words for completions along with LSP completions.
     Enabled,
-    /// Only if LSP response errors/times out/is empty,
+    /// Only if LSP response errors or times out,
     /// use document's words to show completions.
     Fallback,
     /// Never fetch or complete document's words for completions.
+    /// (Word-based completions can still be queried via a separate action)
     Disabled,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LspInsertMode {
+    /// Replaces text before the cursor, using the `insert` range described in the LSP specification.
+    Insert,
+    /// Replaces text before and after the cursor, using the `replace` range described in the LSP specification.
+    Replace,
+    /// Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text,
+    /// and like `"insert"` otherwise.
+    ReplaceSubsequence,
+    /// Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
+    /// `"insert"` otherwise.
+    ReplaceSuffix,
 }
 
 fn default_words_completion_mode() -> WordsCompletionMode {
     WordsCompletionMode::Fallback
 }
 
-fn lsp_fetch_timeout_ms() -> u64 {
-    500
+fn default_lsp_insert_mode() -> LspInsertMode {
+    LspInsertMode::Insert
+}
+
+fn default_lsp_fetch_timeout_ms() -> u64 {
+    0
 }
 
 /// The settings for a particular language.
@@ -580,8 +605,6 @@ pub struct CopilotSettingsContent {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
-    /// Whether the GitHub Copilot feature is enabled.
-    pub copilot: Option<bool>,
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
 }
@@ -1158,7 +1181,6 @@ impl settings::Settings for AllLanguageSettings {
             languages.insert(language_name.clone(), language_settings);
         }
 
-        let mut copilot_enabled = default_value.features.as_ref().and_then(|f| f.copilot);
         let mut edit_prediction_provider = default_value
             .features
             .as_ref()
@@ -1205,9 +1227,6 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         for user_settings in sources.customizations() {
-            if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
-                copilot_enabled = Some(copilot);
-            }
             if let Some(provider) = user_settings
                 .features
                 .as_ref()
@@ -1282,8 +1301,6 @@ impl settings::Settings for AllLanguageSettings {
             edit_predictions: EditPredictionSettings {
                 provider: if let Some(provider) = edit_prediction_provider {
                     provider
-                } else if copilot_enabled.unwrap_or(true) {
-                    EditPredictionProvider::Copilot
                 } else {
                     EditPredictionProvider::None
                 },
@@ -1307,7 +1324,7 @@ impl settings::Settings for AllLanguageSettings {
     }
 
     fn json_schema(
-        generator: &mut schemars::gen::SchemaGenerator,
+        generator: &mut schemars::r#gen::SchemaGenerator,
         params: &settings::SettingsJsonSchemaParams,
         _: &App,
     ) -> schemars::schema::RootSchema {
@@ -1315,9 +1332,11 @@ impl settings::Settings for AllLanguageSettings {
 
         // Create a schema for a 'languages overrides' object, associating editor
         // settings with specific languages.
-        assert!(root_schema
-            .definitions
-            .contains_key("LanguageSettingsContent"));
+        assert!(
+            root_schema
+                .definitions
+                .contains_key("LanguageSettingsContent")
+        );
 
         let languages_object_schema = SchemaObject {
             instance_type: Some(InstanceType::Object.into()),

@@ -2,17 +2,17 @@ use anyhow::Result;
 use call::ActiveCall;
 use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelStore};
 use client::{
-    proto::{self, PeerId},
     ChannelId, Collaborator, ParticipantIndex,
+    proto::{self, PeerId},
 };
 use collections::HashMap;
 use editor::{
-    display_map::ToDisplayPoint, scroll::Autoscroll, CollaborationHub, DisplayPoint, Editor,
-    EditorEvent,
+    CollaborationHub, DisplayPoint, Editor, EditorEvent, display_map::ToDisplayPoint,
+    scroll::Autoscroll,
 };
 use gpui::{
-    actions, AnyView, App, ClipboardItem, Context, Entity, EventEmitter, Focusable, Pixels, Point,
-    Render, Subscription, Task, VisualContext as _, WeakEntity, Window,
+    AnyView, App, ClipboardItem, Context, Entity, EventEmitter, Focusable, Pixels, Point, Render,
+    Subscription, Task, VisualContext as _, WeakEntity, Window, actions,
 };
 use project::Project;
 use rpc::proto::ChannelVisibility;
@@ -23,12 +23,12 @@ use std::{
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::item::TabContentParams;
-use workspace::{item::Dedup, notifications::NotificationId};
 use workspace::{
+    ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ItemHandle},
     searchable::SearchableItemHandle,
-    ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
 };
+use workspace::{item::Dedup, notifications::NotificationId};
 
 actions!(collab, [CopyLink]);
 
@@ -64,9 +64,9 @@ impl ChannelView {
             window,
             cx,
         );
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let channel_view = channel_view.await?;
-            pane.update_in(&mut cx, |pane, window, cx| {
+            pane.update_in(cx, |pane, window, cx| {
                 telemetry::event!(
                     "Channel Notes Opened",
                     channel_id,
@@ -90,10 +90,10 @@ impl ChannelView {
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         let channel_view = Self::load(channel_id, workspace, window, cx);
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let channel_view = channel_view.await?;
 
-            pane.update_in(&mut cx, |pane, window, cx| {
+            pane.update_in(cx, |pane, window, cx| {
                 let buffer_id = channel_view.read(cx).channel_buffer.read(cx).remote_id(cx);
 
                 let existing_view = pane
@@ -166,11 +166,11 @@ impl ChannelView {
         let channel_buffer =
             channel_store.update(cx, |store, cx| store.open_channel_buffer(channel_id, cx));
 
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let channel_buffer = channel_buffer.await?;
             let markdown = markdown.await.log_err();
 
-            channel_buffer.update(&mut cx, |channel_buffer, cx| {
+            channel_buffer.update(cx, |channel_buffer, cx| {
                 channel_buffer.buffer().update(cx, |buffer, cx| {
                     buffer.set_language_registry(language_registry);
                     let Some(markdown) = markdown else {
@@ -583,10 +583,10 @@ impl FollowableItem for ChannelView {
 
         let open = ChannelView::load(ChannelId(state.channel_id), workspace, window, cx);
 
-        Some(window.spawn(cx, |mut cx| async move {
+        Some(window.spawn(cx, async move |cx| {
             let this = open.await?;
 
-            let task = this.update_in(&mut cx, |this, window, cx| {
+            let task = this.update_in(cx, |this, window, cx| {
                 this.remote_id = Some(remote_id);
 
                 if let Some(state) = state.editor {

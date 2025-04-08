@@ -1,7 +1,7 @@
 use gpui::{AnyView, DefiniteLength, Hsla};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
-use crate::{prelude::*, ElevationIndex, Indicator, SelectableButton, TintColor};
+use crate::{ElevationIndex, Indicator, SelectableButton, TintColor, prelude::*};
 use crate::{IconName, IconSize};
 
 use super::button_icon::ButtonIcon;
@@ -70,6 +70,14 @@ impl IconButton {
         self
     }
 
+    pub fn on_right_click(
+        mut self,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.base = self.base.on_right_click(handler);
+        self
+    }
+
     /// Sets the icon color used when the button is in a selected state.
     pub fn selected_icon_color(mut self, color: impl Into<Option<Color>>) -> Self {
         self.selected_icon_color = color.into();
@@ -83,6 +91,7 @@ impl IconButton {
 
     pub fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
         self.indicator_border_color = color;
+
         self
     }
 }
