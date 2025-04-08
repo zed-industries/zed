@@ -582,9 +582,10 @@ impl Replacement {
 
         for c in flags.chars() {
             match c {
-                'g' | 'I' => replacement.should_replace_all = true,
+                'g' => replacement.should_replace_all = true,
                 'c' | 'n' => replacement.should_replace_all = false,
                 'i' => replacement.is_case_sensitive = false,
+                'I' => replacement.is_case_sensitive = true,
                 _ => {}
             }
         }
