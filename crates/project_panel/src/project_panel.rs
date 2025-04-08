@@ -1150,9 +1150,7 @@ impl ProjectPanel {
             Some(state) => state,
             None => return,
         };
-
         let filename = self.filename_editor.read(cx).text(cx);
-
         if !filename.is_empty() {
             if let Some(worktree) = self
                 .project
@@ -1160,6 +1158,7 @@ impl ProjectPanel {
                 .worktree_for_id(edit_state.worktree_id, cx)
             {
                 if let Some(entry) = worktree.read(cx).entry_for_id(edit_state.entry_id) {
+                    let mut already_exists = false;
                     if edit_state.is_new_entry() {
                         let new_path = entry.path.join(filename.trim_start_matches('/'));
                         if worktree
@@ -1167,12 +1166,7 @@ impl ProjectPanel {
                             .entry_for_path(new_path.as_path())
                             .is_some()
                         {
-                            edit_state.validation_state = ValidationState::Error(format!(
-                                "File or directory '{}' already exists at location. Please choose a different name.",
-                                filename
-                            ));
-                            cx.notify();
-                            return;
+                            already_exists = true;
                         }
                     } else {
                         let new_path = if let Some(parent) = entry.path.clone().parent() {
@@ -1183,18 +1177,28 @@ impl ProjectPanel {
                         if let Some(existing) = worktree.read(cx).entry_for_path(new_path.as_path())
                         {
                             if existing.id != entry.id {
-                                edit_state.validation_state = ValidationState::Error(
-                                    "File or directory already exists".to_string(),
-                                );
-                                cx.notify();
-                                return;
+                                already_exists = true;
                             }
                         }
                     };
+                    if already_exists {
+                        edit_state.validation_state = ValidationState::Error(format!(
+                            "File or directory '{}' already exists at location. Please choose a different name.",
+                            filename
+                        ));
+                        cx.notify();
+                        return;
+                    }
                 }
             }
-
-            if filename.trim() != filename {
+            let trimmed_filename = filename.trim();
+            if trimmed_filename.is_empty() {
+                edit_state.validation_state =
+                    ValidationState::Error("File or directory name cannot be empty.".to_string());
+                cx.notify();
+                return;
+            }
+            if trimmed_filename != filename {
                 edit_state.validation_state = ValidationState::Warning(
                     "File or directory name contains leading or trailing whitespace.".to_string(),
                 );
@@ -1202,7 +1206,6 @@ impl ProjectPanel {
                 return;
             }
         }
-
         edit_state.validation_state = ValidationState::None;
         cx.notify();
     }
@@ -1216,6 +1219,9 @@ impl ProjectPanel {
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry();
         let filename = self.filename_editor.read(cx).text(cx);
+        if filename.trim().is_empty() {
+            return None;
+        }
         #[cfg(not(target_os = "windows"))]
         let filename_indicates_dir = filename.ends_with("/");
         // On Windows, path separator could be either `/` or `\`.

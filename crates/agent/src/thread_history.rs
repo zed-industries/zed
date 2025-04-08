@@ -558,7 +558,14 @@ impl RenderOnce for PastContext {
                     IconButton::new("delete", IconName::TrashAlt)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
-                        .tooltip(Tooltip::text("Delete Prompt Editor"))
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action(
+                                "Delete Prompt Editor",
+                                &RemoveSelectedThread,
+                                window,
+                                cx,
+                            )
+                        })
                         .on_click({
                             let assistant_panel = self.assistant_panel.clone();
                             let path = self.context.path.clone();

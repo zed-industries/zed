@@ -127,7 +127,7 @@ async fn update_billing_preferences(
 
     SnowflakeRow::new(
         "Spend Limit Updated",
-        user.metrics_id,
+        Some(user.metrics_id),
         user.admin,
         None,
         json!({

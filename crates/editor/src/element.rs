@@ -3912,9 +3912,13 @@ impl EditorElement {
         );
 
         let hover_popovers = self.editor.update(cx, |editor, cx| {
-            editor
-                .hover_state
-                .render(snapshot, visible_display_row_range.clone(), max_size, cx)
+            editor.hover_state.render(
+                snapshot,
+                visible_display_row_range.clone(),
+                max_size,
+                window,
+                cx,
+            )
         });
         let Some((position, hover_popovers)) = hover_popovers else {
             return;
@@ -8400,7 +8404,7 @@ enum CursorPopoverType {
 }
 
 pub fn scale_vertical_mouse_autoscroll_delta(delta: Pixels) -> f32 {
-    (delta.pow(1.5) / 100.0).into()
+    (delta.pow(1.2) / 100.0).min(px(3.0)).into()
 }
 
 fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
