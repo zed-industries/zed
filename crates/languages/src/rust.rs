@@ -480,7 +480,6 @@ impl LspAdapter for RustLspAdapter {
         &self,
         mut original: InitializeParams,
     ) -> Result<InitializeParams> {
-        // TODO kb is `"shell"` needed?
         // TODO kb allow to disable this
         let experimental = json!({
             "runnables": {

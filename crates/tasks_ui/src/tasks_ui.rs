@@ -224,7 +224,6 @@ where
                     )
                 })
                 .unwrap_or_default();
-            // TODO kb need to list LSP tasks too?
             task_inventory
                 .read(cx)
                 .list_tasks(file, language, task_contexts.worktree(), cx)

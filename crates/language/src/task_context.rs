@@ -43,7 +43,7 @@ pub trait ContextProvider: Send + Sync {
         None
     }
 
-    /// TODO kb docs
+    /// A language server name, that can return tasks using LSP (ext) for this language.
     fn lsp_task_source(&self) -> Option<LanguageServerName> {
         None
     }
