@@ -344,7 +344,7 @@ impl ToolUseState {
                         tool_name,
                         content: tool_result.response_for_model().into(),
                         is_error: false,
-                        tool_output: None,
+                        tool_output: Some(tool_result.clone()),
                     },
                 );
                 self.pending_tool_uses_by_id.remove(&tool_use_id)

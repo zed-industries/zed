@@ -4,7 +4,7 @@ mod registry;
 mod request;
 mod role;
 mod telemetry;
-pub mod tool_output;
+mod tool_output;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
