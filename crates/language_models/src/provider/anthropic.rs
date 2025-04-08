@@ -1,8 +1,6 @@
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
-use anthropic::{
-    AnthropicError, AnthropicModelMode, ApiErrorCode, ContentDelta, Event, ResponseContent, Usage,
-};
+use anthropic::{AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, Usage};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -753,7 +751,7 @@ pub fn map_to_language_model_completion_events(
     .flat_map(futures::stream::iter)
 }
 
-fn anthropic_err_to_anyhow(err: AnthropicError) -> anyhow::Error {
+pub fn anthropic_err_to_anyhow(err: AnthropicError) -> anyhow::Error {
     if let AnthropicError::ApiError(api_err) = &err {
         if let Some(tokens) = api_err.match_window_exceeded() {
             return anyhow!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens });

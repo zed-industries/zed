@@ -14,10 +14,11 @@ use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
-    PaymentRequiredError, Role, StopReason, TokenUsage,
+    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
+    Role, StopReason, TokenUsage,
 };
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use project::{Project, Worktree};
@@ -228,7 +229,7 @@ pub struct TotalTokenUsage {
     pub ratio: TokenUsageRatio,
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum TokenUsageRatio {
     #[default]
     Normal,
@@ -260,7 +261,15 @@ pub struct Thread {
     pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
+    exceeded_tokens: Option<ExceededTokens>,
     feedback: Option<ThreadFeedback>,
+}
+
+struct ExceededTokens {
+    /// Model used when last message exceeded context window
+    model_id: LanguageModelId,
+    /// Token count including last message
+    token_count: usize,
 }
 
 impl Thread {
@@ -298,6 +307,7 @@ impl Thread {
                     .shared()
             },
             cumulative_token_usage: TokenUsage::default(),
+            exceeded_tokens: None,
             feedback: None,
         }
     }
@@ -361,6 +371,7 @@ impl Thread {
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
+            exceeded_tokens: None,
             feedback: None,
         }
     }
@@ -802,6 +813,7 @@ impl Thread {
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage.clone(),
                 detailed_summary_state: this.detailed_summary_state.clone(),
+                // todo! serde
             })
         })
     }
@@ -1222,6 +1234,20 @@ impl Thread {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::MaxMonthlySpendReached,
                                 ));
+                            } else if let Some(known_error) =
+                                error.downcast_ref::<LanguageModelKnownError>()
+                            {
+                                match known_error {
+                                    LanguageModelKnownError::ContextWindowLimitExceeded {
+                                        tokens,
+                                    } => {
+                                        thread.exceeded_tokens = Some(ExceededTokens {
+                                            model_id: model.id(),
+                                            token_count: *tokens,
+                                        });
+                                        cx.notify();
+                                    }
+                                }
                             } else {
                                 let error_message = error
                                     .chain()
@@ -1799,6 +1825,16 @@ impl Thread {
         };
 
         let max = model.model.max_token_count();
+
+        if let Some(exceeded_tokens) = &self.exceeded_tokens {
+            if model.model.id() == exceeded_tokens.model_id {
+                return TotalTokenUsage {
+                    total: exceeded_tokens.token_count,
+                    max,
+                    ratio: TokenUsageRatio::Exceeded,
+                };
+            }
+        }
 
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")

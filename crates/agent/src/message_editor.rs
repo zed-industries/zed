@@ -778,13 +778,24 @@ impl Render for MessageEditor {
                     )
             )
             .when(total_token_usage.ratio != TokenUsageRatio::Normal, |parent| {
+                let heading = if total_token_usage.ratio == TokenUsageRatio::Exceeded {
+                    "Thread reached the token limit"
+                } else {
+                    "Thread reaching the token limit soon"
+                };
+
                 parent.child(
                     h_flex()
                         .p_2()
                         .gap_2()
                         .flex_wrap()
                         .justify_between()
-                        .bg(cx.theme().status().warning_background.opacity(0.1))
+                        .bg(
+                            if total_token_usage.ratio == TokenUsageRatio::Exceeded {
+                                cx.theme().status().error_background.opacity(0.1)
+                            } else {
+                                cx.theme().status().warning_background.opacity(0.1)
+                            })
                         .border_t_1()
                         .border_color(cx.theme().colors().border)
                         .child(
@@ -796,15 +807,21 @@ impl Render for MessageEditor {
                                         .h(line_height)
                                         .justify_center()
                                         .child(
-                                            Icon::new(IconName::Warning)
-                                                .color(Color::Warning)
-                                                .size(IconSize::XSmall),
+                                            if total_token_usage.ratio == TokenUsageRatio::Exceeded {
+                                                Icon::new(IconName::X)
+                                                    .color(Color::Error)
+                                                    .size(IconSize::XSmall)
+                                            } else {
+                                                Icon::new(IconName::Warning)
+                                                    .color(Color::Warning)
+                                                    .size(IconSize::XSmall)
+                                            }
                                         ),
                                 )
                                 .child(
                                     v_flex()
                                         .mr_auto()
-                                        .child(Label::new("Thread reaching the token limit soon").size(LabelSize::Small))
+                                        .child(Label::new(heading).size(LabelSize::Small))
                                         .child(
                                             Label::new(
                                                 "Start a new thread from a summary to continue the conversation.",
@@ -828,8 +845,8 @@ impl Render for MessageEditor {
                                 .icon_size(IconSize::Small)
                                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                                 .label_size(LabelSize::Small),
-                        ),
-                )
+                        )
+                    )
             })
     }
 }

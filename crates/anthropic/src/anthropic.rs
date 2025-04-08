@@ -730,13 +730,17 @@ impl ApiError {
             return None;
         };
 
-        self.message
-            .strip_prefix("prompt is too long: ")?
-            .split_once(" tokens")?
-            .0
-            .parse::<usize>()
-            .ok()
+        parse_prompt_too_long(&self.message)
     }
+}
+
+pub fn parse_prompt_too_long(message: &str) -> Option<usize> {
+    message
+        .strip_prefix("prompt is too long: ")?
+        .split_once(" tokens")?
+        .0
+        .parse::<usize>()
+        .ok()
 }
 
 #[test]
