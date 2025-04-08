@@ -288,7 +288,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 
         for model in bedrock::Model::iter() {
             if !matches!(model, bedrock::Model::Custom { .. }) {
-                // ToDo: Sonnet 3.7 vs. 3.7 Thinking bug is here
+                // TODO: Sonnet 3.7 vs. 3.7 Thinking bug is here.
                 models.insert(model.id().to_string(), model);
             }
         }
