@@ -10,7 +10,10 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, AsyncApp, Entity};
-use language::{Buffer, point_to_lsp, proto::deserialize_anchor};
+use language::{
+    Buffer, point_to_lsp,
+    proto::{deserialize_anchor, serialize_anchor},
+};
 use lsp::{LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};
@@ -447,6 +450,7 @@ pub struct ShellRunnableArgs {
 #[derive(Debug)]
 pub struct GetLspRunnables {
     pub buffer_id: BufferId,
+    pub position: Option<text::Anchor>,
 }
 
 #[derive(Debug, Default)]
@@ -467,7 +471,7 @@ impl LspCommand for GetLspRunnables {
     fn to_lsp(
         &self,
         path: &Path,
-        _: &Buffer,
+        buffer: &Buffer,
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<RunnablesParams> {
@@ -477,7 +481,9 @@ impl LspCommand for GetLspRunnables {
         };
         Ok(RunnablesParams {
             text_document: lsp::TextDocumentIdentifier::new(url),
-            position: None,
+            position: self
+                .position
+                .map(|anchor| point_to_lsp(anchor.to_point_utf16(&buffer.snapshot()))),
         })
     }
 
@@ -546,6 +552,7 @@ impl LspCommand for GetLspRunnables {
         proto::LspExtRunnables {
             project_id,
             buffer_id: buffer.remote_id().to_proto(),
+            position: self.position.as_ref().map(serialize_anchor),
         }
     }
 
@@ -556,7 +563,11 @@ impl LspCommand for GetLspRunnables {
         _: AsyncApp,
     ) -> Result<Self> {
         let buffer_id = Self::buffer_id_from_proto(&message)?;
-        Ok(Self { buffer_id })
+        let position = message.position.and_then(deserialize_anchor);
+        Ok(Self {
+            buffer_id,
+            position,
+        })
     }
 
     fn response_to_proto(

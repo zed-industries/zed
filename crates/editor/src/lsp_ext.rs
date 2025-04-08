@@ -77,6 +77,7 @@ where
 pub fn lsp_tasks(
     project: Entity<Project>,
     task_sources: &HashMap<LanguageServerName, Vec<BufferId>>,
+    for_position: Option<text::Anchor>,
     cx: &mut App,
 ) -> Task<Vec<(TaskSourceKind, Vec<(Option<LocationLink>, ResolvedTask)>)>> {
     let mut lsp_task_sources = task_sources
@@ -104,7 +105,10 @@ pub fn lsp_tasks(
                         project.request_lsp(
                             buffer,
                             LanguageServerToQuery::Other(server_id),
-                            GetLspRunnables { buffer_id },
+                            GetLspRunnables {
+                                buffer_id,
+                                position: for_position,
+                            },
                             cx,
                         )
                     }) {

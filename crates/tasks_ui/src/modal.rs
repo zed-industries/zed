@@ -230,11 +230,16 @@ impl PickerDelegate for TasksModalDelegate {
                         .used_and_current_resolved_tasks(&self.task_contexts, cx);
                     let workspace = self.workspace.clone();
                     let lsp_task_sources = self.task_contexts.lsp_task_sources.clone();
+                    let task_position = self.task_contexts.latest_selection;
 
                     cx.spawn(async move |picker, cx| {
                         let Ok(lsp_tasks) = workspace.update(cx, |workspace, cx| {
-                            // TODO kb need to filter out the ones for latest selection only, otherwise it's too many?
-                            editor::lsp_tasks(workspace.project().clone(), &lsp_task_sources, cx)
+                            editor::lsp_tasks(
+                                workspace.project().clone(),
+                                &lsp_task_sources,
+                                task_position,
+                                cx,
+                            )
                         }) else {
                             return Vec::new();
                         };

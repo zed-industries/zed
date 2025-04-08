@@ -319,6 +319,12 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
         .map(|active_editor| active_editor.update(cx, |editor, cx| editor.lsp_task_sources(cx)))
         .unwrap_or_default();
 
+    let latest_selection = active_editor.as_ref().map(|active_editor| {
+        active_editor.update(cx, |editor, _| {
+            editor.selections.newest_anchor().head().text_anchor
+        })
+    });
+
     let mut worktree_abs_paths = workspace
         .worktrees(cx)
         .filter(|worktree| is_visible_directory(worktree, cx))
@@ -332,6 +338,7 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
         let mut task_contexts = TaskContexts::default();
 
         task_contexts.lsp_task_sources = lsp_task_sources;
+        task_contexts.latest_selection = latest_selection;
 
         if let Some(editor_context_task) = editor_context_task {
             if let Some(editor_context) = editor_context_task.await {

@@ -12480,7 +12480,7 @@ impl Editor {
                 })
                     .await;
             let Ok(lsp_tasks) =
-                cx.update(|_, cx| crate::lsp_tasks(project.clone(), &task_sources, cx))
+                cx.update(|_, cx| crate::lsp_tasks(project.clone(), &task_sources, None, cx))
             else {
                 return;
             };

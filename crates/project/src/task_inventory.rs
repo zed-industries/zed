@@ -72,6 +72,7 @@ pub struct TaskContexts {
     /// If there are multiple worktrees in the workspace, all non-active ones are included here.
     pub other_worktree_contexts: Vec<(WorktreeId, TaskContext)>,
     pub lsp_task_sources: HashMap<LanguageServerName, Vec<BufferId>>,
+    pub latest_selection: Option<text::Anchor>,
 }
 
 impl TaskContexts {
