@@ -4,3 +4,15 @@
 {"Key":"j"}
 {"Key":"p"}
 {"Get":{"state":"the quick brown fox\nˇthe quick brown fox\njumped over the lazy dog","mode":"Normal"}}
+{"Put":{"state":"the quick bˇrown fox\njumped over the lazy dog"}}
+{"Key":"y"}
+{"Key":"v"}
+{"Key":"j"}
+{"Key":"p"}
+{"Get":{"state":"the quick brˇrown fox\njumped overown fox\njumped over the lazy dog","mode":"Normal"}}
+{"Put":{"state":"the quick brown foxˇ\njumped over the lazy dog"}}
+{"Key":"y"}
+{"Key":"v"}
+{"Key":"j"}
+{"Key":"p"}
+{"Get":{"state":"the quick brown foxˇx\njumped over the la\njumped over the lazy dog","mode":"Normal"}}

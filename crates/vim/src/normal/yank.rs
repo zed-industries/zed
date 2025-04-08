@@ -7,7 +7,7 @@ use crate::{
     state::{Mode, Register},
 };
 use collections::HashMap;
-use editor::{ClipboardSelection, Editor};
+use editor::{ClipboardSelection, Editor, display_map::ToDisplayPoint};
 use gpui::Context;
 use gpui::Window;
 use language::Point;
@@ -55,6 +55,8 @@ impl Vim {
             });
         });
         self.exit_temporary_normal(window, cx);
+        // Exit forced motion mode (if active).
+        self.exit_forced_motion();
     }
 
     pub fn yank_object(
@@ -85,6 +87,8 @@ impl Vim {
             });
         });
         self.exit_temporary_normal(window, cx);
+        // Exit forced motion mode (if active).
+        self.exit_forced_motion();
     }
 
     pub fn yank_selections_content(

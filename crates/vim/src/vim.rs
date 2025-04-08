@@ -476,7 +476,6 @@ impl Vim {
                 },
             );
             Vim::action(editor, cx, |vim, _: &PushForcedMotion, _, _| {
-                //TODO: unset this bool after motion is done
                 vim.forced_motion = true;
             });
             Vim::action(editor, cx, |vim, action: &PushObject, window, cx| {

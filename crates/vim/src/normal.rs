@@ -219,6 +219,8 @@ impl Vim {
         }
         // Exit temporary normal mode (if active).
         self.exit_temporary_normal(window, cx);
+        // Exit forced motion mode (if active).
+        self.exit_forced_motion();
     }
 
     pub fn normal_object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
@@ -661,6 +663,12 @@ impl Vim {
     fn exit_temporary_normal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.temp_mode {
             self.switch_mode(Mode::Insert, true, window, cx);
+        }
+    }
+
+    fn exit_forced_motion(&mut self) {
+        if self.forced_motion {
+            self.forced_motion = false;
         }
     }
 }
