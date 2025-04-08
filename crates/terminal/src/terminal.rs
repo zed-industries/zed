@@ -334,6 +334,25 @@ fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
     None
 }
 
+fn is_path_with_dots(path: &str) -> bool {
+    path.contains("..")
+}
+
+fn normalize_path_with_dots(file_path: &str) -> String {
+    let mut parts = vec![];
+    for part in file_path.split("/") {
+        if part == ".." {
+            if parts.len() > 0 {
+                parts.pop();
+            }
+        } else {
+            parts.push(part);
+        }
+    }
+
+    parts.join("/")
+}
+
 pub struct TerminalBuilder {
     terminal: Terminal,
     events_rx: UnboundedReceiver<AlacTermEvent>,
@@ -972,6 +991,11 @@ impl Terminal {
                     let (sanitized_match, sanitized_word) = 'sanitize: {
                         let mut word_match = word_match;
                         let mut file_path = file_path;
+
+                        if is_path_with_dots(&file_path) {
+                            /* for e.g src/../some/path/to/file.c => /some/path/to/file.c */
+                            file_path = normalize_path_with_dots(&file_path);
+                        }
 
                         if is_path_surrounded_by_common_symbols(&file_path) {
                             word_match = Match::new(
@@ -2149,8 +2173,8 @@ mod tests {
     use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
 
     use crate::{
-        IndexedCell, TerminalBounds, TerminalContent, content_index_for_mouse,
-        python_extract_path_and_line, rgb_for_index,
+        IndexedCell, TerminalBounds, TerminalContent, content_index_for_mouse, is_path_with_dots,
+        normalize_path_with_dots, python_extract_path_and_line, rgb_for_index,
     };
 
     #[test]
@@ -2366,5 +2390,14 @@ mod tests {
             .collect::<Vec<_>>();
         let expected = inputs.iter().map(|(_, output)| *output).collect::<Vec<_>>();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_url_with_dots() {
+        let path = "crates/../crates/terminal/src/pty_info.rs:21:17";
+        assert!(is_path_with_dots(path));
+
+        let path = normalize_path_with_dots(path);
+        assert_eq!(path, "crates/terminal/src/pty_info.rs:21:17".to_string());
     }
 }
