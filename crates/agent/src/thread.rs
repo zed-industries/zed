@@ -1036,7 +1036,9 @@ impl Thread {
             .rev()
             .find(|msg| msg.role == Role::User)
         {
-            last_user_message.content.push(MessageContent::Text("\n\nIn your response, make sure to remember and follow my instructions about how to format code blocks (and don't mention that you are remembering it, just follow the instructions).".to_string()));
+            last_user_message
+                .content
+                .push(MessageContent::Text(SYSTEM_PROMPT_REMINDER.to_string()));
         }
 
         request
@@ -1851,6 +1853,8 @@ impl Thread {
     }
 }
 
+pub const SYSTEM_PROMPT_REMINDER: &str = "\n\nIn your response, make sure to remember and follow my instructions about how to format code blocks (and don't mention that you are remembering it, just follow the instructions).";
+
 #[derive(Debug, Clone)]
 pub enum ThreadError {
     PaymentRequired,
@@ -1974,7 +1978,10 @@ fn main() {{
         });
 
         assert_eq!(request.messages.len(), 1);
-        let expected_full_message = format!("{}Please explain this code", expected_context);
+        let expected_full_message = format!(
+            "{}Please explain this code{}",
+            expected_context, SYSTEM_PROMPT_REMINDER
+        );
         assert_eq!(request.messages[0].string_contents(), expected_full_message);
     }
 
