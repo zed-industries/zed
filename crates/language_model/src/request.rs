@@ -2,8 +2,8 @@ use std::io::{Cursor, Write};
 use std::sync::Arc;
 
 use crate::role::Role;
+use crate::tool_output::ToolOutput;
 use crate::{LanguageModelToolUse, LanguageModelToolUseId};
-use assistant_tool::assistant_tool::ToolOutput;
 use base64::write::EncoderWriter;
 use gpui::{
     App, AppContext as _, DevicePixels, Image, ObjectFit, RenderImage, SharedString, Size, Task,
@@ -174,7 +174,39 @@ pub struct LanguageModelToolResult {
     pub tool_output: Option<Arc<dyn ToolOutput>>,
 }
 
+impl PartialEq for LanguageModelToolResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.tool_use_id == other.tool_use_id
+            && self.tool_name == other.tool_name
+            && self.is_error == other.is_error
+            && self.content == other.content
+            && self.tool_output == other.tool_output
+    }
+}
 
+impl Eq for LanguageModelToolResult {}
+
+impl std::hash::Hash for LanguageModelToolResult {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.tool_use_id.hash(state);
+        self.tool_name.hash(state);
+        self.is_error.hash(state);
+        self.content.hash(state);
+        self.tool_output.hash(state);
+    }
+}
+
+impl std::fmt::Debug for LanguageModelToolResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LanguageModelToolResult")
+            .field("tool_use_id", &self.tool_use_id)
+            .field("tool_name", &self.tool_name)
+            .field("is_error", &self.is_error)
+            .field("content", &self.content)
+            .field("tool_output", &self.tool_output)
+            .finish()
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum MessageContent {
