@@ -7,6 +7,7 @@ use gpui::{
     Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
     WeakEntity, Window, rems,
 };
+use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
 use task::{
@@ -258,6 +259,9 @@ impl PickerDelegate for TasksModalDelegate {
                                     |(kind, tasks_with_locations)| {
                                         tasks_with_locations
                                             .into_iter()
+                                            .sorted_by_key(|(location, task)| {
+                                                (location.is_none(), task.resolved_label.clone())
+                                            })
                                             .map(move |(_, task)| (kind.clone(), task))
                                     },
                                 ));

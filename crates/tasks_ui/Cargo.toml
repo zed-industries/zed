@@ -19,6 +19,7 @@ editor.workspace = true
 file_icons.workspace = true
 fuzzy.workspace = true
 feature_flags.workspace = true
+itertools.workspace = true
 gpui.workspace = true
 menu.workspace = true
 picker.workspace = true
