@@ -360,12 +360,12 @@ jobs:
       - name: Create Dev Drive using ReFS
         run: ./script/setup-dev-driver.ps1
 
-      # TODO: Remove this
-      - name: Test
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
-        with:
-          path: crates/zed/resources/windows/installer/zed.iss
-          options: /O+
+      # # TODO: Remove this
+      # - name: Test
+      #   uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+      #   with:
+      #     path: crates/zed/resources/windows/installer/zed.iss
+      #     options: /O+
 
       # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
       - name: Copy Git Repo to Dev Drive
