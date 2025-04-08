@@ -1,5 +1,4 @@
 mod action_log;
-mod string_tool_output;
 mod tool_registry;
 mod tool_working_set;
 
@@ -13,10 +12,11 @@ use gpui::{self, App, Entity, EntityId, SharedString, Task};
 use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
+use language_model::ToolOutput;
 use project::Project;
 
 pub use crate::action_log::*;
-pub use crate::string_tool_output::*;
+// StringToolOutput is now directly imported from language_model
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
 
@@ -82,29 +82,5 @@ pub trait Tool: 'static + Send + Sync {
 impl Debug for dyn Tool {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Tool").field("name", &self.name()).finish()
-    }
-}
-
-pub trait ToolOutput: Send + Sync + std::fmt::Debug + PartialEq + Eq + std::hash::Hash + serde::Serialize + for<'de> serde::Deserialize<'de> {
-    /// Returns a string that will be given to the model
-    /// as the tool output.
-    fn response_for_model(&self) -> SharedString;
-
-    /// Returns a custom UI element to render the tool's output.
-    /// Returns None by default to indicate that rendering has not yet been
-    /// implemented for this tool, and the caller should do some default rendering.
-    fn render(
-        &self,
-        _rendered_tool_use: &RenderedToolUse,
-        _window: &mut gpui::Window,
-        _cx: &gpui::App,
-    ) -> Option<gpui::AnyElement> {
-        None
-    }
-}
-
-impl ToolOutput for SharedString {
-    fn response_for_model(&self) -> SharedString {
-        self.clone()
     }
 }

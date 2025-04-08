@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolSource, StringToolOutput, ToolOutput};
+use assistant_tool::{ActionLog, Tool, ToolSource};
+use language_model::{ToolOutput, StringToolOutput};
 use gpui::{App, Entity, Task};
 use icons::IconName;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};

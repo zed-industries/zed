@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
+use assistant_tool::{ActionLog, Tool};
+use language_model::{ToolOutput, StringToolOutput};
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{self, Anchor, Buffer, BufferSnapshot, Location, Point, ToPoint, ToPointUtf16};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};

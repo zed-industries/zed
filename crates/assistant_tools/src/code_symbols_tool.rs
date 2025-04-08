@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
+use assistant_tool::{ActionLog, Tool};
+use language_model::{ToolOutput, StringToolOutput};
 use collections::IndexMap;
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{CodeLabel, Language, LanguageRegistry};

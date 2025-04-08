@@ -16,7 +16,6 @@ doctest = false
 test-support = []
 
 [dependencies]
-assistant_tool.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 base64.workspace = true

@@ -4,6 +4,7 @@ mod registry;
 mod request;
 mod role;
 mod telemetry;
+mod tool_output;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
@@ -26,6 +27,7 @@ use util::serde::is_default;
 
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
+pub use crate::tool_output::{ToolOutput, StringToolOutput};
 pub use crate::registry::*;
 pub use crate::request::*;
 pub use crate::role::*;

@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, StringToolOutput, ToolOutput};
+use assistant_tool::{ActionLog, Tool};
+use language_model::{ToolOutput, StringToolOutput};
 use gpui::{App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;

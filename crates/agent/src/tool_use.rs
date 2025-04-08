@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{Tool, ToolOutput, ToolWorkingSet};
+use assistant_tool::{Tool, ToolWorkingSet};
 use collections::HashMap;
+use language_model::ToolOutput;
 use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, SharedString, Task};
