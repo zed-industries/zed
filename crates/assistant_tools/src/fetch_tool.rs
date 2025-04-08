@@ -116,7 +116,7 @@ impl Tool for FetchTool {
         "fetch".to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         true
     }
 

@@ -72,7 +72,7 @@ impl Tool for SymbolInfoTool {
         "symbol_info".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 

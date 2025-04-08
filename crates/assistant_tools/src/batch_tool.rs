@@ -151,7 +151,7 @@ impl Tool for BatchTool {
         "batch_tool".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value) -> bool {
+    fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool {
         true
     }
 
