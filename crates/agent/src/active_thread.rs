@@ -1424,7 +1424,6 @@ impl ActiveThread {
             .when(!needs_confirmation && generating_label.is_some(), |this| {
                 this.child(
                     h_flex()
-                        // .debug_bg_red()
                         .h_8()
                         .mt_2()
                         .mb_4()
