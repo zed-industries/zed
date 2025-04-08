@@ -598,6 +598,23 @@ impl Vim {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let line_mode = line_mode || editor.selections.line_mode;
+
+            // For visual line mode, adjust selections to avoid yanking the next line when on \n
+            if line_mode && vim.mode != Mode::VisualBlock {
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        let start = selection.start.to_point(map);
+                        let end = selection.end.to_point(map);
+                        if end.column == 0 && end > start {
+                            let row = end.row.saturating_sub(1);
+                            selection.end =
+                                Point::new(row, map.buffer_snapshot.line_len(MultiBufferRow(row)))
+                                    .to_display_point(map);
+                        }
+                    });
+                });
+            }
+
             editor.selections.line_mode = line_mode;
             let kind = if line_mode {
                 MotionKind::Linewise
@@ -1132,6 +1149,19 @@ mod test {
         cx.shared_clipboard()
             .await
             .assert_eq("fox jumps over\nthe lazy dog\n");
+
+        cx.set_shared_state(indoc! {"
+                    The quick brown
+                    fox ˇjumps over
+                    the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("shift-v shift-4 shift-y")
+            .await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                    The quick brown
+                    ˇfox jumps over
+                    the lazy dog"});
+        cx.shared_clipboard().await.assert_eq("fox jumps over\n");
     }
 
     #[gpui::test]
