@@ -20,14 +20,6 @@ pub use crate::action_log::*;
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
 
-/// A rendered tool use containing styled markdown elements for UI representation.
-#[derive(Clone)]
-pub struct RenderedToolUse {
-    pub label: EntityId,
-    pub input: EntityId,
-    pub output: EntityId,
-}
-
 pub fn init(cx: &mut App) {
     ToolRegistry::default_global(cx);
 }

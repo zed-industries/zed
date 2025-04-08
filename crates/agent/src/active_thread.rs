@@ -76,16 +76,6 @@ struct RenderedToolUse {
     output: Entity<Markdown>,
 }
 
-impl From<&RenderedToolUse> for assistant_tool::RenderedToolUse {
-    fn from(source: &RenderedToolUse) -> Self {
-        Self {
-            label: source.label.entity_id(),
-            input: source.input.entity_id(),
-            output: source.output.entity_id(),
-        }
-    }
-}
-
 impl RenderedMessage {
     fn from_segments(
         segments: &[MessageSegment],
