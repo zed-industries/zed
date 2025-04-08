@@ -343,12 +343,13 @@ impl RunningState {
                     SharedString::new_static("Modules"),
                     cx,
                 )),
-                true,
+                false,
                 false,
                 None,
                 window,
                 cx,
             );
+            this.activate_item(0, false, false, window, cx);
         });
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         rightmost_pane.update(cx, |this, cx| {
