@@ -1,6 +1,5 @@
 mod bash_tool;
 mod batch_tool;
-mod code_symbol_iter;
 mod code_symbols_tool;
 mod copy_path_tool;
 mod create_directory_tool;
