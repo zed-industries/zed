@@ -1080,7 +1080,7 @@ impl AssistantPanel {
                                             cx,
                                             |menu, _window, _cx| {
                                                 menu.action(
-                                                    "New Prompt Editor",
+                                                    "New Text Thread",
                                                     NewPromptEditor.boxed_clone(),
                                                 )
                                                 .when(!is_empty, |menu| {
