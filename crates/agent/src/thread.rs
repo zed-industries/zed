@@ -182,7 +182,7 @@ pub struct ThreadCheckpoint {
     git_checkpoint: GitStoreCheckpoint,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ThreadFeedback {
     Positive,
     Negative,
@@ -1535,6 +1535,10 @@ impl Thread {
         feedback: ThreadFeedback,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.message_feedback.get(&message_id) == Some(&feedback) {
+            return Task::ready(Ok(()));
+        }
+
         let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
