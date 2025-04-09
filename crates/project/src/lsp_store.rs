@@ -1564,6 +1564,7 @@ impl LocalLspStore {
                             zlog::trace!(logger => "No code action kinds enabled, skipping");
                             continue 'formatters;
                         }
+                        zlog::trace!(logger => "Attempting to resolve code actions {:?}", &code_action_kinds);
 
                         let mut actions_and_servers = Vec::new();
 
