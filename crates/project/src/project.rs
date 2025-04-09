@@ -334,6 +334,10 @@ impl ProjectPath {
             path: Path::new("").into(),
         }
     }
+
+    pub fn starts_with(&self, other: &ProjectPath) -> bool {
+        self.worktree_id == other.worktree_id && self.path.starts_with(&other.path)
+    }
 }
 
 #[derive(Debug, Default)]

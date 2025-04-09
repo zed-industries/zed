@@ -105,21 +105,56 @@ enum TrashCancel {
     Cancel,
 }
 
+struct GitMenuState {
+    has_tracked_changes: bool,
+    has_staged_changes: bool,
+    has_unstaged_changes: bool,
+    has_new_changes: bool,
+}
+
 fn git_panel_context_menu(
     focus_handle: FocusHandle,
+    state: GitMenuState,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
-    ContextMenu::build(window, cx, |context_menu, _, _| {
+    ContextMenu::build(window, cx, move |context_menu, _, _| {
         context_menu
             .context(focus_handle)
-            .action("Stage All", StageAll.boxed_clone())
-            .action("Unstage All", UnstageAll.boxed_clone())
+            .map(|menu| {
+                if state.has_unstaged_changes {
+                    menu.action("Stage All", StageAll.boxed_clone())
+                } else {
+                    menu.disabled_action("Stage All", StageAll.boxed_clone())
+                }
+            })
+            .map(|menu| {
+                if state.has_staged_changes {
+                    menu.action("Unstage All", UnstageAll.boxed_clone())
+                } else {
+                    menu.disabled_action("Unstage All", UnstageAll.boxed_clone())
+                }
+            })
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
             .separator()
-            .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
-            .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
+            .map(|menu| {
+                if state.has_tracked_changes {
+                    menu.action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
+                } else {
+                    menu.disabled_action(
+                        "Discard Tracked Changes",
+                        RestoreTrackedFiles.boxed_clone(),
+                    )
+                }
+            })
+            .map(|menu| {
+                if state.has_new_changes {
+                    menu.action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
+                } else {
+                    menu.disabled_action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
+                }
+            })
     })
 }
 
@@ -2571,13 +2606,30 @@ impl GitPanel {
 
     fn render_overflow_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
+        let has_tracked_changes = self.has_tracked_changes();
+        let has_staged_changes = self.has_staged_changes();
+        let has_unstaged_changes = self.has_unstaged_changes();
+        let has_new_changes = self.new_count > 0;
+
         PopoverMenu::new(id.into())
             .trigger(
                 IconButton::new("overflow-menu-trigger", IconName::EllipsisVertical)
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted),
             )
-            .menu(move |window, cx| Some(git_panel_context_menu(focus_handle.clone(), window, cx)))
+            .menu(move |window, cx| {
+                Some(git_panel_context_menu(
+                    focus_handle.clone(),
+                    GitMenuState {
+                        has_tracked_changes,
+                        has_staged_changes,
+                        has_unstaged_changes,
+                        has_new_changes,
+                    },
+                    window,
+                    cx,
+                ))
+            })
             .anchor(Corner::TopRight)
     }
 
@@ -3449,7 +3501,17 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context_menu = git_panel_context_menu(self.focus_handle.clone(), window, cx);
+        let context_menu = git_panel_context_menu(
+            self.focus_handle.clone(),
+            GitMenuState {
+                has_tracked_changes: self.has_tracked_changes(),
+                has_staged_changes: self.has_staged_changes(),
+                has_unstaged_changes: self.has_unstaged_changes(),
+                has_new_changes: self.new_count > 0,
+            },
+            window,
+            cx,
+        );
         self.set_context_menu(context_menu, position, window, cx);
     }
 

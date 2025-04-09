@@ -1624,7 +1624,21 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
         cx: &mut Context<PromptLibrary>,
     ) {
         InlineAssistant::update_global(cx, |assistant, cx| {
-            assistant.assist(&prompt_editor, self.workspace.clone(), None, window, cx)
+            let Some(project) = self
+                .workspace
+                .upgrade()
+                .map(|workspace| workspace.read(cx).project().downgrade())
+            else {
+                return;
+            };
+            assistant.assist(
+                &prompt_editor,
+                self.workspace.clone(),
+                project,
+                None,
+                window,
+                cx,
+            )
         })
     }
 

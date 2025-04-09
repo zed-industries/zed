@@ -6415,6 +6415,9 @@ impl Editor {
             "Set Breakpoint"
         };
 
+        let run_to_cursor = command_palette_hooks::CommandPaletteFilter::try_global(cx)
+            .map_or(false, |filter| !filter.is_hidden(&DebuggerRunToCursor));
+
         let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
             BreakpointState::Enabled => Some("Disable"),
             BreakpointState::Disabled => Some("Enable"),
@@ -6426,6 +6429,21 @@ impl Editor {
         ui::ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
+                .when(run_to_cursor, |this| {
+                    let weak_editor = weak_editor.clone();
+                    this.entry("Run to cursor", None, move |window, cx| {
+                        weak_editor
+                            .update(cx, |editor, cx| {
+                                editor.change_selections(None, window, cx, |s| {
+                                    s.select_ranges([Point::new(row, 0)..Point::new(row, 0)])
+                                });
+                            })
+                            .ok();
+
+                        window.dispatch_action(Box::new(DebuggerRunToCursor), cx);
+                    })
+                    .separator()
+                })
                 .when_some(toggle_state_msg, |this, msg| {
                     this.entry(msg, None, {
                         let weak_editor = weak_editor.clone();
@@ -8209,12 +8227,18 @@ impl Editor {
                 IndentSize::tab()
             } else {
                 let tab_size = settings.tab_size.get();
-                let char_column = snapshot
+                let indent_remainder = snapshot
                     .text_for_range(Point::new(cursor.row, 0)..cursor)
                     .flat_map(str::chars)
-                    .count()
-                    + row_delta as usize;
-                let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
+                    .fold(row_delta % tab_size, |counter: u32, c| {
+                        if c == '\t' {
+                            0
+                        } else {
+                            (counter + 1) % tab_size
+                        }
+                    });
+
+                let chars_to_next_tab_stop = tab_size - indent_remainder;
                 IndentSize::spaces(chars_to_next_tab_stop)
             };
             selection.start = Point::new(cursor.row, cursor.column + row_delta + tab_size.len);
@@ -11567,7 +11591,7 @@ impl Editor {
             window: &mut Window,
             cx: &mut Context<Editor>,
         ) {
-            this.unfold_ranges(&[range.clone()], false, true, cx);
+            this.unfold_ranges(&[range.clone()], false, auto_scroll.is_some(), cx);
             this.change_selections(auto_scroll, window, cx, |s| {
                 if replace_newest {
                     s.delete(s.newest_anchor().id);
@@ -11742,16 +11766,21 @@ impl Editor {
             return Ok(());
         }
 
-        let mut new_selections = self.selections.all::<usize>(cx);
+        let mut new_selections = Vec::new();
 
+        let reversed = self.selections.oldest::<usize>(cx).reversed;
         let buffer = &display_map.buffer_snapshot;
         let query_matches = select_next_state
             .query
             .stream_find_iter(buffer.bytes_in_range(0..buffer.len()));
 
-        for query_match in query_matches {
-            let query_match = query_match.unwrap(); // can only fail due to I/O
-            let offset_range = query_match.start()..query_match.end();
+        for query_match in query_matches.into_iter() {
+            let query_match = query_match.context("query match for select all action")?; // can only fail due to I/O
+            let offset_range = if reversed {
+                query_match.end()..query_match.start()
+            } else {
+                query_match.start()..query_match.end()
+            };
             let display_range = offset_range.start.to_display_point(&display_map)
                 ..offset_range.end.to_display_point(&display_map);
 
@@ -11759,52 +11788,14 @@ impl Editor {
                 || (!movement::is_inside_word(&display_map, display_range.start)
                     && !movement::is_inside_word(&display_map, display_range.end))
             {
-                self.selections.change_with(cx, |selections| {
-                    new_selections.push(Selection {
-                        id: selections.new_selection_id(),
-                        start: offset_range.start,
-                        end: offset_range.end,
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    });
-                });
+                new_selections.push(offset_range.start..offset_range.end);
             }
-        }
-
-        new_selections.sort_by_key(|selection| selection.start);
-        let mut ix = 0;
-        while ix + 1 < new_selections.len() {
-            let current_selection = &new_selections[ix];
-            let next_selection = &new_selections[ix + 1];
-            if current_selection.range().overlaps(&next_selection.range()) {
-                if current_selection.id < next_selection.id {
-                    new_selections.remove(ix + 1);
-                } else {
-                    new_selections.remove(ix);
-                }
-            } else {
-                ix += 1;
-            }
-        }
-
-        let reversed = self.selections.oldest::<usize>(cx).reversed;
-
-        for selection in new_selections.iter_mut() {
-            selection.reversed = reversed;
         }
 
         select_next_state.done = true;
-        self.unfold_ranges(
-            &new_selections
-                .iter()
-                .map(|selection| selection.range())
-                .collect::<Vec<_>>(),
-            false,
-            false,
-            cx,
-        );
-        self.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
-            selections.select(new_selections)
+        self.unfold_ranges(&new_selections.clone(), false, false, cx);
+        self.change_selections(None, window, cx, |selections| {
+            selections.select_ranges(new_selections)
         });
 
         Ok(())
@@ -14909,8 +14900,12 @@ impl Editor {
         self.fold_creases(to_fold, true, window, cx);
     }
 
-    pub fn fold_at(&mut self, fold_at: &FoldAt, window: &mut Window, cx: &mut Context<Self>) {
-        let buffer_row = fold_at.buffer_row;
+    pub fn fold_at(
+        &mut self,
+        buffer_row: MultiBufferRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(crease) = display_map.crease_for_buffer_row(buffer_row) {
@@ -14980,16 +14975,16 @@ impl Editor {
 
     pub fn unfold_at(
         &mut self,
-        unfold_at: &UnfoldAt,
+        buffer_row: MultiBufferRow,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        let intersection_range = Point::new(unfold_at.buffer_row.0, 0)
+        let intersection_range = Point::new(buffer_row.0, 0)
             ..Point::new(
-                unfold_at.buffer_row.0,
-                display_map.buffer_snapshot.line_len(unfold_at.buffer_row),
+                buffer_row.0,
+                display_map.buffer_snapshot.line_len(buffer_row),
             );
 
         let autoscroll = self
@@ -19358,15 +19353,11 @@ impl EditorSnapshot {
                             Arc::new(move |folded, window: &mut Window, cx: &mut App| {
                                 if folded {
                                     editor.update(cx, |editor, cx| {
-                                        editor.fold_at(&crate::FoldAt { buffer_row }, window, cx)
+                                        editor.fold_at(buffer_row, window, cx)
                                     });
                                 } else {
                                     editor.update(cx, |editor, cx| {
-                                        editor.unfold_at(
-                                            &crate::UnfoldAt { buffer_row },
-                                            window,
-                                            cx,
-                                        )
+                                        editor.unfold_at(buffer_row, window, cx)
                                     });
                                 }
                             });
@@ -19390,9 +19381,9 @@ impl EditorSnapshot {
                     .toggle_state(folded)
                     .on_click(window.listener_for(&editor, move |this, _e, window, cx| {
                         if folded {
-                            this.unfold_at(&UnfoldAt { buffer_row }, window, cx);
+                            this.unfold_at(buffer_row, window, cx);
                         } else {
-                            this.fold_at(&FoldAt { buffer_row }, window, cx);
+                            this.fold_at(buffer_row, window, cx);
                         }
                     }))
                     .into_any_element(),
