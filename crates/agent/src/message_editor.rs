@@ -702,13 +702,13 @@ impl Render for MessageEditor {
                             .gap_5()
                             .child(div().when(self.height_expanded, |this| this.h_96()).debug_bg_red().child({
                                     let settings = ThemeSettings::get_global(cx);
+
                                     let text_style = TextStyle {
                                         color: cx.theme().colors().text,
-                                        font_family: settings.ui_font.family.clone(),
-                                        font_fallbacks: settings.ui_font.fallbacks.clone(),
-                                        font_features: settings.ui_font.features.clone(),
+                                        font_family: settings.buffer_font.family.clone(),
+                                        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                                        font_features: settings.buffer_font.features.clone(),
                                         font_size: font_size.into(),
-                                        font_weight: settings.ui_font.weight,
                                         line_height: line_height.into(),
                                         ..Default::default()
                                     };
@@ -744,7 +744,7 @@ impl Render for MessageEditor {
                             .child(
                                 h_flex()
                                     .debug_bg_cyan()
-                                    // .mt_auto()
+                                    .mt_auto()
                                     .flex_none()
                                     .justify_between()
                                     .child(h_flex().gap_2().child(self.profile_selector.clone()))
