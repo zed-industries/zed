@@ -475,4 +475,22 @@ impl Settings for EditorSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(source: serde_json::Value, _: &mut App) -> anyhow::Result<Self> {
+        let this = Self::default();
+        bool_setting("editor.enabled", source, &mut this.enabled);
+        bool_setting("editor.enabled", source, &mut this.enabled);
+        bool_setting("editor.enabled", source, &mut this.enabled);
+
+
+
+        fn bool_setting(key: &str, source: serde_json::Value, value: &mut bool) -> {
+            normalize_key(key, source);
+        }
+
+        fn bool_setting_converted(key: &str, source: serde_json::Value, value: &mut bool, f: impl FnOnce() -> bool) -> {
+            *value = f(normalize_key(key, source));
+        }
+    }
+
 }
