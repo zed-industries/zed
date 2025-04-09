@@ -1547,7 +1547,6 @@ impl Thread {
             .default_profile
             .to_string();
 
-        // Tools enabled during the thread at the time of reporting
         let enabled_tool_names: Vec<String> = self
             .tools()
             .enabled_tools(cx)
@@ -1555,7 +1554,6 @@ impl Thread {
             .map(|tool| tool.name().to_string())
             .collect();
 
-        self.feedback = Some(feedback);
         self.message_feedback.insert(message_id, feedback);
 
         cx.notify();
