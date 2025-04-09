@@ -3,7 +3,7 @@ use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language::{self, Anchor, Buffer, ToPointUtf16};
 use language_model::LanguageModelRequestMessage;
-use project::{self, Project};
+use project::{self, LspAction, Project};
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -83,8 +83,8 @@ impl Tool for CodeActionTool {
         "code_actions".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
-        true
+    fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
+        false
     }
 
     fn description(&self) -> String {
@@ -177,43 +177,24 @@ impl Tool for CodeActionTool {
             };
 
             if let Some(action_type) = &input.action {
-                if action_type == "textDocument/rename" {
-                    // Handle rename operation
-                    let new_name = match &input.arguments {
-                        Some(serde_json::Value::String(new_name)) => new_name.clone(),
-                        Some(value) => {
-                            if let Ok(new_name) = serde_json::from_value::<String>(value.clone()) {
-                                new_name
-                            } else {
-                                return Err(anyhow!("For rename operations, 'arguments' must be a string containing the new name"));
-                            }
-                        },
-                        None => return Err(anyhow!("For rename operations, 'arguments' must contain the new name")),
+                // Special-case the `rename` operation
+                let response = if action_type == "textDocument/rename" {
+                    let Some(new_name) = input.arguments.and_then(|args| serde_json::from_value::<String>(args).ok()) else {
+                        return Err(anyhow!("For rename operations, 'arguments' must be a string containing the new name"));
                     };
 
                     let position = buffer.read_with(cx, |buffer, _| {
                         range.start.to_point_utf16(&buffer.snapshot())
                     })?;
 
-                    // Execute the rename operation
-                    let _ = project
+                    project
                         .update(cx, |project, cx| {
                             project.perform_rename(buffer.clone(), position, new_name.clone(), cx)
                         })?
                         .await?;
 
-                    // Save the buffer after rename
-                    project
-                        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
-                        .await?;
-
-                    action_log.update(cx, |log, cx| {
-                        log.buffer_edited(buffer.clone(), Vec::new(), cx)
-                    })?;
-
-                    Ok(format!("Renamed '{}' to '{}'", input.text_range, new_name))
+                    format!("Renamed '{}' to '{}'", input.text_range, new_name)
                 } else {
-                    // Handle execute specific code action
                     // Get code actions for the range
                     let actions = project
                         .update(cx, |project, cx| {
@@ -225,63 +206,54 @@ impl Tool for CodeActionTool {
                         return Err(anyhow!("No code actions available for this range"));
                     }
 
-                    // Compile the regex pattern
+                    // Find all matching actions
                     let regex = match Regex::new(action_type) {
                         Ok(regex) => regex,
                         Err(err) => return Err(anyhow!("Invalid regex pattern: {}", err)),
                     };
+                    let mut matching_actions = actions
+                        .into_iter()
+                        .filter(|action| { regex.is_match(action.lsp_action.title()) });
 
-                    // Find all matching actions
-                    let matching_actions: Vec<_> = actions
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, action)| {
-                            let title = action.lsp_action.title();
-                            regex.is_match(title)
-                        })
-                        .collect();
-
-                    // Ensure exactly one action matches
-                    if matching_actions.is_empty() {
+                    let Some(action) = matching_actions.next() else {
                         return Err(anyhow!("No code actions match the pattern: {}", action_type));
-                    } else if matching_actions.len() > 1 {
-                        let titles: Vec<_> = matching_actions
-                            .iter()
-                            .map(|(_, action)| action.lsp_action.title().to_string())
-                            .collect();
+                    };
+
+                    // There should have been exactly one matching action.
+                    if let Some(second) = matching_actions.next() {
+                        let mut all_matches = vec![action, second];
+
+                        all_matches.extend(matching_actions);
 
                         return Err(anyhow!(
                             "Pattern '{}' matches multiple code actions: {}",
                             action_type,
-                            titles.join(", ")
+                            all_matches.into_iter().map(|action| action.lsp_action.title().to_string()).collect::<Vec<_>>().join(", ")
                         ));
                     }
 
-                    // Get the single matching action
-                    let (_, action) = matching_actions[0];
-                    let action = action.clone();
                     let title = action.lsp_action.title().to_string();
 
-                    // Apply the selected code action
-                    let _transaction = project
+                    project
                         .update(cx, |project, cx| {
                             project.apply_code_action(buffer.clone(), action, true, cx)
                         })?
                         .await?;
 
-                    // Save the buffer after executing the code action
-                    project
-                        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
-                        .await?;
+                    format!("Completed code action: {}", title)
+                };
 
-                    action_log.update(cx, |log, cx| {
-                        log.buffer_edited(buffer.clone(), Vec::new(), cx)
-                    })?;
+                project
+                    .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                    .await?;
 
-                    Ok(format!("Executed code action: {}", title))
-                }
+                action_log.update(cx, |log, cx| {
+                    log.buffer_edited(buffer.clone(), cx)
+                })?;
+
+                Ok(response)
             } else {
-                // List available code actions mode (no action specified)
+                // No action specified, so list the avilable ones.
                 let (position_start, position_end) = buffer.read_with(cx, |buffer, _| {
                     let snapshot = buffer.snapshot();
                     (
@@ -308,8 +280,7 @@ impl Tool for CodeActionTool {
                     })?
                     .await?;
 
-                // Format the results
-                let mut result = format!(
+                let mut response = format!(
                     "Available code actions for text range '{}' at position {}:{} to {}:{} (UTF-16 coordinates):\n\n",
                     input.text_range,
                     position_start_display.row, position_start_display.column,
@@ -317,13 +288,13 @@ impl Tool for CodeActionTool {
                 );
 
                 if actions.is_empty() {
-                    result.push_str("No code actions available for this range.");
+                    response.push_str("No code actions available for this range.");
                 } else {
                     for (i, action) in actions.iter().enumerate() {
                         let title = match &action.lsp_action {
-                            project::LspAction::Action(code_action) => code_action.title.as_str(),
-                            project::LspAction::Command(command) => command.title.as_str(),
-                            project::LspAction::CodeLens(code_lens) => {
+                            LspAction::Action(code_action) => code_action.title.as_str(),
+                            LspAction::Command(command) => command.title.as_str(),
+                            LspAction::CodeLens(code_lens) => {
                                 if let Some(cmd) = &code_lens.command {
                                     cmd.title.as_str()
                                 } else {
@@ -333,22 +304,22 @@ impl Tool for CodeActionTool {
                         };
 
                         let kind = match &action.lsp_action {
-                            project::LspAction::Action(code_action) => {
+                            LspAction::Action(code_action) => {
                                 if let Some(kind) = &code_action.kind {
                                     kind.as_str()
                                 } else {
                                     "unknown"
                                 }
                             },
-                            project::LspAction::Command(_) => "command",
-                            project::LspAction::CodeLens(_) => "code_lens",
+                            LspAction::Command(_) => "command",
+                            LspAction::CodeLens(_) => "code_lens",
                         };
 
-                        result.push_str(&format!("{}. {} ({})\n", i + 1, title, kind));
+                        response.push_str(&format!("{}. {title} ({kind})\n", i + 1));
                     }
                 }
 
-                Ok(result)
+                Ok(response)
             }
         })
     }

@@ -70,7 +70,7 @@ pub struct FindReplaceFileToolInput {
     /// the exact text of the file in question, to make sure that you are searching for
     /// exactly the right string. Regardless of whether it was because you made a mistake
     /// or because the file changed since you last looked at it, you should be extra
-    /// careful when retrying in this way. It's a bad expereience for the user if
+    /// careful when retrying in this way. It's a bad experience for the user if
     /// this `find` string isn't found, so be super careful to get it exactly right!
     ///
     /// <example>
