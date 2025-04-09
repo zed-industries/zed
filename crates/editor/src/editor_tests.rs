@@ -8344,20 +8344,8 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
     });
 
     cx.executor().start_waiting();
+
     let fake_server = fake_servers.next().await.unwrap();
-
-    let format = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.perform_format(
-                project.clone(),
-                FormatTrigger::Manual,
-                FormatTarget::Buffers,
-                window,
-                cx,
-            )
-        })
-        .unwrap();
-
     fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
         move |_params, _| async move {
             Ok(Some(vec![lsp::TextEdit::new(
@@ -8411,15 +8399,21 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
             ]))
         },
     );
-    fake_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>(
-        move |params, _| async move { Ok(params) },
-    );
+
+    fake_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>({
+        move |params, _| async move { Ok(params) }
+    });
+
+    let command_lock = Arc::new(futures::lock::Mutex::new(()));
     fake_server.set_request_handler::<lsp::request::ExecuteCommand, _, _>({
         let fake = fake_server.clone();
+        let lock = command_lock.clone();
         move |params, _| {
             assert_eq!(params.command, "the-command-for-code-action-1");
             let fake = fake.clone();
+            let lock = lock.clone();
             async move {
+                lock.lock().await;
                 fake.server
                     .request::<lsp::request::ApplyWorkspaceEdit>(lsp::ApplyWorkspaceEditParams {
                         label: None,
@@ -8449,7 +8443,18 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
     });
 
     cx.executor().start_waiting();
-    format.await;
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.text(cx),
@@ -8467,6 +8472,81 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
     });
 
     editor.update_in(cx, |editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+        assert_eq!(editor.text(cx), "one  \ntwo   \nthree");
+    });
+
+    // Perform a manual edit while waiting for an LSP command
+    // that's being run as part of a formatting code action.
+    let lock_guard = command_lock.lock().await;
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+            "#
+            .unindent()
+        );
+
+        editor.buffer.update(cx, |buffer, cx| {
+            let ix = buffer.len(cx);
+            buffer.edit([(ix..ix, "edited\n")], None, cx);
+        });
+    });
+
+    // Allow the LSP command to proceed. Because the buffer was edited,
+    // the second code action will not be run.
+    drop(lock_guard);
+    format.await;
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-1-command
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+                edited
+            "#
+            .unindent()
+        );
+
+        // The manual edit is undone first, because it is the last thing the user did
+        // (even though the command completed afterwards).
+        editor.undo(&Default::default(), window, cx);
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-1-command
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+            "#
+            .unindent()
+        );
+
+        // All the formatting (including the command, which completed after the manual edit)
+        // is undone together.
         editor.undo(&Default::default(), window, cx);
         assert_eq!(editor.text(cx), "one  \ntwo   \nthree");
     });
