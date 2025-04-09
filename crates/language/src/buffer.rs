@@ -2015,11 +2015,16 @@ impl Buffer {
     }
 
     /// Manually remove a transaction from the buffer's undo history
-    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
-        self.text.forget_transaction(transaction_id);
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        self.text.forget_transaction(transaction_id)
     }
 
-    /// Manually merge two adjacent transactions in the buffer's undo history.
+    /// Retrieve a transaction from the buffer's undo history
+    pub fn get_transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.text.get_transaction(transaction_id)
+    }
+
+    /// Manually merge two transactions in the buffer's undo history.
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         self.text.merge_transactions(transaction, destination);
     }

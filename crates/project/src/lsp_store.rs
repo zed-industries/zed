@@ -86,7 +86,8 @@ use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
 use url::Url;
 use util::{
     ResultExt, TryFutureExt as _, debug_panic, defer, maybe, merge_json_value_into,
-    paths::SanitizedPath, post_inc,
+    paths::{PathExt, SanitizedPath},
+    post_inc,
 };
 
 pub use fs::*;
@@ -1220,8 +1221,61 @@ impl LocalLspStore {
                 buffer.finalize_last_transaction();
             })?;
 
-            // handle whitespace formatting
+            // helper function to avoid duplicate logic between formatter handlers below
+            // We want to avoid continuing to format the buffer if it has been edited since the start
+            // so we check that the last transaction id on the undo stack matches the one we expect
+            // This check should be done after each "gather" step where we generate a diff or edits to apply,
+            // and before applying them to the buffer to avoid messing up the user's buffer
+            fn err_if_buffer_edited_since_start(
+                buffer: &FormattableBuffer,
+                transaction_id_format: Option<text::TransactionId>,
+                cx: &AsyncApp,
+            ) -> Option<anyhow::Error> {
+                let transaction_id_last = buffer
+                    .handle
+                    .read_with(cx, |buffer, _| {
+                        buffer.peek_undo_stack().map(|t| t.transaction_id())
+                    })
+                    .ok()
+                    .flatten();
+                let should_continue_formatting = match (transaction_id_format, transaction_id_last)
+                {
+                    (Some(format), Some(last)) => format == last,
+                    (Some(_), None) => false,
+                    (_, _) => true,
+                };
+                if !should_continue_formatting {
+                    return Some(anyhow::anyhow!("Buffer edited while formatting. Aborting"));
+                }
+                return None;
+            }
+
+            // variable used to track errors that occur during the formatting process below,
+            // but that need to not be returned right away (with `?` for example) because we
+            // still need to clean up the transaction history and update the project transaction
+            // at the very end
+            let mut result = anyhow::Ok(());
+
+            // see handling of code action formatting for why there might already be transactions
+            // in project_transaction for this buffer
+            if let Some(transaction_existing) = project_transaction.0.remove(&buffer.handle) {
+                transaction_id_format = Some(transaction_existing.id);
+                buffer.handle.update(cx, |buffer, _| {
+                    // ensure the transaction is in the history so we can group with it
+                    if buffer.get_transaction(transaction_existing.id).is_none() {
+                        buffer.push_transaction(transaction_existing, Instant::now());
+                    }
+                })?;
+            }
+
+            if let Some(err) = err_if_buffer_edited_since_start(buffer, transaction_id_format, &cx)
             {
+                zlog::warn!(logger => "Buffer edited while formatting. Aborting");
+                result = Err(err);
+            }
+
+            // handle whitespace formatting
+            if result.is_ok() {
                 if settings.remove_trailing_whitespace_on_save {
                     zlog::trace!(logger => "removing trailing whitespace");
                     let diff = buffer
@@ -1297,41 +1351,12 @@ impl LocalLspStore {
 
             let formatters = code_actions_on_format_formatter.iter().chain(formatters);
 
-            // helper function to avoid duplicate logic between formatter handlers below
-            // We want to avoid continuing to format the buffer if it has been edited since the start
-            // so we check that the last transaction id on the undo stack matches the one we expect
-            // This check should be done after each "gather" step where we generate a diff or edits to apply,
-            // and before applying them to the buffer to avoid messing up the user's buffer
-            fn err_if_buffer_edited_since_start(
-                buffer: &FormattableBuffer,
-                transaction_id_format: Option<text::TransactionId>,
-                cx: &AsyncApp,
-            ) -> Option<anyhow::Error> {
-                let transaction_id_last = buffer
-                    .handle
-                    .read_with(cx, |buffer, _| {
-                        buffer.peek_undo_stack().map(|t| t.transaction_id())
-                    })
-                    .ok()
-                    .flatten();
-                let should_continue_formatting = match (transaction_id_format, transaction_id_last)
-                {
-                    (Some(format), Some(last)) => format == last,
-                    (Some(_), None) => false,
-                    (_, _) => true,
-                };
-                if !should_continue_formatting {
-                    return Some(anyhow::anyhow!("Buffer edited while formatting. Aborting"));
-                }
-                return None;
-            }
-
-            // variable used to track errors that occur during the formatting process below,
-            // but that need to not be returned right away (with `?` for example) because we
-            // still need to clean up the transaction history and update the project transaction
-            let mut result = anyhow::Ok(());
-
             'formatters: for formatter in formatters {
+                if result.is_err() {
+                    // may have been set above, instead of indenting this whole block with an if, just don't do anything
+                    // destructive if we're aborting
+                    continue;
+                }
                 match formatter {
                     Formatter::Prettier => {
                         let logger = zlog::scoped!(logger => "prettier");
@@ -1583,31 +1608,18 @@ impl LocalLspStore {
 
                             let describe_code_action = |action: &CodeAction| {
                                 format!(
-                                    "code action '{}' with title \"{}\"",
+                                    "code action '{}' with title \"{}\" on server {}",
                                     action
                                         .lsp_action
                                         .action_kind()
                                         .unwrap_or("unknown".into())
                                         .as_str(),
-                                    action.lsp_action.title()
+                                    action.lsp_action.title(),
+                                    server.name(),
                                 )
                             };
 
                             zlog::trace!(logger => "Executing {}", describe_code_action(&action));
-
-                            // NOTE: code below duplicated from `Self::deserialize_workspace_edit`
-                            // but filters out and logs warnings for code actions that cause unreasonably
-                            // difficult handling on our part, such as:
-                            // - applying edits that call commands
-                            //   which can result in arbitrary workspace edits being sent from the server that
-                            //   have no way of being tied back to the command that initiated them (i.e. we
-                            //   can't know which edits are part of the format request, or if the server is done sending
-                            //   actions in response to the command)
-                            // - actions that create/delete/modify/rename files other than the one we are formatting
-                            //   as we then would need to handle such changes correctly in the local history as well
-                            //   as the remote history through the ProjectTransaction
-                            // - actions with snippet edits, as these simply don't make sense in the context of a format request
-                            // Supporting these actions is not impossible, but not supported as of yet.
 
                             if let Err(err) =
                                 Self::try_resolve_code_action(server, &mut action).await
@@ -1620,163 +1632,339 @@ impl LocalLspStore {
                                 );
                                 continue 'actions;
                             }
-                            if let Some(_) = action.lsp_action.command() {
-                                zlog::warn!(
-                                    logger =>
-                                    "Code actions with commands are not supported while formatting. Skipping {}",
-                                    describe_code_action(&action),
-                                );
-                                continue 'actions;
-                            }
-                            let Some(edit) = action.lsp_action.edit().cloned() else {
-                                zlog::warn!(
-                                    logger =>
-                                    "No edit found for while formatting. Skipping {}",
-                                    describe_code_action(&action),
-                                );
-                                continue 'actions;
-                            };
 
-                            if edit.changes.is_none() && edit.document_changes.is_none() {
-                                zlog::trace!(
-                                    logger =>
-                                    "No changes for code action. Skipping {}",
-                                    describe_code_action(&action),
-                                );
-                                continue 'actions;
-                            }
-
-                            let mut operations = Vec::new();
-                            if let Some(document_changes) = edit.document_changes {
-                                match document_changes {
-                                    lsp::DocumentChanges::Edits(edits) => operations.extend(
-                                        edits.into_iter().map(lsp::DocumentChangeOperation::Edit),
-                                    ),
-                                    lsp::DocumentChanges::Operations(ops) => operations = ops,
+                            if let Some(edit) = action.lsp_action.edit().cloned() {
+                                // NOTE: code below duplicated from `Self::deserialize_workspace_edit`
+                                // but filters out and logs warnings for code actions that cause unreasonably
+                                // difficult handling on our part, such as:
+                                // - applying edits that call commands
+                                //   which can result in arbitrary workspace edits being sent from the server that
+                                //   have no way of being tied back to the command that initiated them (i.e. we
+                                //   can't know which edits are part of the format request, or if the server is done sending
+                                //   actions in response to the command)
+                                // - actions that create/delete/modify/rename files other than the one we are formatting
+                                //   as we then would need to handle such changes correctly in the local history as well
+                                //   as the remote history through the ProjectTransaction
+                                // - actions with snippet edits, as these simply don't make sense in the context of a format request
+                                // Supporting these actions is not impossible, but not supported as of yet.
+                                if edit.changes.is_none() && edit.document_changes.is_none() {
+                                    zlog::trace!(
+                                        logger =>
+                                        "No changes for code action. Skipping {}",
+                                        describe_code_action(&action),
+                                    );
+                                    continue 'actions;
                                 }
-                            } else if let Some(changes) = edit.changes {
-                                operations.extend(changes.into_iter().map(|(uri, edits)| {
-                                    lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
-                                        text_document:
-                                            lsp::OptionalVersionedTextDocumentIdentifier {
-                                                uri,
-                                                version: None,
-                                            },
-                                        edits: edits.into_iter().map(Edit::Plain).collect(),
-                                    })
-                                }));
-                            }
 
-                            let mut edits = Vec::with_capacity(operations.len());
-
-                            if operations.is_empty() {
-                                zlog::trace!(
-                                    logger =>
-                                    "No changes for code action. Skipping {}",
-                                    describe_code_action(&action),
-                                );
-                                continue 'actions;
-                            }
-                            for operation in operations {
-                                let op = match operation {
-                                    lsp::DocumentChangeOperation::Edit(op) => op,
-                                    lsp::DocumentChangeOperation::Op(_) => {
-                                        zlog::warn!(
-                                            logger =>
-                                            "Code actions which create, delete, or rename files are not supported on format. Skipping {}",
-                                            describe_code_action(&action),
-                                        );
-                                        continue 'actions;
+                                let mut operations = Vec::new();
+                                if let Some(document_changes) = edit.document_changes {
+                                    match document_changes {
+                                        lsp::DocumentChanges::Edits(edits) => operations.extend(
+                                            edits
+                                                .into_iter()
+                                                .map(lsp::DocumentChangeOperation::Edit),
+                                        ),
+                                        lsp::DocumentChanges::Operations(ops) => operations = ops,
                                     }
-                                };
-                                let Ok(file_path) = op.text_document.uri.to_file_path() else {
-                                    zlog::warn!(
+                                } else if let Some(changes) = edit.changes {
+                                    operations.extend(changes.into_iter().map(|(uri, edits)| {
+                                        lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                                            text_document:
+                                                lsp::OptionalVersionedTextDocumentIdentifier {
+                                                    uri,
+                                                    version: None,
+                                                },
+                                            edits: edits.into_iter().map(Edit::Plain).collect(),
+                                        })
+                                    }));
+                                }
+
+                                let mut edits = Vec::with_capacity(operations.len());
+
+                                if operations.is_empty() {
+                                    zlog::trace!(
                                         logger =>
-                                        "Failed to convert URI '{:?}' to file path. Skipping {}",
-                                        &op.text_document.uri,
-                                        describe_code_action(&action),
-                                    );
-                                    continue 'actions;
-                                };
-                                if &file_path != buffer_path_abs {
-                                    zlog::warn!(
-                                        logger =>
-                                        "File path '{:?}' does not match buffer path '{:?}'. Skipping {}",
-                                        file_path,
-                                        buffer_path_abs,
+                                        "No changes for code action. Skipping {}",
                                         describe_code_action(&action),
                                     );
                                     continue 'actions;
                                 }
-
-                                let mut lsp_edits = Vec::new();
-                                for edit in op.edits {
-                                    match edit {
-                                        Edit::Plain(edit) => {
-                                            if !lsp_edits.contains(&edit) {
-                                                lsp_edits.push(edit);
-                                            }
-                                        }
-                                        Edit::Annotated(edit) => {
-                                            if !lsp_edits.contains(&edit.text_edit) {
-                                                lsp_edits.push(edit.text_edit);
-                                            }
-                                        }
-                                        Edit::Snippet(_) => {
+                                for operation in operations {
+                                    let op = match operation {
+                                        lsp::DocumentChangeOperation::Edit(op) => op,
+                                        lsp::DocumentChangeOperation::Op(_) => {
                                             zlog::warn!(
                                                 logger =>
-                                                "Code actions which produce snippet edits are not supported during formatting. Skipping {}",
+                                                "Code actions which create, delete, or rename files are not supported on format. Skipping {}",
                                                 describe_code_action(&action),
                                             );
                                             continue 'actions;
                                         }
+                                    };
+                                    let Ok(file_path) = op.text_document.uri.to_file_path() else {
+                                        zlog::warn!(
+                                            logger =>
+                                            "Failed to convert URI '{:?}' to file path. Skipping {}",
+                                            &op.text_document.uri,
+                                            describe_code_action(&action),
+                                        );
+                                        continue 'actions;
+                                    };
+                                    if &file_path != buffer_path_abs {
+                                        zlog::warn!(
+                                            logger =>
+                                            "File path '{:?}' does not match buffer path '{:?}'. Skipping {}",
+                                            file_path,
+                                            buffer_path_abs,
+                                            describe_code_action(&action),
+                                        );
+                                        continue 'actions;
+                                    }
+
+                                    let mut lsp_edits = Vec::new();
+                                    for edit in op.edits {
+                                        match edit {
+                                            Edit::Plain(edit) => {
+                                                if !lsp_edits.contains(&edit) {
+                                                    lsp_edits.push(edit);
+                                                }
+                                            }
+                                            Edit::Annotated(edit) => {
+                                                if !lsp_edits.contains(&edit.text_edit) {
+                                                    lsp_edits.push(edit.text_edit);
+                                                }
+                                            }
+                                            Edit::Snippet(_) => {
+                                                zlog::warn!(
+                                                    logger =>
+                                                    "Code actions which produce snippet edits are not supported during formatting. Skipping {}",
+                                                    describe_code_action(&action),
+                                                );
+                                                continue 'actions;
+                                            }
+                                        }
+                                    }
+                                    let edits_result = lsp_store
+                                        .update(cx, |lsp_store, cx| {
+                                            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                                                &buffer.handle,
+                                                lsp_edits,
+                                                server.server_id(),
+                                                op.text_document.version,
+                                                cx,
+                                            )
+                                        })?
+                                        .await;
+                                    let Ok(resolved_edits) = edits_result else {
+                                        zlog::warn!(
+                                            logger =>
+                                            "Failed to resolve edits from LSP for buffer {:?} while handling {}",
+                                            buffer_path_abs.as_path(),
+                                            describe_code_action(&action),
+                                        );
+                                        continue 'actions;
+                                    };
+                                    edits.extend(resolved_edits);
+                                }
+
+                                if edits.is_empty() {
+                                    zlog::warn!(logger => "No edits resolved from LSP");
+                                    continue 'actions;
+                                }
+
+                                if let Some(err) = err_if_buffer_edited_since_start(
+                                    buffer,
+                                    transaction_id_format,
+                                    &cx,
+                                ) {
+                                    zlog::warn!(logger => "Buffer edited while formatting. Aborting");
+                                    result = Err(err);
+                                    break 'formatters;
+                                }
+                                zlog::info!(logger => "Applying changes");
+                                buffer.handle.update(cx, |buffer, cx| {
+                                    buffer.start_transaction();
+                                    buffer.edit(edits, None, cx);
+                                    transaction_id_format =
+                                        transaction_id_format.or(buffer.end_transaction(cx));
+                                    if let Some(transaction_id) = transaction_id_format {
+                                        buffer.group_until_transaction(transaction_id);
+                                    }
+                                })?;
+                            }
+                            if let Some(command) = action.lsp_action.command() {
+                                zlog::warn!(
+                                    logger =>
+                                    "Executing code action command '{}'. This may cause formatting to abort unnecessarily as well as splitting formatting into two entries in the undo history",
+                                    &command.command,
+                                );
+                                // bail early and command is invalid
+                                {
+                                    let server_capabilities = server.capabilities();
+                                    let available_commands = server_capabilities
+                                        .execute_command_provider
+                                        .as_ref()
+                                        .map(|options| options.commands.as_slice())
+                                        .unwrap_or_default();
+                                    if !available_commands.contains(&command.command) {
+                                        zlog::warn!(
+                                            logger =>
+                                            "Cannot execute a command {} not listed in the language server capabilities of server {}",
+                                            command.command,
+                                            server.name(),
+                                        );
+                                        continue 'actions;
                                     }
                                 }
-                                let edits_result = lsp_store
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store.as_local_mut().unwrap().edits_from_lsp(
-                                            &buffer.handle,
-                                            lsp_edits,
-                                            server.server_id(),
-                                            op.text_document.version,
-                                            cx,
-                                        )
-                                    })?
+
+                                if let Some(err) = err_if_buffer_edited_since_start(
+                                    buffer,
+                                    transaction_id_format,
+                                    &cx,
+                                ) {
+                                    zlog::warn!(logger => "Buffer edited while formatting. Aborting");
+                                    result = Err(err);
+                                    break 'formatters;
+                                }
+                                zlog::info!(logger => "Executing command {}", &command.command);
+
+                                lsp_store.update(cx, |this, _| {
+                                    this.as_local_mut()
+                                        .unwrap()
+                                        .last_workspace_edits_by_language_server
+                                        .remove(&server.server_id());
+                                })?;
+
+                                let execute_command_result = server
+                                    .request::<lsp::request::ExecuteCommand>(
+                                        lsp::ExecuteCommandParams {
+                                            command: command.command.clone(),
+                                            arguments: command
+                                                .arguments
+                                                .clone()
+                                                .unwrap_or_default(),
+                                            ..Default::default()
+                                        },
+                                    )
                                     .await;
-                                let Ok(resolved_edits) = edits_result else {
-                                    zlog::warn!(
+
+                                if execute_command_result.is_err() {
+                                    zlog::error!(
                                         logger =>
-                                        "Failed to resolve edits from LSP for buffer {:?} while handling {}",
-                                        buffer_path_abs.as_path(),
+                                        "Failed to execute command '{}' as part of {}",
+                                        &command.command,
                                         describe_code_action(&action),
                                     );
                                     continue 'actions;
-                                };
-                                edits.extend(resolved_edits);
-                            }
-
-                            if edits.is_empty() {
-                                zlog::warn!(logger => "No edits resolved from LSP");
-                                continue 'actions;
-                            }
-
-                            if let Some(err) =
-                                err_if_buffer_edited_since_start(buffer, transaction_id_format, &cx)
-                            {
-                                zlog::warn!(logger => "Buffer edited while formatting. Aborting");
-                                result = Err(err);
-                                break 'formatters;
-                            }
-                            zlog::info!(logger => "Applying changes");
-                            buffer.handle.update(cx, |buffer, cx| {
-                                buffer.start_transaction();
-                                buffer.edit(edits, None, cx);
-                                transaction_id_format =
-                                    transaction_id_format.or(buffer.end_transaction(cx));
-                                if let Some(transaction_id) = transaction_id_format {
-                                    buffer.group_until_transaction(transaction_id);
                                 }
-                            })?;
+
+                                let mut project_transaction_command =
+                                    lsp_store.update(cx, |this, _| {
+                                        this.as_local_mut()
+                                            .unwrap()
+                                            .last_workspace_edits_by_language_server
+                                            .remove(&server.server_id())
+                                            .unwrap_or_default()
+                                    })?;
+
+                                if let Some(transaction) =
+                                    project_transaction_command.0.remove(&buffer.handle)
+                                {
+                                    zlog::trace!(
+                                        logger =>
+                                        "Successfully captured {} edits that resulted from command {}",
+                                        transaction.edit_ids.len(),
+                                        &command.command,
+                                    );
+                                    if let Some(transaction_id_format) = transaction_id_format {
+                                        let transaction_id_project_transaction = transaction.id;
+                                        buffer.handle.update(cx, |buffer, _| {
+                                            // it may have been removed from history if push_to_history was
+                                            // false in deserialize_workspace_edit. If so push it so we
+                                            // can merge it with the format transaction
+                                            // and pop the combined transaction off the history stack
+                                            // later if push_to_history is false
+                                            if buffer.get_transaction(transaction.id).is_none() {
+                                                buffer
+                                                    .push_transaction(transaction, Instant::now());
+                                            }
+                                            buffer.merge_transactions(
+                                                transaction_id_project_transaction,
+                                                transaction_id_format,
+                                            );
+                                        })?;
+                                    } else {
+                                        transaction_id_format = Some(transaction.id);
+                                    }
+                                }
+                                if !project_transaction_command.0.is_empty() {
+                                    let extra_buffers = project_transaction_command
+                                        .0
+                                        .keys()
+                                        .filter_map(|buffer_handle| {
+                                            buffer_handle
+                                                .read_with(cx, |b, cx| b.project_path(cx))
+                                                .ok()
+                                                .flatten()
+                                        })
+                                        .map(|p| p.path.to_sanitized_string())
+                                        .join(", ");
+                                    zlog::warn!(
+                                        logger =>
+                                        "Unexpected edits to buffers other than the buffer actively being formatted due to command {}. Impacted buffers: [{}].",
+                                        &command.command,
+                                        extra_buffers,
+                                    );
+                                    for (buffer_handle, transaction) in
+                                        project_transaction_command.0
+                                    {
+                                        let entry = project_transaction.0.entry(buffer_handle);
+                                        use std::collections::hash_map::Entry;
+                                        match entry {
+                                            // if project_transaction already contains a transaction for this buffer, then
+                                            // we already formatted it, and we need to merge the new transaction into the one
+                                            // in project_transaction that we created while formatting
+                                            Entry::Occupied(mut occupied_entry) => {
+                                                let buffer_handle = occupied_entry.key();
+                                                buffer_handle.update(cx, |buffer, _| {
+                                                    // if push_to_history is true, then we need to make sure it is merged in the
+                                                    // buffer history as well
+                                                    if push_to_history {
+                                                        let transaction_id_project_transaction =
+                                                            transaction.id;
+                                                        // ensure transaction from command project transaction
+                                                        // is in history so we can merge
+                                                        if buffer
+                                                            .get_transaction(transaction.id)
+                                                            .is_none()
+                                                        {
+                                                            buffer.push_transaction(
+                                                                transaction.clone(),
+                                                                Instant::now(),
+                                                            );
+                                                        }
+                                                        let transaction_id_existing =
+                                                            occupied_entry.get().id;
+                                                        buffer.merge_transactions(
+                                                            transaction_id_project_transaction,
+                                                            transaction_id_existing,
+                                                        );
+                                                    }
+                                                })?;
+                                                let transaction_existing = occupied_entry.get_mut();
+                                                transaction_existing.merge_in(transaction);
+                                            }
+                                            // if there is no transaction in project_transaction, we either haven't formatted the buffer yet,
+                                            // or we won't format this buffer
+                                            // later iterations over the formattable_buffers list will use this as the starting transaction
+                                            // for the formatting on that buffer
+                                            Entry::Vacant(vacant_entry) => {
+                                                vacant_entry.insert(transaction);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -2898,20 +3086,35 @@ impl LocalLspStore {
                         .await?;
 
                     let transaction = buffer_to_edit.update(cx, |buffer, cx| {
-                        buffer.finalize_last_transaction();
+                        let is_formatting = this.read_with(cx, |lsp_store, _| {
+                            lsp_store
+                                .as_local()
+                                .map_or(false, |local| !local.buffers_being_formatted.is_empty())
+                        });
+                        // finalizing last transaction breaks workspace edits received due to
+                        // code actions that are run as part of formatting because formatting
+                        // groups transactions from format steps together to allow undoing all formatting with
+                        // a single undo, and to bail when the user modifies the buffer during formatting
+                        // finalizing the transaction prevents the necessary grouping from happening
+                        if !is_formatting {
+                            buffer.finalize_last_transaction();
+                        }
                         buffer.start_transaction();
                         for (range, text) in edits {
                             buffer.edit([(range, text)], None, cx);
                         }
-                        let transaction = if buffer.end_transaction(cx).is_some() {
-                            let transaction = buffer.finalize_last_transaction().unwrap().clone();
-                            if !push_to_history {
-                                buffer.forget_transaction(transaction.id);
+
+                        let transaction = buffer.end_transaction(cx).and_then(|transaction_id| {
+                            if push_to_history {
+                                if !is_formatting {
+                                    // see comment above about finalizing during formatting
+                                    buffer.finalize_last_transaction();
+                                }
+                                buffer.get_transaction(transaction_id).cloned()
+                            } else {
+                                buffer.forget_transaction(transaction_id)
                             }
-                            Some(transaction)
-                        } else {
-                            None
-                        };
+                        });
 
                         transaction
                     })?;
@@ -5451,6 +5654,7 @@ impl LspStore {
                     if push_to_history {
                         buffer_handle.update(cx, |buffer, _| {
                             buffer.push_transaction(transaction.clone(), Instant::now());
+                            buffer.finalize_last_transaction();
                         })?;
                     }
                     Ok(Some(transaction))
