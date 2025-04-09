@@ -1816,7 +1816,6 @@ impl Thread {
             return;
         }
 
-        // Check if this thread should be auto-captured for telemetry
         if cfg!(debug_assertions) {
             // In development, check env var for auto capture
             if std::env::var("ZED_ENABLE_THREAD_AUTO_CAPTURE").is_ok() {
@@ -1825,7 +1824,6 @@ impl Thread {
                 return;
             }
         } else {
-            // In production, only capture for specific handles
             let should_capture = self
                 .project
                 .read(cx)
@@ -1844,7 +1842,6 @@ impl Thread {
 
         let thread_id = self.id().clone();
 
-        // Get GitHub handle for logging purposes if available
         let github_handle = self
             .project
             .read(cx)
@@ -1853,13 +1850,10 @@ impl Thread {
             .current_user()
             .map(|user| user.github_login.clone());
 
-        // We need to separate the immutable borrows from the mutable borrow needed for serialization
         let client = self.project.read(cx).client().clone();
 
-        // Now that we've gathered everything using immutable borrows, we can serialize the thread
         let serialized_thread = self.serialize(cx);
 
-        // Spawn a task to handle the telemetry event
         cx.foreground_executor()
             .spawn(async move {
                 if let Ok(serialized_thread) = serialized_thread.await {
