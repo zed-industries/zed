@@ -841,7 +841,7 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
-            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
+            let environment = cx.new(|_| ProjectEnvironment::new(env));
             let toolchain_store = cx.new(|cx| {
                 ToolchainStore::local(
                     languages.clone(),
@@ -1043,7 +1043,7 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
-            let environment = ProjectEnvironment::new(&worktree_store, None, cx);
+            let environment = cx.new(|_| ProjectEnvironment::new(None));
 
             let lsp_store = cx.new(|cx| {
                 LspStore::new_remote(
@@ -1242,7 +1242,7 @@ impl Project {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
 
-        let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
+        let environment = cx.new(|_| ProjectEnvironment::new(None))?;
 
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;

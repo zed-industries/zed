@@ -8291,16 +8291,10 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        let worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
-        let worktree_abs_path = worktree_id.and_then(|worktree_id| {
-            self.worktree_store
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .map(|entry| entry.read(cx).abs_path().clone())
-        });
-
         if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
-            environment.update(cx, |env, cx| env.get_environment(worktree_abs_path, cx))
+            environment.update(cx, |env, cx| {
+                env.get_buffer_environment(buffer.clone(), self.worktree_store.clone(), cx)
+            })
         } else {
             Task::ready(None).shared()
         }
@@ -10134,10 +10128,8 @@ impl LocalLspAdapterDelegate {
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let worktree_abs_path = worktree.read(cx).abs_path();
-
         let load_shell_env_task = environment.update(cx, |env, cx| {
-            env.get_environment(Some(worktree_abs_path), cx)
+            env.get_worktree_environment(worktree.clone(), cx)
         });
 
         Arc::new(Self {
