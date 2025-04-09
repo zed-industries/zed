@@ -572,7 +572,7 @@ fn render_markdown_code_block(
             if is_expanded {
                 this.h_full()
             } else {
-                this.h_40()
+                this.max_h_40()
             }
         });
 
