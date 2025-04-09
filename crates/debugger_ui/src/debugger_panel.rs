@@ -25,6 +25,8 @@ use project::{
 };
 use rpc::proto::{self};
 use settings::Settings;
+use std::path::Path;
+use std::sync::Arc;
 use std::{any::TypeId, path::PathBuf};
 use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
@@ -272,7 +274,7 @@ impl DebugPanel {
     fn handle_run_in_terminal_request(
         &self,
         title: Option<String>,
-        cwd: PathBuf,
+        cwd: Option<Arc<Path>>,
         command: Option<String>,
         args: Vec<String>,
         envs: HashMap<String, String>,
