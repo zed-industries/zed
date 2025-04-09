@@ -189,6 +189,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 .toggle_state(selected)
                 .child(render_file_context_entry(
                     ElementId::NamedInteger("file-ctx-picker".into(), ix),
+                    WorktreeId::from_usize(mat.worktree_id),
                     &mat.path,
                     &mat.path_prefix,
                     mat.is_dir,
@@ -328,19 +329,26 @@ pub fn extract_file_name_and_directory(
 
 pub fn render_file_context_entry(
     id: ElementId,
-    path: &Path,
+    worktree_id: WorktreeId,
+    path: &Arc<Path>,
     path_prefix: &Arc<str>,
     is_directory: bool,
     context_store: WeakEntity<ContextStore>,
     cx: &App,
 ) -> Stateful<Div> {
-    let (file_name, directory) = extract_file_name_and_directory(path, path_prefix);
+    let (file_name, directory) = extract_file_name_and_directory(&path, path_prefix);
 
     let added = context_store.upgrade().and_then(|context_store| {
+        let project_path = ProjectPath {
+            worktree_id,
+            path: path.clone(),
+        };
         if is_directory {
-            context_store.read(cx).includes_directory(path)
+            context_store.read(cx).includes_directory(&project_path)
         } else {
-            context_store.read(cx).will_include_file_path(path, cx)
+            context_store
+                .read(cx)
+                .will_include_file_path(&project_path, cx)
         }
     });
 
@@ -380,8 +388,9 @@ pub fn render_file_context_entry(
                     )
                     .child(Label::new("Added").size(LabelSize::Small)),
             ),
-            FileInclusion::InDirectory(dir_name) => {
-                let dir_name = dir_name.to_string_lossy().into_owned();
+            FileInclusion::InDirectory(directory_project_path) => {
+                // TODO: Consider using worktree full_path to include worktree name.
+                let directory_path = directory_project_path.path.to_string_lossy().into_owned();
 
                 el.child(
                     h_flex()
@@ -395,7 +404,7 @@ pub fn render_file_context_entry(
                         )
                         .child(Label::new("Included").size(LabelSize::Small)),
                 )
-                .tooltip(Tooltip::text(format!("in {dir_name}")))
+                .tooltip(Tooltip::text(format!("in {directory_path}")))
             }
         })
 }

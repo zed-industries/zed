@@ -2840,10 +2840,10 @@ pub(crate) fn open_context(
             }
         }
         AssistantContext::Directory(directory_context) => {
-            let path = directory_context.project_path.clone();
+            let project_path = directory_context.project_path(cx);
             workspace.update(cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
-                    if let Some(entry) = project.entry_for_path(&path, cx) {
+                    if let Some(entry) = project.entry_for_path(&project_path, cx) {
                         cx.emit(project::Event::RevealInProjectPanel(entry.id));
                     }
                 })
