@@ -148,53 +148,58 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
 
     let mut out_reader = BufReader::new(cmd.stdout.take().context("Failed to get stdout")?);
     let mut out_tmp_buffer = String::with_capacity(512);
-    let mut out_active = true;
     let mut err_reader = BufReader::new(cmd.stderr.take().context("Failed to get stderr")?);
     let mut err_tmp_buffer = String::with_capacity(512);
-    let mut err_active = true;
 
-    while (out_active || err_active) && combined_buffer.len() < LIMIT + 1 {
-        let stdout_fut = if out_active {
-            out_reader
-                .read_line(&mut out_tmp_buffer)
-                .fuse()
-                .left_future()
-        } else {
-            future::pending().right_future()
+    let mut out_line = Box::pin(
+        out_reader
+            .read_line(&mut out_tmp_buffer)
+            .left_future()
+            .fuse(),
+    );
+    let mut err_line = Box::pin(
+        err_reader
+            .read_line(&mut err_tmp_buffer)
+            .left_future()
+            .fuse(),
+    );
+
+    let mut has_stdout = true;
+    let mut has_stderr = true;
+    while (has_stdout || has_stderr) && combined_buffer.len() < LIMIT + 1 {
+        futures::select_biased! {
+            read = out_line => {
+                drop(out_line);
+                combined_buffer.extend(out_tmp_buffer.drain(..));
+                if read? == 0 {
+                    out_line = Box::pin(future::pending().right_future().fuse());
+                    has_stdout = false;
+                } else {
+                    out_line = Box::pin(out_reader.read_line(&mut out_tmp_buffer).left_future().fuse());
+                }
+            }
+            read = err_line => {
+                drop(err_line);
+                combined_buffer.extend(err_tmp_buffer.drain(..));
+                if read? == 0 {
+                    err_line = Box::pin(future::pending().right_future().fuse());
+                    has_stderr = false;
+                } else {
+                    err_line = Box::pin(err_reader.read_line(&mut err_tmp_buffer).left_future().fuse());
+                }
+            }
         };
-
-        let stderr_fut = if err_active {
-            err_reader
-                .read_line(&mut err_tmp_buffer)
-                .fuse()
-                .left_future()
-        } else {
-            future::pending().right_future()
-        };
-
-        let (read_stdout, read_stderr) = match select(stdout_fut, stderr_fut).await {
-            Either::Left((_, future)) => (true, future.now_or_never().is_some()),
-            Either::Right((_, future)) => (future.now_or_never().is_some(), true),
-        };
-
-        if read_stdout {
-            out_active = !out_tmp_buffer.is_empty();
-            combined_buffer.extend(out_tmp_buffer.drain(..));
-        }
-
-        if read_stderr {
-            err_active = !err_tmp_buffer.is_empty();
-            combined_buffer.extend(err_tmp_buffer.drain(..));
-        }
     }
 
-    consume_reader(out_reader).await?;
-    consume_reader(err_reader).await?;
-
-    let status = cmd.status().await.context("Failed to get command status")?;
+    drop((out_line, err_line));
 
     let truncated = combined_buffer.len() > LIMIT;
     combined_buffer.truncate(LIMIT);
+
+    consume_reader(out_reader, truncated).await?;
+    consume_reader(err_reader, truncated).await?;
+
+    let status = cmd.status().await.context("Failed to get command status")?;
 
     let output_string = if truncated {
         // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
@@ -231,6 +236,7 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
 
 async fn consume_reader<T: AsyncReadExt + Unpin>(
     mut reader: BufReader<T>,
+    truncated: bool,
 ) -> Result<(), std::io::Error> {
     loop {
         let skipped_bytes = reader.fill_buf().await?;
@@ -239,6 +245,9 @@ async fn consume_reader<T: AsyncReadExt + Unpin>(
         }
         let skipped_bytes_len = skipped_bytes.len();
         reader.consume_unpin(skipped_bytes_len);
+
+        // Should only skip if we went over the limit
+        debug_assert!(truncated);
     }
     Ok(())
 }
@@ -258,7 +267,7 @@ mod tests {
 
     use super::*;
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_run_command_simple(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
@@ -269,12 +278,11 @@ mod tests {
         assert_eq!(result.unwrap(), "```\nHello, World!\n```");
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_interleaved_stdout_stderr(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let command =
-            "echo 'stdout 1' && echo 'stderr 1' >&2 && echo 'stdout 2' && echo 'stderr 2' >&2";
+        let command = "echo 'stdout 1' && sleep 0.01 && echo 'stderr 1' >&2 && sleep 0.01 && echo 'stdout 2' && sleep 0.01 && echo 'stderr 2' >&2";
         let result = run_command_limited(Path::new(".").into(), command.to_string()).await;
 
         assert!(result.is_ok());
@@ -284,7 +292,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_multiple_output_reads(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
@@ -299,11 +307,11 @@ mod tests {
         assert_eq!(result.unwrap(), "```\n1\n2\n3\n```");
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_output_truncation_single_line(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let cmd = format!("echo '{}';", "X".repeat(LIMIT * 2));
+        let cmd = format!("echo '{}'; sleep 0.01;", "X".repeat(LIMIT * 2));
 
         let result = run_command_limited(Path::new(".").into(), cmd).await;
 
@@ -318,7 +326,7 @@ mod tests {
         assert_eq!(content_length, LIMIT);
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_output_truncation_multiline(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
@@ -337,7 +345,7 @@ mod tests {
         assert!(content_length <= LIMIT);
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_command_failure(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
