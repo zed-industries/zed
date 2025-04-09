@@ -200,7 +200,7 @@ pub(crate) trait Platform: 'static {
         None
     }
 
-    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) -> Vec<SmallVec<[PathBuf; 2]>>;
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
     fn perform_dock_menu_action(&self, _action: usize) {}
     fn add_recent_document(&self, _path: &Path) {}
     fn update_jump_list(

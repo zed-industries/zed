@@ -26,9 +26,9 @@ use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, DismissEvent, Element,
-    Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
-    ReadGlobal, SharedString, Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind,
-    WindowOptions, actions, point, px,
+    Entity, Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal,
+    SharedString, Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions,
+    actions, point, px,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -71,7 +71,7 @@ use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
-use workspace::{CloseIntent, HistoryManager, RestoreBanner};
+use workspace::{CloseIntent, RestoreBanner};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
@@ -1419,13 +1419,12 @@ fn reload_keymaps(cx: &mut App, user_key_bindings: Vec<KeyBinding>) {
     load_default_keymap(cx);
     cx.bind_keys(user_key_bindings);
     cx.set_menus(app_menus());
-    let removed_workspaces =
-        cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)]);
-    if let Some(manager) = HistoryManager::global(cx) {
-        manager.update(cx, |manager, cx| {
-            manager.remove_user_removed_workspaces(removed_workspaces, cx);
-        });
-    }
+    // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
+    #[cfg(not(target_os = "windows"))]
+    cx.set_dock_menu(vec![gpui::MenuItem::action(
+        "New Window",
+        workspace::NewWindow,
+    )]);
 }
 
 pub fn load_default_keymap(cx: &mut App) {

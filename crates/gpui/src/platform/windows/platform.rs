@@ -252,7 +252,7 @@ impl WindowsPlatform {
         false
     }
 
-    fn set_dock_menus(&self, menus: Vec<MenuItem>) -> Vec<SmallVec<[PathBuf; 2]>> {
+    fn set_dock_menus(&self, menus: Vec<MenuItem>) {
         let mut actions = Vec::new();
         menus.into_iter().for_each(|menu| {
             if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
@@ -261,10 +261,7 @@ impl WindowsPlatform {
         });
         let mut lock = self.state.borrow_mut();
         lock.jump_list.dock_menus = actions;
-        update_jump_list(&lock.jump_list)
-            .log_err()
-            .unwrap_or_default();
-        Vec::new()
+        update_jump_list(&lock.jump_list).log_err();
     }
 
     fn update_jump_list(
@@ -537,8 +534,8 @@ impl Platform for WindowsPlatform {
         Some(self.state.borrow().menus.clone())
     }
 
-    fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) -> Vec<SmallVec<[PathBuf; 2]>> {
-        self.set_dock_menus(menus)
+    fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
+        self.set_dock_menus(menus);
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
