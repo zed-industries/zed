@@ -172,6 +172,7 @@ dependencies = [
  "indoc",
  "prompt_store",
  "util",
+ "workspace-hack",
  "worktree",
 ]
 
