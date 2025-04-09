@@ -4,11 +4,11 @@ mod key_equivalents;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
+mod vscode_import;
 
-use anyhow::Result;
 use gpui::App;
 use rust_embed::RustEmbed;
-use std::{borrow::Cow, collections::BTreeMap, fmt, str};
+use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
 pub use editable_setting_control::*;
@@ -113,51 +113,4 @@ pub fn initial_tasks_content() -> Cow<'static, str> {
 
 pub fn initial_debug_tasks_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_debug_tasks.json")
-}
-
-fn read_vscode_settings(content: &str) -> Result<BTreeMap<String, String>> {
-    let nested: serde_json::Value = settings_store::parse_json_with_comments(content)?;
-    fn helper(
-        flattened: &mut BTreeMap<String, String>,
-        prefix: &mut Vec<String>,
-        current: serde_json::Map<String, serde_json::Value>,
-    ) -> Result<()> {
-        for (k, v) in current {
-            if let Ok(map) = serde_json::from_value(v.clone()) {
-                prefix.push(k);
-                helper(flattened, prefix, map)?;
-                prefix.pop();
-            } else {
-                let existing =
-                    flattened.insert(format!("{}.{}", prefix.join("."), k), v.to_string());
-                debug_assert!(existing.is_none());
-            }
-        }
-        Ok(())
-    }
-    let mut prefix = Vec::new();
-    let mut flattened = Default::default();
-    helper(&mut flattened, &mut prefix, serde_json::from_value(nested)?)?;
-    Ok(flattened)
-}
-
-#[cfg(test)]
-mod tests {
-    use collections::BTreeMap;
-
-    use super::*;
-
-    #[test]
-    fn test_flatten_vscode_settings() {
-        let config = r#"{
-            "a": { "b": 1, "c.d": 2, "e.f": {"g.h.i": 3} }
-            }"#;
-        let expected: BTreeMap<String, String> =
-            [("a.b", "1"), ("a.c.d", "2"), ("a.e.f.g.h.i", "3")]
-                .iter()
-                .map(|&(k, v)| (k.to_owned(), v.to_owned()))
-                .collect();
-        assert_eq!(expected, read_vscode_settings(config).unwrap());
-        assert!(read_vscode_settings("not_a_map").is_err());
-    }
 }

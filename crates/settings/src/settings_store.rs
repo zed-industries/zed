@@ -68,6 +68,11 @@ pub trait Settings: 'static + Send + Sync {
         anyhow::anyhow!("missing default")
     }
 
+    /// Use [the helpers](crate::vscode_import)
+    fn import_from_vscode(source: serde_json::Value, _: &mut App) -> Result<Self> where Self: Sized {
+        todo!("remove this and make everyone have to implement it...")
+    }
+
     #[track_caller]
     fn register(cx: &mut App)
     where
@@ -109,6 +114,10 @@ pub trait Settings: 'static + Send + Sync {
     {
         cx.global_mut::<SettingsStore>().override_global(settings)
     }
+
+    // fn translate_vscode(&mut self, settings: &BTreeMap<String, String>) {
+    //
+    // }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -302,6 +311,7 @@ impl SettingsStore {
         let setting_value = entry.or_insert(Box::new(SettingValue::<T> {
             global_value: None,
             local_values: Vec::new(),
+            vscode_importer: Self as SettingImported::import_vscode_settings,
         }));
 
         if let Some(default_settings) = setting_value
@@ -420,6 +430,70 @@ impl SettingsStore {
                 Err(err)
             }
         }
+    }
+
+    pub fn apply_vscode_settings(&self) {
+        // simple switches/enables
+        let booleans = [
+            ("chat.agent.enabled", "assistant.enabled"),
+            ("explorer.compactFolders", "project_panel.auto_fold_dirs"),
+        ];
+
+        // any numeric setting (possibly with translation/scale function?)
+        let numeric = [
+            ("editor.fontSize", "buffer_font_size"),
+            ("editor.lineHeight", "buffer_line_height.custom"),
+        ];
+
+        // string/path settings
+        let string = [
+            ("http.proxy", "proxy"),
+            ("npm.packageManager", "node.npm_path"),
+        ];
+
+        // for enums with well defined mappings
+        let mapping = [("", "", &[("", ""), ("", "")])];
+
+        fn bool_setting(key: &str) -> Box<dyn Fn()> {
+            Box::new(move || {
+                // Implementation for bool_setting
+            })
+        }
+
+
+
+
+        trait SettingImported {
+
+            fn import_vscode_settings(&self, vscode_settings: &serde_json::Map<String, serde_json::Value>) -> {
+                map_bool_setting("editor.enabled", "editor.enabled", vscode_settings)
+
+                // let auto_save = get_normalized_settings("editor.autoSave", vscode_settings) -> Option<serde_json::Value>;
+                // let mcp = get_normalized_settings("mcp", vscode_settings);
+            }
+        }
+
+        // // full access to both settings, triggered if any of the listed keys are present
+        // let complex: Vec<(
+        //     Vec<&str>,
+        //     Box<dyn FnOnce(&BTreeMap<String, String>) -> Option<serde_json::Value>>,
+        // )> = vec![
+        //     (
+        //         vec!["update.mode"],
+        //         Box::new(|vscode: &BTreeMap<String, String>| {
+        //             (vscode.get("update.mode")? == "off")
+        //                 .then_some(("zed.auto_update", false.into()))
+        //         }),
+        //     ),
+        //     // (
+        //     //     &["files.autoSave", "files.autoSaveDelay"],
+        //     //     Box::new(|vscode| {
+        //     //         // zed.autosave off/after_delay{millis}/on_window_change/on_focus_change
+        //     //     }),
+        //     // ),
+        // ];
+
+        // TODO: handle maps like env
     }
 
     pub fn update_settings_file<T: Settings>(
