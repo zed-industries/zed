@@ -4268,6 +4268,7 @@ impl Editor {
                     buffer
                         .update(cx, |buffer, _| {
                             buffer.push_transaction(transaction, Instant::now());
+                            buffer.finalize_last_transaction();
                         })
                         .ok();
                 }
