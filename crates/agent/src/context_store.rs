@@ -8,10 +8,11 @@ use futures::future::join_all;
 use futures::{self, Future, FutureExt, future};
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, File};
-use project::{Project, ProjectItem, ProjectPath, Worktree};
+use project::{ProjectItem, ProjectPath, Worktree};
 use rope::Rope;
 use text::{Anchor, BufferId, OffsetRangeExt};
 use util::{ResultExt as _, maybe};
+use workspace::Workspace;
 
 use crate::ThreadStore;
 use crate::context::{
@@ -22,7 +23,7 @@ use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
 
 pub struct ContextStore {
-    project: WeakEntity<Project>,
+    workspace: WeakEntity<Workspace>,
     context: Vec<AssistantContext>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     // TODO: If an EntityId is used for all context types (like BufferId), can remove ContextId.
@@ -39,11 +40,11 @@ pub struct ContextStore {
 
 impl ContextStore {
     pub fn new(
-        project: WeakEntity<Project>,
+        workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
     ) -> Self {
         Self {
-            project,
+            workspace,
             thread_store,
             context: Vec::new(),
             next_context_id: ContextId(0),
@@ -80,7 +81,12 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(project) = self.project.upgrade() else {
+        let workspace = self.workspace.clone();
+
+        let Some(project) = workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().clone())
+        else {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
@@ -155,7 +161,11 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(project) = self.project.upgrade() else {
+        let workspace = self.workspace.clone();
+        let Some(project) = workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().clone())
+        else {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
