@@ -694,13 +694,13 @@ impl MentionCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Focusable, TestAppContext, VisualTestContext};
+    use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};
     use project::{Project, ProjectPath};
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{ops::Deref, path::PathBuf};
+    use std::ops::Deref;
     use util::{path, separator};
-    use workspace::AppState;
+    use workspace::{AppState, Item};
 
     #[test]
     fn test_mention_completion_parse() {
@@ -770,6 +770,30 @@ mod tests {
         );
 
         assert_eq!(MentionCompletion::try_parse("test@", 0), None);
+    }
+
+    struct AtMentionEditor(Entity<Editor>);
+
+    impl Item for AtMentionEditor {
+        type Event = ();
+
+        fn include_in_nav_history() -> bool {
+            false
+        }
+    }
+
+    impl EventEmitter<()> for AtMentionEditor {}
+
+    impl Focusable for AtMentionEditor {
+        fn focus_handle(&self, cx: &App) -> FocusHandle {
+            self.0.read(cx).focus_handle(cx).clone()
+        }
+    }
+
+    impl Render for AtMentionEditor {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.0.clone().into_any_element()
+        }
     }
 
     #[gpui::test]
@@ -847,25 +871,27 @@ mod tests {
                 .unwrap();
         }
 
-        let item = workspace
-            .update_in(&mut cx, |workspace, window, cx| {
-                workspace.open_path(
-                    ProjectPath {
-                        worktree_id,
-                        path: PathBuf::from("editor").into(),
-                    },
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| {
+                Editor::new(
+                    editor::EditorMode::Full,
+                    multi_buffer::MultiBuffer::build_simple("", cx),
                     None,
-                    true,
                     window,
                     cx,
                 )
-            })
-            .await
-            .expect("Could not open test file");
-
-        let editor = cx.update(|_, cx| {
-            item.act_as::<Editor>(cx)
-                .expect("Opened test file wasn't an editor")
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| AtMentionEditor(editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            editor
         });
 
         let context_store = cx.new(|_| ContextStore::new(workspace.downgrade(), None));
@@ -896,10 +922,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "editor dir/",
                     "seven.txt dir/b/",
                     "six.txt dir/b/",
                     "five.txt dir/b/",
+                    "four.txt dir/a/",
                     "Files & Directories",
                     "Symbols",
                     "Fetch"
@@ -994,14 +1020,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@editor](@file:dir/editor)"
+                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@seven.txt](@file:dir/b/seven.txt)"
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 44)..Point::new(0, 71)
+                    Point::new(0, 44)..Point::new(0, 79)
                 ]
             );
         });
@@ -1011,14 +1037,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@editor](@file:dir/editor)\n@"
+                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@seven.txt](@file:dir/b/seven.txt)\n@"
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 44)..Point::new(0, 71)
+                    Point::new(0, 44)..Point::new(0, 79)
                 ]
             );
         });
@@ -1032,15 +1058,15 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@editor](@file:dir/editor)\n[@seven.txt](@file:dir/b/seven.txt)"
+                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@seven.txt](@file:dir/b/seven.txt)\n[@six.txt](@file:dir/b/six.txt)"
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 44)..Point::new(0, 71),
-                    Point::new(1, 0)..Point::new(1, 35)
+                    Point::new(0, 44)..Point::new(0, 79),
+                    Point::new(1, 0)..Point::new(1, 31)
                 ]
             );
         });
