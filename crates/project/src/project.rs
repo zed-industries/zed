@@ -1595,6 +1595,13 @@ impl Project {
         self.breakpoint_store.clone()
     }
 
+    pub fn active_debug_session(&self, cx: &App) -> Option<Entity<Session>> {
+        self.breakpoint_store
+            .read(cx)
+            .active_position()
+            .and_then(|(session_id, _, _)| self.dap_store.read(cx).session_by_id(session_id))
+    }
+
     pub fn lsp_store(&self) -> Entity<LspStore> {
         self.lsp_store.clone()
     }

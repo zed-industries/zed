@@ -1326,6 +1326,10 @@ impl Session {
             });
     }
 
+    pub fn any_stopped_thread(&self) -> bool {
+        self.thread_states.any_stopped_thread()
+    }
+
     pub fn thread_status(&self, thread_id: ThreadId) -> ThreadStatus {
         self.thread_states.thread_status(thread_id)
     }
@@ -1796,6 +1800,10 @@ impl Session {
             .unwrap_or_default()
     }
 
+    pub fn all_variables(&self) -> Vec<dap::Variable> {
+        self.variables.values().cloned().flatten().collect()
+    }
+
     pub fn variables(
         &mut self,
         variables_reference: VariableReference,
@@ -1909,6 +1917,7 @@ impl Session {
         );
         self.locations.get(&reference).cloned()
     }
+
     pub fn disconnect_client(&mut self, cx: &mut Context<Self>) {
         let command = DisconnectCommand {
             restart: Some(false),

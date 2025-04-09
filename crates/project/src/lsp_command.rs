@@ -259,6 +259,13 @@ pub(crate) struct LinkedEditingRange {
     pub position: Anchor,
 }
 
+#[derive(Debug)]
+pub(crate) struct InlineValue {
+    pub range: Range<Anchor>,
+    pub stackFrameId: i32,
+    pub stoppedLocation: Range<Anchor>,
+}
+
 #[async_trait(?Send)]
 impl LspCommand for PrepareRename {
     type Response = PrepareRenameResponse;
@@ -3612,6 +3619,139 @@ impl LspCommand for LinkedEditingRange {
     }
 
     fn buffer_id_from_proto(message: &proto::LinkedEditingRange) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for InlineValue {
+    type Response = Option<lsp::InlineValue>;
+    type LspRequest = lsp::InlineValueRequest;
+    type ProtoRequest = proto::InlineValue;
+
+    fn display_name(&self) -> &str {
+        "Inline Value"
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        _language_server: &Arc<LanguageServer>,
+        _cx: &App,
+    ) -> Result<lsp::InlineValueParams> {
+        Ok(lsp::InlineValueParams {
+            work_done_progress_params: Default::default(),
+            text_document: make_text_document_identifier(path)?,
+            range: range_to_lsp(self.range.to_point_utf16(buffer))?,
+            context: lsp::InlineValueContext {
+                frame_id: self.stackFrameId,
+                stopped_location: range_to_lsp(self.stoppedLocation.to_point_utf16(buffer))?,
+            },
+        })
+    }
+
+    fn response_from_lsp(
+        self,
+        message: Option<lsp::InlineValue>,
+        _lsp_store: Entity<LspStore>,
+        _buffer: Entity<Buffer>,
+        _server_id: LanguageServerId,
+        _cx: AsyncApp,
+    ) -> anyhow::Result<Option<lsp::InlineValue>> {
+        Ok(message)
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        proto::InlineValue {
+            project_id,
+            version: serialize_version(&buffer.version()),
+            buffer_id: buffer.remote_id().into(),
+            start: Some(language::proto::serialize_anchor(&self.range.start)),
+            end: Some(language::proto::serialize_anchor(&self.range.end)),
+            context: Some(proto::InlineValueContext {
+                stack_frame_id: self.stackFrameId as u32,
+                start: Some(language::proto::serialize_anchor(
+                    &self.stoppedLocation.start,
+                )),
+                end: Some(language::proto::serialize_anchor(&self.stoppedLocation.end)),
+            }),
+        }
+    }
+
+    async fn from_proto(
+        message: Self::ProtoRequest,
+        _lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Self> {
+        let buffer_start = message
+            .start
+            .and_then(language::proto::deserialize_anchor)
+            .context("invalid start")?;
+        let buffer_end = message
+            .end
+            .and_then(language::proto::deserialize_anchor)
+            .context("invalid end")?;
+
+        let context = message.context.ok_or_else(|| anyhow!("Expected context"))?;
+        let context_start = context
+            .start
+            .and_then(language::proto::deserialize_anchor)
+            .context("invalid start")?;
+        let context_end = context
+            .end
+            .and_then(language::proto::deserialize_anchor)
+            .context("invalid end")?;
+
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+
+        Ok(Self {
+            range: buffer_start..buffer_end,
+            stackFrameId: context.stack_frame_id as i32,
+            stoppedLocation: context_start..context_end,
+        })
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        lsp_store: &mut LspStore,
+        peer_id: PeerId,
+        buffer_version: &clock::Global,
+        cx: &mut App,
+    ) -> proto::InlineValueResponse {
+        proto::InlineValueResponse {
+            inline_value: todo!(),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::InlineValueResponse,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        cx: AsyncApp,
+    ) -> anyhow::Result<Self::Response> {
+        let Some(inline_value) = message.inline_value else {
+            return Err(anyhow!("Failed to get valid inline value"));
+        };
+
+        Ok(match inline_value {
+            proto::InlineValueResponse::InlineValueText(fields) => {
+                lsp::InlineValue(lsp::InlineValueText {
+                    range: todo!(),
+                    text: todo!(),
+                })
+            }
+            _ => todo!(),
+        })
+    }
+
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

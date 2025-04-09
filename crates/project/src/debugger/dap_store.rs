@@ -3,7 +3,10 @@ use super::{
     locator_store::LocatorStore,
     session::{self, Session},
 };
-use crate::{ProjectEnvironment, debugger, worktree_store::WorktreeStore};
+use crate::{
+    InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState, debugger,
+    worktree_store::WorktreeStore,
+};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -23,7 +26,10 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
-use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
+use language::{
+    BinaryStatus, Buffer, LanguageRegistry, LanguageToolchainStore, Node,
+    language_settings::InlayHintKind,
+};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
@@ -38,11 +44,13 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashSet},
     ffi::OsStr,
+    ops::Range,
     path::PathBuf,
     sync::{Arc, atomic::Ordering::SeqCst},
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
 use task::{DebugAdapterConfig, DebugRequestDisposition};
+use text::Point;
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -730,6 +738,115 @@ impl DapStore {
                 .await?
                 .targets)
         })
+    }
+
+    fn tree_sitter_inlay_hints(
+        &mut self,
+        session: Entity<Session>,
+        buffer: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<InlayHint>>> {
+        let snapshot = buffer.read(cx).snapshot();
+
+        fn find_in_code_variables(node: Node, source_code: &str) -> HashMap<String, Point> {
+            let mut variables = HashMap::default();
+
+            // python variable assignment
+            if node.kind() == "assignment" {
+                if let Some(variable_node) = node.child_by_field_name("left") {
+                    let variable_name = source_code[variable_node.byte_range()].to_string();
+                    let end_byte = variable_node.end_position();
+                    variables.insert(
+                        variable_name,
+                        Point::new(end_byte.row as u32, end_byte.column as u32),
+                    );
+                }
+            }
+
+            // t = 10
+            // expression # debug line is here
+            // t = 12 // no hint here
+            // 1. Language specifc find in code variables
+            // 2. stop highlighting at active debug line
+            // 3. allow switching between different stack frames but still cache the results
+            // 4. updater inline hints when we get a set variable response
+            // 5. (post merge) RR has drop down menus for inlay hint variables to see their children
+
+            // python function args
+            if node.kind() == "function_definition" {
+                if let Some(parameters) = node.child_by_field_name("parameters") {
+                    for parameter in parameters.named_children(&mut node.walk()) {
+                        if parameter.kind() == "identifier" {
+                            let variable_name = source_code[parameter.byte_range()].to_string();
+                            let end_byte = parameter.end_position();
+                            variables.insert(
+                                variable_name,
+                                Point::new(end_byte.row as u32, end_byte.column as u32),
+                            );
+                        }
+                    }
+                }
+            }
+
+            // rust variable
+            if node.kind() == "let_declaration" {
+                if let Some(variable_node) = node.child_by_field_name("pattern") {
+                    let variable_name = source_code[variable_node.byte_range()].to_string();
+                    let end_byte = variable_node.end_position();
+                    variables.insert(
+                        variable_name,
+                        Point::new(end_byte.row as u32, end_byte.column as u32),
+                    );
+                }
+            }
+
+            for child in node.children(&mut node.walk()) {
+                variables.extend(find_in_code_variables(child, source_code));
+            }
+
+            variables
+        }
+
+        let in_code_variables = if let Some(ancestor) = snapshot.syntax_root_ancestor(range.clone())
+        {
+            find_in_code_variables(
+                ancestor,
+                snapshot.text_for_range(range).collect::<String>().as_str(),
+            )
+        } else {
+            HashMap::default()
+        };
+
+        let mut variable_positions = Vec::new();
+        for variable in session.read(cx).all_variables() {
+            if let Some(variable_range) = in_code_variables.get(&variable.name) {
+                variable_positions.push((variable, variable_range));
+            }
+        }
+
+        return Task::ready(Ok(variable_positions
+            .iter()
+            .map(|(variable, end_point)| InlayHint {
+                position: snapshot.anchor_after(*end_point),
+                label: InlayHintLabel::String(format!(": {}", variable.value.clone())),
+                kind: Some(InlayHintKind::Type),
+                padding_left: false,
+                padding_right: false,
+                tooltip: None,
+                resolve_state: ResolveState::Resolved,
+            })
+            .collect()));
+    }
+
+    pub fn inlay_hints(
+        &mut self,
+        session: Entity<Session>,
+        buffer: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<InlayHint>>> {
+        self.tree_sitter_inlay_hints(session, buffer, range, cx)
     }
 
     pub fn shutdown_sessions(&mut self, cx: &mut Context<Self>) -> Task<()> {

@@ -18777,9 +18777,16 @@ impl SemanticsProvider for Entity<Project> {
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         // TODO: make this work for remote projects
-        self.update(cx, |this, cx| {
+        self.update(cx, |project, cx| {
+            if project
+                .active_debug_session(cx)
+                .is_some_and(|session| session.read(cx).any_stopped_thread())
+            {
+                return true;
+            }
+
             buffer.update(cx, |buffer, cx| {
-                this.any_language_server_supports_inlay_hints(buffer, cx)
+                project.any_language_server_supports_inlay_hints(buffer, cx)
             })
         })
     }
@@ -18791,6 +18798,12 @@ impl SemanticsProvider for Entity<Project> {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {
         Some(self.update(cx, |project, cx| {
+            if let Some(session) = project.active_debug_session(cx) {
+                return project.dap_store().update(cx, |dap_store, cx| {
+                    dap_store.inlay_hints(session, buffer_handle, range, cx)
+                });
+            }
+
             project.inlay_hints(buffer_handle, range, cx)
         }))
     }

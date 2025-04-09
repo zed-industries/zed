@@ -699,3 +699,44 @@ message LanguageServerIdForName {
 message LanguageServerIdForNameResponse {
     optional uint64 server_id = 1;
 }
+
+message InlineValue {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor start = 3;
+    Anchor end = 4;
+    InlineValueContext context = 5;
+    repeated VectorClockEntry version = 6;
+}
+
+message InlineValueContext {
+    uint32 stack_frame_id = 1;
+    Anchor start = 2;
+    Anchor end = 3;
+}
+
+message InlineValueText {
+    Anchor start = 1;
+    Anchor end = 2;
+}
+
+message InlineValueVariableLookup {
+    Anchor start = 1;
+    Anchor end = 2;
+    optional string variable_name = 3;
+    bool case_sensitive_lookup = 4;
+}
+
+message InlineValueEvaluatableExpression {
+    Anchor start = 1;
+    Anchor end = 2;
+    optional string expression = 3;
+}
+
+message InlineValueResponse {
+    oneof inline_value {
+        InlineValueText inline_value_text = 1;
+        InlineValueVariableLookup inline_value_variable_lookup = 2;
+        InlineValueEvaluatableExpression inline_value_evaluate_expression = 3;
+    }
+}

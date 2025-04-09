@@ -3297,6 +3297,43 @@ impl BufferSnapshot {
         result
     }
 
+    /// Returns the root syntax node enclosing the given range start.
+    pub fn syntax_root_ancestor<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'a>> {
+        let start_offset = range.start.to_offset(self);
+        let mut result: Option<tree_sitter::Node<'a>> = None;
+
+        for layer in self
+            .syntax
+            .layers_for_range(start_offset..start_offset, &self.text, true)
+        {
+            let mut cursor = layer.node().walk();
+
+            // Descend to the first leaf that touches the start of the range.
+            while cursor.goto_first_child_for_byte(start_offset).is_some() {
+                if cursor.node().end_byte() == start_offset {
+                    cursor.goto_next_sibling();
+                }
+            }
+
+            // Ascend to the root node.
+            while cursor.goto_parent() {}
+
+            let root_node = cursor.node();
+
+            if let Some(previous_result) = &result {
+                if previous_result.byte_range().len() < root_node.byte_range().len() {
+                    continue;
+                }
+            }
+            result = Some(root_node);
+        }
+
+        result
+    }
+
     /// Returns the outline for the buffer.
     ///
     /// This method allows passing an optional [`SyntaxTheme`] to
