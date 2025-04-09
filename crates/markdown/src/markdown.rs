@@ -689,6 +689,7 @@ impl Element for MarkdownElement {
                                     builder.push_div(parent_container, range, markdown_end);
 
                                     let mut code_block = div()
+                                        .debug_bg_red()
                                         .id(("code-block", range.start))
                                         .rounded_b_lg()
                                         .map(|mut code_block| {
