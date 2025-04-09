@@ -282,7 +282,6 @@ fn find_matching_symbol(symbol: &Symbol, candidates: &[DocumentSymbol]) -> Optio
 }
 
 pub struct SymbolMatch {
-    pub mat: StringMatch,
     pub symbol: Symbol,
 }
 
@@ -357,7 +356,7 @@ pub(crate) fn search_symbols(
                 for position in &mut mat.positions {
                     *position += filter_start;
                 }
-                SymbolMatch { mat, symbol }
+                SymbolMatch { symbol }
             })
             .collect()
     })

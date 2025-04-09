@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy::StringMatchCandidate;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use ui::{ListItem, prelude::*};
@@ -220,7 +220,6 @@ pub fn render_thread_context_entry(
 
 #[derive(Clone)]
 pub struct ThreadMatch {
-    pub mat: Option<StringMatch>,
     pub thread: ThreadContextEntry,
     pub is_recent: bool,
 }
@@ -247,7 +246,6 @@ pub(crate) fn search_threads(
             threads
                 .into_iter()
                 .map(|thread| ThreadMatch {
-                    mat: None,
                     thread,
                     is_recent: false,
                 })
@@ -272,7 +270,6 @@ pub(crate) fn search_threads(
                 .into_iter()
                 .map(|mat| ThreadMatch {
                     thread: threads[mat.candidate_id].clone(),
-                    mat: Some(mat),
                     is_recent: false,
                 })
                 .collect()
