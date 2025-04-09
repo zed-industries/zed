@@ -70,7 +70,7 @@ impl MessageEditor {
 
         let language = Language::new(
             language::LanguageConfig {
-                completion_query_characters: HashSet::from(['.', '-', '_', '@']),
+                completion_query_characters: HashSet::from_iter(['.', '-', '_', '@']),
                 ..Default::default()
             },
             None,
