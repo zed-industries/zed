@@ -31,7 +31,8 @@ use super::file_context_picker::FileMatch;
 use super::symbol_context_picker::SymbolMatch;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
-    ContextPickerMode, MentionLink, recent_context_picker_entries, supported_context_picker_modes,
+    ContextPickerMode, MentionLink, RecentEntry, recent_context_picker_entries,
+    supported_context_picker_modes,
 };
 
 pub(crate) enum Match {
@@ -56,9 +57,6 @@ impl Match {
 }
 
 struct ContextPickerCompletionProviderState {
-    workspace: WeakEntity<Workspace>,
-    context_store: WeakEntity<ContextStore>,
-    thread_store: Option<WeakEntity<ThreadStore>>,
     pending_symbols_task: Option<(String, Task<Vec<SymbolMatch>>)>,
 }
 
@@ -68,12 +66,11 @@ impl ContextPickerCompletionProviderState {
         mode: Option<ContextPickerMode>,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
+        recent_entries: Vec<RecentEntry>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        workspace: Entity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Match>> {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return Task::ready(Vec::new());
-        };
-
         match mode {
             Some(ContextPickerMode::File) => {
                 let search_files_task =
@@ -98,7 +95,7 @@ impl ContextPickerCompletionProviderState {
                 })
             }
             Some(ContextPickerMode::Thread) => {
-                if let Some(thread_store) = self.thread_store.as_ref().and_then(|t| t.upgrade()) {
+                if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
                     let search_threads_task =
                         search_threads(query.clone(), cancellation_flag.clone(), thread_store, cx);
                     cx.background_spawn(async move {
@@ -121,45 +118,36 @@ impl ContextPickerCompletionProviderState {
             }
             None => {
                 if query.is_empty() {
-                    let Some(context_store) = self.context_store.upgrade() else {
-                        return Task::ready(Vec::new());
-                    };
-
-                    let mut matches = recent_context_picker_entries(
-                        context_store,
-                        self.thread_store.clone(),
-                        workspace.clone(),
-                        cx,
-                    )
-                    .into_iter()
-                    .map(|entry| match entry {
-                        super::RecentEntry::File {
-                            project_path,
-                            path_prefix,
-                        } => Match::File(FileMatch {
-                            mat: fuzzy::PathMatch {
-                                score: 1.,
-                                positions: Vec::new(),
-                                worktree_id: project_path.worktree_id.to_usize(),
-                                path: project_path.path,
+                    let mut matches = recent_entries
+                        .into_iter()
+                        .map(|entry| match entry {
+                            super::RecentEntry::File {
+                                project_path,
                                 path_prefix,
-                                is_dir: false,
-                                distance_to_relative_ancestor: 0,
-                            },
-                            is_recent: true,
-                        }),
-                        super::RecentEntry::Thread(thread_context_entry) => {
-                            Match::Thread(ThreadMatch {
-                                mat: None,
-                                thread: thread_context_entry,
+                            } => Match::File(FileMatch {
+                                mat: fuzzy::PathMatch {
+                                    score: 1.,
+                                    positions: Vec::new(),
+                                    worktree_id: project_path.worktree_id.to_usize(),
+                                    path: project_path.path,
+                                    path_prefix,
+                                    is_dir: false,
+                                    distance_to_relative_ancestor: 0,
+                                },
                                 is_recent: true,
-                            })
-                        }
-                    })
-                    .collect::<Vec<_>>();
+                            }),
+                            super::RecentEntry::Thread(thread_context_entry) => {
+                                Match::Thread(ThreadMatch {
+                                    mat: None,
+                                    thread: thread_context_entry,
+                                    is_recent: true,
+                                })
+                            }
+                        })
+                        .collect::<Vec<_>>();
 
                     matches.extend(
-                        supported_context_picker_modes(&self.thread_store)
+                        supported_context_picker_modes(&thread_store)
                             .into_iter()
                             .map(Match::Mode),
                     );
@@ -242,9 +230,6 @@ impl ContextPickerCompletionProvider {
         cx: &mut App,
     ) -> Self {
         let state = cx.new(|_| ContextPickerCompletionProviderState {
-            workspace: workspace.clone(),
-            context_store: context_store.clone(),
-            thread_store: thread_store.clone(),
             pending_symbols_task: None,
         });
         Self {
@@ -563,8 +548,23 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let MentionCompletion { mode, argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
 
+        let recent_entries = recent_context_picker_entries(
+            context_store.clone(),
+            thread_store.clone(),
+            workspace.clone(),
+            cx,
+        );
+
         let search_task = self.state.update(cx, |state, cx| {
-            state.search(mode, query, Arc::<AtomicBool>::default(), cx)
+            state.search(
+                mode,
+                query,
+                Arc::<AtomicBool>::default(),
+                recent_entries,
+                thread_store.clone(),
+                workspace.clone(),
+                cx,
+            )
         });
 
         cx.spawn(async move |_, cx| {
