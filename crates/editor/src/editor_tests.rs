@@ -5843,6 +5843,37 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let large_body_1 = "\nd".repeat(200);
+    let large_body_2 = "\ne".repeat(200);
+
+    cx.set_state(&format!(
+        "abc\nabc{large_body_1} «ˇa»bc{large_body_2}\nefabc\nabc"
+    ));
+    let initial_scroll_position = cx.update_editor(|editor, _, cx| {
+        let scroll_position = editor.scroll_position(cx);
+        assert!(scroll_position.y > 0.0, "Initial selection is between two large bodies and should have the editor scrolled to it");
+        scroll_position
+    });
+
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state(&format!(
+        "«ˇa»bc\n«ˇa»bc{large_body_1} «ˇa»bc{large_body_2}\nef«ˇa»bc\n«ˇa»bc"
+    ));
+    let scroll_position_after_selection =
+        cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
+    assert_eq!(
+        initial_scroll_position, scroll_position_after_selection,
+        "Scroll position should not change after selecting all matches"
+    );
+}
+
+#[gpui::test]
 async fn test_select_next_with_multiple_carets(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
