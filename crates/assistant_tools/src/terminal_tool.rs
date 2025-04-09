@@ -1,13 +1,16 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
+use futures::future::{Either, select};
 use futures::io::BufReader;
-use futures::{AsyncBufReadExt, AsyncReadExt};
+use futures::{AsyncBufReadExt, AsyncReadExt, FutureExt};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::future;
+
 use std::path::Path;
 use std::sync::Arc;
 use ui::IconName;
@@ -132,7 +135,6 @@ const LIMIT: usize = 16 * 1024;
 async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
     let shell = std::env::var("SHELL").unwrap_or("bash".to_string());
 
-    // Add 2>&1 to merge stderr into stdout for proper interleaving.
     let mut cmd = new_smol_command(shell)
         .arg("-c")
         .arg(&command)
@@ -142,56 +144,73 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
         .spawn()
         .context("Failed to execute terminal command")?;
 
-    // Capture stdout with a limit
-    let stdout = cmd.stdout.take().unwrap();
-    let mut reader = BufReader::new(stdout);
+    let mut combined_buffer = String::with_capacity(LIMIT + 1);
 
-    // Read one more byte to determine whether the output was truncated
-    let mut buffer = vec![0; LIMIT + 1];
-    let mut bytes_read = 0;
+    let mut out_reader = BufReader::new(cmd.stdout.take().context("Failed to get stdout")?);
+    let mut out_tmp_buffer = String::new();
+    let mut out_active = true;
+    let mut err_reader = BufReader::new(cmd.stderr.take().context("Failed to get stderr")?);
+    let mut err_tmp_buffer = String::new();
+    let mut err_active = true;
 
-    // Read until we reach the limit
-    loop {
-        let read = reader.read(&mut buffer[bytes_read..]).await?;
-        if read == 0 {
-            break;
+    while (out_active || err_active) && combined_buffer.len() < LIMIT + 1 {
+        let stdout_fut = if out_active {
+            out_reader
+                .read_line(&mut out_tmp_buffer)
+                .fuse()
+                .left_future()
+        } else {
+            future::pending().right_future()
+        };
+
+        let stderr_fut = if err_active {
+            err_reader
+                .read_line(&mut err_tmp_buffer)
+                .fuse()
+                .left_future()
+        } else {
+            future::pending().right_future()
+        };
+
+        let (read_stdout, read_stderr) = match select(stdout_fut, stderr_fut).await {
+            Either::Left((_, future)) => (true, future.now_or_never().is_some()),
+            Either::Right((_, future)) => (future.now_or_never().is_some(), true),
+        };
+
+        if read_stdout {
+            out_active = !out_tmp_buffer.is_empty();
+            combined_buffer.push_str(&out_tmp_buffer);
+            out_tmp_buffer.clear();
         }
 
-        bytes_read += read;
-        if bytes_read > LIMIT {
-            bytes_read = LIMIT + 1;
-            break;
+        if read_stderr {
+            err_active = !err_tmp_buffer.is_empty();
+            combined_buffer.push_str(&err_tmp_buffer);
+            err_tmp_buffer.clear();
         }
     }
 
-    // Repeatedly fill the output reader's buffer without copying it.
-    loop {
-        let skipped_bytes = reader.fill_buf().await?;
-        if skipped_bytes.is_empty() {
-            break;
-        }
-        let skipped_bytes_len = skipped_bytes.len();
-        reader.consume_unpin(skipped_bytes_len);
-    }
-
-    let output_bytes = &buffer[..bytes_read.min(LIMIT)];
+    consume_reader(out_reader).await?;
+    consume_reader(err_reader).await?;
 
     let status = cmd.status().await.context("Failed to get command status")?;
 
-    let output_string = if bytes_read > LIMIT {
+    let truncated = combined_buffer.len() > LIMIT;
+    combined_buffer.truncate(LIMIT);
+
+    let output_string = if truncated {
         // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
         // multi-byte characters.
-        let last_line_ix = output_bytes.iter().rposition(|b| *b == b'\n');
-        let until_last_line = &output_bytes[..last_line_ix.unwrap_or(output_bytes.len())];
-        let output_string = String::from_utf8_lossy(until_last_line);
+        let last_line_ix = combined_buffer.bytes().rposition(|b| b == b'\n');
+        let combined_buffer = &combined_buffer[..last_line_ix.unwrap_or(combined_buffer.len())];
 
         format!(
             "Command output too long. The first {} bytes:\n\n{}",
-            output_string.len(),
-            output_block(&output_string),
+            combined_buffer.len(),
+            output_block(&combined_buffer),
         )
     } else {
-        output_block(&String::from_utf8_lossy(&output_bytes))
+        output_block(&combined_buffer)
     };
 
     let output_with_status = if status.success() {
@@ -209,6 +228,20 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
     };
 
     Ok(output_with_status)
+}
+
+async fn consume_reader<T: AsyncReadExt + Unpin>(
+    mut reader: BufReader<T>,
+) -> Result<(), std::io::Error> {
+    loop {
+        let skipped_bytes = reader.fill_buf().await?;
+        if skipped_bytes.is_empty() {
+            break;
+        }
+        let skipped_bytes_len = skipped_bytes.len();
+        reader.consume_unpin(skipped_bytes_len);
+    }
+    Ok(())
 }
 
 fn output_block(output: &str) -> String {
@@ -271,7 +304,7 @@ mod tests {
     async fn test_output_truncation_single_line(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let cmd = format!("echo '{}');", "X".repeat(LIMIT * 2));
+        let cmd = format!("echo '{}';", "X".repeat(LIMIT * 2));
 
         let result = run_command_limited(Path::new(".").into(), cmd).await;
 
