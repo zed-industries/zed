@@ -105,6 +105,10 @@ impl Console {
         }
     }
 
+    pub(crate) fn show_indicator(&self, cx: &App) -> bool {
+        self.session.read(cx).has_new_output(self.last_token)
+    }
+
     pub fn add_messages<'a>(
         &mut self,
         events: impl Iterator<Item = &'a OutputEvent>,

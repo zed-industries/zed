@@ -24,8 +24,8 @@ use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use ui::{
-    App, Context, ContextMenu, DropdownMenu, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, Window, div, h_flex, v_flex,
+    AnyElement, App, Context, ContextMenu, DropdownMenu, InteractiveElement, IntoElement, Label,
+    LabelCommon as _, ParentElement, Render, SharedString, Styled, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -108,8 +108,33 @@ impl Focusable for SubView {
 impl EventEmitter<()> for SubView {}
 impl Item for SubView {
     type Event = ();
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some(self.tab_name.clone())
+
+    fn tab_content(
+        &self,
+        params: workspace::item::TabContentParams,
+        _: &Window,
+        cx: &App,
+    ) -> AnyElement {
+        let label = Label::new(self.tab_name.clone())
+            .color(params.text_color())
+            .into_any_element();
+
+        if !params.selected
+            && self
+                .inner
+                .clone()
+                .downcast::<Console>()
+                .map_or(false, |console| console.read(cx).show_indicator(cx))
+        {
+            return h_flex()
+                .justify_between()
+                .child(ui::Indicator::dot())
+                .gap_2()
+                .child(label)
+                .into_any_element();
+        }
+
+        label
     }
 }
 

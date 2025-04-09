@@ -237,7 +237,7 @@ pub fn init(cx: &mut App) {
 
                                     state.session().update(cx, |session, cx| {
                                         session.evaluate(text, None, stack_id, None, cx);
-                                    })
+                                    });
                                 });
                             Some(())
                         });
