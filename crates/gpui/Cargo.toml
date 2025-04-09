@@ -231,6 +231,7 @@ rand.workspace = true
 unicode-segmentation.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+wry = "0.51"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
