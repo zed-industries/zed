@@ -86,7 +86,8 @@ use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
 use url::Url;
 use util::{
     ResultExt, TryFutureExt as _, debug_panic, defer, maybe, merge_json_value_into,
-    paths::SanitizedPath, post_inc,
+    paths::{PathExt, SanitizedPath},
+    post_inc,
 };
 
 pub use fs::*;
@@ -1220,8 +1221,61 @@ impl LocalLspStore {
                 buffer.finalize_last_transaction();
             })?;
 
-            // handle whitespace formatting
+            // helper function to avoid duplicate logic between formatter handlers below
+            // We want to avoid continuing to format the buffer if it has been edited since the start
+            // so we check that the last transaction id on the undo stack matches the one we expect
+            // This check should be done after each "gather" step where we generate a diff or edits to apply,
+            // and before applying them to the buffer to avoid messing up the user's buffer
+            fn err_if_buffer_edited_since_start(
+                buffer: &FormattableBuffer,
+                transaction_id_format: Option<text::TransactionId>,
+                cx: &AsyncApp,
+            ) -> Option<anyhow::Error> {
+                let transaction_id_last = buffer
+                    .handle
+                    .read_with(cx, |buffer, _| {
+                        buffer.peek_undo_stack().map(|t| t.transaction_id())
+                    })
+                    .ok()
+                    .flatten();
+                let should_continue_formatting = match (transaction_id_format, transaction_id_last)
+                {
+                    (Some(format), Some(last)) => format == last,
+                    (Some(_), None) => false,
+                    (_, _) => true,
+                };
+                if !should_continue_formatting {
+                    return Some(anyhow::anyhow!("Buffer edited while formatting. Aborting"));
+                }
+                return None;
+            }
+
+            // variable used to track errors that occur during the formatting process below,
+            // but that need to not be returned right away (with `?` for example) because we
+            // still need to clean up the transaction history and update the project transaction
+            // at the very end
+            let mut result = anyhow::Ok(());
+
+            // see handling of code action formatting for why there might already be transactions
+            // in project_transaction for this buffer
+            if let Some(transaction_existing) = project_transaction.0.remove(&buffer.handle) {
+                transaction_id_format = Some(transaction_existing.id);
+                buffer.handle.update(cx, |buffer, _| {
+                    // ensure the transaction is in the history so we can group with it
+                    if buffer.get_transaction(transaction_existing.id).is_none() {
+                        buffer.push_transaction(transaction_existing, Instant::now());
+                    }
+                })?;
+            }
+
+            if let Some(err) = err_if_buffer_edited_since_start(buffer, transaction_id_format, &cx)
             {
+                zlog::warn!(logger => "Buffer edited while formatting. Aborting");
+                result = Err(err);
+            }
+
+            // handle whitespace formatting
+            if result.is_ok() {
                 if settings.remove_trailing_whitespace_on_save {
                     zlog::trace!(logger => "removing trailing whitespace");
                     let diff = buffer
@@ -1297,41 +1351,12 @@ impl LocalLspStore {
 
             let formatters = code_actions_on_format_formatter.iter().chain(formatters);
 
-            // helper function to avoid duplicate logic between formatter handlers below
-            // We want to avoid continuing to format the buffer if it has been edited since the start
-            // so we check that the last transaction id on the undo stack matches the one we expect
-            // This check should be done after each "gather" step where we generate a diff or edits to apply,
-            // and before applying them to the buffer to avoid messing up the user's buffer
-            fn err_if_buffer_edited_since_start(
-                buffer: &FormattableBuffer,
-                transaction_id_format: Option<text::TransactionId>,
-                cx: &AsyncApp,
-            ) -> Option<anyhow::Error> {
-                let transaction_id_last = buffer
-                    .handle
-                    .read_with(cx, |buffer, _| {
-                        buffer.peek_undo_stack().map(|t| t.transaction_id())
-                    })
-                    .ok()
-                    .flatten();
-                let should_continue_formatting = match (transaction_id_format, transaction_id_last)
-                {
-                    (Some(format), Some(last)) => format == last,
-                    (Some(_), None) => false,
-                    (_, _) => true,
-                };
-                if !should_continue_formatting {
-                    return Some(anyhow::anyhow!("Buffer edited while formatting. Aborting"));
-                }
-                return None;
-            }
-
-            // variable used to track errors that occur during the formatting process below,
-            // but that need to not be returned right away (with `?` for example) because we
-            // still need to clean up the transaction history and update the project transaction
-            let mut result = anyhow::Ok(());
-
             'formatters: for formatter in formatters {
+                if result.is_err() {
+                    // may have been set above, instead of indenting this whole block with an if, just don't do anything
+                    // destructive if we're aborting
+                    continue;
+                }
                 match formatter {
                     Formatter::Prettier => {
                         let logger = zlog::scoped!(logger => "prettier");
@@ -1870,6 +1895,73 @@ impl LocalLspStore {
                                         })?;
                                     } else {
                                         transaction_id_format = Some(transaction.id);
+                                    }
+                                }
+                                if !project_transaction_command.0.is_empty() {
+                                    let extra_buffers = project_transaction_command
+                                        .0
+                                        .keys()
+                                        .filter_map(|buffer_handle| {
+                                            buffer_handle
+                                                .read_with(cx, |b, cx| b.project_path(cx))
+                                                .ok()
+                                                .flatten()
+                                        })
+                                        .map(|p| p.path.to_sanitized_string())
+                                        .join(", ");
+                                    zlog::warn!(
+                                        logger =>
+                                        "Unexpected edits to buffers other than the buffer actively being formatted due to command {}. Impacted buffers: [{}].",
+                                        &command.command,
+                                        extra_buffers,
+                                    );
+                                    for (buffer_handle, transaction) in
+                                        project_transaction_command.0
+                                    {
+                                        let entry = project_transaction.0.entry(buffer_handle);
+                                        use std::collections::hash_map::Entry;
+                                        match entry {
+                                            // if project_transaction already contains a transaction for this buffer, then
+                                            // we already formatted it, and we need to merge the new transaction into the one
+                                            // in project_transaction that we created while formatting
+                                            Entry::Occupied(mut occupied_entry) => {
+                                                let buffer_handle = occupied_entry.key();
+                                                buffer_handle.update(cx, |buffer, _| {
+                                                    // if push_to_history is true, then we need to make sure it is merged in the
+                                                    // buffer history as well
+                                                    if push_to_history {
+                                                        let transaction_id_project_transaction =
+                                                            transaction.id;
+                                                        // ensure transaction from command project transaction
+                                                        // is in history so we can merge
+                                                        if buffer
+                                                            .get_transaction(transaction.id)
+                                                            .is_none()
+                                                        {
+                                                            buffer.push_transaction(
+                                                                transaction.clone(),
+                                                                Instant::now(),
+                                                            );
+                                                        }
+                                                        let transaction_id_existing =
+                                                            occupied_entry.get().id;
+                                                        buffer.merge_transactions(
+                                                            transaction_id_project_transaction,
+                                                            transaction_id_existing,
+                                                        );
+                                                    }
+                                                })?;
+                                                let transaction_existing = occupied_entry.get_mut();
+                                                transaction_existing.merge_in(transaction);
+                                            }
+                                            // if there is no transaction in project_transaction, we either haven't formatted the buffer yet,
+                                            // or we won't format this buffer
+                                            // later iterations over the formattable_buffers list will use this as the starting transaction
+                                            // for the formatting on that buffer
+                                            Entry::Vacant(vacant_entry) => {
+                                                vacant_entry.insert(transaction);
+                                            }
+                                        }
                                     }
                                 }
                             }

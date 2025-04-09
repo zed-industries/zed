@@ -130,6 +130,12 @@ pub struct Transaction {
     pub start: clock::Global,
 }
 
+impl Transaction {
+    pub fn merge_in(&mut self, other: Transaction) {
+        self.edit_ids.extend(other.edit_ids);
+    }
+}
+
 impl HistoryEntry {
     pub fn transaction_id(&self) -> TransactionId {
         self.transaction.id
