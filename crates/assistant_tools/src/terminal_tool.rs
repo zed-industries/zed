@@ -147,10 +147,10 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
     let mut combined_buffer = String::with_capacity(LIMIT + 1);
 
     let mut out_reader = BufReader::new(cmd.stdout.take().context("Failed to get stdout")?);
-    let mut out_tmp_buffer = String::new();
+    let mut out_tmp_buffer = String::with_capacity(512);
     let mut out_active = true;
     let mut err_reader = BufReader::new(cmd.stderr.take().context("Failed to get stderr")?);
-    let mut err_tmp_buffer = String::new();
+    let mut err_tmp_buffer = String::with_capacity(512);
     let mut err_active = true;
 
     while (out_active || err_active) && combined_buffer.len() < LIMIT + 1 {
@@ -179,14 +179,12 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
 
         if read_stdout {
             out_active = !out_tmp_buffer.is_empty();
-            combined_buffer.push_str(&out_tmp_buffer);
-            out_tmp_buffer.clear();
+            combined_buffer.extend(out_tmp_buffer.drain(..));
         }
 
         if read_stderr {
             err_active = !err_tmp_buffer.is_empty();
-            combined_buffer.push_str(&err_tmp_buffer);
-            err_tmp_buffer.clear();
+            combined_buffer.extend(err_tmp_buffer.drain(..));
         }
     }
 
