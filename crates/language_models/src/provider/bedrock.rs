@@ -479,7 +479,10 @@ impl BedrockModel {
         &self,
         request: bedrock::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
+    > {
         let Ok(runtime_client) = self
             .get_or_init_client(&cx)
             .cloned()
@@ -489,12 +492,8 @@ impl BedrockModel {
         };
 
         match Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request)) {
-            Ok(res) => {
-                async {res.await.map_err(|err| anyhow!(err))?}.boxed()
-            }
-            Err(err) => {
-                futures::future::ready(Err(anyhow!(err))).boxed()
-            }
+            Ok(res) => async { res.await.map_err(|err| anyhow!(err))? }.boxed(),
+            Err(err) => futures::future::ready(Err(anyhow!(err))).boxed(),
         }
     }
 }

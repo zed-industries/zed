@@ -59,15 +59,16 @@ pub async fn stream_completion(
         response = response.set_tool_config(request.tools);
     }
 
-    let output = response.send().await.context("Failed to send API request to Bedrock");
+    let output = response
+        .send()
+        .await
+        .context("Failed to send API request to Bedrock");
 
     let stream = Box::pin(stream::unfold(
         output?.stream,
         move |mut stream| async move {
             match stream.recv().await {
-                Ok(Some(output)) => {
-                    Some((Ok(output), stream))
-                },
+                Ok(Some(output)) => Some((Ok(output), stream)),
                 Ok(None) => None,
                 Err(err) => Some((
                     Err(BedrockError::ClientError(anyhow!(
