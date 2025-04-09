@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 use text::LineEnding;
-use util::{ResultExt, get_current_shell};
+use util::{ResultExt, get_system_shell};
 
 #[derive(Serialize)]
 pub struct AssistantSystemPromptContext {
@@ -35,7 +35,7 @@ impl AssistantSystemPromptContext {
             has_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
-            shell: get_current_shell(),
+            shell: get_system_shell(),
         }
     }
 }

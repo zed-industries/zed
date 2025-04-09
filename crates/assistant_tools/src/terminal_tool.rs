@@ -9,7 +9,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::future;
-use util::get_current_shell;
+use util::get_system_shell;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -133,7 +133,7 @@ impl Tool for TerminalTool {
 const LIMIT: usize = 16 * 1024;
 
 async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
-    let shell = get_current_shell();
+    let shell = get_system_shell();
 
     let mut cmd = new_smol_command(&shell)
         .arg("-c")
