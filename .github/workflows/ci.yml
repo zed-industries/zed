@@ -225,7 +225,7 @@ jobs:
 
       - name: Check for new vulnerable dependencies
         if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4
+        uses: actions/dependency-review-action@67d4f4bd7a9b17a0db54d2a7519187c65e339de8 # v4
         with:
           license-check: false
 
