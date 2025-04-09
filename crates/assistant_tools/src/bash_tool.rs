@@ -219,6 +219,7 @@ fn output_block(output: &str) -> String {
 }
 
 #[cfg(test)]
+#[cfg(not(windows))]
 mod tests {
     use gpui::TestAppContext;
 
