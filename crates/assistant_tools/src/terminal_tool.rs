@@ -15,18 +15,18 @@ use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct BashToolInput {
-    /// The bash one-liner command to execute.
+pub struct TerminalToolInput {
+    /// The one-liner command to execute.
     command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     cd: String,
 }
 
-pub struct BashTool;
+pub struct TerminalTool;
 
-impl Tool for BashTool {
+impl Tool for TerminalTool {
     fn name(&self) -> String {
-        "bash".to_string()
+        "terminal".to_string()
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
@@ -34,7 +34,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> String {
-        include_str!("./bash_tool/description.md").to_string()
+        include_str!("./terminal_tool/description.md").to_string()
     }
 
     fn icon(&self) -> IconName {
@@ -42,11 +42,11 @@ impl Tool for BashTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        json_schema_for::<BashToolInput>(format)
+        json_schema_for::<TerminalToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<BashToolInput>(input.clone()) {
+        match serde_json::from_value::<TerminalToolInput>(input.clone()) {
             Ok(input) => {
                 let mut lines = input.command.lines();
                 let first_line = lines.next().unwrap_or_default();
@@ -65,7 +65,7 @@ impl Tool for BashTool {
                     }
                 }
             }
-            Err(_) => "Run bash command".to_string(),
+            Err(_) => "Run terminal command".to_string(),
         }
     }
 
@@ -77,7 +77,7 @@ impl Tool for BashTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let input: BashToolInput = match serde_json::from_value(input) {
+        let input: TerminalToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
@@ -130,16 +130,17 @@ impl Tool for BashTool {
 const LIMIT: usize = 16 * 1024;
 
 async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
-    // Add 2>&1 to merge stderr into stdout for proper interleaving.
-    let command = format!("({}) 2>&1", command);
+    let shell = std::env::var("SHELL").unwrap_or("bash".to_string());
 
-    let mut cmd = new_smol_command("bash")
+    // Add 2>&1 to merge stderr into stdout for proper interleaving.
+    let mut cmd = new_smol_command(shell)
         .arg("-c")
         .arg(&command)
         .current_dir(working_dir)
         .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
-        .context("Failed to execute bash command")?;
+        .context("Failed to execute terminal command")?;
 
     // Capture stdout with a limit
     let stdout = cmd.stdout.take().unwrap();
@@ -270,7 +271,7 @@ mod tests {
     async fn test_output_truncation_single_line(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let cmd = format!("echo '{}';", "X".repeat(LIMIT * 2));
+        let cmd = format!("echo '{}');", "X".repeat(LIMIT * 2));
 
         let result = run_command_limited(Path::new(".").into(), cmd).await;
 
