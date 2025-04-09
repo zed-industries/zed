@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use crate::code_symbols_tool::file_outline;
-use crate::schema::json_schema_for;
+use crate::{code_symbols_tool::file_outline, schema::json_schema_for};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
@@ -16,7 +15,7 @@ use util::markdown::MarkdownString;
 /// If the model requests to read a file whose size exceeds this, then
 /// the tool will return an error along with the model's symbol outline,
 /// and suggest trying again using line ranges from the outline.
-const MAX_FILE_SIZE_TO_READ: usize = 4096;
+const MAX_FILE_SIZE_TO_READ: usize = 16384;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
@@ -52,7 +51,7 @@ impl Tool for ReadFileTool {
         "read_file".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 

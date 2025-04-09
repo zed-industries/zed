@@ -38,12 +38,12 @@ impl AssistantSystemPromptContext {
 pub struct WorktreeInfoForSystemPrompt {
     pub root_name: String,
     pub abs_path: Arc<Path>,
-    pub rules_file: Option<RulesFile>,
+    pub rules_file: Option<SystemPromptRulesFile>,
 }
 
 #[derive(Serialize)]
-pub struct RulesFile {
-    pub rel_path: Arc<Path>,
+pub struct SystemPromptRulesFile {
+    pub path_in_worktree: Arc<Path>,
     pub abs_path: Arc<Path>,
     pub text: String,
 }
@@ -75,11 +75,6 @@ pub struct TerminalAssistantPromptContext {
     pub working_directory: Option<String>,
     pub latest_output: Vec<String>,
     pub user_prompt: String,
-}
-
-#[derive(Serialize)]
-pub struct ProjectSlashCommandPromptContext {
-    pub context_buffer: String,
 }
 
 pub struct PromptLoadingParams<'a> {
@@ -266,6 +261,12 @@ impl PromptBuilder {
             .render("assistant_system_prompt", context)
     }
 
+    pub fn generate_assistant_system_prompt_reminder(&self) -> Result<String, RenderError> {
+        self.handlebars
+            .lock()
+            .render("assistant_system_prompt_reminder", &())
+    }
+
     pub fn generate_inline_transformation_prompt(
         &self,
         user_prompt: String,
@@ -374,15 +375,5 @@ impl PromptBuilder {
 
     pub fn generate_suggest_edits_prompt(&self) -> Result<String, RenderError> {
         self.handlebars.lock().render("suggest_edits", &())
-    }
-
-    pub fn generate_project_slash_command_prompt(
-        &self,
-        context_buffer: String,
-    ) -> Result<String, RenderError> {
-        self.handlebars.lock().render(
-            "project_slash_command",
-            &ProjectSlashCommandPromptContext { context_buffer },
-        )
     }
 }

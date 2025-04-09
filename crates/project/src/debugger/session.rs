@@ -10,7 +10,7 @@ use super::dap_command::{
     VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
 use dap::messages::Response;
@@ -190,7 +190,7 @@ impl LocalMode {
         delegate: DapAdapterDelegate,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
         cx: AsyncApp,
-    ) -> Task<Result<(Self, Capabilities)>> {
+    ) -> Task<Result<Self>> {
         Self::new_inner(
             debug_adapters,
             session_id,
@@ -214,7 +214,7 @@ impl LocalMode {
         caps: Capabilities,
         fail: bool,
         cx: AsyncApp,
-    ) -> Task<Result<(Self, Capabilities)>> {
+    ) -> Task<Result<Self>> {
         use task::DebugRequestDisposition;
 
         let request = match config.request.clone() {
@@ -349,7 +349,7 @@ impl LocalMode {
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
         on_initialized: impl AsyncFnOnce(&mut LocalMode, AsyncApp) + 'static,
         cx: AsyncApp,
-    ) -> Task<Result<(Self, Capabilities)>> {
+    ) -> Task<Result<Self>> {
         cx.spawn(async move |cx| {
             let (adapter, binary) =
                 Self::get_adapter_binary(&registry, &config, &delegate, cx).await?;
@@ -374,11 +374,11 @@ impl LocalMode {
                         message_handler,
                         cx.clone(),
                     )
-                    .await?
+                    .await
+                    .with_context(|| "Failed to start communication with debug adapter")?
                 },
             );
 
-            let adapter_id = adapter.name().to_string().to_owned();
             let mut session = Self {
                 client,
                 adapter,
@@ -387,11 +387,8 @@ impl LocalMode {
             };
 
             on_initialized(&mut session, cx.clone()).await;
-            let capabilities = session
-                .request(Initialize { adapter_id }, cx.background_executor().clone())
-                .await?;
 
-            Ok((session, capabilities))
+            Ok(session)
         })
     }
 
@@ -541,6 +538,12 @@ impl LocalMode {
         self.config.label.clone()
     }
 
+    fn request_initialization(&self, cx: &App) -> Task<Result<Capabilities>> {
+        let adapter_id = self.adapter.name().to_string();
+
+        self.request(Initialize { adapter_id }, cx.background_executor().clone())
+    }
+
     fn initialize_sequence(
         &self,
         capabilities: &Capabilities,
@@ -590,7 +593,7 @@ impl LocalMode {
                 cx.update(|cx| this.send_all_breakpoints(false, cx))?.await;
 
                 if configuration_done_supported {
-                    this.request(ConfigurationDone, cx.background_executor().clone())
+                    this.request(ConfigurationDone {}, cx.background_executor().clone())
                 } else {
                     Task::ready(Ok(()))
                 }
@@ -743,8 +746,7 @@ pub struct Session {
     _background_tasks: Vec<Task<()>>,
 }
 
-trait CacheableCommand: 'static + Send + Sync {
-    fn as_any(&self) -> &dyn Any;
+trait CacheableCommand: Any + Send + Sync {
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool;
     fn dyn_hash(&self, hasher: &mut dyn Hasher);
     fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
@@ -754,12 +756,8 @@ impl<T> CacheableCommand for T
 where
     T: DapCommand + PartialEq + Eq + Hash,
 {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool {
-        rhs.as_any()
+        (rhs as &dyn Any)
             .downcast_ref::<Self>()
             .map_or(false, |rhs| self == rhs)
     }
@@ -792,7 +790,7 @@ impl Eq for RequestSlot {}
 impl Hash for RequestSlot {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.dyn_hash(state);
-        self.0.as_any().type_id().hash(state)
+        (&*self.0 as &dyn Any).type_id().hash(state)
     }
 }
 
@@ -829,7 +827,12 @@ pub enum SessionEvent {
     Threads,
 }
 
+pub(crate) enum SessionStateEvent {
+    Shutdown,
+}
+
 impl EventEmitter<SessionEvent> for Session {}
+impl EventEmitter<SessionStateEvent> for Session {}
 
 // local session will send breakpoint updates to DAP for all new breakpoints
 // remote side will only send breakpoint updates when it is a breakpoint created by that peer
@@ -849,7 +852,7 @@ impl Session {
         let (message_tx, message_rx) = futures::channel::mpsc::unbounded();
 
         cx.spawn(async move |cx| {
-            let (mode, capabilities) = LocalMode::new(
+            let mode = LocalMode::new(
                 debug_adapters,
                 session_id,
                 parent_session.clone(),
@@ -870,7 +873,6 @@ impl Session {
                     initialized_tx,
                     message_rx,
                     mode,
-                    capabilities,
                     cx,
                 )
             })
@@ -893,7 +895,7 @@ impl Session {
         let (message_tx, message_rx) = futures::channel::mpsc::unbounded();
 
         cx.spawn(async move |cx| {
-            let (mode, capabilities) = LocalMode::new_fake(
+            let mode = LocalMode::new_fake(
                 session_id,
                 parent_session.clone(),
                 breakpoint_store.clone(),
@@ -915,7 +917,6 @@ impl Session {
                     initialized_tx,
                     message_rx,
                     mode,
-                    capabilities,
                     cx,
                 )
             })
@@ -1004,6 +1005,25 @@ impl Session {
         match &self.mode {
             Mode::Local(local_mode) => Some(local_mode),
             Mode::Remote(_) => None,
+        }
+    }
+
+    pub(super) fn request_initialize(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        match &self.mode {
+            Mode::Local(local_mode) => {
+                let capabilities = local_mode.clone().request_initialization(cx);
+
+                cx.spawn(async move |this, cx| {
+                    let capabilities = capabilities.await?;
+                    this.update(cx, |session, _| {
+                        session.capabilities = capabilities;
+                    })?;
+                    Ok(())
+                })
+            }
+            Mode::Remote(_) => Task::ready(Err(anyhow!(
+                "Cannot send initialize request from remote session"
+            ))),
         }
     }
 
@@ -1320,7 +1340,7 @@ impl Session {
 
     fn invalidate_state(&mut self, key: &RequestSlot) {
         self.requests
-            .entry(key.0.as_any().type_id())
+            .entry((&*key.0 as &dyn Any).type_id())
             .and_modify(|request_map| {
                 request_map.remove(&key);
             });
@@ -1532,6 +1552,8 @@ impl Session {
                 cx,
             )
         };
+
+        cx.emit(SessionStateEvent::Shutdown);
 
         cx.background_spawn(async move {
             let _ = task.await;
@@ -1947,7 +1969,6 @@ fn create_local_session(
     initialized_tx: oneshot::Sender<()>,
     mut message_rx: futures::channel::mpsc::UnboundedReceiver<Message>,
     mode: LocalMode,
-    capabilities: Capabilities,
     cx: &mut Context<Session>,
 ) -> Session {
     let _background_tasks = vec![cx.spawn(async move |this: WeakEntity<Session>, cx| {
@@ -2003,7 +2024,7 @@ fn create_local_session(
         child_session_ids: HashSet::default(),
         parent_id: parent_session.map(|session| session.read(cx).id),
         variables: Default::default(),
-        capabilities,
+        capabilities: Capabilities::default(),
         thread_states: ThreadStates::default(),
         output_token: OutputToken(0),
         ignore_breakpoints: false,

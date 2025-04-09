@@ -7,7 +7,7 @@ use gpui::{
 };
 use language::Buffer;
 use language::CodeLabel;
-use markdown::Markdown;
+use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::CompletionSource;
@@ -230,7 +230,7 @@ impl CompletionsMenu {
         let completions = choices
             .iter()
             .map(|choice| Completion {
-                old_range: selection.start.text_anchor..selection.end.text_anchor,
+                replace_range: selection.start.text_anchor..selection.end.text_anchor,
                 new_text: choice.to_string(),
                 label: CodeLabel {
                     text: choice.to_string(),
@@ -240,6 +240,7 @@ impl CompletionsMenu {
                 icon_path: None,
                 documentation: None,
                 confirm: None,
+                insert_text_mode: None,
                 source: CompletionSource::Custom,
             })
             .collect();
@@ -621,21 +622,19 @@ impl CompletionsMenu {
                         let language = editor
                             .language_at(self.initial_position, cx)
                             .map(|l| l.name().to_proto());
-                        Markdown::new(
-                            SharedString::default(),
-                            hover_markdown_style(window, cx),
-                            languages,
-                            language,
-                            cx,
-                        )
-                        .copy_code_block_buttons(false)
-                        .open_url(open_markdown_url)
+                        Markdown::new(SharedString::default(), languages, language, cx)
                     })
                 });
                 markdown.update(cx, |markdown, cx| {
                     markdown.reset(parsed.clone(), cx);
                 });
-                div().child(markdown.clone())
+                div().child(
+                    MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
+                        .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                            copy_button: false,
+                        })
+                        .on_url_click(open_markdown_url),
+                )
             }
             CompletionDocumentation::MultiLineMarkdown(_) => return None,
             CompletionDocumentation::SingleLine(_) => return None,

@@ -2918,7 +2918,32 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-async fn test_tab_with_mixed_whitespace(cx: &mut TestAppContext) {
+async fn test_tab_with_mixed_whitespace_txt(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(3)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+         ˇ
+        \t ˇ
+        \t  ˇ
+        \t   ˇ
+         \t  \t\t \t      \t\t   \t\t    \t \t ˇ
+    "});
+
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+           ˇ
+        \t   ˇ
+        \t   ˇ
+        \t      ˇ
+         \t  \t\t \t      \t\t   \t\t    \t \t   ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_tab_with_mixed_whitespace_rust(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4)
     });
@@ -3872,6 +3897,41 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
         «2ˇ»
 
         «bbbbˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_case(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // If all lower case -> upper case
+    cx.set_state(indoc! {"
+        «hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+
+    // If all upper case -> lower case
+    cx.set_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
+    "});
+
+    // If any upper case characters are identified -> lower case
+    // This matches JetBrains IDEs
+    cx.set_state(indoc! {"
+        «hEllo worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
     "});
 }
 
@@ -5780,6 +5840,37 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("abc\n«  ˇ»abc\nabc");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let large_body_1 = "\nd".repeat(200);
+    let large_body_2 = "\ne".repeat(200);
+
+    cx.set_state(&format!(
+        "abc\nabc{large_body_1} «ˇa»bc{large_body_2}\nefabc\nabc"
+    ));
+    let initial_scroll_position = cx.update_editor(|editor, _, cx| {
+        let scroll_position = editor.scroll_position(cx);
+        assert!(scroll_position.y > 0.0, "Initial selection is between two large bodies and should have the editor scrolled to it");
+        scroll_position
+    });
+
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state(&format!(
+        "«ˇa»bc\n«ˇa»bc{large_body_1} «ˇa»bc{large_body_2}\nef«ˇa»bc\n«ˇa»bc"
+    ));
+    let scroll_position_after_selection =
+        cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
+    assert_eq!(
+        initial_scroll_position, scroll_position_after_selection,
+        "Scroll position should not change after selecting all matches"
+    );
 }
 
 #[gpui::test]
@@ -9218,7 +9309,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
         initial_state: String,
         buffer_marked_text: String,
         completion_text: &'static str,
-        expected_with_insertion_mode: String,
+        expected_with_insert_mode: String,
         expected_with_replace_mode: String,
         expected_with_replace_subsequence_mode: String,
         expected_with_replace_suffix_mode: String,
@@ -9230,7 +9321,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "before ediˇ after".into(),
             buffer_marked_text: "before <edi|> after".into(),
             completion_text: "editor",
-            expected_with_insertion_mode: "before editorˇ after".into(),
+            expected_with_insert_mode: "before editorˇ after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
             expected_with_replace_subsequence_mode: "before editorˇ after".into(),
             expected_with_replace_suffix_mode: "before editorˇ after".into(),
@@ -9240,7 +9331,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "before ediˇtor after".into(),
             buffer_marked_text: "before <edi|tor> after".into(),
             completion_text: "editor",
-            expected_with_insertion_mode: "before editorˇtor after".into(),
+            expected_with_insert_mode: "before editorˇtor after".into(),
             expected_with_replace_mode: "before ediˇtor after".into(),
             expected_with_replace_subsequence_mode: "before ediˇtor after".into(),
             expected_with_replace_suffix_mode: "before ediˇtor after".into(),
@@ -9250,7 +9341,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "before torˇ after".into(),
             buffer_marked_text: "before <tor|> after".into(),
             completion_text: "editor",
-            expected_with_insertion_mode: "before editorˇ after".into(),
+            expected_with_insert_mode: "before editorˇ after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
             expected_with_replace_subsequence_mode: "before editorˇ after".into(),
             expected_with_replace_suffix_mode: "before editorˇ after".into(),
@@ -9260,7 +9351,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "before ˇtor after".into(),
             buffer_marked_text: "before <|tor> after".into(),
             completion_text: "editor",
-            expected_with_insertion_mode: "before editorˇtor after".into(),
+            expected_with_insert_mode: "before editorˇtor after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
             expected_with_replace_subsequence_mode: "before editorˇ after".into(),
             expected_with_replace_suffix_mode: "before editorˇ after".into(),
@@ -9270,7 +9361,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "pˇfield: bool".into(),
             buffer_marked_text: "<p|field>: bool".into(),
             completion_text: "pub ",
-            expected_with_insertion_mode: "pub ˇfield: bool".into(),
+            expected_with_insert_mode: "pub ˇfield: bool".into(),
             expected_with_replace_mode: "pub ˇ: bool".into(),
             expected_with_replace_subsequence_mode: "pub ˇfield: bool".into(),
             expected_with_replace_suffix_mode: "pub ˇfield: bool".into(),
@@ -9280,7 +9371,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "[element_ˇelement_2]".into(),
             buffer_marked_text: "[<element_|element_2>]".into(),
             completion_text: "element_1",
-            expected_with_insertion_mode: "[element_1ˇelement_2]".into(),
+            expected_with_insert_mode: "[element_1ˇelement_2]".into(),
             expected_with_replace_mode: "[element_1ˇ]".into(),
             expected_with_replace_subsequence_mode: "[element_1ˇelement_2]".into(),
             expected_with_replace_suffix_mode: "[element_1ˇelement_2]".into(),
@@ -9290,7 +9381,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "[elˇelement]".into(),
             buffer_marked_text: "[<el|element>]".into(),
             completion_text: "element",
-            expected_with_insertion_mode: "[elementˇelement]".into(),
+            expected_with_insert_mode: "[elementˇelement]".into(),
             expected_with_replace_mode: "[elˇement]".into(),
             expected_with_replace_subsequence_mode: "[elementˇelement]".into(),
             expected_with_replace_suffix_mode: "[elˇement]".into(),
@@ -9300,7 +9391,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "SubˇError".into(),
             buffer_marked_text: "<Sub|Error>".into(),
             completion_text: "SubscriptionError",
-            expected_with_insertion_mode: "SubscriptionErrorˇError".into(),
+            expected_with_insert_mode: "SubscriptionErrorˇError".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_subsequence_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_suffix_mode: "SubscriptionErrorˇ".into(),
@@ -9310,7 +9401,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "SubˇErr".into(),
             buffer_marked_text: "<Sub|Err>".into(),
             completion_text: "SubscriptionError",
-            expected_with_insertion_mode: "SubscriptionErrorˇErr".into(),
+            expected_with_insert_mode: "SubscriptionErrorˇErr".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_subsequence_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_suffix_mode: "SubscriptionErrorˇErr".into(),
@@ -9320,7 +9411,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "Suˇscrirr".into(),
             buffer_marked_text: "<Su|scrirr>".into(),
             completion_text: "SubscriptionError",
-            expected_with_insertion_mode: "SubscriptionErrorˇscrirr".into(),
+            expected_with_insert_mode: "SubscriptionErrorˇscrirr".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_subsequence_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_suffix_mode: "SubscriptionErrorˇscrirr".into(),
@@ -9330,7 +9421,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "foo(indˇix)".into(),
             buffer_marked_text: "foo(<ind|ix>)".into(),
             completion_text: "node_index",
-            expected_with_insertion_mode: "foo(node_indexˇix)".into(),
+            expected_with_insert_mode: "foo(node_indexˇix)".into(),
             expected_with_replace_mode: "foo(node_indexˇ)".into(),
             expected_with_replace_subsequence_mode: "foo(node_indexˇix)".into(),
             expected_with_replace_suffix_mode: "foo(node_indexˇix)".into(),
@@ -9339,7 +9430,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 
     for run in runs {
         let run_variations = [
-            (LspInsertMode::Insert, run.expected_with_insertion_mode),
+            (LspInsertMode::Insert, run.expected_with_insert_mode),
             (LspInsertMode::Replace, run.expected_with_replace_mode),
             (
                 LspInsertMode::ReplaceSubsequence,
@@ -9393,6 +9484,98 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             apply_additional_edits.await.unwrap();
         }
     }
+}
+
+#[gpui::test]
+async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let initial_state = "SubˇError";
+    let buffer_marked_text = "<Sub|Error>";
+    let completion_text = "SubscriptionError";
+    let expected_with_insert_mode = "SubscriptionErrorˇError";
+    let expected_with_replace_mode = "SubscriptionErrorˇ";
+
+    update_test_language_settings(&mut cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            // set the opposite here to ensure that the action is overriding the default behavior
+            lsp_insert_mode: LspInsertMode::Insert,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    cx.set_state(initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        &buffer_marked_text,
+        vec![completion_text],
+        counter.clone(),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(&expected_with_replace_mode);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
+
+    update_test_language_settings(&mut cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            // set the opposite here to ensure that the action is overriding the default behavior
+            lsp_insert_mode: LspInsertMode::Replace,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    cx.set_state(initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        &buffer_marked_text,
+        vec![completion_text],
+        counter.clone(),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 2);
+
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_insert(&ConfirmCompletionInsert, window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(&expected_with_insert_mode);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
 }
 
 #[gpui::test]
@@ -10233,6 +10416,62 @@ async fn test_completion_sort(cx: &mut TestAppContext) {
             panic!("expected completion menu to be open");
         }
     });
+}
+
+#[gpui::test]
+async fn test_as_is_completions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "unsafe".into(),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 1,
+                                character: 2,
+                            },
+                            end: lsp::Position {
+                                line: 1,
+                                character: 3,
+                            },
+                        },
+                        new_text: "unsafe".to_string(),
+                    })),
+                    insert_text_mode: Some(lsp::InsertTextMode::AS_IS),
+                    ..Default::default()
+                },
+            ])))
+        });
+    cx.set_state("fn a() {}\n  nˇ");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: Some("\n".into()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.executor().run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.confirm_completion(&Default::default(), window, cx)
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state("fn a() {}\n  unsafeˇ");
 }
 
 #[gpui::test]
@@ -12483,6 +12722,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "some other init value": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12502,6 +12742,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12521,6 +12762,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12538,6 +12780,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 binary: None,
                 settings: None,
                 initialization_options: None,
+                enable_lsp_tasks: false,
             },
         );
     });

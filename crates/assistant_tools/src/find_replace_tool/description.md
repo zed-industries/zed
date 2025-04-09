@@ -7,3 +7,5 @@ You should use this tool when you want to edit a subset of a file's contents, bu
 DO NOT call this tool until the code to be edited appears in the conversation! You must use another tool to read the file's contents into the conversation, or ask the user to add it to context first.
 
 Never call this tool with identical "find" and "replace" strings. Instead, stop and think about what you actually want to do.
+
+REMEMBER: You can use this tool after you just used the `create_file` tool. It's better to edit the file you just created than to recreate a new file from scratch.

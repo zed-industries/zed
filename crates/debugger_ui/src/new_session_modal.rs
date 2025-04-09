@@ -31,6 +31,7 @@ pub(super) struct NewSessionModal {
     debug_panel: WeakEntity<DebugPanel>,
     mode: NewSessionMode,
     stop_on_entry: ToggleState,
+    initialize_args: Option<serde_json::Value>,
     debugger: Option<SharedString>,
     last_selected_profile_name: Option<SharedString>,
 }
@@ -82,17 +83,17 @@ impl NewSessionModal {
                 .map(Into::into)
                 .unwrap_or(ToggleState::Unselected),
             last_selected_profile_name: None,
+            initialize_args: None,
         }
     }
 
     fn debug_config(&self, cx: &App) -> Option<DebugTaskDefinition> {
         let request = self.mode.debug_task(cx);
-
         Some(DebugTaskDefinition {
             adapter: self.debugger.clone()?.to_string(),
             label: suggested_label(&request, self.debugger.as_deref()?),
             request,
-            initialize_args: None,
+            initialize_args: self.initialize_args.clone(),
             tcp_connection: None,
             locator: None,
             stop_on_entry: match self.stop_on_entry {
@@ -228,7 +229,7 @@ impl NewSessionModal {
                         weak.update(cx, |this, cx| {
                             this.last_selected_profile_name = Some(SharedString::from(&task.label));
                             this.debugger = Some(task.adapter.clone().into());
-
+                            this.initialize_args = task.initialize_args.clone();
                             match &task.request {
                                 DebugRequestType::Launch(launch_config) => {
                                     this.mode = NewSessionMode::launch(

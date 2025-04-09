@@ -3,12 +3,13 @@ resolver = "2"
 members = [
     "crates/activity_indicator",
     "crates/agent",
+    "crates/agent_rules",
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
     "crates/assistant",
     "crates/assistant_context_editor",
-    "crates/assistant_eval",
+    "crates/agent_eval",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
@@ -209,13 +210,14 @@ edition = "2024"
 
 activity_indicator = { path = "crates/activity_indicator" }
 agent = { path = "crates/agent" }
+agent_rules = { path = "crates/agent_rules" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_context_editor = { path = "crates/assistant_context_editor" }
-assistant_eval = { path = "crates/assistant_eval" }
+assistant_eval = { path = "crates/agent_eval" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
@@ -396,7 +398,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
-async-tungstenite = "0.28"
+async-tungstenite = "0.29.1"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
@@ -425,7 +427,7 @@ core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 ctor = "0.4.0"
 dashmap = "6.0"
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "bfd4af0" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "be69a016ba710191b9fdded28c8b042af4b617f7" }
 derive_more = "0.99.17"
 dirs = "4.0"
 ec4rs = "1.1"
@@ -453,8 +455,8 @@ indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
 jsonwebtoken = "9.3"
-jupyter-protocol = { version = "0.6.0" }
-jupyter-websocket-client = { version = "0.9.0" }
+jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
@@ -463,21 +465,22 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
 nanoid = "0.4"
-nbformat = { version = "0.10.0" }
+nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 nix = "0.29"
+objc = "0.2"
 open = "5.0.0"
 num-format = "0.4.4"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 pathdiff = "0.2"
-pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
-pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
-pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
-pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
-pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
-pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
-pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
+pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
+pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
+pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
+pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
+pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
+pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
+pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
@@ -500,7 +503,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = { version = "0.25.0", default-features = false, features = [
+runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"
@@ -660,7 +663,6 @@ features = [
 # TODO livekit https://github.com/RustAudio/cpal/pull/891
 [patch.crates-io]
 cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
-real-async-tls = { git = "https://github.com/zed-industries/async-tls", rev = "1e759a4b5e370f87dc15e40756ac4f8815b61d9d", package = "async-tls" }
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 

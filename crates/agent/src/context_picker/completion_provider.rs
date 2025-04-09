@@ -106,12 +106,13 @@ impl ContextPickerCompletionProvider {
                 .iter()
                 .map(|mode| {
                     Completion {
-                        old_range: source_range.clone(),
+                        replace_range: source_range.clone(),
                         new_text: format!("@{} ", mode.mention_prefix()),
                         label: CodeLabel::plain(mode.label().to_string(), None),
                         icon_path: Some(mode.icon().path().into()),
                         documentation: None,
                         source: project::CompletionSource::Custom,
+                        insert_text_mode: None,
                         // This ensures that when a user accepts this completion, the
                         // completion menu will still be shown after "@category " is
                         // inserted
@@ -159,10 +160,11 @@ impl ContextPickerCompletionProvider {
         let new_text = MentionLink::for_thread(&thread_entry);
         let new_text_len = new_text.len();
         Completion {
-            old_range: source_range.clone(),
+            replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(thread_entry.summary.to_string(), None),
             documentation: None,
+            insert_text_mode: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_for_completion.path().into()),
             confirm: Some(confirm_completion_callback(
@@ -203,12 +205,13 @@ impl ContextPickerCompletionProvider {
         let new_text = MentionLink::for_fetch(&url_to_fetch);
         let new_text_len = new_text.len();
         Completion {
-            old_range: source_range.clone(),
+            replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Globe.path().into()),
+            insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 IconName::Globe.path().into(),
                 url_to_fetch.clone(),
@@ -284,12 +287,13 @@ impl ContextPickerCompletionProvider {
         let new_text = MentionLink::for_file(&file_name, &full_path);
         let new_text_len = new_text.len();
         Completion {
-            old_range: source_range.clone(),
+            replace_range: source_range.clone(),
             new_text,
             label,
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
+            insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 crease_icon_path,
                 file_name,
@@ -346,12 +350,13 @@ impl ContextPickerCompletionProvider {
         let new_text = MentionLink::for_symbol(&symbol.name, &full_path);
         let new_text_len = new_text.len();
         Some(Completion {
-            old_range: source_range.clone(),
+            replace_range: source_range.clone(),
             new_text,
             label,
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Code.path().into()),
+            insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 IconName::Code.path().into(),
                 symbol.name.clone().into(),
@@ -862,7 +867,7 @@ mod tests {
                 .expect("Opened test file wasn't an editor")
         });
 
-        let context_store = cx.new(|_| ContextStore::new(workspace.downgrade(), None));
+        let context_store = cx.new(|_| ContextStore::new(project.downgrade(), None));
 
         let editor_entity = editor.downgrade();
         editor.update_in(&mut cx, |editor, window, cx| {
