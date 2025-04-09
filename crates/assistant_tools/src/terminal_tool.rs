@@ -1,7 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
-use futures::future::{Either, select};
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt, AsyncReadExt, FutureExt};
 use gpui::{App, AppContext, Entity, Task};
@@ -10,6 +9,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::future;
+use util::get_current_shell;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -133,7 +133,7 @@ impl Tool for TerminalTool {
 const LIMIT: usize = 16 * 1024;
 
 async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
-    let shell = std::env::var("SHELL").unwrap_or("bash".to_string());
+    let shell = get_current_shell();
 
     let mut cmd = new_smol_command(&shell)
         .arg("-c")

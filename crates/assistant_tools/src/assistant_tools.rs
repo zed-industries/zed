@@ -1,4 +1,3 @@
-mod terminal_tool;
 mod batch_tool;
 mod code_symbols_tool;
 mod copy_path_tool;
@@ -18,6 +17,7 @@ mod regex_search_tool;
 mod replace;
 mod schema;
 mod symbol_info_tool;
+mod terminal_tool;
 mod thinking_tool;
 
 use std::sync::Arc;
@@ -28,7 +28,6 @@ use gpui::App;
 use http_client::HttpClientWithUrl;
 use move_path_tool::MovePathTool;
 
-use crate::terminal_tool::TerminalTool;
 use crate::batch_tool::BatchTool;
 use crate::code_symbols_tool::CodeSymbolsTool;
 use crate::create_directory_tool::CreateDirectoryTool;
@@ -44,6 +43,7 @@ use crate::path_search_tool::PathSearchTool;
 use crate::read_file_tool::ReadFileTool;
 use crate::regex_search_tool::RegexSearchTool;
 use crate::symbol_info_tool::SymbolInfoTool;
+use crate::terminal_tool::TerminalTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {

@@ -994,6 +994,11 @@ pub fn default<D: Default>() -> D {
     Default::default()
 }
 
+pub fn get_current_shell() -> String {
+    // TODO: WINDOOOWS
+    std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
