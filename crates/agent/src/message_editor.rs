@@ -721,7 +721,8 @@ impl Render for MessageEditor {
                         v_flex()
                             .size_full()
                             .gap_4()
-                            .child(div().when(is_editor_expanded, |this| this.h_96()).child({
+                            .when(is_editor_expanded, |this| this.h(vh(0.8, window)).justify_between())
+                            .child(div().when(is_editor_expanded, |this| this.h_full()).child({
                                     let settings = ThemeSettings::get_global(cx);
 
                                     let text_style = TextStyle {
@@ -764,7 +765,6 @@ impl Render for MessageEditor {
                             )
                             .child(
                                 h_flex()
-                                    .mt_auto()
                                     .flex_none()
                                     .justify_between()
                                     .child(h_flex().gap_2().child(self.profile_selector.clone()))

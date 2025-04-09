@@ -1292,6 +1292,7 @@ impl AssistantPanel {
                 let configuration_error_ref = &configuration_error;
 
                 parent
+                    .overflow_hidden()
                     .p_1p5()
                     .justify_end()
                     .gap_1()
