@@ -127,7 +127,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
     Ok(())
 }
 
-// #[cfg(not(test))]
+#[cfg(not(test))]
 fn retry_loop(hwnd: Option<HWND>, f: impl Fn() -> bool) -> Result<()> {
     let start = Instant::now();
     while start.elapsed().as_secs() <= 1 {
@@ -144,33 +144,29 @@ fn retry_loop(hwnd: Option<HWND>, f: impl Fn() -> bool) -> Result<()> {
     Err(anyhow::anyhow!("Timed out"))
 }
 
-// #[cfg(test)]
-// fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Result<()> {
-//     let start = Instant::now();
-//     while start.elapsed().as_secs() <= 1 {
-//         let result = if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
-//             match config.as_str() {
-//                 "inf" => {
-//                     std::thread::sleep(Duration::from_millis(500));
-//                     Err(anyhow::anyhow!("Test timeout"))
-//                 }
-//                 "err" => {
-//                     std::thread::sleep(Duration::from_millis(10));
-//                     Err(anyhow::anyhow!("Test error"))
-//                 }
-//                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
-//             }
-//         } else {
-//             Ok(())
-//         };
-//         if result.is_ok() {
-//             unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
-//             return Ok(());
-//         }
-//         std::thread::sleep(Duration::from_millis(10));
-//     }
-//     Err(anyhow::anyhow!("Update timed out"))
-// }
+#[cfg(test)]
+fn retry_loop(hwnd: Option<HWND>, _: impl Fn() -> bool) -> Result<()> {
+    let start = Instant::now();
+    while start.elapsed().as_secs() <= 1 {
+        let result = if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
+            match config.as_str() {
+                "err" => {
+                    std::thread::sleep(Duration::from_millis(500));
+                    false
+                }
+                _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
+            }
+        } else {
+            true
+        };
+        if result {
+            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    Err(anyhow::anyhow!("Timed out"))
+}
 
 #[cfg(test)]
 mod test {
@@ -182,13 +178,8 @@ mod test {
         assert!(perform_update(app_dir, None).is_ok());
 
         // Simulate a timeout
-        unsafe { std::env::set_var("ZED_AUTO_UPDATE", "inf") };
-        let ret = perform_update(app_dir, None);
-        assert!(ret.is_err_and(|e| e.to_string().as_str() == "Update timed out"));
-
-        // Simulate a test error
         unsafe { std::env::set_var("ZED_AUTO_UPDATE", "err") };
         let ret = perform_update(app_dir, None);
-        assert!(ret.is_err_and(|e| e.to_string().as_str() == "Update timed out"));
+        assert!(ret.is_err_and(|e| e.to_string().as_str() == "Timed out"));
     }
 }
