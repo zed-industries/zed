@@ -2635,7 +2635,8 @@ impl LocalLspStore {
                 .into_iter()
                 .map(|edit| (range_from_lsp(edit.range), edit.new_text))
                 .collect::<Vec<_>>();
-            lsp_edits.sort_by_key(|(range, _)| range.start);
+
+            lsp_edits.sort_by_key(|(range, _)| (range.start, range.end));
 
             let mut lsp_edits = lsp_edits.into_iter().peekable();
             let mut edits = Vec::new();

@@ -114,7 +114,9 @@ jobs:
     timeout-minutes: 60
     name: Check workspace-hack crate
     needs: [job_spec]
-    if: github.repository_owner == 'zed-industries'
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:

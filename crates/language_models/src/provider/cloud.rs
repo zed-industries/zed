@@ -504,10 +504,14 @@ impl CloudLanguageModel {
         let mut retry_delay = Duration::from_secs(1);
 
         loop {
-            let request_builder = http_client::Request::builder();
+            let request_builder = http_client::Request::builder().method(Method::POST);
+            let request_builder = if let Ok(completions_url) = std::env::var("ZED_COMPLETIONS_URL")
+            {
+                request_builder.uri(completions_url)
+            } else {
+                request_builder.uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
+            };
             let request = request_builder
-                .method(Method::POST)
-                .uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .body(serde_json::to_string(&body)?.into())?;

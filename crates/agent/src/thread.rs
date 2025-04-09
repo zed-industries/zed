@@ -1487,6 +1487,7 @@ impl Thread {
                             tool_use_id.clone(),
                             tool_name,
                             output,
+                            cx,
                         );
 
                         cx.emit(ThreadEvent::ToolFinished {
@@ -1831,7 +1832,7 @@ impl Thread {
         ));
 
         self.tool_use
-            .insert_tool_output(tool_use_id.clone(), tool_name, err);
+            .insert_tool_output(tool_use_id.clone(), tool_name, err, cx);
 
         cx.emit(ThreadEvent::ToolFinished {
             tool_use_id,

@@ -51,6 +51,11 @@ impl Label {
             label: label.into(),
         }
     }
+
+    /// Sets the text of the [`Label`].
+    pub fn set_text(&mut self, text: impl Into<SharedString>) {
+        self.label = text.into();
+    }
 }
 
 // nate: If we are going to do this, we might as well just

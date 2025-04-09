@@ -746,8 +746,7 @@ pub struct Session {
     _background_tasks: Vec<Task<()>>,
 }
 
-trait CacheableCommand: 'static + Send + Sync {
-    fn as_any(&self) -> &dyn Any;
+trait CacheableCommand: Any + Send + Sync {
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool;
     fn dyn_hash(&self, hasher: &mut dyn Hasher);
     fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
@@ -757,12 +756,8 @@ impl<T> CacheableCommand for T
 where
     T: DapCommand + PartialEq + Eq + Hash,
 {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool {
-        rhs.as_any()
+        (rhs as &dyn Any)
             .downcast_ref::<Self>()
             .map_or(false, |rhs| self == rhs)
     }
@@ -795,7 +790,7 @@ impl Eq for RequestSlot {}
 impl Hash for RequestSlot {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.dyn_hash(state);
-        self.0.as_any().type_id().hash(state)
+        (&*self.0 as &dyn Any).type_id().hash(state)
     }
 }
 
@@ -832,7 +827,12 @@ pub enum SessionEvent {
     Threads,
 }
 
+pub(crate) enum SessionStateEvent {
+    Shutdown,
+}
+
 impl EventEmitter<SessionEvent> for Session {}
+impl EventEmitter<SessionStateEvent> for Session {}
 
 // local session will send breakpoint updates to DAP for all new breakpoints
 // remote side will only send breakpoint updates when it is a breakpoint created by that peer
@@ -1340,7 +1340,7 @@ impl Session {
 
     fn invalidate_state(&mut self, key: &RequestSlot) {
         self.requests
-            .entry(key.0.as_any().type_id())
+            .entry((&*key.0 as &dyn Any).type_id())
             .and_modify(|request_map| {
                 request_map.remove(&key);
             });
@@ -1552,6 +1552,8 @@ impl Session {
                 cx,
             )
         };
+
+        cx.emit(SessionStateEvent::Shutdown);
 
         cx.background_spawn(async move {
             let _ = task.await;

@@ -3,15 +3,16 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_tool::{Tool, ToolWorkingSet};
 use collections::HashMap;
-use language_model::ToolOutput;
 use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, SharedString, Task};
+use language_model::ToolOutput;
 use language_model::{
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, Role,
+    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolResult,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
 };
 use ui::IconName;
+use util::truncate_lines_to_byte_limit;
 
 use crate::thread::MessageId;
 use crate::thread_store::SerializedMessage;
@@ -334,15 +335,44 @@ impl ToolUseState {
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
         output: Result<ToolOutput>,
+        cx: &App,
     ) -> Option<PendingToolUse> {
         match output {
             Ok(tool_result) => {
+                let model_registry = LanguageModelRegistry::read_global(cx);
+
+                const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
+
+                // Protect from clearly large output
+                let tool_output_limit = model_registry
+                    .default_model()
+                    .map(|model| model.model.max_token_count() * BYTES_PER_TOKEN_ESTIMATE)
+                    .unwrap_or(usize::MAX);
+
+                // Get string representation of the tool result
+                let response_text = tool_result.response_for_model();
+                
+                // Check length and truncate if needed
+                let final_tool_result = if response_text.len() <= tool_output_limit {
+                    response_text.to_string()
+                } else {
+                    let response_string = response_text.to_string();
+                    let truncated = truncate_lines_to_byte_limit(&response_string, tool_output_limit);
+                    let truncated_len = truncated.len();
+
+                    format!(
+                        "Tool result too long. The first {} bytes:\n\n{}",
+                        truncated_len,
+                        truncated
+                    )
+                };
+
                 self.tool_results.insert(
                     tool_use_id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
                         tool_name,
-                        content: tool_result.response_for_model().into(),
+                        content: Arc::from(final_tool_result),
                         is_error: false,
                         tool_output: Some(Arc::new(tool_result)),
                     },
