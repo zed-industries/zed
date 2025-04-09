@@ -334,6 +334,8 @@ impl ToolUseState {
         output: Result<String>,
         cx: &App,
     ) -> Option<PendingToolUse> {
+        telemetry::event!("Agent Tool Finished", tool_name, success = output.is_ok());
+
         match output {
             Ok(tool_result) => {
                 let model_registry = LanguageModelRegistry::read_global(cx);
