@@ -1,14 +1,14 @@
-use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
+use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use extension::{ExtensionLanguageServerProxy, KeyValueStoreDelegate, WorktreeDelegate};
-use futures::{io::BufReader, FutureExt as _};
-use futures::{lock::Mutex, AsyncReadExt};
+use futures::{AsyncReadExt, lock::Mutex};
+use futures::{FutureExt as _, io::BufReader};
 use language::LanguageName;
-use language::{language_settings::AllLanguageSettings, BinaryStatus};
+use language::{BinaryStatus, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{

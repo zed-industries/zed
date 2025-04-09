@@ -4,8 +4,8 @@ use crate::{
     tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
-    requests::{StackTrace, Threads},
     StackFrame,
+    requests::{StackTrace, Threads},
 };
 use editor::{Editor, ToPoint as _};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
@@ -410,7 +410,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_panel_item = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, _| this.active_session())
                 .unwrap();
 
             active_debug_panel_item

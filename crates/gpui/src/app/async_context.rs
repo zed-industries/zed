@@ -3,7 +3,7 @@ use crate::{
     Entity, Focusable, ForegroundExecutor, Global, PromptLevel, Render, Reservation, Result, Task,
     VisualContext, Window, WindowHandle,
 };
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use std::{future::Future, rc::Weak};

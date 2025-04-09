@@ -3,13 +3,13 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 
 use core::cmp;
 use gpui::{
-    rems, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
-    Task, WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Task, WeakEntity,
+    Window, rems,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
@@ -44,10 +44,7 @@ pub fn prompt(
             })
             .ok();
 
-        match rx.await {
-            Ok(selection) => Some(selection),
-            Err(_) => None, // User cancelled
-        }
+        (rx.await).ok()
     })
 }
 

@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{Ok, Result, anyhow};
 use dap::{
-    client::SessionId,
-    proto_conversions::ProtoConversion,
-    requests::{Continue, Next},
     Capabilities, ContinueArguments, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, SourceBreakpoint,
     StepInArguments, StepOutArguments, SteppingGranularity, ValueFormat, Variable,
     VariablesArgumentsFilter,
+    client::SessionId,
+    proto_conversions::ProtoConversion,
+    requests::{Continue, Next},
 };
 use rpc::proto;
 use serde_json::Value;
@@ -1479,7 +1479,7 @@ impl LocalDapCommand for ThreadsCommand {
     type DapRequest = dap::requests::Threads;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
-        ()
+        dap::ThreadsArgument {}
     }
 
     fn response_from_dap(
@@ -1568,7 +1568,7 @@ impl LocalDapCommand for Initialize {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq)]
-pub(super) struct ConfigurationDone;
+pub(super) struct ConfigurationDone {}
 
 impl LocalDapCommand for ConfigurationDone {
     type Response = ();
@@ -1581,7 +1581,7 @@ impl LocalDapCommand for ConfigurationDone {
     }
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
-        dap::ConfigurationDoneArguments
+        dap::ConfigurationDoneArguments {}
     }
 
     fn response_from_dap(

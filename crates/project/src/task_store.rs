@@ -7,18 +7,18 @@ use anyhow::Context as _;
 use collections::HashMap;
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
-    proto::{deserialize_anchor, serialize_anchor},
     ContextProvider as _, LanguageToolchainStore, Location,
+    proto::{deserialize_anchor, serialize_anchor},
 };
-use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use settings::{InvalidSettingsError, SettingsLocation, TaskKind};
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{BufferId, OffsetRangeExt};
 use util::ResultExt;
 
 use crate::{
-    buffer_store::BufferStore, worktree_store::WorktreeStore, BasicContextProvider, Inventory,
-    ProjectEnvironment,
+    BasicContextProvider, Inventory, ProjectEnvironment, buffer_store::BufferStore,
+    worktree_store::WorktreeStore,
 };
 
 #[allow(clippy::large_enum_variant)] // platform-dependent warning
@@ -295,10 +295,13 @@ fn local_task_context_for_location(
         .and_then(|worktree| worktree.read(cx).root_dir());
 
     cx.spawn(async move |cx| {
-        let worktree_abs_path = worktree_abs_path.clone();
         let project_env = environment
             .update(cx, |environment, cx| {
-                environment.get_environment(worktree_id, worktree_abs_path.clone(), cx)
+                environment.get_buffer_environment(
+                    location.buffer.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
             })
             .ok()?
             .await;

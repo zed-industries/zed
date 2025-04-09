@@ -1,17 +1,17 @@
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 
 use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs,
-    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowKind, WindowParams, X11ClientStatePtr,
+    AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    WindowParams, X11ClientStatePtr, px, size,
 };
 
 use blade_graphics as gpu;
 use raw_window_handle as rwh;
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},
@@ -31,7 +31,7 @@ use std::{
     sync::Arc,
 };
 
-use super::{X11Display, XINPUT_ALL_DEVICES, XINPUT_ALL_DEVICE_GROUPS};
+use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
         XA_ATOM,

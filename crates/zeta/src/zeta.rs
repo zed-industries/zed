@@ -10,23 +10,23 @@ pub(crate) use completion_diff_element::*;
 use db::kvp::KEY_VALUE_STORE;
 pub use init::*;
 use inline_completion::DataCollectionState;
-pub use license_detection::is_license_eligible_for_data_collection;
 use license_detection::LICENSE_FILES_TO_CHECK;
+pub use license_detection::is_license_eligible_for_data_collection;
 pub use rate_completion_modal::*;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
 use client::{Client, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
-    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
-    Subscription, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
+    Subscription, Task, WeakEntity, actions,
 };
 use http_client::{HttpClient, Method};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{
-    text_diff, Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint,
+    Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint, text_diff,
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use postage::watch;
@@ -50,12 +50,12 @@ use telemetry_events::InlineCompletionRating;
 use thiserror::Error;
 use util::ResultExt;
 use uuid::Uuid;
-use workspace::notifications::{ErrorMessagePrompt, NotificationId};
 use workspace::Workspace;
+use workspace::notifications::{ErrorMessagePrompt, NotificationId};
 use worktree::Worktree;
 use zed_llm_client::{
-    PredictEditsBody, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
-    MINIMUM_REQUIRED_VERSION_HEADER_NAME,
+    EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsBody,
+    PredictEditsResponse,
 };
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
@@ -165,11 +165,7 @@ fn interpolate(
 
     edits.extend(model_edits.cloned());
 
-    if edits.is_empty() {
-        None
-    } else {
-        Some(edits)
-    }
+    if edits.is_empty() { None } else { Some(edits) }
 }
 
 impl std::fmt::Debug for InlineCompletion {

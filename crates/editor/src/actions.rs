@@ -3,6 +3,7 @@ use super::*;
 use gpui::{action_as, action_with_deprecated_aliases, actions};
 use schemars::JsonSchema;
 use util::serde::default_true;
+
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SelectNext {
@@ -262,6 +263,8 @@ actions!(
         Cancel,
         CancelLanguageServerWork,
         ConfirmRename,
+        ConfirmCompletionInsert,
+        ConfirmCompletionReplace,
         ContextMenuFirst,
         ContextMenuLast,
         ContextMenuNext,
@@ -274,6 +277,8 @@ actions!(
         ConvertToTitleCase,
         ConvertToUpperCamelCase,
         ConvertToUpperCase,
+        ConvertToRot13,
+        ConvertToRot47,
         Copy,
         CopyAndTrim,
         CopyFileLocation,
@@ -410,15 +415,18 @@ actions!(
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
+        StopLanguageServer,
         SwitchSourceHeader,
         Tab,
         Backtab,
         ToggleBreakpoint,
+        ToggleCase,
         DisableBreakpoint,
         EnableBreakpoint,
         EditLogBreakpoint,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
+        OpenGitBlameCommit,
         ToggleIndentGuides,
         ToggleInlayHints,
         ToggleInlineDiagnostics,

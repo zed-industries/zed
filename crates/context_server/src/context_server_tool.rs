@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolSource};
 use gpui::{App, Entity, Task};
 use icons::IconName;
@@ -49,7 +49,7 @@ impl Tool for ContextServerTool {
         }
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         true
     }
 

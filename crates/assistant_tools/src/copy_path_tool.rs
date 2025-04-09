@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModelRequestMessage;
@@ -40,10 +40,10 @@ pub struct CopyPathTool;
 
 impl Tool for CopyPathTool {
     fn name(&self) -> String {
-        "copy-path".into()
+        "copy_path".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         true
     }
 

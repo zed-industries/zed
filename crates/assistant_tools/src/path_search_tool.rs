@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -38,10 +38,10 @@ pub struct PathSearchTool;
 
 impl Tool for PathSearchTool {
     fn name(&self) -> String {
-        "path-search".into()
+        "path_search".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 

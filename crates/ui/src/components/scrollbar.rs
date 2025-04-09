@@ -1,11 +1,11 @@
 use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
-use crate::{prelude::*, px, relative, IntoElement};
+use crate::{IntoElement, prelude::*, px, relative};
 use gpui::{
-    point, quad, Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners,
-    Edges, Element, ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId,
-    ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
-    ScrollWheelEvent, Size, Style, UniformListScrollHandle, Window,
+    Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, Edges, Element,
+    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, ListState,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
+    Size, Style, UniformListScrollHandle, Window, point, quad,
 };
 
 pub struct Scrollbar {
@@ -32,10 +32,6 @@ impl ScrollableHandle for UniformListScrollHandle {
 
     fn viewport(&self) -> Bounds<Pixels> {
         self.0.borrow().base_handle.bounds()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -65,10 +61,6 @@ impl ScrollableHandle for ListState {
 
     fn viewport(&self) -> Bounds<Pixels> {
         self.viewport_bounds()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -107,10 +99,6 @@ impl ScrollableHandle for ScrollHandle {
     fn viewport(&self) -> Bounds<Pixels> {
         self.bounds()
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 #[derive(Debug)]
@@ -119,12 +107,11 @@ pub struct ContentSize {
     pub scroll_adjustment: Option<Point<Pixels>>,
 }
 
-pub trait ScrollableHandle: Debug + 'static {
+pub trait ScrollableHandle: Any + Debug {
     fn content_size(&self) -> Option<ContentSize>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
     fn viewport(&self) -> Bounds<Pixels>;
-    fn as_any(&self) -> &dyn Any;
     fn drag_started(&self) {}
     fn drag_ended(&self) {}
 }
@@ -171,11 +158,7 @@ impl ScrollbarState {
         let mut current_offset = self.scroll_handle.offset().along(axis).min(px(0.)).abs().0;
         if let Some(adjustment) = scroll_adjustment.and_then(|adjustment| {
             let adjust = adjustment.along(axis).0;
-            if adjust < 0.0 {
-                Some(adjust)
-            } else {
-                None
-            }
+            if adjust < 0.0 { Some(adjust) } else { None }
         }) {
             current_offset -= adjustment;
         }

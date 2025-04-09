@@ -25,7 +25,7 @@ async-trait.workspace = true
 collections.workspace = true
 cpal = "0.15"
 futures.workspace = true
-gpui.workspace = true
+gpui = { workspace = true, features = ["x11", "wayland"] }
 gpui_tokio.workspace = true
 http_client_tls.workspace = true
 image.workspace = true
@@ -37,16 +37,22 @@ postage.workspace = true
 smallvec.workspace = true
 tokio-tungstenite.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
-libwebrtc = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks" }
-livekit = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks", features = ["__rustls-tls"] }
+libwebrtc = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://github.com/zed-industries/livekit-rust-sdks" }
+livekit = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://github.com/zed-industries/livekit-rust-sdks", features = [
+    "__rustls-tls"
+] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 core-video.workspace = true
 coreaudio-rs = "0.12.1"
-objc = "0.2"
+objc.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

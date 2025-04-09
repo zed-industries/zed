@@ -1,8 +1,8 @@
 use collections::HashMap;
 use schemars::{
+    JsonSchema,
     r#gen::SchemaSettings,
     schema::{ObjectValidation, Schema, SchemaObject},
-    JsonSchema,
 };
 use serde::Deserialize;
 use serde_json_lenient::Value;

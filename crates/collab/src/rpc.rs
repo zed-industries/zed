@@ -3,7 +3,7 @@ mod connection_pool;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::llm::LlmTokenClaims;
 use crate::{
-    auth,
+    AppState, Config, Error, RateLimit, Result, auth,
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
         CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
@@ -11,47 +11,46 @@ use crate::{
         RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
-    AppState, Config, Error, RateLimit, Result,
 };
-use anyhow::{anyhow, bail, Context as _};
+use anyhow::{Context as _, anyhow, bail};
 use async_tungstenite::tungstenite::{
-    protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
+    Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
 };
 use axum::{
+    Extension, Router, TypedHeader,
     body::Body,
     extract::{
-        ws::{CloseFrame as AxumCloseFrame, Message as AxumMessage},
         ConnectInfo, WebSocketUpgrade,
+        ws::{CloseFrame as AxumCloseFrame, Message as AxumMessage},
     },
     headers::{Header, HeaderName},
     http::StatusCode,
     middleware,
     response::IntoResponse,
     routing::get,
-    Extension, Router, TypedHeader,
 };
 use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use http_client::HttpClient;
-use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
+use open_ai::{OPEN_AI_API_URL, OpenAiEmbeddingModel};
 use reqwest_client::ReqwestClient;
 use rpc::proto::split_repository_update;
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
-    channel::oneshot, future::BoxFuture, stream::FuturesUnordered, FutureExt, SinkExt, StreamExt,
-    TryStreamExt,
+    FutureExt, SinkExt, StreamExt, TryStreamExt, channel::oneshot, future::BoxFuture,
+    stream::FuturesUnordered,
 };
-use prometheus::{register_int_gauge, IntGauge};
+use prometheus::{IntGauge, register_int_gauge};
 use rpc::{
+    Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
     proto::{
         self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
         RequestMessage, ShareProject, UpdateChannelBufferCollaborators,
     },
-    Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
 };
 use semantic_version::SemanticVersion;
 use serde::{Serialize, Serializer};
@@ -64,17 +63,18 @@ use std::{
     ops::{Deref, DerefMut},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc, OnceLock,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
 use time::OffsetDateTime;
-use tokio::sync::{watch, MutexGuard, Semaphore};
+use tokio::sync::{MutexGuard, Semaphore, watch};
 use tower::ServiceBuilder;
 use tracing::{
+    Instrument,
     field::{self},
-    info_span, instrument, Instrument,
+    info_span, instrument,
 };
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -318,6 +318,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtOpenDocs>)
+            .add_request_handler(forward_mutating_project_request::<proto::LspExtRunnables>)
             .add_request_handler(
                 forward_read_only_project_request::<proto::LspExtSwitchSourceHeader>,
             )
@@ -356,6 +357,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::MultiLspQuery>)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
+            .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
@@ -413,6 +415,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
             .add_request_handler(forward_read_only_project_request::<proto::GitShow>)
+            .add_request_handler(forward_read_only_project_request::<proto::LoadCommitDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::GitReset>)
             .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
             .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
@@ -982,7 +985,7 @@ impl Server {
         }
     }
 
-    pub async fn snapshot<'a>(self: &'a Arc<Self>) -> ServerSnapshot<'a> {
+    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot {
         ServerSnapshot {
             connection_pool: ConnectionPoolGuard {
                 guard: self.connection_pool.lock(),
@@ -1115,7 +1118,7 @@ pub async fn handle_websocket_request(
             .into_response();
     }
 
-    let Some(version) = app_version_header.map(|header| ZedVersion(header.0 .0)) else {
+    let Some(version) = app_version_header.map(|header| ZedVersion(header.0.0)) else {
         return (
             StatusCode::UPGRADE_REQUIRED,
             "no version header found".to_string(),
@@ -4151,13 +4154,13 @@ async fn get_llm_api_token(
 
 fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
     let message = match message {
-        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload),
-        TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload),
-        TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload),
-        TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload),
+        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload.as_str().to_string()),
+        TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
+        TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload.into()),
+        TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload.into()),
         TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
             code: frame.code.into(),
-            reason: frame.reason,
+            reason: frame.reason.as_str().to_owned().into(),
         })),
         // We should never receive a frame while reading the message, according
         // to the `tungstenite` maintainers:
@@ -4177,14 +4180,14 @@ fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
 
 fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
     match message {
-        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload),
-        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload),
-        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload),
-        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload),
+        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload.into()),
+        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload.into()),
+        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload.into()),
+        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload.into()),
         AxumMessage::Close(frame) => {
             TungsteniteMessage::Close(frame.map(|frame| TungsteniteCloseFrame {
                 code: frame.code.into(),
-                reason: frame.reason,
+                reason: frame.reason.as_ref().into(),
             }))
         }
     }

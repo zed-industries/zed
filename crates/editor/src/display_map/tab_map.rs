@@ -1,8 +1,8 @@
 use super::{
-    fold_map::{self, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
     Highlights,
+    fold_map::{self, Chunk, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
 };
-use language::{Chunk, Point};
+use language::Point;
 use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
@@ -602,10 +602,10 @@ impl<'a> Iterator for TabChunks<'a> {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap},
         MultiBuffer,
+        display_map::{fold_map::FoldMap, inlay_map::InlayMap},
     };
-    use rand::{prelude::StdRng, Rng};
+    use rand::{Rng, prelude::StdRng};
 
     #[gpui::test]
     fn test_expand_tabs(cx: &mut gpui::App) {

@@ -1,0 +1,720 @@
+syntax = "proto3";
+package zed.messages;
+
+import "core.proto";
+import "worktree.proto";
+import "buffer.proto";
+
+message GetDefinition {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+}
+
+message GetDefinitionResponse {
+    repeated LocationLink links = 1;
+}
+
+message GetDeclaration {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+}
+
+message GetDeclarationResponse {
+    repeated LocationLink links = 1;
+}
+
+message GetTypeDefinition {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+ }
+
+message GetTypeDefinitionResponse {
+    repeated LocationLink links = 1;
+}
+message GetImplementation {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+ }
+
+message GetImplementationResponse {
+    repeated LocationLink links = 1;
+}
+
+message GetReferences {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+ }
+
+message GetReferencesResponse {
+    repeated Location locations = 1;
+}
+
+message GetDocumentHighlights {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+     repeated VectorClockEntry version = 4;
+ }
+
+message GetDocumentHighlightsResponse {
+    repeated DocumentHighlight highlights = 1;
+}
+
+message LocationLink {
+    optional Location origin = 1;
+    Location target = 2;
+}
+
+message DocumentHighlight {
+    Kind kind = 1;
+    Anchor start = 2;
+    Anchor end = 3;
+
+    enum Kind {
+        Text = 0;
+        Read = 1;
+        Write = 2;
+    }
+}
+
+message GetProjectSymbols {
+    uint64 project_id = 1;
+    string query = 2;
+}
+
+message GetProjectSymbolsResponse {
+    repeated Symbol symbols = 4;
+}
+
+message Symbol {
+    uint64 source_worktree_id = 1;
+    uint64 worktree_id = 2;
+    string language_server_name = 3;
+    string name = 4;
+    int32 kind = 5;
+    string path = 6;
+    // Cannot use generate anchors for unopened files,
+    // so we are forced to use point coords instead
+    PointUtf16 start = 7;
+    PointUtf16 end = 8;
+    bytes signature = 9;
+    uint64 language_server_id = 10;
+}
+
+message GetDocumentSymbols {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetDocumentSymbolsResponse {
+    repeated DocumentSymbol symbols = 1;
+}
+
+message DocumentSymbol {
+    string name = 1;
+    int32 kind = 2;
+    // Cannot use generate anchors for unopened files,
+    // so we are forced to use point coords instead
+    PointUtf16 start = 3;
+    PointUtf16 end = 4;
+    PointUtf16 selection_start = 5;
+    PointUtf16 selection_end = 6;
+    repeated DocumentSymbol children = 7;
+}
+
+message InlayHints {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor start = 3;
+    Anchor end = 4;
+    repeated VectorClockEntry version = 5;
+}
+
+message InlayHintsResponse {
+    repeated InlayHint hints = 1;
+    repeated VectorClockEntry version = 2;
+}
+
+message PointUtf16 {
+    uint32 row = 1;
+    uint32 column = 2;
+}
+
+message LspExtExpandMacro {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message LspExtExpandMacroResponse {
+    string name = 1;
+    string expansion = 2;
+}
+
+message LspExtOpenDocs {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message LspExtOpenDocsResponse {
+    optional string web = 1;
+    optional string local = 2;
+}
+
+message LspExtSwitchSourceHeader {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message LspExtSwitchSourceHeaderResponse {
+    string target_file = 1;
+}
+
+message GetCompletionsResponse {
+    repeated Completion completions = 1;
+    repeated VectorClockEntry version = 2;
+}
+
+message ApplyCompletionAdditionalEdits {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Completion completion = 3;
+}
+
+message ApplyCompletionAdditionalEditsResponse {
+    Transaction transaction = 1;
+}
+
+message Completion {
+    Anchor old_replace_start = 1;
+    Anchor old_replace_end = 2;
+    string new_text = 3;
+    uint64 server_id = 4;
+    bytes lsp_completion = 5;
+    bool resolved = 6;
+    Source source = 7;
+    optional bytes lsp_defaults = 8;
+    optional Anchor buffer_word_start = 9;
+    optional Anchor buffer_word_end = 10;
+    Anchor old_insert_start = 11;
+    Anchor old_insert_end = 12;
+
+    enum Source {
+        Lsp = 0;
+        Custom = 1;
+        BufferWord = 2;
+    }
+}
+
+message GetCodeActions {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor start = 3;
+    Anchor end = 4;
+    repeated VectorClockEntry version = 5;
+}
+
+message GetCodeActionsResponse {
+    repeated CodeAction actions = 1;
+    repeated VectorClockEntry version = 2;
+}
+
+message GetSignatureHelp {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message GetSignatureHelpResponse {
+    optional SignatureHelp signature_help = 1;
+}
+
+message SignatureHelp {
+    repeated SignatureInformation signatures = 1;
+    optional uint32 active_signature = 2;
+    optional uint32 active_parameter = 3;
+}
+
+message SignatureInformation {
+    string label = 1;
+    optional Documentation documentation = 2;
+    repeated ParameterInformation parameters = 3;
+    optional uint32 active_parameter = 4;
+}
+
+message Documentation {
+    oneof content {
+        string value = 1;
+        MarkupContent markup_content = 2;
+    }
+}
+
+enum MarkupKind {
+    PlainText = 0;
+    Markdown = 1;
+}
+
+message ParameterInformation {
+    oneof label {
+        string simple = 1;
+        LabelOffsets label_offsets = 2;
+    }
+    optional Documentation documentation = 3;
+}
+
+message LabelOffsets {
+    uint32 start = 1;
+    uint32 end = 2;
+}
+
+message GetHover {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 5;
+}
+
+message GetHoverResponse {
+    optional Anchor start = 1;
+    optional Anchor end = 2;
+    repeated HoverBlock contents = 3;
+}
+
+message HoverBlock {
+    string text = 1;
+    optional string language = 2;
+    bool is_markdown = 3;
+}
+
+message ApplyCodeAction {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    CodeAction action = 3;
+}
+
+message ApplyCodeActionResponse {
+    ProjectTransaction transaction = 1;
+}
+
+message PrepareRename {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message PrepareRenameResponse {
+    bool can_rename = 1;
+    Anchor start = 2;
+    Anchor end = 3;
+    repeated VectorClockEntry version = 4;
+    bool only_unprepared_rename_supported = 5;
+}
+
+message PerformRename {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    string new_name = 4;
+    repeated VectorClockEntry version = 5;
+}
+
+message OnTypeFormatting {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    string trigger = 4;
+    repeated VectorClockEntry version = 5;
+}
+
+message OnTypeFormattingResponse {
+    Transaction transaction = 1;
+}
+
+
+message LinkedEditingRange {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message LinkedEditingRangeResponse {
+    repeated AnchorRange items = 1;
+    repeated VectorClockEntry version = 4;
+}
+
+message InlayHint {
+    Anchor position = 1;
+    InlayHintLabel label = 2;
+    optional string kind = 3;
+    bool padding_left = 4;
+    bool padding_right = 5;
+    InlayHintTooltip tooltip = 6;
+    ResolveState resolve_state = 7;
+}
+
+message InlayHintLabel {
+    oneof label {
+        string value = 1;
+        InlayHintLabelParts label_parts = 2;
+    }
+}
+
+message InlayHintLabelParts {
+    repeated InlayHintLabelPart parts = 1;
+}
+
+message InlayHintLabelPart {
+    string value = 1;
+    InlayHintLabelPartTooltip tooltip = 2;
+    optional string location_url = 3;
+    PointUtf16 location_range_start = 4;
+    PointUtf16 location_range_end = 5;
+    optional uint64 language_server_id = 6;
+}
+
+message InlayHintTooltip {
+    oneof content {
+        string value = 1;
+        MarkupContent markup_content = 2;
+    }
+}
+
+message InlayHintLabelPartTooltip {
+    oneof content {
+        string value = 1;
+        MarkupContent markup_content = 2;
+    }
+}
+
+message ResolveState {
+    State state = 1;
+    LspResolveState lsp_resolve_state = 2;
+
+    enum State {
+        Resolved = 0;
+        CanResolve = 1;
+        Resolving = 2;
+    }
+
+    message LspResolveState {
+        optional string value = 1;
+        uint64 server_id = 2;
+    }
+}
+
+// This type is used to resolve more than just
+// the documentation, but for backwards-compatibility
+// reasons we can't rename the type.
+message ResolveCompletionDocumentation {
+    uint64 project_id = 1;
+    uint64 language_server_id = 2;
+    bytes lsp_completion = 3;
+    uint64 buffer_id = 4;
+}
+
+message ResolveCompletionDocumentationResponse {
+    string documentation = 1;
+    bool documentation_is_markdown = 2;
+    Anchor old_replace_start = 3;
+    Anchor old_replace_end = 4;
+    string new_text = 5;
+    bytes lsp_completion = 6;
+    Anchor old_insert_start = 7;
+    Anchor old_insert_end = 8;
+}
+
+message ResolveInlayHint {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    uint64 language_server_id = 3;
+    InlayHint hint = 4;
+}
+
+message ResolveInlayHintResponse {
+    InlayHint hint = 1;
+}
+
+message RefreshInlayHints {
+    uint64 project_id = 1;
+}
+
+message CodeLens {
+    bytes lsp_lens = 1;
+}
+
+message GetCodeLens {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetCodeLensResponse {
+    repeated CodeAction lens_actions = 1;
+    repeated VectorClockEntry version = 2;
+}
+
+message RefreshCodeLens {
+    uint64 project_id = 1;
+}
+
+message MarkupContent {
+    bool is_markdown = 1;
+    string value = 2;
+}
+
+message PerformRenameResponse {
+    ProjectTransaction transaction = 2;
+}
+
+message CodeAction {
+    uint64 server_id = 1;
+    Anchor start = 2;
+    Anchor end = 3;
+    bytes lsp_action = 4;
+    Kind kind = 5;
+    bool resolved = 6;
+    enum Kind {
+        Action = 0;
+        Command = 1;
+        CodeLens = 2;
+    }
+}
+
+message LanguageServer {
+    uint64 id = 1;
+    string name = 2;
+    optional uint64 worktree_id = 3;
+}
+
+message StartLanguageServer {
+    uint64 project_id = 1;
+    LanguageServer server = 2;
+}
+
+message UpdateDiagnosticSummary {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    DiagnosticSummary summary = 3;
+}
+
+message DiagnosticSummary {
+    string path = 1;
+    uint64 language_server_id = 2;
+    uint32 error_count = 3;
+    uint32 warning_count = 4;
+}
+
+message UpdateLanguageServer {
+    uint64 project_id = 1;
+    uint64 language_server_id = 2;
+    oneof variant {
+        LspWorkStart work_start = 3;
+        LspWorkProgress work_progress = 4;
+        LspWorkEnd work_end = 5;
+        LspDiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 6;
+        LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 7;
+    }
+}
+
+message LspWorkStart {
+    string token = 1;
+    optional string title = 4;
+    optional string message = 2;
+    optional uint32 percentage = 3;
+    optional bool is_cancellable = 5;
+}
+
+message LspWorkProgress {
+    string token = 1;
+    optional string message = 2;
+    optional uint32 percentage = 3;
+    optional bool is_cancellable = 4;
+}
+
+message LspWorkEnd {
+    string token = 1;
+}
+
+message LspDiskBasedDiagnosticsUpdating {}
+
+message LspDiskBasedDiagnosticsUpdated {}
+
+message LanguageServerLog {
+    uint64 project_id = 1;
+    uint64 language_server_id = 2;
+    oneof log_type {
+        uint32 log_message_type = 3;
+        LspLogTrace log_trace = 4;
+    }
+    string message = 5;
+}
+
+message LspLogTrace {
+    optional string message = 1;
+}
+
+message ApplyCodeActionKind {
+    uint64 project_id = 1;
+    string kind = 2;
+    repeated uint64 buffer_ids = 3;
+}
+
+message ApplyCodeActionKindResponse {
+    ProjectTransaction transaction = 1;
+}
+
+message RegisterBufferWithLanguageServers {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+enum FormatTrigger {
+    Save = 0;
+    Manual = 1;
+}
+
+message OpenBufferForSymbol {
+    uint64 project_id = 1;
+    Symbol symbol = 2;
+}
+
+message OpenBufferForSymbolResponse {
+    uint64 buffer_id = 1;
+}
+
+message FormatBuffers {
+    uint64 project_id = 1;
+    FormatTrigger trigger = 2;
+    repeated uint64 buffer_ids = 3;
+}
+
+message FormatBuffersResponse {
+    ProjectTransaction transaction = 1;
+}
+
+message GetCompletions {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message CancelLanguageServerWork {
+    uint64 project_id = 1;
+
+    oneof work {
+        Buffers buffers = 2;
+        LanguageServerWork language_server_work = 3;
+    }
+
+    message Buffers {
+        repeated uint64 buffer_ids = 2;
+    }
+
+    message LanguageServerWork {
+        uint64 language_server_id = 1;
+        optional string token = 2;
+    }
+}
+
+message LanguageServerPromptRequest {
+    uint64 project_id = 1;
+
+    oneof level {
+        Info info = 2;
+        Warning warning = 3;
+        Critical critical = 4;
+    }
+
+    message Info {}
+    message Warning {}
+    message Critical {}
+
+    string message = 5;
+    repeated string actions = 6;
+    string lsp_name = 7;
+}
+
+message LanguageServerPromptResponse {
+    optional uint64 action_response = 1;
+}
+
+message MultiLspQuery {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+    oneof strategy {
+        AllLanguageServers all = 4;
+    }
+    oneof request {
+        GetHover get_hover = 5;
+        GetCodeActions get_code_actions = 6;
+        GetSignatureHelp get_signature_help = 7;
+        GetCodeLens get_code_lens = 8;
+    }
+}
+
+message AllLanguageServers {}
+
+message RestartLanguageServers {
+    uint64 project_id = 1;
+    repeated uint64 buffer_ids = 2;
+}
+
+message StopLanguageServers {
+    uint64 project_id = 1;
+    repeated uint64 buffer_ids = 2;
+}
+
+message MultiLspQueryResponse {
+    repeated LspResponse responses = 1;
+}
+
+message LspResponse {
+    oneof response {
+        GetHoverResponse get_hover_response = 1;
+        GetCodeActionsResponse get_code_actions_response = 2;
+        GetSignatureHelpResponse get_signature_help_response = 3;
+        GetCodeLensResponse get_code_lens_response = 4;
+    }
+}
+
+message LanguageServerIdForName {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    string name = 3;
+}
+
+message LanguageServerIdForNameResponse {
+    optional uint64 server_id = 1;
+}
+
+message LspExtRunnables {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    optional Anchor position = 3;
+}
+
+message LspExtRunnablesResponse {
+    repeated LspRunnable runnables = 1;
+}
+
+message LspRunnable {
+    bytes task_template = 1;
+    optional LocationLink location = 2;
+}

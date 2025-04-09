@@ -13,8 +13,8 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
     task::{Context, Poll},
     time::{Duration, Instant},

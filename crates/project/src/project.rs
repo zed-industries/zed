@@ -24,21 +24,21 @@ mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
-use git_store::{GitEvent, Repository};
+use git_store::{Repository, RepositoryId};
 pub mod search_history;
 mod yarn;
 
 use crate::git_store::GitStore;
 pub use git_store::git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal};
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
-    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
+    Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore, proto,
 };
 use clock::ReplicaId;
 
-use dap::{client::DebugAdapterClient, DapRegistry, DebugAdapterConfig};
+use dap::{DapRegistry, DebugAdapterConfig, client::DebugAdapterClient};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -49,9 +49,9 @@ use debugger::{
 };
 pub use environment::ProjectEnvironment;
 use futures::{
+    StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
     future::try_join_all,
-    StreamExt,
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
@@ -63,13 +63,13 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent, Capability,
-    CodeLabel, File as _, Language, LanguageName, LanguageRegistry, PointUtf16, ToOffset,
-    ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
+    Buffer, BufferEvent, Capability, CodeLabel, Language, LanguageName, LanguageRegistry,
+    PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
+    language_settings::InlayHintKind, proto::split_operations,
 };
 use lsp::{
-    CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServerId,
-    LanguageServerName, MessageActionItem,
+    CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
+    LanguageServerId, LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
@@ -80,8 +80,8 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
 use rpc::{
-    proto::{FromProto, LanguageServerPromptResponse, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorCode,
+    proto::{FromProto, LanguageServerPromptResponse, SSH_PROJECT_ID, ToProto},
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
@@ -104,14 +104,13 @@ use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    maybe,
-    paths::{compare_paths, SanitizedPath},
-    ResultExt as _,
+    ResultExt as _, maybe,
+    paths::{SanitizedPath, compare_paths},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
-    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, UpdatedEntriesSet,
-    UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings, FS_WATCH_LATENCY,
+    Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
+    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
 };
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -301,8 +300,6 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
-    GitStateUpdated,
-    ActiveRepositoryChanged,
 }
 
 pub enum DebugAdapterClientState {
@@ -362,8 +359,14 @@ pub struct InlayHint {
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub enum CompletionIntent {
     /// The user intends to 'commit' this result, if possible
-    /// completion confirmations should run side effects
+    /// completion confirmations should run side effects.
+    ///
+    /// For LSP completions, will respect the setting `completions.lsp_insert_mode`.
     Complete,
+    /// Similar to [Self::Complete], but behaves like `lsp_insert_mode` is set to `insert`.
+    CompleteWithInsert,
+    /// Similar to [Self::Complete], but behaves like `lsp_insert_mode` is set to `replace`.
+    CompleteWithReplace,
     /// The user intends to continue 'composing' this completion
     /// completion confirmations should not run side effects and
     /// let the user continue composing their action
@@ -380,11 +383,11 @@ impl CompletionIntent {
     }
 }
 
-/// A completion provided by a language server
+/// Similar to `CoreCompletion`, but with extra metadata attached.
 #[derive(Clone)]
 pub struct Completion {
-    /// The range of the buffer that will be replaced.
-    pub old_range: Range<Anchor>,
+    /// The range of text that will be replaced by this completion.
+    pub replace_range: Range<Anchor>,
     /// The new text that will be inserted.
     pub new_text: String,
     /// A label for this completion that is shown in the menu.
@@ -395,6 +398,8 @@ pub struct Completion {
     pub source: CompletionSource,
     /// A path to an icon for this completion that is shown in the menu.
     pub icon_path: Option<SharedString>,
+    /// Whether to adjust indentation (the default) or not.
+    pub insert_text_mode: Option<InsertTextMode>,
     /// An optional callback to invoke when this completion is confirmed.
     /// Returns, whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
@@ -405,6 +410,8 @@ pub struct Completion {
 #[derive(Debug, Clone)]
 pub enum CompletionSource {
     Lsp {
+        /// The alternate `insert` range, if provided by the LSP server.
+        insert_range: Option<Range<Anchor>>,
         /// The id of the language server that produced this completion.
         server_id: LanguageServerId,
         /// The raw completion provided by the language server.
@@ -509,7 +516,7 @@ impl CompletionSource {
 impl std::fmt::Debug for Completion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Completion")
-            .field("old_range", &self.old_range)
+            .field("replace_range", &self.replace_range)
             .field("new_text", &self.new_text)
             .field("label", &self.label)
             .field("documentation", &self.documentation)
@@ -518,10 +525,10 @@ impl std::fmt::Debug for Completion {
     }
 }
 
-/// A completion provided by a language server
+/// A generic completion that can come from different sources.
 #[derive(Clone, Debug)]
 pub(crate) struct CoreCompletion {
-    old_range: Range<Anchor>,
+    replace_range: Range<Anchor>,
     new_text: String,
     source: CompletionSource,
 }
@@ -834,7 +841,7 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
-            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
+            let environment = cx.new(|_| ProjectEnvironment::new(env));
             let toolchain_store = cx.new(|cx| {
                 ToolchainStore::local(
                     languages.clone(),
@@ -925,7 +932,6 @@ impl Project {
                     cx,
                 )
             });
-            cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -1037,7 +1043,7 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
-            let environment = ProjectEnvironment::new(&worktree_store, None, cx);
+            let environment = cx.new(|_| ProjectEnvironment::new(None));
 
             let lsp_store = cx.new(|cx| {
                 LspStore::new_remote(
@@ -1065,13 +1071,7 @@ impl Project {
             });
 
             let git_store = cx.new(|cx| {
-                GitStore::ssh(
-                    &worktree_store,
-                    buffer_store.clone(),
-                    environment.clone(),
-                    ssh_proto.clone(),
-                    cx,
-                )
+                GitStore::ssh(&worktree_store, buffer_store.clone(), ssh_proto.clone(), cx)
             });
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
@@ -1242,7 +1242,7 @@ impl Project {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
 
-        let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
+        let environment = cx.new(|_| ProjectEnvironment::new(None))?;
 
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
@@ -1499,7 +1499,7 @@ impl Project {
             initialize_args: None,
             tcp_connection: None,
             locator: None,
-            args: Default::default(),
+            stop_on_entry: None,
         };
         let caps = caps.unwrap_or(Capabilities {
             supports_step_back: Some(false),
@@ -1656,13 +1656,13 @@ impl Project {
     pub fn shell_environment_errors<'a>(
         &'a self,
         cx: &'a App,
-    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
+    ) -> impl Iterator<Item = (&'a Arc<Path>, &'a EnvironmentErrorMessage)> {
         self.environment.read(cx).environment_errors()
     }
 
-    pub fn remove_environment_error(&mut self, worktree_id: WorktreeId, cx: &mut Context<Self>) {
+    pub fn remove_environment_error(&mut self, abs_path: &Path, cx: &mut Context<Self>) {
         self.environment.update(cx, |environment, cx| {
-            environment.remove_environment_error(worktree_id, cx);
+            environment.remove_environment_error(abs_path, cx);
         });
     }
 
@@ -2761,19 +2761,6 @@ impl Project {
         }
     }
 
-    fn on_git_store_event(
-        &mut self,
-        _: Entity<GitStore>,
-        event: &GitEvent,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            GitEvent::GitStateUpdated => cx.emit(Event::GitStateUpdated),
-            GitEvent::ActiveRepositoryChanged => cx.emit(Event::ActiveRepositoryChanged),
-            GitEvent::FileSystemUpdated | GitEvent::IndexWriteError(_) => {}
-        }
-    }
-
     fn on_ssh_event(
         &mut self,
         _: Entity<SshRemoteClient>,
@@ -2988,29 +2975,31 @@ impl Project {
     }
 
     fn recalculate_buffer_diffs(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |this, cx| loop {
-            let task = this
-                .update(cx, |this, cx| {
-                    let buffers = this
-                        .buffers_needing_diff
-                        .drain()
-                        .filter_map(|buffer| buffer.upgrade())
-                        .collect::<Vec<_>>();
-                    if buffers.is_empty() {
-                        None
-                    } else {
-                        Some(this.git_store.update(cx, |git_store, cx| {
-                            git_store.recalculate_buffer_diffs(buffers, cx)
-                        }))
-                    }
-                })
-                .ok()
-                .flatten();
+        cx.spawn(async move |this, cx| {
+            loop {
+                let task = this
+                    .update(cx, |this, cx| {
+                        let buffers = this
+                            .buffers_needing_diff
+                            .drain()
+                            .filter_map(|buffer| buffer.upgrade())
+                            .collect::<Vec<_>>();
+                        if buffers.is_empty() {
+                            None
+                        } else {
+                            Some(this.git_store.update(cx, |git_store, cx| {
+                                git_store.recalculate_buffer_diffs(buffers, cx)
+                            }))
+                        }
+                    })
+                    .ok()
+                    .flatten();
 
-            if let Some(task) = task {
-                task.await;
-            } else {
-                break;
+                if let Some(task) = task {
+                    task.await;
+                } else {
+                    break;
+                }
             }
         })
     }
@@ -3033,6 +3022,16 @@ impl Project {
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.restart_language_servers_for_buffers(buffers, cx)
+        })
+    }
+
+    pub fn stop_language_servers_for_buffers(
+        &mut self,
+        buffers: Vec<Entity<Buffer>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.stop_language_servers_for_buffers(buffers, cx)
         })
     }
 
@@ -4144,20 +4143,22 @@ impl Project {
         &self,
         buffer: &Entity<Buffer>,
         version: Option<clock::Global>,
-        cx: &App,
+        cx: &mut App,
     ) -> Task<Result<Option<Blame>>> {
-        self.git_store.read(cx).blame_buffer(buffer, version, cx)
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.blame_buffer(buffer, version, cx)
+        })
     }
 
     pub fn get_permalink_to_line(
         &self,
         buffer: &Entity<Buffer>,
         selection: Range<u32>,
-        cx: &App,
+        cx: &mut App,
     ) -> Task<Result<url::Url>> {
-        self.git_store
-            .read(cx)
-            .get_permalink_to_line(buffer, selection, cx)
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.get_permalink_to_line(buffer, selection, cx)
+        })
     }
 
     // RPC message handlers
@@ -4757,6 +4758,20 @@ impl Project {
                 let response = request.await.log_err()?;
                 response.server_id.map(LanguageServerId::from_proto)
             })
+        } else if let Some(ssh_client) = self.ssh_client.as_ref() {
+            let request =
+                ssh_client
+                    .read(cx)
+                    .proto_client()
+                    .request(proto::LanguageServerIdForName {
+                        project_id: SSH_PROJECT_ID,
+                        buffer_id: buffer.remote_id().to_proto(),
+                        name: name.to_string(),
+                    });
+            cx.background_spawn(async move {
+                let response = request.await.log_err()?;
+                response.server_id.map(LanguageServerId::from_proto)
+            })
         } else {
             Task::ready(None)
         }
@@ -4793,7 +4808,7 @@ impl Project {
         self.git_store.read(cx).active_repository()
     }
 
-    pub fn repositories<'a>(&self, cx: &'a App) -> &'a HashMap<ProjectEntryId, Entity<Repository>> {
+    pub fn repositories<'a>(&self, cx: &'a App) -> &'a HashMap<RepositoryId, Entity<Repository>> {
         self.git_store.read(cx).repositories()
     }
 
@@ -5010,7 +5025,7 @@ impl ProjectItem for Buffer {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        File::from_dyn(self.file()).map(|file| ProjectPath {
+        self.file().map(|file| ProjectPath {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })

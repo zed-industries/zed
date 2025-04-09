@@ -1,12 +1,12 @@
 use editor::{
+    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
-        self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
+        self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
     },
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
 };
-use gpui::{action_with_deprecated_aliases, actions, impl_actions, px, Context, Window};
+use gpui::{Context, Window, action_with_deprecated_aliases, actions, impl_actions, px};
 use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
@@ -15,10 +15,10 @@ use std::ops::Range;
 use workspace::searchable::Direction;
 
 use crate::{
+    Vim,
     normal::mark,
     state::{Mode, Operator},
     surrounds::SurroundsType,
-    Vim,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +147,12 @@ pub enum Motion {
     PreviousMethodEnd,
     NextComment,
     PreviousComment,
+    PreviousLesserIndent,
+    PreviousGreaterIndent,
+    PreviousSameIndent,
+    NextLesserIndent,
+    NextGreaterIndent,
+    NextSameIndent,
 
     // we don't have a good way to run a search synchronously, so
     // we handle search motions by running the search async and then
@@ -159,6 +165,13 @@ pub enum Motion {
         anchor: Anchor,
         line: bool,
     },
+}
+
+#[derive(Clone, Copy)]
+enum IndentType {
+    Lesser,
+    Greater,
+    Same,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -323,6 +336,12 @@ actions!(
         PreviousMethodEnd,
         NextComment,
         PreviousComment,
+        PreviousLesserIndent,
+        PreviousGreaterIndent,
+        PreviousSameIndent,
+        NextLesserIndent,
+        NextGreaterIndent,
+        NextSameIndent,
     ]
 );
 
@@ -572,6 +591,24 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, &PreviousComment, window, cx| {
         vim.motion(Motion::PreviousComment, window, cx)
     });
+    Vim::action(editor, cx, |vim, &PreviousLesserIndent, window, cx| {
+        vim.motion(Motion::PreviousLesserIndent, window, cx)
+    });
+    Vim::action(editor, cx, |vim, &PreviousGreaterIndent, window, cx| {
+        vim.motion(Motion::PreviousGreaterIndent, window, cx)
+    });
+    Vim::action(editor, cx, |vim, &PreviousSameIndent, window, cx| {
+        vim.motion(Motion::PreviousSameIndent, window, cx)
+    });
+    Vim::action(editor, cx, |vim, &NextLesserIndent, window, cx| {
+        vim.motion(Motion::NextLesserIndent, window, cx)
+    });
+    Vim::action(editor, cx, |vim, &NextGreaterIndent, window, cx| {
+        vim.motion(Motion::NextGreaterIndent, window, cx)
+    });
+    Vim::action(editor, cx, |vim, &NextSameIndent, window, cx| {
+        vim.motion(Motion::NextSameIndent, window, cx)
+    });
 }
 
 impl Vim {
@@ -666,6 +703,12 @@ impl Motion {
             | PreviousMethodEnd
             | NextComment
             | PreviousComment
+            | PreviousLesserIndent
+            | PreviousGreaterIndent
+            | PreviousSameIndent
+            | NextLesserIndent
+            | NextGreaterIndent
+            | NextSameIndent
             | GoToPercentage
             | Jump { line: true, .. } => MotionKind::Linewise,
             EndOfLine { .. }
@@ -765,6 +808,12 @@ impl Motion {
             | PreviousMethodEnd
             | NextComment
             | PreviousComment
+            | PreviousLesserIndent
+            | PreviousGreaterIndent
+            | PreviousSameIndent
+            | NextLesserIndent
+            | NextGreaterIndent
+            | NextSameIndent
             | Jump { .. } => false,
         }
     }
@@ -1109,6 +1158,30 @@ impl Motion {
                 comment_motion(map, point, times, Direction::Prev),
                 SelectionGoal::None,
             ),
+            PreviousLesserIndent => (
+                indent_motion(map, point, times, Direction::Prev, IndentType::Lesser),
+                SelectionGoal::None,
+            ),
+            PreviousGreaterIndent => (
+                indent_motion(map, point, times, Direction::Prev, IndentType::Greater),
+                SelectionGoal::None,
+            ),
+            PreviousSameIndent => (
+                indent_motion(map, point, times, Direction::Prev, IndentType::Same),
+                SelectionGoal::None,
+            ),
+            NextLesserIndent => (
+                indent_motion(map, point, times, Direction::Next, IndentType::Lesser),
+                SelectionGoal::None,
+            ),
+            NextGreaterIndent => (
+                indent_motion(map, point, times, Direction::Next, IndentType::Greater),
+                SelectionGoal::None,
+            ),
+            NextSameIndent => (
+                indent_motion(map, point, times, Direction::Next, IndentType::Same),
+                SelectionGoal::None,
+            ),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -1273,16 +1346,19 @@ fn wrapping_right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) 
     point
 }
 
-fn wrapping_right_single(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let max_column = map.line_len(point.row()).saturating_sub(1);
-    if point.column() < max_column {
-        *point.column_mut() += 1;
-        point = map.clip_point(point, Bias::Right);
-    } else if point.row() < map.max_point().row() {
-        *point.row_mut() += 1;
-        *point.column_mut() = 0;
+fn wrapping_right_single(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let mut next_point = point;
+    *next_point.column_mut() += 1;
+    next_point = map.clip_point(next_point, Bias::Right);
+    if next_point == point {
+        if next_point.row() == map.max_point().row() {
+            next_point
+        } else {
+            DisplayPoint::new(next_point.row().next_row(), 0)
+        }
+    } else {
+        next_point
     }
-    point
 }
 
 pub(crate) fn start_of_relative_buffer_row(
@@ -2171,7 +2247,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
 // https://neovim.io/doc/user/motion.html#N%25
 fn go_to_percentage(map: &DisplaySnapshot, point: DisplayPoint, count: usize) -> DisplayPoint {
     let total_lines = map.buffer_snapshot.max_point().row + 1;
-    let target_line = (count * total_lines as usize + 99) / 100;
+    let target_line = (count * total_lines as usize).div_ceil(100);
     let target_point = DisplayPoint::new(
         DisplayRow(target_line.saturating_sub(1) as u32),
         point.column(),
@@ -2719,6 +2795,67 @@ fn section_motion(
         display_point = next_point;
     }
 
+    display_point
+}
+
+fn matches_indent_type(
+    target_indent: &text::LineIndent,
+    current_indent: &text::LineIndent,
+    indent_type: IndentType,
+) -> bool {
+    match indent_type {
+        IndentType::Lesser => {
+            target_indent.spaces < current_indent.spaces || target_indent.tabs < current_indent.tabs
+        }
+        IndentType::Greater => {
+            target_indent.spaces > current_indent.spaces || target_indent.tabs > current_indent.tabs
+        }
+        IndentType::Same => {
+            target_indent.spaces == current_indent.spaces
+                && target_indent.tabs == current_indent.tabs
+        }
+    }
+}
+
+fn indent_motion(
+    map: &DisplaySnapshot,
+    mut display_point: DisplayPoint,
+    times: usize,
+    direction: Direction,
+    indent_type: IndentType,
+) -> DisplayPoint {
+    let buffer_point = map.display_point_to_point(display_point, Bias::Left);
+    let current_row = MultiBufferRow(buffer_point.row);
+    let current_indent = map.line_indent_for_buffer_row(current_row);
+    if current_indent.is_line_empty() {
+        return display_point;
+    }
+    let max_row = map.max_point().to_point(map).row;
+
+    for _ in 0..times {
+        let current_buffer_row = map.display_point_to_point(display_point, Bias::Left).row;
+
+        let target_row = match direction {
+            Direction::Next => (current_buffer_row + 1..=max_row).find(|&row| {
+                let indent = map.line_indent_for_buffer_row(MultiBufferRow(row));
+                !indent.is_line_empty()
+                    && matches_indent_type(&indent, &current_indent, indent_type)
+            }),
+            Direction::Prev => (0..current_buffer_row).rev().find(|&row| {
+                let indent = map.line_indent_for_buffer_row(MultiBufferRow(row));
+                !indent.is_line_empty()
+                    && matches_indent_type(&indent, &current_indent, indent_type)
+            }),
+        }
+        .unwrap_or(current_buffer_row);
+
+        let new_point = map.point_to_display_point(Point::new(target_row, 0), Bias::Right);
+        let new_point = first_non_whitespace(map, false, new_point);
+        if new_point == display_point {
+            break;
+        }
+        display_point = new_point;
+    }
     display_point
 }
 
@@ -3562,5 +3699,121 @@ mod test {
         cx.set_shared_state("ˇπππππ").await;
         cx.simulate_shared_keystrokes("3 space").await;
         cx.shared_state().await.assert_eq("πππˇππ");
+    }
+
+    #[gpui::test]
+    async fn test_space_non_ascii_eol(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ππππˇπ
+            πanotherline"})
+            .await;
+        cx.simulate_shared_keystrokes("4 space").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            πππππ
+            πanˇotherline"});
+    }
+
+    #[gpui::test]
+    async fn test_backspace_non_ascii_bol(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+                        ππππ
+                        πanˇotherline"})
+            .await;
+        cx.simulate_shared_keystrokes("4 backspace").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                        πππˇπ
+                        πanotherline"});
+    }
+
+    #[gpui::test]
+    async fn test_go_to_indent(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                     ˇif a == \"\" {
+                         return true
+                     }
+                     return false
+                }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("[ -");
+        cx.assert_state(
+            indoc! {
+                "ˇfunc empty(a string) bool {
+                     if a == \"\" {
+                         return true
+                     }
+                     return false
+                }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("] =");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         return true
+                     }
+                     return false
+                ˇ}"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("[ +");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         return true
+                     }
+                     ˇreturn false
+                }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("2 [ =");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     ˇif a == \"\" {
+                         return true
+                     }
+                     return false
+                }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("] +");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         ˇreturn true
+                     }
+                     return false
+                }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("] -");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         return true
+                     ˇ}
+                     return false
+                }"
+            },
+            Mode::Normal,
+        );
     }
 }

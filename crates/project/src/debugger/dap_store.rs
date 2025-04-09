@@ -1,25 +1,25 @@
 use super::{
     breakpoint_store::BreakpointStore,
     locator_store::LocatorStore,
-    session::{self, Session},
+    session::{self, Session, SessionStateEvent},
 };
-use crate::{debugger, worktree_store::WorktreeStore, ProjectEnvironment};
-use anyhow::{anyhow, Result};
+use crate::{ProjectEnvironment, debugger, worktree_store::WorktreeStore};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
+    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
+    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
+    Source, StartDebuggingRequestArguments,
     adapters::{DapStatus, DebugAdapterName},
     client::SessionId,
     messages::Message,
     requests::{Completions, Evaluate, Request as _, RunInTerminal, StartDebugging},
-    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
-    Source, StartDebuggingRequestArguments,
 };
 use fs::Fs;
 use futures::{
     channel::{mpsc, oneshot},
-    future::{join_all, Shared},
+    future::{Shared, join_all},
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
@@ -28,8 +28,8 @@ use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
 use rpc::{
-    proto::{self},
     AnyProtoClient, TypedEnvelope,
+    proto::{self},
 };
 use serde_json::Value;
 use settings::WorktreeId;
@@ -38,8 +38,8 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashSet},
     ffi::OsStr,
-    path::PathBuf,
-    sync::{atomic::Ordering::SeqCst, Arc},
+    path::{Path, PathBuf},
+    sync::{Arc, atomic::Ordering::SeqCst},
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
 use task::{DebugAdapterConfig, DebugRequestDisposition};
@@ -48,6 +48,7 @@ use worktree::Worktree;
 
 pub enum DapStoreEvent {
     DebugClientStarted(SessionId),
+    DebugSessionInitialized(SessionId),
     DebugClientShutdown(SessionId),
     DebugClientEvent {
         session_id: SessionId,
@@ -56,7 +57,7 @@ pub enum DapStoreEvent {
     RunInTerminal {
         session_id: SessionId,
         title: Option<String>,
-        cwd: PathBuf,
+        cwd: Option<Arc<Path>>,
         command: Option<String>,
         args: Vec<String>,
         envs: HashMap<String, String>,
@@ -338,8 +339,7 @@ impl DapStore {
             local_store.language_registry.clone(),
             local_store.toolchain_store.clone(),
             local_store.environment.update(cx, |env, cx| {
-                let worktree = worktree.read(cx);
-                env.get_environment(Some(worktree.id()), Some(worktree.abs_path()), cx)
+                env.get_worktree_environment(worktree.clone(), cx)
             }),
         );
         let session_id = local_store.next_session_id();
@@ -358,7 +358,14 @@ impl DapStore {
 
         let task = cx.spawn(async move |this, cx| {
             if config.locator.is_some() {
-                locator_store.resolve_debug_config(&mut config).await?;
+                config = cx
+                    .background_spawn(async move {
+                        locator_store
+                            .resolve_debug_config(&mut config)
+                            .await
+                            .map(|_| config)
+                    })
+                    .await?;
             }
 
             let start_client_task = this.update(cx, |this, cx| {
@@ -406,8 +413,7 @@ impl DapStore {
             local_store.language_registry.clone(),
             local_store.toolchain_store.clone(),
             local_store.environment.update(cx, |env, cx| {
-                let worktree = worktree.read(cx);
-                env.get_environment(Some(worktree.id()), Some(worktree.abs_path()), cx)
+                env.get_worktree_environment(worktree.clone(), cx)
             }),
         );
         let session_id = local_store.next_session_id();
@@ -471,7 +477,7 @@ impl DapStore {
             initialize_args: config.initialize_args.clone(),
             tcp_connection: config.tcp_connection.clone(),
             locator: None,
-            args: Default::default(),
+            stop_on_entry: config.stop_on_entry,
         };
 
         #[cfg(any(test, feature = "test-support"))]
@@ -543,10 +549,10 @@ impl DapStore {
 
         let seq = request.seq;
 
-        let cwd = PathBuf::from(request_args.cwd);
+        let cwd = Path::new(&request_args.cwd);
+
         match cwd.try_exists() {
-            Ok(true) => (),
-            Ok(false) | Err(_) => {
+            Ok(false) | Err(_) if !request_args.cwd.is_empty() => {
                 return session.update(cx, |session, cx| {
                     session.respond_to_client(
                         seq,
@@ -568,8 +574,8 @@ impl DapStore {
                     )
                 });
             }
+            _ => (),
         }
-
         let mut args = request_args.args.clone();
 
         // Handle special case for NodeJS debug adapter
@@ -596,7 +602,19 @@ impl DapStore {
         }
 
         let (tx, mut rx) = mpsc::channel::<Result<u32>>(1);
-
+        let cwd = Some(cwd)
+            .filter(|cwd| cwd.as_os_str().len() > 0)
+            .map(Arc::from)
+            .or_else(|| {
+                self.session_by_id(session_id)
+                    .and_then(|session| {
+                        session
+                            .read(cx)
+                            .configuration()
+                            .and_then(|config| config.request.cwd())
+                    })
+                    .map(Arc::from)
+            });
         cx.emit(DapStoreEvent::RunInTerminal {
             session_id,
             title: request_args.title,
@@ -835,12 +853,17 @@ fn create_new_session(
             cx.notify();
         })?;
 
-        match session
-            .update(cx, |session, cx| {
-                session.initialize_sequence(initialized_rx, cx)
-            })?
-            .await
-        {
+        match {
+            session
+                .update(cx, |session, cx| session.request_initialize(cx))?
+                .await?;
+
+            session
+                .update(cx, |session, cx| {
+                    session.initialize_sequence(initialized_rx, cx)
+                })?
+                .await
+        } {
             Ok(_) => {}
             Err(error) => {
                 this.update(cx, |this, cx| {
@@ -854,6 +877,19 @@ fn create_new_session(
                 return Err(error);
             }
         }
+
+        this.update(cx, |_, cx| {
+            cx.subscribe(
+                &session,
+                move |this: &mut DapStore, _, event: &SessionStateEvent, cx| match event {
+                    SessionStateEvent::Shutdown => {
+                        this.shutdown_session(session_id, cx).detach_and_log_err(cx);
+                    }
+                },
+            )
+            .detach();
+            cx.emit(DapStoreEvent::DebugSessionInitialized(session_id));
+        })?;
 
         Ok(session)
     });

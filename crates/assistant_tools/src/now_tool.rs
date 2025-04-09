@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use chrono::{Local, Utc};
 use gpui::{App, Entity, Task};
@@ -33,7 +33,7 @@ impl Tool for NowTool {
         "now".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 

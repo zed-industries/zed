@@ -1,4 +1,4 @@
-use gpui::{px, size, AppContext as _, UpdateGlobal};
+use gpui::{AppContext as _, UpdateGlobal, px, size};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{
@@ -9,7 +9,7 @@ use std::{
 use language::language_settings::{AllLanguageSettings, SoftWrap};
 use util::test::marked_text_offsets;
 
-use super::{neovim_connection::NeovimConnection, VimTestContext};
+use super::{VimTestContext, neovim_connection::NeovimConnection};
 use crate::state::{Mode, VimGlobals};
 
 pub struct NeovimBackedTestContext {
@@ -147,7 +147,7 @@ impl NeovimBackedTestContext {
             .name()
             .expect("thread is not named")
             .split(':')
-            .last()
+            .next_back()
             .unwrap()
             .to_string();
         Self {
@@ -171,7 +171,7 @@ impl NeovimBackedTestContext {
             .name()
             .expect("thread is not named")
             .split(':')
-            .last()
+            .next_back()
             .unwrap()
             .to_string();
         Self {

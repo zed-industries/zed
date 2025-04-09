@@ -1,13 +1,13 @@
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{
-    search::{SearchQuery, SearchResult},
     Project,
+    search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -41,10 +41,10 @@ pub struct RegexSearchTool;
 
 impl Tool for RegexSearchTool {
     fn name(&self) -> String {
-        "regex-search".into()
+        "regex_search".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 

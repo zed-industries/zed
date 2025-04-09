@@ -1,42 +1,44 @@
 mod project_panel_settings;
 mod utils;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use client::{ErrorCode, ErrorExt};
-use collections::{hash_map, BTreeSet, HashMap};
+use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
+    Editor, EditorEvent, EditorSettings, ShowScrollbar,
     items::{
         entry_diagnostic_aware_icon_decoration_and_color,
         entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
     scroll::{Autoscroll, ScrollbarAutoHide},
-    Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
 use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
-    DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
-    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window,
+    Action, AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context,
+    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
+    Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions,
+    anchored, deferred, div, impl_actions, point, px, size, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
-    git_store::git_traversal::ChildEntriesGitIter, relativize_path, Entry, EntryKind, Fs, GitEntry,
-    GitEntryRef, GitTraversal, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId,
+    Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
+    ProjectPath, Worktree, WorktreeId,
+    git_store::{GitStoreEvent, git_traversal::ChildEntriesGitIter},
+    relativize_path,
 };
 use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use smallvec::SmallVec;
 use std::any::TypeId;
 use std::{
@@ -51,16 +53,16 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
-    ScrollbarState, Tooltip,
+    Color, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
+    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, Scrollbar,
+    ScrollbarState, Tooltip, prelude::*, v_flex,
 };
-use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyTaskExt},
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     Workspace,
+    dock::{DockPosition, Panel, PanelEvent},
+    notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 
@@ -118,6 +120,13 @@ struct FoldedDirectoryDragTarget {
 }
 
 #[derive(Clone, Debug)]
+enum ValidationState {
+    None,
+    Warning(String),
+    Error(String),
+}
+
+#[derive(Clone, Debug)]
 struct EditState {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
@@ -126,6 +135,7 @@ struct EditState {
     depth: usize,
     processing_filename: Option<String>,
     previously_focused: Option<SelectedEntry>,
+    validation_state: ValidationState,
 }
 
 impl EditState {
@@ -297,6 +307,7 @@ impl ProjectPanel {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let project = workspace.project().clone();
+        let git_store = project.read(cx).git_store().clone();
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
@@ -305,6 +316,18 @@ impl ProjectPanel {
                 this.hide_scrollbar(window, cx);
             })
             .detach();
+
+            cx.subscribe(&git_store, |this, _, event, cx| match event {
+                GitStoreEvent::RepositoryUpdated(_, _, _)
+                | GitStoreEvent::RepositoryAdded(_)
+                | GitStoreEvent::RepositoryRemoved(_) => {
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+                _ => {}
+            })
+            .detach();
+
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
@@ -334,9 +357,7 @@ impl ProjectPanel {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
-                project::Event::GitStateUpdated
-                | project::Event::ActiveRepositoryChanged
-                | project::Event::WorktreeUpdatedEntries(_, _)
+                project::Event::WorktreeUpdatedEntries(_, _)
                 | project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeOrderChanged => {
                     this.update_visible_entries(None, cx);
@@ -395,7 +416,11 @@ impl ProjectPanel {
             cx.subscribe(
                 &filename_editor,
                 |project_panel, _, editor_event, cx| match editor_event {
-                    EditorEvent::BufferEdited | EditorEvent::SelectionsChanged { .. } => {
+                    EditorEvent::BufferEdited => {
+                        project_panel.populate_validation_error(cx);
+                        project_panel.autoscroll(cx);
+                    }
+                    EditorEvent::SelectionsChanged { .. } => {
                         project_panel.autoscroll(cx);
                     }
                     EditorEvent::Blurred => {
@@ -1120,17 +1145,83 @@ impl ProjectPanel {
         }
     }
 
+    fn populate_validation_error(&mut self, cx: &mut Context<Self>) {
+        let edit_state = match self.edit_state.as_mut() {
+            Some(state) => state,
+            None => return,
+        };
+        let filename = self.filename_editor.read(cx).text(cx);
+        if !filename.is_empty() {
+            if let Some(worktree) = self
+                .project
+                .read(cx)
+                .worktree_for_id(edit_state.worktree_id, cx)
+            {
+                if let Some(entry) = worktree.read(cx).entry_for_id(edit_state.entry_id) {
+                    let mut already_exists = false;
+                    if edit_state.is_new_entry() {
+                        let new_path = entry.path.join(filename.trim_start_matches('/'));
+                        if worktree
+                            .read(cx)
+                            .entry_for_path(new_path.as_path())
+                            .is_some()
+                        {
+                            already_exists = true;
+                        }
+                    } else {
+                        let new_path = if let Some(parent) = entry.path.clone().parent() {
+                            parent.join(&filename)
+                        } else {
+                            filename.clone().into()
+                        };
+                        if let Some(existing) = worktree.read(cx).entry_for_path(new_path.as_path())
+                        {
+                            if existing.id != entry.id {
+                                already_exists = true;
+                            }
+                        }
+                    };
+                    if already_exists {
+                        edit_state.validation_state = ValidationState::Error(format!(
+                            "File or directory '{}' already exists at location. Please choose a different name.",
+                            filename
+                        ));
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+            let trimmed_filename = filename.trim();
+            if trimmed_filename.is_empty() {
+                edit_state.validation_state =
+                    ValidationState::Error("File or directory name cannot be empty.".to_string());
+                cx.notify();
+                return;
+            }
+            if trimmed_filename != filename {
+                edit_state.validation_state = ValidationState::Warning(
+                    "File or directory name contains leading or trailing whitespace.".to_string(),
+                );
+                cx.notify();
+                return;
+            }
+        }
+        edit_state.validation_state = ValidationState::None;
+        cx.notify();
+    }
+
     fn confirm_edit(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let edit_state = self.edit_state.as_mut()?;
-        window.focus(&self.focus_handle);
-
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry();
         let filename = self.filename_editor.read(cx).text(cx);
+        if filename.trim().is_empty() {
+            return None;
+        }
         #[cfg(not(target_os = "windows"))]
         let filename_indicates_dir = filename.ends_with("/");
         // On Windows, path separator could be either `/` or `\`.
@@ -1142,7 +1233,6 @@ impl ProjectPanel {
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
 
-        let path_already_exists = |path| worktree.read(cx).entry_for_path(path).is_some();
         let edit_task;
         let edited_entry_id;
         if is_new_entry {
@@ -1151,7 +1241,11 @@ impl ProjectPanel {
                 entry_id: NEW_ENTRY_ID,
             });
             let new_path = entry.path.join(filename.trim_start_matches('/'));
-            if path_already_exists(new_path.as_path()) {
+            if worktree
+                .read(cx)
+                .entry_for_path(new_path.as_path())
+                .is_some()
+            {
                 return None;
             }
 
@@ -1165,7 +1259,10 @@ impl ProjectPanel {
             } else {
                 filename.clone().into()
             };
-            if path_already_exists(new_path.as_path()) {
+            if let Some(existing) = worktree.read(cx).entry_for_path(new_path.as_path()) {
+                if existing.id == entry.id {
+                    window.focus(&self.focus_handle);
+                }
                 return None;
             }
             edited_entry_id = entry.id;
@@ -1174,6 +1271,7 @@ impl ProjectPanel {
             });
         };
 
+        window.focus(&self.focus_handle);
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
@@ -1334,6 +1432,7 @@ impl ProjectPanel {
                 processing_filename: None,
                 previously_focused: self.selection,
                 depth: 0,
+                validation_state: ValidationState::None,
             });
             self.filename_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
@@ -1383,6 +1482,7 @@ impl ProjectPanel {
                         processing_filename: None,
                         previously_focused: None,
                         depth: 0,
+                        validation_state: ValidationState::None,
                     });
                     let file_name = entry
                         .path
@@ -3246,7 +3346,7 @@ impl ProjectPanel {
                                         .take(prefix_components)
                                         .collect::<PathBuf>();
                                     if let Some(last_component) =
-                                        Path::new(processing_filename).components().last()
+                                        Path::new(processing_filename).components().next_back()
                                     {
                                         new_path.push(last_component);
                                         previous_components.next();
@@ -3616,16 +3716,36 @@ impl ProjectPanel {
             item_colors.hover
         };
 
+        let validation_color_and_message = if show_editor {
+            match self
+                .edit_state
+                .as_ref()
+                .map_or(ValidationState::None, |e| e.validation_state.clone())
+            {
+                ValidationState::Error(msg) => Some((Color::Error.color(cx), msg.clone())),
+                ValidationState::Warning(msg) => Some((Color::Warning.color(cx), msg.clone())),
+                ValidationState::None => None,
+            }
+        } else {
+            None
+        };
+
         let border_color =
             if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
-                item_colors.focused
+                match validation_color_and_message {
+                    Some((color, _)) => color,
+                    None => item_colors.focused,
+                }
             } else {
                 bg_color
             };
 
         let border_hover_color =
             if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
-                item_colors.focused
+                match validation_color_and_message {
+                    Some((color, _)) => color,
+                    None => item_colors.focused,
+                }
             } else {
                 bg_hover_color
             };
@@ -4095,6 +4215,33 @@ impl ProjectPanel {
                     ))
                     .overflow_x(),
             )
+            .when_some(
+                validation_color_and_message,
+                |this, (color, message)| {
+                    this
+                    .relative()
+                    .child(
+                        deferred(
+                            div()
+                            .occlude()
+                            .absolute()
+                            .top_full()
+                            .left(px(-1.)) // Used px over rem so that it doesn't change with font size
+                            .right(px(-0.5))
+                            .py_1()
+                            .px_2()
+                            .border_1()
+                            .border_color(color)
+                            .bg(cx.theme().colors().background)
+                            .child(
+                                Label::new(message)
+                                .color(Color::from(color))
+                                .size(LabelSize::Small)
+                            )
+                        )
+                    )
+                }
+            )
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
@@ -4424,26 +4571,28 @@ impl Render for ProjectPanel {
                     return;
                 };
                 let adjustment = point(px(0.), px(vertical_scroll_offset));
-                this.hover_scroll_task = Some(cx.spawn_in(window, async move |this, cx| loop {
-                    let should_stop_scrolling = this
-                        .update(cx, |this, cx| {
-                            this.hover_scroll_task.as_ref()?;
-                            let handle = this.scroll_handle.0.borrow_mut();
-                            let offset = handle.base_handle.offset();
+                this.hover_scroll_task = Some(cx.spawn_in(window, async move |this, cx| {
+                    loop {
+                        let should_stop_scrolling = this
+                            .update(cx, |this, cx| {
+                                this.hover_scroll_task.as_ref()?;
+                                let handle = this.scroll_handle.0.borrow_mut();
+                                let offset = handle.base_handle.offset();
 
-                            handle.base_handle.set_offset(offset + adjustment);
-                            cx.notify();
-                            Some(())
-                        })
-                        .ok()
-                        .flatten()
-                        .is_some();
-                    if should_stop_scrolling {
-                        return;
+                                handle.base_handle.set_offset(offset + adjustment);
+                                cx.notify();
+                                Some(())
+                            })
+                            .ok()
+                            .flatten()
+                            .is_some();
+                        if should_stop_scrolling {
+                            return;
+                        }
+                        cx.background_executor()
+                            .timer(Duration::from_millis(16))
+                            .await;
                     }
-                    cx.background_executor()
-                        .timer(Duration::from_millis(16))
-                        .await;
                 }));
             }
             h_flex()

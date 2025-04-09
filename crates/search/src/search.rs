@@ -1,17 +1,18 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use editor::SearchSettings;
-use gpui::{actions, Action, App, FocusHandle, IntoElement};
+use gpui::{Action, App, FocusHandle, IntoElement, actions};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
-use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton, IconButtonShape};
+use ui::{Tooltip, prelude::*};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
 
 pub mod buffer_search;
 pub mod project_search;
 pub(crate) mod search_bar;
+pub mod search_status_button;
 
 pub fn init(cx: &mut App) {
     menu::init();

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{prelude::*, App, Context, Entity, EntityId, Global, Subscription, Task};
+use gpui::{App, Context, Entity, EntityId, Global, Subscription, Task, prelude::*};
 use jupyter_websocket_client::RemoteServer;
 use language::Language;
 use project::{Fs, Project, WorktreeId};

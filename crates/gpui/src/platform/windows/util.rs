@@ -2,13 +2,13 @@ use std::sync::OnceLock;
 
 use ::util::ResultExt;
 use windows::{
-    core::BOOL,
-    Wdk::System::SystemServices::RtlGetVersion,
-    Win32::{Foundation::*, Graphics::Dwm::*, UI::WindowsAndMessaging::*},
     UI::{
         Color,
         ViewManagement::{UIColorType, UISettings},
     },
+    Wdk::System::SystemServices::RtlGetVersion,
+    Win32::{Foundation::*, Graphics::Dwm::*, UI::WindowsAndMessaging::*},
+    core::BOOL,
 };
 
 use crate::*;

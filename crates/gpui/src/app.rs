@@ -1,21 +1,21 @@
 use std::{
-    any::{type_name, TypeId},
+    any::{TypeId, type_name},
     cell::{Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{atomic::Ordering::SeqCst, Arc},
+    sync::{Arc, atomic::Ordering::SeqCst},
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::{
+    Future, FutureExt,
     channel::oneshot,
     future::{LocalBoxFuture, Shared},
-    Future, FutureExt,
 };
 use parking_lot::RwLock;
 use slotmap::SlotMap;
@@ -30,14 +30,14 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
-    AnyWindowHandle, AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
-    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
-    Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
+    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, DispatchPhase, DisplayId, EventEmitter,
+    FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
+    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
+    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
+    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem,
+    Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator, current_platform, hash,
+    init_app_menus,
 };
 
 mod async_context;
@@ -648,6 +648,11 @@ impl App {
     /// Returns the primary display that will be used for new windows.
     pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
+    }
+
+    /// Returns whether `screen_capture_sources` may work.
+    pub fn is_screen_capture_supported(&self) -> bool {
+        self.platform.is_screen_capture_supported()
     }
 
     /// Returns a list of available screen capture sources.
@@ -1513,15 +1518,15 @@ impl App {
     pub fn set_prompt_builder(
         &mut self,
         renderer: impl Fn(
-                PromptLevel,
-                &str,
-                Option<&str>,
-                &[&str],
-                PromptHandle,
-                &mut Window,
-                &mut App,
-            ) -> RenderablePromptHandle
-            + 'static,
+            PromptLevel,
+            &str,
+            Option<&str>,
+            &[&str],
+            PromptHandle,
+            &mut Window,
+            &mut App,
+        ) -> RenderablePromptHandle
+        + 'static,
     ) {
         self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
     }

@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use futures::future::join_all;
 use gpui::{App, AppContext, Entity, Task};
@@ -31,19 +31,19 @@ pub struct BatchToolInput {
     /// {
     ///   "invocations": [
     ///     {
-    ///       "name": "read-file",
+    ///       "name": "read_file",
     ///       "input": {
     ///         "path": "src/main.rs"
     ///       }
     ///     },
     ///     {
-    ///       "name": "list-directory",
+    ///       "name": "list_directory",
     ///       "input": {
     ///         "path": "src/lib"
     ///       }
     ///     },
     ///     {
-    ///       "name": "regex-search",
+    ///       "name": "regex_search",
     ///       "input": {
     ///         "regex": "fn run\\("
     ///       }
@@ -61,7 +61,7 @@ pub struct BatchToolInput {
     /// {
     ///   "invocations": [
     ///     {
-    ///       "name": "find-replace-file",
+    ///       "name": "find_replace_file",
     ///       "input": {
     ///         "path": "src/config.rs",
     ///         "display_description": "Update default timeout value",
@@ -70,7 +70,7 @@ pub struct BatchToolInput {
     ///       }
     ///     },
     ///     {
-    ///       "name": "find-replace-file",
+    ///       "name": "find_replace_file",
     ///       "input": {
     ///         "path": "src/config.rs",
     ///         "display_description": "Update API endpoint URL",
@@ -91,13 +91,13 @@ pub struct BatchToolInput {
     /// {
     ///   "invocations": [
     ///     {
-    ///       "name": "regex-search",
+    ///       "name": "regex_search",
     ///       "input": {
     ///         "regex": "impl Database"
     ///       }
     ///     },
     ///     {
-    ///       "name": "path-search",
+    ///       "name": "path_search",
     ///       "input": {
     ///         "glob": "**/*test*.rs"
     ///       }
@@ -115,7 +115,7 @@ pub struct BatchToolInput {
     /// {
     ///   "invocations": [
     ///     {
-    ///       "name": "find-replace-file",
+    ///       "name": "find_replace_file",
     ///       "input": {
     ///         "path": "src/models/user.rs",
     ///         "display_description": "Add email field to User struct",
@@ -124,7 +124,7 @@ pub struct BatchToolInput {
     ///       }
     ///     },
     ///     {
-    ///       "name": "find-replace-file",
+    ///       "name": "find_replace_file",
     ///       "input": {
     ///         "path": "src/db/queries.rs",
     ///         "display_description": "Update user insertion query",
@@ -148,11 +148,20 @@ pub struct BatchTool;
 
 impl Tool for BatchTool {
     fn name(&self) -> String {
-        "batch-tool".into()
+        "batch_tool".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
-        true
+    fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool {
+        serde_json::from_value::<BatchToolInput>(input.clone())
+            .map(|input| {
+                let working_set = ToolWorkingSet::default();
+                input.invocations.iter().any(|invocation| {
+                    working_set
+                        .tool(&invocation.name, cx)
+                        .map_or(false, |tool| tool.needs_confirmation(&invocation.input, cx))
+                })
+            })
+            .unwrap_or(false)
     }
 
     fn description(&self) -> String {

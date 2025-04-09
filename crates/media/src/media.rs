@@ -8,10 +8,10 @@ pub mod core_media {
     #![allow(non_snake_case)]
 
     pub use crate::bindings::{
-        kCMSampleAttachmentKey_NotSync, kCMTimeInvalid, kCMVideoCodecType_H264, CMItemIndex,
-        CMSampleTimingInfo, CMTime, CMTimeMake, CMVideoCodecType,
+        CMItemIndex, CMSampleTimingInfo, CMTime, CMTimeMake, CMVideoCodecType,
+        kCMSampleAttachmentKey_NotSync, kCMTimeInvalid, kCMVideoCodecType_H264,
     };
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
     use core_foundation::{
         array::{CFArray, CFArrayRef},
         base::{CFTypeID, OSStatus, TCFType},
@@ -226,12 +226,12 @@ pub mod core_video {
     #[cfg(target_os = "macos")]
     use std::ffi::c_void;
 
+    use crate::bindings::{CVReturn, kCVReturnSuccess};
     pub use crate::bindings::{
         kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
     };
-    use crate::bindings::{kCVReturnSuccess, CVReturn};
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
     use core_foundation::{
         base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,
     };

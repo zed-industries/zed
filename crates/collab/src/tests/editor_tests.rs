@@ -1,9 +1,10 @@
 use crate::{
     rpc::RECONNECT_TIMEOUT,
-    tests::{rust_lang, TestServer},
+    tests::{TestServer, rust_lang},
 };
 use call::ActiveCall;
 use editor::{
+    Editor, RowInfo,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
         ExpandMacroRecursively, Redo, Rename, ToggleCodeActions, Undo,
@@ -12,23 +13,22 @@ use editor::{
         editor_test_context::{AssertionContextManager, EditorTestContext},
         expand_macro_recursively,
     },
-    Editor, RowInfo,
 };
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
-    language_settings::{AllLanguageSettings, InlayHintSettings},
     FakeLspAdapter,
+    language_settings::{AllLanguageSettings, InlayHintSettings},
 };
 use project::{
+    ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
     lsp_store::{
         lsp_ext_command::{ExpandedMacro, LspExpandMacro},
         rust_analyzer_ext::RUST_ANALYZER_NAME,
     },
     project_settings::{InlineBlameSettings, ProjectSettings},
-    ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
@@ -38,8 +38,8 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool, AtomicUsize},
         Arc,
+        atomic::{self, AtomicBool, AtomicUsize},
     },
 };
 use text::Point;
