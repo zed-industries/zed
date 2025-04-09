@@ -2231,6 +2231,7 @@ impl BufferSnapshot {
         } else if *anchor == Anchor::MAX {
             self.visible_text.len()
         } else {
+            debug_assert!(anchor.buffer_id == Some(self.remote_id));
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,
