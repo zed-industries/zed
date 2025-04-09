@@ -77,7 +77,7 @@ impl Tool for ContextServerTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<Arc<dyn ToolOutput>>> {
+    ) -> Task<Result<ToolOutput>> {
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
             let tool_name = self.tool.name.clone();
             let server_clone = server.clone();

@@ -84,7 +84,7 @@ impl Tool for RegexSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<Arc<dyn ToolOutput>>> {
+    ) -> Task<Result<ToolOutput>> {
         const CONTEXT_LINES: u32 = 2;
 
         let (offset, regex) = match serde_json::from_value::<RegexSearchToolInput>(input) {

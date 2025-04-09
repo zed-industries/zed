@@ -84,7 +84,7 @@ impl Tool for DiagnosticsTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<Arc<dyn ToolOutput>>> {
+    ) -> Task<Result<ToolOutput>> {
         match serde_json::from_value::<DiagnosticsToolInput>(input)
             .ok()
             .and_then(|input| input.path)

@@ -78,7 +78,7 @@ impl Tool for ListDirectoryTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<Arc<dyn ToolOutput>>> {
+    ) -> Task<Result<ToolOutput>> {
         let input = match serde_json::from_value::<ListDirectoryToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),

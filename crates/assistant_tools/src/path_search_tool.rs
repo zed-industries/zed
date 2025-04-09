@@ -72,7 +72,7 @@ impl Tool for PathSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<Arc<dyn ToolOutput>>> {
+    ) -> Task<Result<ToolOutput>> {
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
             Ok(input) => (input.offset, input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))),

@@ -52,7 +52,7 @@ impl Tool for ThinkingTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _cx: &mut App,
-    ) -> Task<Result<Arc<dyn ToolOutput>>> {
+    ) -> Task<Result<ToolOutput>> {
         // This tool just "thinks out loud" and doesn't perform any actions.
         Task::ready(match serde_json::from_value::<ThinkingToolInput>(input) {
             Ok(_input) => Ok(StringToolOutput::new("Finished thinking.")),

@@ -61,7 +61,7 @@ impl Tool for NowTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _cx: &mut App,
-    ) -> Task<Result<Arc<dyn ToolOutput>>> {
+    ) -> Task<Result<ToolOutput>> {
         let input: NowToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),

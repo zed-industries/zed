@@ -333,7 +333,7 @@ impl ToolUseState {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
-        output: Result<Arc<dyn ToolOutput>>,
+        output: Result<ToolOutput>,
     ) -> Option<PendingToolUse> {
         match output {
             Ok(tool_result) => {
@@ -344,7 +344,7 @@ impl ToolUseState {
                         tool_name,
                         content: tool_result.response_for_model().into(),
                         is_error: false,
-                        tool_output: Some(tool_result.clone()),
+                        tool_output: Some(Arc::new(tool_result)),
                     },
                 );
                 self.pending_tool_uses_by_id.remove(&tool_use_id)

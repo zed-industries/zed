@@ -8,7 +8,7 @@ use std::fmt::Formatter;
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::{self, App, Entity, EntityId, SharedString, Task};
+use gpui::{self, App, Entity, SharedString, Task};
 use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -68,7 +68,7 @@ pub trait Tool: 'static + Send + Sync {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<Arc<dyn ToolOutput>>>;
+    ) -> Task<Result<ToolOutput>>;
 }
 
 impl Debug for dyn Tool {
