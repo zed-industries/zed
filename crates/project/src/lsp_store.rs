@@ -424,6 +424,8 @@ impl LocalLspStore {
             let mut binary = binary_result?;
             let mut shell_env = delegate.shell_env().await;
 
+            shell_env.extend(binary.env.unwrap_or_default());
+
             if let Some(settings) = settings {
                 if let Some(arguments) = settings.arguments {
                     binary.arguments = arguments.into_iter().map(Into::into).collect();
