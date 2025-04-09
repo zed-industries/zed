@@ -139,24 +139,25 @@ impl Tool for BashTool {
             let stdout = cmd.stdout.take().unwrap();
             let mut reader = BufReader::new(stdout);
 
-            const MESSAGE_1: &str = "Command output too long. The first ";
-            const MESSAGE_2: &str = " bytes:\n\n";
-            const ERR_MESSAGE_1: &str = "Command failed with exit code ";
-            const ERR_MESSAGE_2: &str = "\n\n";
-
-            const STDOUT_LIMIT: usize = 8192;
-
-            const LIMIT: usize = STDOUT_LIMIT
-                - (MESSAGE_1.len()
-                    + (STDOUT_LIMIT.ilog10() as usize + 1) // byte count
-                    + MESSAGE_2.len()
-                    + ERR_MESSAGE_1.len()
-                    + 3 // status code
-                    + ERR_MESSAGE_2.len());
+            const LIMIT: usize = 8192;
 
             // Read one more byte to determine whether the output was truncated
             let mut buffer = vec![0; LIMIT + 1];
-            let bytes_read = reader.read(&mut buffer).await?;
+            let mut bytes_read = 0;
+
+            // Read until we reach the limit
+            loop {
+                let read = reader.read(&mut buffer[bytes_read..]).await?;
+                if read == 0 {
+                    break;
+                }
+
+                bytes_read += read;
+                if bytes_read > LIMIT {
+                    bytes_read = LIMIT + 1;
+                    break;
+                }
+            }
 
             // Repeatedly fill the output reader's buffer without copying it.
             loop {
@@ -182,14 +183,12 @@ impl Tool for BashTool {
                 );
 
                 format!(
-                    "{}{}{}{}",
-                    MESSAGE_1,
+                    "Command output too long. The first {} bytes:\n\n```\n{}\n```",
                     output_string.len(),
-                    MESSAGE_2,
                     output_string
                 )
             } else {
-                String::from_utf8_lossy(&output_bytes).into()
+                format!("```\n{}\n```", String::from_utf8_lossy(&output_bytes))
             };
 
             let output_with_status = if status.success() {
@@ -200,15 +199,11 @@ impl Tool for BashTool {
                 }
             } else {
                 format!(
-                    "{}{}{}{}",
-                    ERR_MESSAGE_1,
+                    "Command failed with exit code {}\n\n{}",
                     status.code().unwrap_or(-1),
-                    ERR_MESSAGE_2,
                     output_string,
                 )
             };
-
-            debug_assert!(output_with_status.len() <= STDOUT_LIMIT);
 
             Ok(output_with_status)
         })
