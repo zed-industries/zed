@@ -62,7 +62,7 @@ pub struct ActiveThread {
     copied_code_block_ids: HashSet<(MessageId, usize)>,
     _subscriptions: Vec<Subscription>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    feedback_message_editor: Option<Entity<Editor>>,
+    open_feedback_editors: HashMap<MessageId, Entity<Editor>>,
 }
 
 struct RenderedMessage {
@@ -376,7 +376,7 @@ fn render_markdown_code_block(
                 .cursor_pointer()
                 .rounded_sm()
                 .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
-                .tooltip(Tooltip::text("Jump to file"))
+                .tooltip(Tooltip::text("Jump to File"))
                 .children(
                     file_icons::FileIcons::get_icon(&path_range.path, cx)
                         .map(Icon::from_path)
@@ -456,6 +456,7 @@ fn render_markdown_code_block(
         .contains(&(message_id, ix));
 
     let codeblock_header = h_flex()
+        .group("codeblock_header")
         .p_1()
         .gap_1()
         .justify_between()
@@ -465,45 +466,47 @@ fn render_markdown_code_block(
         .rounded_t_md()
         .children(label)
         .child(
-            IconButton::new(
-                ("copy-markdown-code", ix),
-                if codeblock_was_copied {
-                    IconName::Check
-                } else {
-                    IconName::Copy
-                },
-            )
-            .icon_color(Color::Muted)
-            .shape(ui::IconButtonShape::Square)
-            .tooltip(Tooltip::text("Copy Code"))
-            .on_click({
-                let active_thread = active_thread.clone();
-                let parsed_markdown = parsed_markdown.clone();
-                move |_event, _window, cx| {
-                    active_thread.update(cx, |this, cx| {
-                        this.copied_code_block_ids.insert((message_id, ix));
+            div().visible_on_hover("codeblock_header").child(
+                IconButton::new(
+                    ("copy-markdown-code", ix),
+                    if codeblock_was_copied {
+                        IconName::Check
+                    } else {
+                        IconName::Copy
+                    },
+                )
+                .icon_color(Color::Muted)
+                .shape(ui::IconButtonShape::Square)
+                .tooltip(Tooltip::text("Copy Code"))
+                .on_click({
+                    let active_thread = active_thread.clone();
+                    let parsed_markdown = parsed_markdown.clone();
+                    move |_event, _window, cx| {
+                        active_thread.update(cx, |this, cx| {
+                            this.copied_code_block_ids.insert((message_id, ix));
 
-                        let code =
-                            without_fences(&parsed_markdown.source()[codeblock_range.clone()])
-                                .to_string();
+                            let code =
+                                without_fences(&parsed_markdown.source()[codeblock_range.clone()])
+                                    .to_string();
 
-                        cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                            cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
 
-                        cx.spawn(async move |this, cx| {
-                            cx.background_executor().timer(Duration::from_secs(2)).await;
+                            cx.spawn(async move |this, cx| {
+                                cx.background_executor().timer(Duration::from_secs(2)).await;
 
-                            cx.update(|cx| {
-                                this.update(cx, |this, cx| {
-                                    this.copied_code_block_ids.remove(&(message_id, ix));
-                                    cx.notify();
+                                cx.update(|cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.copied_code_block_ids.remove(&(message_id, ix));
+                                        cx.notify();
+                                    })
                                 })
+                                .ok();
                             })
-                            .ok();
-                        })
-                        .detach();
-                    });
-                }
-            }),
+                            .detach();
+                        });
+                    }
+                }),
+            ),
         );
 
     v_flex()
@@ -633,7 +636,7 @@ impl ActiveThread {
             notifications: Vec::new(),
             _subscriptions: subscriptions,
             notification_subscriptions: HashMap::default(),
-            feedback_message_editor: None,
+            open_feedback_editors: HashMap::default(),
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -936,7 +939,7 @@ impl ActiveThread {
                         |this, _, event, window, cx| match event {
                             AgentNotificationEvent::Accepted => {
                                 let handle = window.window_handle();
-                                cx.activate(true); // Switch back to the Zed application
+                                cx.activate(true);
 
                                 let workspace_handle = this.workspace.clone();
 
@@ -1108,34 +1111,37 @@ impl ActiveThread {
 
     fn handle_feedback_click(
         &mut self,
+        message_id: MessageId,
         feedback: ThreadFeedback,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let report = self.thread.update(cx, |thread, cx| {
+            thread.report_message_feedback(message_id, feedback, cx)
+        });
+
+        cx.spawn(async move |this, cx| {
+            report.await?;
+            this.update(cx, |_this, cx| cx.notify())
+        })
+        .detach_and_log_err(cx);
+
         match feedback {
             ThreadFeedback::Positive => {
-                let report = self
-                    .thread
-                    .update(cx, |thread, cx| thread.report_feedback(feedback, cx));
-
-                let this = cx.entity().downgrade();
-                cx.spawn(async move |_, cx| {
-                    report.await?;
-                    this.update(cx, |_this, cx| cx.notify())
-                })
-                .detach_and_log_err(cx);
+                self.open_feedback_editors.remove(&message_id);
             }
             ThreadFeedback::Negative => {
-                self.handle_show_feedback_comments(window, cx);
+                self.handle_show_feedback_comments(message_id, window, cx);
             }
         }
     }
 
-    fn handle_show_feedback_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.feedback_message_editor.is_some() {
-            return;
-        }
-
+    fn handle_show_feedback_comments(
+        &mut self,
+        message_id: MessageId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let buffer = cx.new(|cx| {
             let empty_string = String::new();
             MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
@@ -1157,34 +1163,47 @@ impl ActiveThread {
         });
 
         editor.read(cx).focus_handle(cx).focus(window);
-        self.feedback_message_editor = Some(editor);
+        self.open_feedback_editors.insert(message_id, editor);
         cx.notify();
     }
 
-    fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
-        let Some(editor) = self.feedback_message_editor.clone() else {
+    fn submit_feedback_message(&mut self, message_id: MessageId, cx: &mut Context<Self>) {
+        let Some(editor) = self.open_feedback_editors.get(&message_id) else {
             return;
         };
 
         let report_task = self.thread.update(cx, |thread, cx| {
-            thread.report_feedback(ThreadFeedback::Negative, cx)
+            thread.report_message_feedback(message_id, ThreadFeedback::Negative, cx)
         });
 
         let comments = editor.read(cx).text(cx);
         if !comments.is_empty() {
             let thread_id = self.thread.read(cx).id().clone();
+            let comments_value = String::from(comments.as_str());
 
-            telemetry::event!("Assistant Thread Feedback Comments", thread_id, comments);
+            let message_content = self
+                .thread
+                .read(cx)
+                .message(message_id)
+                .map(|msg| msg.to_string())
+                .unwrap_or_default();
+
+            telemetry::event!(
+                "Assistant Thread Feedback Comments",
+                thread_id,
+                message_id = message_id.0,
+                message_content,
+                comments = comments_value
+            );
+
+            self.open_feedback_editors.remove(&message_id);
+
+            cx.spawn(async move |this, cx| {
+                report_task.await?;
+                this.update(cx, |_this, cx| cx.notify())
+            })
+            .detach_and_log_err(cx);
         }
-
-        self.feedback_message_editor = None;
-
-        let this = cx.entity().downgrade();
-        cx.spawn(async move |_, cx| {
-            report_task.await?;
-            this.update(cx, |_this, cx| cx.notify())
-        })
-        .detach_and_log_err(cx);
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1211,7 +1230,18 @@ impl ActiveThread {
 
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
-        let show_feedback = is_last_message && message.role != Role::User;
+
+        let show_feedback = (!is_generating && is_last_message && message.role != Role::User)
+            || self.messages.get(ix + 1).map_or(false, |next_id| {
+                self.thread
+                    .read(cx)
+                    .message(*next_id)
+                    .map_or(false, |next_message| {
+                        next_message.role == Role::User
+                            && thread.tool_uses_for_message(*next_id, cx).is_empty()
+                            && thread.tool_results_for_message(*next_id).is_empty()
+                    })
+            });
 
         let needs_confirmation = tool_uses.iter().any(|tool_use| tool_use.needs_confirmation);
 
@@ -1219,17 +1249,30 @@ impl ActiveThread {
             Label::new("Generating")
                 .color(Color::Muted)
                 .size(LabelSize::Small)
-                .with_animation(
+                .with_animations(
                     "generating-label",
-                    Animation::new(Duration::from_secs(1)).repeat(),
-                    |mut label, delta| {
-                        let text = match delta {
-                            d if d < 0.25 => "Generating",
-                            d if d < 0.5 => "Generating.",
-                            d if d < 0.75 => "Generating..",
-                            _ => "Generating...",
-                        };
-                        label.set_text(text);
+                    vec![
+                        Animation::new(Duration::from_secs(1)),
+                        Animation::new(Duration::from_secs(1)).repeat(),
+                    ],
+                    |mut label, animation_ix, delta| {
+                        match animation_ix {
+                            0 => {
+                                let chars_to_show = (delta * 10.).ceil() as usize;
+                                let text = &"Generating"[0..chars_to_show];
+                                label.set_text(text);
+                            }
+                            1 => {
+                                let text = match delta {
+                                    d if d < 0.25 => "Generating",
+                                    d if d < 0.5 => "Generating.",
+                                    d if d < 0.75 => "Generating..",
+                                    _ => "Generating...",
+                                };
+                                label.set_text(text);
+                            }
+                            _ => {}
+                        }
                         label
                     },
                 )
@@ -1271,8 +1314,9 @@ impl ActiveThread {
         let editor_bg_color = colors.editor_background;
         let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
-        let feedback_container = h_flex().pt_2().pb_4().px_4().gap_1().justify_between();
-        let feedback_items = match self.thread.read(cx).feedback() {
+        let feedback_container = h_flex().py_2().px_4().gap_1().justify_between();
+
+        let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
                 .child(
                     Label::new(match feedback {
@@ -1286,18 +1330,20 @@ impl ActiveThread {
                 )
                 .child(
                     h_flex()
+                        .pr_1()
                         .gap_1()
                         .child(
-                            IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                            IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
+                                .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Accent,
                                     ThreadFeedback::Negative => Color::Ignored,
                                 })
-                                .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Helpful Response"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
+                                        message_id,
                                         ThreadFeedback::Positive,
                                         window,
                                         cx,
@@ -1305,16 +1351,17 @@ impl ActiveThread {
                                 })),
                         )
                         .child(
-                            IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                            IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
+                                .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Ignored,
                                     ThreadFeedback::Negative => Color::Accent,
                                 })
-                                .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Not Helpful"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
+                                        message_id,
                                         ThreadFeedback::Negative,
                                         window,
                                         cx,
@@ -1335,13 +1382,14 @@ impl ActiveThread {
                     h_flex()
                         .gap_1()
                         .child(
-                            IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                            IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
                                 .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Helpful Response"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
+                                        message_id,
                                         ThreadFeedback::Positive,
                                         window,
                                         cx,
@@ -1349,13 +1397,14 @@ impl ActiveThread {
                                 })),
                         )
                         .child(
-                            IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                            IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
                                 .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Not Helpful"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
+                                        message_id,
                                         ThreadFeedback::Negative,
                                         window,
                                         cx,
@@ -1653,31 +1702,31 @@ impl ActiveThread {
                         .child(generating_label.unwrap()),
                 )
             })
-            .when(show_feedback && !is_generating, |parent| {
+            .when(show_feedback, move |parent| {
                 parent.child(feedback_items).when_some(
-                    self.feedback_message_editor.clone(),
-                    |parent, feedback_editor| {
+                    self.open_feedback_editors.get(&message_id),
+                    move |parent, feedback_editor| {
                         let focus_handle = feedback_editor.focus_handle(cx);
                         parent.child(
                             v_flex()
                                 .key_context("AgentFeedbackMessageEditor")
-                                .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                                    this.feedback_message_editor = None;
+                                .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
+                                    this.open_feedback_editors.remove(&message_id);
                                     cx.notify();
                                 }))
-                                .on_action(cx.listener(|this, _: &menu::Confirm, _, cx| {
-                                    this.submit_feedback_message(cx);
+                                .on_action(cx.listener(move |this, _: &menu::Confirm, _, cx| {
+                                    this.submit_feedback_message(message_id, cx);
                                     cx.notify();
                                 }))
                                 .on_action(cx.listener(Self::confirm_editing_message))
-                                .my_3()
+                                .mb_2()
                                 .mx_4()
                                 .p_2()
                                 .rounded_md()
                                 .border_1()
                                 .border_color(cx.theme().colors().border)
                                 .bg(cx.theme().colors().editor_background)
-                                .child(feedback_editor)
+                                .child(feedback_editor.clone())
                                 .child(
                                     h_flex()
                                         .gap_1()
@@ -1694,10 +1743,13 @@ impl ActiveThread {
                                                     )
                                                     .map(|kb| kb.size(rems_from_px(10.))),
                                                 )
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.feedback_message_editor = None;
-                                                    cx.notify();
-                                                })),
+                                                .on_click(cx.listener(
+                                                    move |this, _, _window, cx| {
+                                                        this.open_feedback_editors
+                                                            .remove(&message_id);
+                                                        cx.notify();
+                                                    },
+                                                )),
                                         )
                                         .child(
                                             Button::new(
@@ -1716,9 +1768,9 @@ impl ActiveThread {
                                                 .map(|kb| kb.size(rems_from_px(10.))),
                                             )
                                             .on_click(
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.submit_feedback_message(cx);
-                                                    cx.notify();
+                                                cx.listener(move |this, _, _window, cx| {
+                                                    this.submit_feedback_message(message_id, cx);
+                                                    cx.notify()
                                                 }),
                                             ),
                                         ),
@@ -1753,7 +1805,7 @@ impl ActiveThread {
             None
         };
 
-        div()
+        v_flex()
             .text_ui(cx)
             .gap_2()
             .children(
@@ -1838,177 +1890,225 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        let editor_bg = cx.theme().colors().editor_background;
+        let editor_bg = cx.theme().colors().panel_background;
 
-        div().pt_0p5().pb_2().child(
-            v_flex()
-                .rounded_lg()
-                .border_1()
-                .border_color(self.tool_card_border_color(cx))
-                .child(
-                    h_flex()
-                        .group("disclosure-header")
-                        .justify_between()
-                        .py_1()
-                        .px_2()
-                        .bg(self.tool_card_header_bg(cx))
-                        .map(|this| {
-                            if pending || is_open {
-                                this.rounded_t_md()
-                                    .border_b_1()
-                                    .border_color(self.tool_card_border_color(cx))
-                            } else {
-                                this.rounded_md()
-                            }
-                        })
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .child(
-                                    Icon::new(IconName::Brain)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .child({
-                                    if pending {
-                                        Label::new("Thinking…")
+        div().map(|this| {
+            if pending {
+                this.v_flex()
+                    .mt_neg_2()
+                    .mb_1p5()
+                    .child(
+                        h_flex()
+                            .group("disclosure-header")
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .gap_1p5()
+                                    .child(
+                                        Icon::new(IconName::LightBulb)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child({
+                                        Label::new("Thinking")
+                                            .color(Color::Muted)
                                             .size(LabelSize::Small)
-                                            .buffer_font(cx)
+                                            .with_animation(
+                                                "generating-label",
+                                                Animation::new(Duration::from_secs(1)).repeat(),
+                                                |mut label, delta| {
+                                                    let text = match delta {
+                                                        d if d < 0.25 => "Thinking",
+                                                        d if d < 0.5 => "Thinking.",
+                                                        d if d < 0.75 => "Thinking..",
+                                                        _ => "Thinking...",
+                                                    };
+                                                    label.set_text(text);
+                                                    label
+                                                },
+                                            )
                                             .with_animation(
                                                 "pulsating-label",
                                                 Animation::new(Duration::from_secs(2))
                                                     .repeat()
-                                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                                |label, delta| label.alpha(delta),
+                                                    .with_easing(pulsating_between(0.6, 1.)),
+                                                |label, delta| {
+                                                    label.map_element(|label| label.alpha(delta))
+                                                },
                                             )
-                                            .into_any_element()
-                                    } else {
-                                        Label::new("Thought Process")
-                                            .size(LabelSize::Small)
-                                            .buffer_font(cx)
-                                            .into_any_element()
-                                    }
-                                }),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    div().visible_on_hover("disclosure-header").child(
-                                        Disclosure::new("thinking-disclosure", is_open)
-                                            .opened_icon(IconName::ChevronUp)
-                                            .closed_icon(IconName::ChevronDown)
-                                            .on_click(cx.listener({
-                                                move |this, _event, _window, _cx| {
-                                                    let is_open = this
-                                                        .expanded_thinking_segments
-                                                        .entry((message_id, ix))
-                                                        .or_insert(false);
-
-                                                    *is_open = !*is_open;
-                                                }
-                                            })),
-                                    ),
-                                )
-                                .child({
-                                    let (icon_name, color, animated) = if pending {
-                                        (IconName::ArrowCircle, Color::Accent, true)
-                                    } else {
-                                        (IconName::Check, Color::Success, false)
-                                    };
-
-                                    let icon =
-                                        Icon::new(icon_name).color(color).size(IconSize::Small);
-
-                                    if animated {
-                                        icon.with_animation(
-                                            "arrow-circle",
-                                            Animation::new(Duration::from_secs(2)).repeat(),
-                                            |icon, delta| {
-                                                icon.transform(Transformation::rotate(percentage(
-                                                    delta,
-                                                )))
-                                            },
-                                        )
-                                        .into_any_element()
-                                    } else {
-                                        icon.into_any_element()
-                                    }
-                                }),
-                        ),
-                )
-                .when(pending && !is_open, |this| {
-                    let gradient_overlay = div()
-                        .rounded_b_lg()
-                        .h_20()
-                        .absolute()
-                        .w_full()
-                        .bottom_0()
-                        .left_0()
-                        .bg(linear_gradient(
-                            180.,
-                            linear_color_stop(editor_bg, 1.),
-                            linear_color_stop(editor_bg.opacity(0.2), 0.),
-                        ));
-
-                    this.child(
-                        div()
-                            .relative()
-                            .bg(editor_bg)
-                            .rounded_b_lg()
-                            .child(
-                                div()
-                                    .id(("thinking-content", ix))
-                                    .p_2()
-                                    .h_20()
-                                    .track_scroll(scroll_handle)
-                                    .text_ui_sm(cx)
-                                    .child(
-                                        MarkdownElement::new(
-                                            markdown.clone(),
-                                            default_markdown_style(window, cx),
-                                        )
-                                        .on_url_click({
-                                            let workspace = self.workspace.clone();
-                                            move |text, window, cx| {
-                                                open_markdown_link(
-                                                    text,
-                                                    workspace.clone(),
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
-                                        }),
-                                    )
-                                    .overflow_hidden(),
+                                    }),
                             )
-                            .child(gradient_overlay),
-                    )
-                })
-                .when(is_open, |this| {
-                    this.child(
-                        div()
-                            .id(("thinking-content", ix))
-                            .h_full()
-                            .p_2()
-                            .rounded_b_lg()
-                            .bg(editor_bg)
-                            .text_ui_sm(cx)
                             .child(
-                                MarkdownElement::new(
-                                    markdown.clone(),
-                                    default_markdown_style(window, cx),
-                                )
-                                .on_url_click({
-                                    let workspace = self.workspace.clone();
-                                    move |text, window, cx| {
-                                        open_markdown_link(text, workspace.clone(), window, cx);
-                                    }
-                                }),
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        div().visible_on_hover("disclosure-header").child(
+                                            Disclosure::new("thinking-disclosure", is_open)
+                                                .opened_icon(IconName::ChevronUp)
+                                                .closed_icon(IconName::ChevronDown)
+                                                .on_click(cx.listener({
+                                                    move |this, _event, _window, _cx| {
+                                                        let is_open = this
+                                                            .expanded_thinking_segments
+                                                            .entry((message_id, ix))
+                                                            .or_insert(false);
+
+                                                        *is_open = !*is_open;
+                                                    }
+                                                })),
+                                        ),
+                                    )
+                                    .child({
+                                        Icon::new(IconName::ArrowCircle)
+                                            .color(Color::Accent)
+                                            .size(IconSize::Small)
+                                            .with_animation(
+                                                "arrow-circle",
+                                                Animation::new(Duration::from_secs(2)).repeat(),
+                                                |icon, delta| {
+                                                    icon.transform(Transformation::rotate(
+                                                        percentage(delta),
+                                                    ))
+                                                },
+                                            )
+                                    }),
                             ),
                     )
-                }),
-        )
+                    .when(!is_open, |this| {
+                        let gradient_overlay = div()
+                            .rounded_b_lg()
+                            .h_full()
+                            .absolute()
+                            .w_full()
+                            .bottom_0()
+                            .left_0()
+                            .bg(linear_gradient(
+                                180.,
+                                linear_color_stop(editor_bg, 1.),
+                                linear_color_stop(editor_bg.opacity(0.2), 0.),
+                            ));
+
+                        this.child(
+                            div()
+                                .relative()
+                                .bg(editor_bg)
+                                .rounded_b_lg()
+                                .mt_2()
+                                .pl_4()
+                                .child(
+                                    div()
+                                        .id(("thinking-content", ix))
+                                        .max_h_20()
+                                        .track_scroll(scroll_handle)
+                                        .text_ui_sm(cx)
+                                        .overflow_hidden()
+                                        .child(
+                                            MarkdownElement::new(
+                                                markdown.clone(),
+                                                default_markdown_style(window, cx),
+                                            )
+                                            .on_url_click({
+                                                let workspace = self.workspace.clone();
+                                                move |text, window, cx| {
+                                                    open_markdown_link(
+                                                        text,
+                                                        workspace.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            }),
+                                        ),
+                                )
+                                .child(gradient_overlay),
+                        )
+                    })
+                    .when(is_open, |this| {
+                        this.child(
+                            div()
+                                .id(("thinking-content", ix))
+                                .h_full()
+                                .bg(editor_bg)
+                                .text_ui_sm(cx)
+                                .child(
+                                    MarkdownElement::new(
+                                        markdown.clone(),
+                                        default_markdown_style(window, cx),
+                                    )
+                                    .on_url_click({
+                                        let workspace = self.workspace.clone();
+                                        move |text, window, cx| {
+                                            open_markdown_link(text, workspace.clone(), window, cx);
+                                        }
+                                    }),
+                                ),
+                        )
+                    })
+            } else {
+                this.v_flex()
+                    .mt_neg_2()
+                    .child(
+                        h_flex()
+                            .group("disclosure-header")
+                            .pr_1()
+                            .justify_between()
+                            .opacity(0.8)
+                            .hover(|style| style.opacity(1.))
+                            .child(
+                                h_flex()
+                                    .gap_1p5()
+                                    .child(
+                                        Icon::new(IconName::LightBulb)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(Label::new("Thought Process").size(LabelSize::Small)),
+                            )
+                            .child(
+                                div().visible_on_hover("disclosure-header").child(
+                                    Disclosure::new("thinking-disclosure", is_open)
+                                        .opened_icon(IconName::ChevronUp)
+                                        .closed_icon(IconName::ChevronDown)
+                                        .on_click(cx.listener({
+                                            move |this, _event, _window, _cx| {
+                                                let is_open = this
+                                                    .expanded_thinking_segments
+                                                    .entry((message_id, ix))
+                                                    .or_insert(false);
+
+                                                *is_open = !*is_open;
+                                            }
+                                        })),
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id(("thinking-content", ix))
+                            .relative()
+                            .mt_1p5()
+                            .ml_1p5()
+                            .pl_2p5()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .text_ui_sm(cx)
+                            .when(is_open, |this| {
+                                this.child(
+                                    MarkdownElement::new(
+                                        markdown.clone(),
+                                        default_markdown_style(window, cx),
+                                    )
+                                    .on_url_click({
+                                        let workspace = self.workspace.clone();
+                                        move |text, window, cx| {
+                                            open_markdown_link(text, workspace.clone(), window, cx);
+                                        }
+                                    }),
+                                )
+                            }),
+                    )
+            }
+        })
     }
 
     fn render_tool_use(
@@ -2030,6 +2130,7 @@ impl ActiveThread {
             .upgrade()
             .map(|workspace| workspace.read(cx).app_state().fs.clone());
         let needs_confirmation = matches!(&tool_use.status, ToolUseStatus::NeedsConfirmation);
+        let edit_tools = tool_use.needs_confirmation;
 
         let status_icons = div().child(match &tool_use.status {
             ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
@@ -2206,10 +2307,10 @@ impl ActiveThread {
         };
 
         div().map(|element| {
-            if !tool_use.needs_confirmation {
+            if !edit_tools {
                 element.child(
                     v_flex()
-                        .my_1p5()
+                        .my_2()
                         .child(
                             h_flex()
                                 .group("disclosure-header")
@@ -2516,7 +2617,7 @@ impl ActiveThread {
         let label_text = match rules_files.as_slice() {
             &[] => return div().into_any(),
             &[rules_file] => {
-                format!("Using {:?} file", rules_file.rel_path)
+                format!("Using {:?} file", rules_file.path_in_worktree)
             }
             rules_files => {
                 format!("Using {} rules files", rules_files.len())

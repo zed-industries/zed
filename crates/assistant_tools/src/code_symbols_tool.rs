@@ -79,7 +79,7 @@ impl Tool for CodeSymbolsTool {
         "code_symbols".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 

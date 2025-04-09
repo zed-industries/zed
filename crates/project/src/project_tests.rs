@@ -459,6 +459,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
                 active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
                 active_worktree_context: None,
                 other_worktree_contexts: Vec::new(),
+                lsp_task_sources: HashMap::default(),
+                latest_selection: None,
             },
             cx,
         )
@@ -481,6 +483,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
                     worktree_context
                 })),
                 other_worktree_contexts: Vec::new(),
+                lsp_task_sources: HashMap::default(),
+                latest_selection: None,
             },
             cx,
         )
@@ -797,7 +801,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path!("/dir/test3.rs")).unwrap(),),
+        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path!("/dir/test3.rs")).unwrap()),
     );
     assert_eq!(
         fake_json_server
@@ -3014,7 +3018,7 @@ async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "textEditText");
     assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
+        completions[0].replace_range.to_offset(&snapshot),
         text.len() - 3..text.len()
     );
 }
@@ -3097,7 +3101,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].new_text, "insertText");
         assert_eq!(
-            completions[0].old_range.to_offset(&snapshot),
+            completions[0].replace_range.to_offset(&snapshot),
             text.len() - 3..text.len()
         );
     }
@@ -3139,7 +3143,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].new_text, "labelText");
         assert_eq!(
-            completions[0].old_range.to_offset(&snapshot),
+            completions[0].replace_range.to_offset(&snapshot),
             text.len() - 3..text.len()
         );
     }
@@ -3209,7 +3213,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fullyQualifiedName");
     assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
+        completions[0].replace_range.to_offset(&snapshot),
         text.len() - 3..text.len()
     );
 
@@ -3236,7 +3240,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "component");
     assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
+        completions[0].replace_range.to_offset(&snapshot),
         text.len() - 4..text.len() - 1
     );
 }

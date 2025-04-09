@@ -298,7 +298,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
         if (is_near_rounded_corner) {
           float radians = atan2(corner_center_to_point.y, corner_center_to_point.x);
-          float corner_t = radians * corner_radius * dash_velocity;
+          float corner_t = radians * corner_radius;
 
           if (center_to_point.x >= 0.0) {
             if (center_to_point.y < 0.0) {
@@ -306,12 +306,12 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
               // Subtracted because radians is pi/2 to 0 when
               // going clockwise around the top right corner,
               // since the y axis has been flipped
-              t = upto_r - corner_t;
+              t = upto_r - corner_t * dash_velocity;
             } else {
               dash_velocity = corner_dash_velocity_br;
               // Added because radians is 0 to pi/2 when going
               // clockwise around the bottom-right corner
-              t = upto_br + corner_t;
+              t = upto_br + corner_t * dash_velocity;
             }
           } else {
             if (center_to_point.y >= 0.0) {
@@ -319,13 +319,13 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
               // Subtracted because radians is pi/1 to 0 when
               // going clockwise around the bottom-left corner,
               // since the x axis has been flipped
-              t = upto_l - corner_t;
+              t = upto_l - corner_t * dash_velocity;
             } else {
               dash_velocity = corner_dash_velocity_tl;
               // Added because radians is 0 to pi/2 when going
               // clockwise around the top-left corner, since both
               // axis were flipped
-              t = upto_tl + corner_t;
+              t = upto_tl + corner_t * dash_velocity;
             }
           }
         } else {
