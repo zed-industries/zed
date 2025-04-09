@@ -176,6 +176,15 @@ actions!(
     [
         ActivatePreviousItem,
         ActivateNextItem,
+        ActivateItemAtIndex1,
+        ActivateItemAtIndex2,
+        ActivateItemAtIndex3,
+        ActivateItemAtIndex4,
+        ActivateItemAtIndex5,
+        ActivateItemAtIndex6,
+        ActivateItemAtIndex7,
+        ActivateItemAtIndex8,
+        ActivateItemAtIndex9,
         ActivateLastItem,
         AlternateFile,
         GoBack,
@@ -3204,6 +3213,51 @@ impl Render for Pane {
             .on_action(
                 cx.listener(|pane: &mut Pane, _: &ActivateLastItem, window, cx| {
                     pane.activate_item(pane.items.len() - 1, true, true, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane: &mut Pane, _: &ActivateItemAtIndex1, window, cx| {
+                    pane.activate_item(0, true, true, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane: &mut Pane, _: &ActivateItemAtIndex2, window, cx| {
+                    pane.activate_item(1, true, true, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane: &mut Pane, _: &ActivateItemAtIndex3, window, cx| {
+                    pane.activate_item(2, true, true, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane: &mut Pane, _: &ActivateItemAtIndex4, window, cx| {
+                    pane.activate_item(3, true, true, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane: &mut Pane, _: &ActivateItemAtIndex5, window, cx| {
+                    pane.activate_item(4, true, true, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane: &mut Pane, _: &ActivateItemAtIndex6, window, cx| {
+                    pane.activate_item(5, true, true, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane: &mut Pane, _: &ActivateItemAtIndex7, window, cx| {
+                    pane.activate_item(6, true, true, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane: &mut Pane, _: &ActivateItemAtIndex8, window, cx| {
+                    pane.activate_item(7, true, true, window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|pane: &mut Pane, _: &ActivateItemAtIndex9, window, cx| {
+                    pane.activate_item(8, true, true, window, cx);
                 }),
             )
             .on_action(
