@@ -31,76 +31,91 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
 
     // Delete old files
     retry_loop(hwnd, || {
-        let path = app_dir.join("Zed.exe");
-        if path.exists() {
-            log::info!("Removing old file: {}", path.display());
-            log_err!(std::fs::remove_file(path), "Failed to remove old file")
+        let zed_executable = app_dir.join("Zed.exe");
+        if zed_executable.exists() {
+            log::info!("Removing old file: {}", zed_executable.display());
+            log_err!(
+                std::fs::remove_file(zed_executable),
+                "Failed to remove old file"
+            )
         } else {
-            log::warn!("Old file not found: {}", path.display());
+            log::warn!("Old file not found: {}", zed_executable.display());
             Ok(())
         }
     })?;
     retry_loop(hwnd, || {
-        let path = app_dir.join("bin\\zed.exe");
-        if path.exists() {
-            log::info!("Removing old file: {}", path.display());
-            log_err!(std::fs::remove_file(path), "Failed to remove old file")
+        let zed_cli = app_dir.join("bin\\zed.exe");
+        if zed_cli.exists() {
+            log::info!("Removing old file: {}", zed_cli.display());
+            log_err!(std::fs::remove_file(zed_cli), "Failed to remove old file")
         } else {
-            log::warn!("Old file not found: {}", path.display());
+            log::warn!("Old file not found: {}", zed_cli.display());
             Ok(())
         }
     })?;
 
     // Copy new files
     retry_loop(hwnd, || {
-        let from_path = app_dir.join("install\\Zed.exe");
-        let to_path = app_dir.join("Zed.exe");
-        if from_path.exists() {
+        let zed_executable_source = app_dir.join("install\\Zed.exe");
+        let zed_executable_dest = app_dir.join("Zed.exe");
+        if zed_executable_source.exists() {
             log::info!(
                 "Copying new file {} to {}",
-                from_path.display(),
-                to_path.display()
+                zed_executable_source.display(),
+                zed_executable_dest.display()
             );
-            log_err!(std::fs::copy(from_path, to_path), "Failed to copy new file")
+            log_err!(
+                std::fs::copy(zed_executable_source, zed_executable_dest),
+                "Failed to copy new file"
+            )
         } else {
-            log::warn!("New file not found: {}", from_path.display());
+            log::warn!("New file not found: {}", zed_executable_source.display());
             Ok(0)
         }
     })?;
     retry_loop(hwnd, || {
-        let from_path = app_dir.join("install\\bin\\zed.exe");
-        let to_path = app_dir.join("bin\\zed.exe");
-        if from_path.exists() {
+        let zed_cli_source = app_dir.join("install\\bin\\zed.exe");
+        let zed_cli_dest = app_dir.join("bin\\zed.exe");
+        if zed_cli_source.exists() {
             log::info!(
                 "Copying new file {} to {}",
-                from_path.display(),
-                to_path.display()
+                zed_cli_source.display(),
+                zed_cli_dest.display()
             );
-            log_err!(std::fs::copy(from_path, to_path), "Failed to copy new file")
+            log_err!(
+                std::fs::copy(zed_cli_source, zed_cli_dest),
+                "Failed to copy new file"
+            )
         } else {
-            log::warn!("New file not found: {}", from_path.display());
+            log::warn!("New file not found: {}", zed_cli_source.display());
             Ok(0)
         }
     })?;
 
     // Post cleanup jobs
     retry_loop(hwnd, || {
-        let path = app_dir.join("updates");
-        if path.exists() {
-            log::info!("Cleaning up: {}", path.display());
-            log_err!(std::fs::remove_dir_all(path), "Failed to remove directory")
+        let updates_folder = app_dir.join("updates");
+        if updates_folder.exists() {
+            log::info!("Cleaning up: {}", updates_folder.display());
+            log_err!(
+                std::fs::remove_dir_all(updates_folder),
+                "Failed to remove directory"
+            )
         } else {
-            log::warn!("Directory not found: {}", path.display());
+            log::warn!("Directory not found: {}", updates_folder.display());
             Ok(())
         }
     })?;
     retry_loop(hwnd, || {
-        let path = app_dir.join("install");
-        if path.exists() {
-            log::info!("Cleaning up: {}", path.display());
-            log_err!(std::fs::remove_dir_all(path), "Failed to remove directory")
+        let installer_folder = app_dir.join("install");
+        if installer_folder.exists() {
+            log::info!("Cleaning up: {}", installer_folder.display());
+            log_err!(
+                std::fs::remove_dir_all(installer_folder),
+                "Failed to remove directory"
+            )
         } else {
-            log::warn!("Directory not found: {}", path.display());
+            log::warn!("Directory not found: {}", installer_folder.display());
             Ok(())
         }
     })?;
