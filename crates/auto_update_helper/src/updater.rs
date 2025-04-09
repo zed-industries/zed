@@ -20,9 +20,13 @@ pub(crate) const JOBS_COUNT: usize = 6;
 
 macro_rules! log_err {
     ($e:expr, $s:literal) => {
-        $e.inspect_err(|e| {
-            log::error!("{}: {}", $s, e);
-        })
+        match $e {
+            Ok(_) => true,
+            Err(e) => {
+                log::error!("{}: {}", $s, e);
+                false
+            }
+        }
     };
 }
 
@@ -40,7 +44,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             )
         } else {
             log::warn!("Old file not found: {}", zed_executable.display());
-            Ok(())
+            true
         }
     })?;
     retry_loop(hwnd, || {
@@ -50,7 +54,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             log_err!(std::fs::remove_file(zed_cli), "Failed to remove old file")
         } else {
             log::warn!("Old file not found: {}", zed_cli.display());
-            Ok(())
+            true
         }
     })?;
 
@@ -70,7 +74,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             )
         } else {
             log::warn!("New file not found: {}", zed_executable_source.display());
-            Ok(0)
+            true
         }
     })?;
     retry_loop(hwnd, || {
@@ -88,7 +92,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             )
         } else {
             log::warn!("New file not found: {}", zed_cli_source.display());
-            Ok(0)
+            true
         }
     })?;
 
@@ -103,7 +107,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             )
         } else {
             log::warn!("Directory not found: {}", updates_folder.display());
-            Ok(())
+            true
         }
     })?;
     retry_loop(hwnd, || {
@@ -116,53 +120,57 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             )
         } else {
             log::warn!("Directory not found: {}", installer_folder.display());
-            Ok(())
+            true
         }
     })?;
 
     Ok(())
 }
 
-#[cfg(not(test))]
-fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Result<()> {
+// #[cfg(not(test))]
+fn retry_loop(hwnd: Option<HWND>, f: impl Fn() -> bool) -> Result<()> {
     let start = Instant::now();
     while start.elapsed().as_secs() <= 1 {
-        if f().is_ok() {
+        // if the function returns true, we assume the update was successful
+        // and we post a message to the main thread to notify it
+        if f() {
             unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             return Ok(());
         }
+        // if the function returns false, we assume the update failed
+        // and we wait for a bit before retrying
         std::thread::sleep(Duration::from_millis(10));
     }
     Err(anyhow::anyhow!("Timed out"))
 }
 
-#[cfg(test)]
-fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Result<()> {
-    let start = Instant::now();
-    while start.elapsed().as_secs() <= 1 {
-        let result = if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
-            match config.as_str() {
-                "inf" => {
-                    std::thread::sleep(Duration::from_millis(500));
-                    Err(anyhow::anyhow!("Test timeout"))
-                }
-                "err" => {
-                    std::thread::sleep(Duration::from_millis(10));
-                    Err(anyhow::anyhow!("Test error"))
-                }
-                _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
-            }
-        } else {
-            Ok(())
-        };
-        if result.is_ok() {
-            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    Err(anyhow::anyhow!("Update timed out"))
-}
+// #[cfg(test)]
+// fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Result<()> {
+//     let start = Instant::now();
+//     while start.elapsed().as_secs() <= 1 {
+//         let result = if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
+//             match config.as_str() {
+//                 "inf" => {
+//                     std::thread::sleep(Duration::from_millis(500));
+//                     Err(anyhow::anyhow!("Test timeout"))
+//                 }
+//                 "err" => {
+//                     std::thread::sleep(Duration::from_millis(10));
+//                     Err(anyhow::anyhow!("Test error"))
+//                 }
+//                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
+//             }
+//         } else {
+//             Ok(())
+//         };
+//         if result.is_ok() {
+//             unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+//             return Ok(());
+//         }
+//         std::thread::sleep(Duration::from_millis(10));
+//     }
+//     Err(anyhow::anyhow!("Update timed out"))
+// }
 
 #[cfg(test)]
 mod test {
