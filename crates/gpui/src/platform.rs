@@ -205,6 +205,7 @@ pub(crate) trait Platform: 'static {
     fn add_recent_document(&self, _path: &Path) {}
     fn update_jump_list(
         &self,
+        _menus: Vec<MenuItem>,
         _entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Vec<SmallVec<[PathBuf; 2]>> {
         Vec::new()

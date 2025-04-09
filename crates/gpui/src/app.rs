@@ -1448,11 +1448,13 @@ impl App {
     }
 
     /// Updates the jump list with the updated list of recent paths for the application, only used on Windows for now.
+    /// Note that this also sets the dock menu on Windows.
     pub fn update_jump_list(
         &self,
+        menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Vec<SmallVec<[PathBuf; 2]>> {
-        self.platform.update_jump_list(entries)
+        self.platform.update_jump_list(menus, entries)
     }
 
     /// Dispatch an action to the currently active window or global action handler

@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-use gpui::{AppContext, Entity, Global};
+use gpui::{AppContext, Entity, Global, MenuItem};
 use smallvec::SmallVec;
 use ui::App;
 use util::{ResultExt, paths::PathExt};
 
-use crate::{SerializedWorkspaceLocation, WORKSPACE_DB, WorkspaceId};
+use crate::{NewWindow, SerializedWorkspaceLocation, WORKSPACE_DB, WorkspaceId};
 
 pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
@@ -80,13 +80,14 @@ impl HistoryManager {
     }
 
     fn update_jump_list(&mut self, cx: &App) {
+        let menus = vec![MenuItem::action("New Window", NewWindow)];
         let entries = self
             .history
             .iter()
             .rev()
             .map(|entry| entry.path.clone())
             .collect::<Vec<_>>();
-        let user_removed = cx.update_jump_list(entries);
+        let user_removed = cx.update_jump_list(menus, entries);
         self.remove_user_removed_workspaces(user_removed, cx);
     }
 

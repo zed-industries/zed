@@ -263,14 +263,23 @@ impl WindowsPlatform {
         lock.jump_list.dock_menus = actions;
         update_jump_list(&lock.jump_list)
             .log_err()
-            .unwrap_or_default()
+            .unwrap_or_default();
+        Vec::new()
     }
 
     fn update_jump_list(
         &self,
+        menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Vec<SmallVec<[PathBuf; 2]>> {
+        let mut actions = Vec::new();
+        menus.into_iter().for_each(|menu| {
+            if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
+                actions.push(dock_menu);
+            }
+        });
         let mut lock = self.state.borrow_mut();
+        lock.jump_list.dock_menus = actions;
         lock.jump_list.recent_workspaces = entries;
         update_jump_list(&lock.jump_list)
             .log_err()
@@ -670,9 +679,10 @@ impl Platform for WindowsPlatform {
 
     fn update_jump_list(
         &self,
+        menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Vec<SmallVec<[PathBuf; 2]>> {
-        self.update_jump_list(entries)
+        self.update_jump_list(menus, entries)
     }
 }
 
