@@ -1222,17 +1222,30 @@ impl ActiveThread {
             Label::new("Generating")
                 .color(Color::Muted)
                 .size(LabelSize::Small)
-                .with_animation(
+                .with_animations(
                     "generating-label",
-                    Animation::new(Duration::from_secs(1)).repeat(),
-                    |mut label, delta| {
-                        let text = match delta {
-                            d if d < 0.25 => "Generating",
-                            d if d < 0.5 => "Generating.",
-                            d if d < 0.75 => "Generating..",
-                            _ => "Generating...",
-                        };
-                        label.set_text(text);
+                    vec![
+                        Animation::new(Duration::from_secs(1)),
+                        Animation::new(Duration::from_secs(1)).repeat(),
+                    ],
+                    |mut label, animation_ix, delta| {
+                        match animation_ix {
+                            0 => {
+                                let chars_to_show = (delta * 10.).ceil() as usize;
+                                let text = &"Generating"[0..chars_to_show];
+                                label.set_text(text);
+                            }
+                            1 => {
+                                let text = match delta {
+                                    d if d < 0.25 => "Generating",
+                                    d if d < 0.5 => "Generating.",
+                                    d if d < 0.75 => "Generating..",
+                                    _ => "Generating...",
+                                };
+                                label.set_text(text);
+                            }
+                            _ => {}
+                        }
                         label
                     },
                 )
