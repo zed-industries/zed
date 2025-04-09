@@ -3,6 +3,7 @@ use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
 
+use agent_rules::load_worktree_rules_file;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
@@ -21,13 +22,11 @@ use language_model::{
 };
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use project::{Project, Worktree};
-use prompt_store::{
-    AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
-};
+use prompt_store::{AssistantSystemPromptContext, PromptBuilder, WorktreeInfoForSystemPrompt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
+use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
 
 use crate::context::{AssistantContext, ContextId, format_context_as_string};
@@ -183,7 +182,7 @@ pub struct ThreadCheckpoint {
     git_checkpoint: GitStoreCheckpoint,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ThreadFeedback {
     Positive,
     Negative,
@@ -261,6 +260,7 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
+    message_feedback: HashMap<MessageId, ThreadFeedback>,
 }
 
 impl Thread {
@@ -299,6 +299,7 @@ impl Thread {
             },
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
+            message_feedback: HashMap::default(),
         }
     }
 
@@ -362,6 +363,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
+            message_feedback: HashMap::default(),
         }
     }
 
@@ -854,67 +856,36 @@ impl Thread {
         let root_name = worktree.root_name().into();
         let abs_path = worktree.abs_path();
 
-        // Note that Cline supports `.clinerules` being a directory, but that is not currently
-        // supported. This doesn't seem to occur often in GitHub repositories.
-        const RULES_FILE_NAMES: [&'static str; 6] = [
-            ".rules",
-            ".cursorrules",
-            ".windsurfrules",
-            ".clinerules",
-            ".github/copilot-instructions.md",
-            "CLAUDE.md",
-        ];
-        let selected_rules_file = RULES_FILE_NAMES
-            .into_iter()
-            .filter_map(|name| {
-                worktree
-                    .entry_for_path(name)
-                    .filter(|entry| entry.is_file())
-                    .map(|entry| (entry.path.clone(), worktree.absolutize(&entry.path)))
-            })
-            .next();
-
-        if let Some((rel_rules_path, abs_rules_path)) = selected_rules_file {
-            cx.spawn(async move |_| {
-                let rules_file_result = maybe!(async move {
-                    let abs_rules_path = abs_rules_path?;
-                    let text = fs.load(&abs_rules_path).await.with_context(|| {
-                        format!("Failed to load assistant rules file {:?}", abs_rules_path)
-                    })?;
-                    anyhow::Ok(RulesFile {
-                        rel_path: rel_rules_path,
-                        abs_path: abs_rules_path.into(),
-                        text: text.trim().to_string(),
-                    })
-                })
-                .await;
-                let (rules_file, rules_file_error) = match rules_file_result {
-                    Ok(rules_file) => (Some(rules_file), None),
-                    Err(err) => (
-                        None,
-                        Some(ThreadError::Message {
-                            header: "Error loading rules file".into(),
-                            message: format!("{err}").into(),
-                        }),
-                    ),
-                };
-                let worktree_info = WorktreeInfoForSystemPrompt {
-                    root_name,
-                    abs_path,
-                    rules_file,
-                };
-                (worktree_info, rules_file_error)
-            })
-        } else {
-            Task::ready((
+        let rules_task = load_worktree_rules_file(fs, worktree, cx);
+        let Some(rules_task) = rules_task else {
+            return Task::ready((
                 WorktreeInfoForSystemPrompt {
                     root_name,
                     abs_path,
                     rules_file: None,
                 },
                 None,
-            ))
-        }
+            ));
+        };
+
+        cx.spawn(async move |_| {
+            let (rules_file, rules_file_error) = match rules_task.await {
+                Ok(rules_file) => (Some(rules_file), None),
+                Err(err) => (
+                    None,
+                    Some(ThreadError::Message {
+                        header: "Error loading rules file".into(),
+                        message: format!("{err}").into(),
+                    }),
+                ),
+            };
+            let worktree_info = WorktreeInfoForSystemPrompt {
+                root_name,
+                abs_path,
+                rules_file,
+            };
+            (worktree_info, rules_file_error)
+        })
     }
 
     pub fn send_to_model(
@@ -1028,6 +999,20 @@ impl Thread {
         }
 
         self.attached_tracked_files_state(&mut request.messages, cx);
+
+        // Add reminder to the last user message about code blocks
+        if let Some(last_user_message) = request
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|msg| msg.role == Role::User)
+        {
+            last_user_message
+                .content
+                .push(MessageContent::Text(system_prompt_reminder(
+                    &self.prompt_builder,
+                )));
+        }
 
         request
     }
@@ -1414,7 +1399,7 @@ impl Thread {
 
         for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                if tool.needs_confirmation()
+                if tool.needs_confirmation(&tool_use.input, cx)
                     && !AssistantSettings::get_global(cx).always_allow_tool_actions
                 {
                     self.tool_use.confirm_tool_use(
@@ -1536,23 +1521,37 @@ impl Thread {
         canceled
     }
 
-    /// Returns the feedback given to the thread, if any.
     pub fn feedback(&self) -> Option<ThreadFeedback> {
         self.feedback
     }
 
-    /// Reports feedback about the thread and stores it in our telemetry backend.
-    pub fn report_feedback(
+    pub fn message_feedback(&self, message_id: MessageId) -> Option<ThreadFeedback> {
+        self.message_feedback.get(&message_id).copied()
+    }
+
+    pub fn report_message_feedback(
         &mut self,
+        message_id: MessageId,
         feedback: ThreadFeedback,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.message_feedback.get(&message_id) == Some(&feedback) {
+            return Task::ready(Ok(()));
+        }
+
         let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
-        self.feedback = Some(feedback);
+
+        self.message_feedback.insert(message_id, feedback);
+
         cx.notify();
+
+        let message_content = self
+            .message(message_id)
+            .map(|msg| msg.to_string())
+            .unwrap_or_default();
 
         cx.background_spawn(async move {
             let final_project_snapshot = final_project_snapshot.await;
@@ -1568,6 +1567,8 @@ impl Thread {
                 "Assistant Thread Rated",
                 rating,
                 thread_id,
+                message_id = message_id.0,
+                message_content,
                 thread_data,
                 final_project_snapshot
             );
@@ -1575,6 +1576,52 @@ impl Thread {
 
             Ok(())
         })
+    }
+
+    pub fn report_feedback(
+        &mut self,
+        feedback: ThreadFeedback,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let last_assistant_message_id = self
+            .messages
+            .iter()
+            .rev()
+            .find(|msg| msg.role == Role::Assistant)
+            .map(|msg| msg.id);
+
+        if let Some(message_id) = last_assistant_message_id {
+            self.report_message_feedback(message_id, feedback, cx)
+        } else {
+            let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
+            let serialized_thread = self.serialize(cx);
+            let thread_id = self.id().clone();
+            let client = self.project.read(cx).client();
+            self.feedback = Some(feedback);
+            cx.notify();
+
+            cx.background_spawn(async move {
+                let final_project_snapshot = final_project_snapshot.await;
+                let serialized_thread = serialized_thread.await?;
+                let thread_data = serde_json::to_value(serialized_thread)
+                    .unwrap_or_else(|_| serde_json::Value::Null);
+
+                let rating = match feedback {
+                    ThreadFeedback::Positive => "positive",
+                    ThreadFeedback::Negative => "negative",
+                };
+                telemetry::event!(
+                    "Assistant Thread Rated",
+                    rating,
+                    thread_id,
+                    thread_data,
+                    final_project_snapshot
+                );
+                client.telemetry().flush_events();
+
+                Ok(())
+            })
+        }
     }
 
     /// Create a snapshot of the current project state including git information and unsaved buffers.
@@ -1842,6 +1889,12 @@ impl Thread {
     }
 }
 
+pub fn system_prompt_reminder(prompt_builder: &prompt_store::PromptBuilder) -> String {
+    prompt_builder
+        .generate_assistant_system_prompt_reminder()
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone)]
 pub enum ThreadError {
     PaymentRequired,
@@ -1911,7 +1964,7 @@ mod tests {
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store) =
+        let (_workspace, _thread_store, thread, context_store, prompt_builder) =
             setup_test_environment(cx, project.clone()).await;
 
         add_file_to_context(&project, &context_store, "test/code.rs", cx)
@@ -1965,8 +2018,14 @@ fn main() {{
         });
 
         assert_eq!(request.messages.len(), 1);
-        let expected_full_message = format!("{}Please explain this code", expected_context);
-        assert_eq!(request.messages[0].string_contents(), expected_full_message);
+        let actual_message = request.messages[0].string_contents();
+        let expected_content = format!(
+            "{}Please explain this code{}",
+            expected_context,
+            system_prompt_reminder(&prompt_builder)
+        );
+
+        assert_eq!(actual_message, expected_content);
     }
 
     #[gpui::test]
@@ -1983,7 +2042,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, thread, context_store) =
+        let (_, _thread_store, thread, context_store, _prompt_builder) =
             setup_test_environment(cx, project.clone()).await;
 
         // Open files individually
@@ -2083,7 +2142,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, thread, _context_store) =
+        let (_, _thread_store, thread, _context_store, prompt_builder) =
             setup_test_environment(cx, project.clone()).await;
 
         // Insert user message without any context (empty context vector)
@@ -2109,10 +2168,13 @@ fn main() {{
         });
 
         assert_eq!(request.messages.len(), 1);
-        assert_eq!(
-            request.messages[0].string_contents(),
-            "What is the best way to learn Rust?"
+        let actual_message = request.messages[0].string_contents();
+        let expected_content = format!(
+            "What is the best way to learn Rust?{}",
+            system_prompt_reminder(&prompt_builder)
         );
+
+        assert_eq!(actual_message, expected_content);
 
         // Add second message, also without context
         let message2_id = thread.update(cx, |thread, cx| {
@@ -2129,14 +2191,17 @@ fn main() {{
         });
 
         assert_eq!(request.messages.len(), 2);
-        assert_eq!(
-            request.messages[0].string_contents(),
-            "What is the best way to learn Rust?"
+        // First message should be the system prompt
+        assert_eq!(request.messages[0].role, Role::User);
+
+        // Second message should be the user message with prompt reminder
+        let actual_message = request.messages[1].string_contents();
+        let expected_content = format!(
+            "Are there any good books?{}",
+            system_prompt_reminder(&prompt_builder)
         );
-        assert_eq!(
-            request.messages[1].string_contents(),
-            "Are there any good books?"
-        );
+
+        assert_eq!(actual_message, expected_content);
     }
 
     #[gpui::test]
@@ -2149,7 +2214,7 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store) =
+        let (_workspace, _thread_store, thread, context_store, prompt_builder) =
             setup_test_environment(cx, project.clone()).await;
 
         // Open buffer and add it to context
@@ -2209,11 +2274,14 @@ fn main() {{
         // The last message should be the stale buffer notification
         assert_eq!(last_message.role, Role::User);
 
-        // Check the exact content of the message
-        let expected_content = "These files changed since last read:\n- code.rs\n";
+        let actual_message = last_message.string_contents();
+        let expected_content = format!(
+            "These files changed since last read:\n- code.rs\n{}",
+            system_prompt_reminder(&prompt_builder)
+        );
+
         assert_eq!(
-            last_message.string_contents(),
-            expected_content,
+            actual_message, expected_content,
             "Last message should be exactly the stale buffer notification"
         );
     }
@@ -2251,24 +2319,27 @@ fn main() {{
         Entity<ThreadStore>,
         Entity<Thread>,
         Entity<ContextStore>,
+        Arc<PromptBuilder>,
     ) {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+
         let thread_store = cx.update(|_, cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
+            ThreadStore::new(project.clone(), Arc::default(), prompt_builder.clone(), cx).unwrap()
         });
 
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
-        let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
+        let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
 
-        (workspace, thread_store, thread, context_store)
+        (
+            workspace,
+            thread_store,
+            thread,
+            context_store,
+            prompt_builder,
+        )
     }
 
     async fn add_file_to_context(

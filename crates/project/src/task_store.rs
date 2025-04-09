@@ -295,10 +295,13 @@ fn local_task_context_for_location(
         .and_then(|worktree| worktree.read(cx).root_dir());
 
     cx.spawn(async move |cx| {
-        let worktree_abs_path = worktree_abs_path.clone();
         let project_env = environment
             .update(cx, |environment, cx| {
-                environment.get_environment(worktree_abs_path.clone(), cx)
+                environment.get_buffer_environment(
+                    location.buffer.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
             })
             .ok()?
             .await;

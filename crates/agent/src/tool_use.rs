@@ -201,7 +201,7 @@ impl ToolUseState {
 
             let (icon, needs_confirmation) = if let Some(tool) = self.tools.tool(&tool_use.name, cx)
             {
-                (tool.icon(), tool.needs_confirmation())
+                (tool.icon(), tool.needs_confirmation(&tool_use.input, cx))
             } else {
                 (IconName::Cog, false)
             };
@@ -334,6 +334,8 @@ impl ToolUseState {
         output: Result<String>,
         cx: &App,
     ) -> Option<PendingToolUse> {
+        telemetry::event!("Agent Tool Finished", tool_name, success = output.is_ok());
+
         match output {
             Ok(tool_result) => {
                 let model_registry = LanguageModelRegistry::read_global(cx);

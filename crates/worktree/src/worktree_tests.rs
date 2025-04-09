@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
-use gpui::{AppContext as _, BorrowAppContext, Context, Task, TestAppContext};
+use gpui::{AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -1982,6 +1982,68 @@ fn test_unrelativize() {
         work_directory.unrelativize(&"README.md".into()),
         Path::new("../../README.md").into()
     );
+}
+
+#[gpui::test]
+async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "subproject": {
+                "a.txt": "A"
+            }
+        }),
+    )
+    .await;
+    let worktree = Worktree::local(
+        path!("/root/subproject").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree
+            .as_local()
+            .unwrap()
+            .git_repositories
+            .values()
+            .map(|entry| entry.work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
+
+    eprintln!(">>>>>>>>>> touch");
+    fs.touch_path(path!("/root/subproject")).await;
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree
+            .as_local()
+            .unwrap()
+            .git_repositories
+            .values()
+            .map(|entry| entry.work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
 }
 
 #[track_caller]
