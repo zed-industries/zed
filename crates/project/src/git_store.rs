@@ -1329,6 +1329,7 @@ impl GitStore {
                 repo_path,
                 has_unstaged_diff.then(|| diff_state.index_text.clone()),
                 has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+                diff_state.index_changed || diff_state.head_changed,
                 diff_state.hunk_staging_operation_count,
             );
             diff_state_updates.entry(repo).or_default().push(update);
@@ -1359,6 +1360,7 @@ impl GitStore {
                                     repo_path,
                                     current_index_text,
                                     current_head_text,
+                                    already_needs_diff_update,
                                     hunk_staging_operation_count,
                                 ) in &repo_diff_state_updates
                                 {
@@ -1374,15 +1376,16 @@ impl GitStore {
                                     };
 
                                     // Avoid triggering a diff update if the base text has not changed.
-                                    // if let Some((current_index, current_head)) =
-                                    //     current_index_text.as_ref().zip(current_head_text.as_ref())
-                                    // {
-                                    //     if current_index.as_deref() == index_text.as_ref()
-                                    //         && current_head.as_deref() == head_text.as_ref()
-                                    //     {
-                                    //         continue;
-                                    //     }
-                                    // }
+                                    if let Some((current_index, current_head)) =
+                                        current_index_text.as_ref().zip(current_head_text.as_ref())
+                                    {
+                                        if current_index.as_deref() == index_text.as_ref()
+                                            && current_head.as_deref() == head_text.as_ref()
+                                            && !already_needs_diff_update
+                                        {
+                                            continue;
+                                        }
+                                    }
 
                                     let diff_bases_change = match (
                                         current_index_text.is_some(),
