@@ -5,9 +5,10 @@ mod keymap_file;
 mod settings_file;
 mod settings_store;
 
+use anyhow::Result;
 use gpui::App;
 use rust_embed::RustEmbed;
-use std::{borrow::Cow, fmt, str};
+use std::{borrow::Cow, collections::BTreeMap, fmt, str};
 use util::asset_str;
 
 pub use editable_setting_control::*;
@@ -112,4 +113,27 @@ pub fn initial_tasks_content() -> Cow<'static, str> {
 
 pub fn initial_debug_tasks_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_debug_tasks.json")
+}
+
+pub fn read_vscode_settings(content: &str) -> Result<BTreeMap<String, String>> {
+    let nested: serde_json::Value = settings_store::parse_json_with_comments(content)?;
+    fn helper(
+        flattened: &mut BTreeMap<String, String>,
+        prefix: &mut Vec<String>,
+        current: serde_json::Map<String, serde_json::Value>,
+    ) {
+        for (k, v) in current {
+            if todo!("v is map") {
+                prefix.push(k);
+                helper(final, prefix, v);
+                prefix.pop();
+            } else {
+                flattened.insert(prefix.iter().chain(iter::once(v)).join("."), v)
+            }
+        }
+    }
+    let mut prefix = Vec::new();
+    let mut flattened = Default::default();
+    helper(&mut flattened, &mut prefix, nested);
+    Ok(flattened)
 }
