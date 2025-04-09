@@ -132,11 +132,11 @@ impl ContextPickerCompletionProviderState {
                         cx,
                     )
                     .into_iter()
-                    .filter_map(|entry| match entry {
+                    .map(|entry| match entry {
                         super::RecentEntry::File {
                             project_path,
                             path_prefix,
-                        } => Some(Match::File(FileMatch {
+                        } => Match::File(FileMatch {
                             mat: fuzzy::PathMatch {
                                 score: 1.,
                                 positions: Vec::new(),
@@ -147,13 +147,13 @@ impl ContextPickerCompletionProviderState {
                                 distance_to_relative_ancestor: 0,
                             },
                             is_recent: true,
-                        })),
+                        }),
                         super::RecentEntry::Thread(thread_context_entry) => {
-                            Some(Match::Thread(ThreadMatch {
+                            Match::Thread(ThreadMatch {
                                 mat: None,
                                 thread: thread_context_entry,
                                 is_recent: true,
-                            }))
+                            })
                         }
                     })
                     .collect::<Vec<_>>();
