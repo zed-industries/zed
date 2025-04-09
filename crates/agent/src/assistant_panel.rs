@@ -227,14 +227,14 @@ impl AssistantPanel {
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
-        let project = workspace.project().clone();
+        let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
         let workspace = workspace.weak_handle();
         let weak_self = cx.entity().downgrade();
 
         let message_editor_context_store = cx.new(|_cx| {
             crate::context_store::ContextStore::new(
-                workspace.clone(),
+                project.downgrade(),
                 Some(thread_store.downgrade()),
             )
         });
@@ -344,7 +344,7 @@ impl AssistantPanel {
 
         let message_editor_context_store = cx.new(|_cx| {
             crate::context_store::ContextStore::new(
-                self.workspace.clone(),
+                self.project.downgrade(),
                 Some(self.thread_store.downgrade()),
             )
         });
@@ -521,7 +521,7 @@ impl AssistantPanel {
                 this.set_active_view(thread_view, window, cx);
                 let message_editor_context_store = cx.new(|_cx| {
                     crate::context_store::ContextStore::new(
-                        this.workspace.clone(),
+                        this.project.downgrade(),
                         Some(this.thread_store.downgrade()),
                     )
                 });
