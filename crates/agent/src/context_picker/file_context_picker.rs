@@ -58,7 +58,7 @@ pub struct FileContextPickerDelegate {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     confirm_behavior: ConfirmBehavior,
-    matches: Vec<PathMatch>,
+    matches: Vec<FileMatch>,
     selected_index: usize,
 }
 
@@ -114,7 +114,7 @@ impl PickerDelegate for FileContextPickerDelegate {
             return Task::ready(());
         };
 
-        let search_task = search_paths(query, Arc::<AtomicBool>::default(), &workspace, cx);
+        let search_task = search_files(query, Arc::<AtomicBool>::default(), &workspace, cx);
 
         cx.spawn_in(window, async move |this, cx| {
             // TODO: This should be probably be run in the background.
@@ -128,7 +128,7 @@ impl PickerDelegate for FileContextPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let Some(mat) = self.matches.get(self.selected_index) else {
+        let Some(FileMatch { mat, .. }) = self.matches.get(self.selected_index) else {
             return;
         };
 
@@ -181,7 +181,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let path_match = &self.matches[ix];
+        let FileMatch { mat, .. } = &self.matches[ix];
 
         Some(
             ListItem::new(ix)
@@ -189,9 +189,9 @@ impl PickerDelegate for FileContextPickerDelegate {
                 .toggle_state(selected)
                 .child(render_file_context_entry(
                     ElementId::NamedInteger("file-ctx-picker".into(), ix),
-                    &path_match.path,
-                    &path_match.path_prefix,
-                    path_match.is_dir,
+                    &mat.path,
+                    &mat.path_prefix,
+                    mat.is_dir,
                     self.context_store.clone(),
                     cx,
                 )),
@@ -199,12 +199,17 @@ impl PickerDelegate for FileContextPickerDelegate {
     }
 }
 
-pub(crate) fn search_paths(
+pub struct FileMatch {
+    pub mat: PathMatch,
+    pub is_recent: bool,
+}
+
+pub(crate) fn search_files(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
     workspace: &Entity<Workspace>,
     cx: &App,
-) -> Task<Vec<PathMatch>> {
+) -> Task<Vec<FileMatch>> {
     if query.is_empty() {
         let workspace = workspace.read(cx);
         let project = workspace.project().read(cx);
@@ -213,28 +218,34 @@ pub(crate) fn search_paths(
             .into_iter()
             .filter_map(|(project_path, _)| {
                 let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-                Some(PathMatch {
-                    score: 0.,
-                    positions: Vec::new(),
-                    worktree_id: project_path.worktree_id.to_usize(),
-                    path: project_path.path,
-                    path_prefix: worktree.read(cx).root_name().into(),
-                    distance_to_relative_ancestor: 0,
-                    is_dir: false,
+                Some(FileMatch {
+                    mat: PathMatch {
+                        score: 0.,
+                        positions: Vec::new(),
+                        worktree_id: project_path.worktree_id.to_usize(),
+                        path: project_path.path,
+                        path_prefix: worktree.read(cx).root_name().into(),
+                        distance_to_relative_ancestor: 0,
+                        is_dir: false,
+                    },
+                    is_recent: true,
                 })
             });
 
         let file_matches = project.worktrees(cx).flat_map(|worktree| {
             let worktree = worktree.read(cx);
             let path_prefix: Arc<str> = worktree.root_name().into();
-            worktree.entries(false, 0).map(move |entry| PathMatch {
-                score: 0.,
-                positions: Vec::new(),
-                worktree_id: worktree.id().to_usize(),
-                path: entry.path.clone(),
-                path_prefix: path_prefix.clone(),
-                distance_to_relative_ancestor: 0,
-                is_dir: entry.is_dir(),
+            worktree.entries(false, 0).map(move |entry| FileMatch {
+                mat: PathMatch {
+                    score: 0.,
+                    positions: Vec::new(),
+                    worktree_id: worktree.id().to_usize(),
+                    path: entry.path.clone(),
+                    path_prefix: path_prefix.clone(),
+                    distance_to_relative_ancestor: 0,
+                    is_dir: entry.is_dir(),
+                },
+                is_recent: false,
             })
         });
 
@@ -269,6 +280,12 @@ pub(crate) fn search_paths(
                 executor,
             )
             .await
+            .into_iter()
+            .map(|mat| FileMatch {
+                mat,
+                is_recent: false,
+            })
+            .collect::<Vec<_>>()
         })
     }
 }
