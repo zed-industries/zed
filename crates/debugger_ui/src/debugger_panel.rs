@@ -25,9 +25,9 @@ use project::{
 };
 use rpc::proto::{self};
 use settings::Settings;
+use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
-use std::{any::TypeId, path::PathBuf};
 use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
