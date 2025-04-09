@@ -169,8 +169,10 @@ pub fn deploy_context_menu(
                 .is_some()
         });
 
-        let filter = command_palette_hooks::CommandPaletteFilter::global_mut(cx);
-        let evaluate_selection = !filter.is_hidden(&DebuggerEvaluateSelectedText);
+        let evaluate_selection = command_palette_hooks::CommandPaletteFilter::try_global(cx)
+            .map_or(false, |filter| {
+                !filter.is_hidden(&DebuggerEvaluateSelectedText)
+            });
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu

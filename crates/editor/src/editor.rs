@@ -6391,8 +6391,8 @@ impl Editor {
             "Set Breakpoint"
         };
 
-        let filter = command_palette_hooks::CommandPaletteFilter::global_mut(cx);
-        let run_to_cursor = !filter.is_hidden(&DebuggerRunToCursor);
+        let run_to_cursor = command_palette_hooks::CommandPaletteFilter::try_global(cx)
+            .map_or(false, |filter| !filter.is_hidden(&DebuggerRunToCursor));
 
         let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
             BreakpointState::Enabled => Some("Disable"),
