@@ -1262,6 +1262,7 @@ impl Editor {
         clone.selections.clone_state(&self.selections);
         clone.scroll_manager.clone_state(&self.scroll_manager);
         clone.searchable = self.searchable;
+        clone.read_only = self.read_only;
         clone
     }
 
