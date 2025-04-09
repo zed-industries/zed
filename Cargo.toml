@@ -666,6 +666,9 @@ notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bb
 rustls = { git = "https://github.com/ConradIrwin/rustls", rev = "fa9c96ea259d6ce69445de54755401fa197e63cd"}
 tokio-rustls = { git = "https://github.com/ConradIrwin/tokio-rustls", rev = "f544a5d2f2eff8b2dd5527bd7dc78c854c218d06" }
 
+tokio = { git = "https://github.com/ConradIrwin/tokio", rev = "5499df6df21837104cff5f85b51d3529179ed6f4"}
+mio = { git = "https://github.com/ConradIrwin/mio", rev = "d30ff26870457cdeee2f638be65543d65faff37d"}
+
 # Makes the workspace hack crate refer to the local one, but only when you're building locally
 workspace-hack = { path = "tooling/workspace-hack" }
 

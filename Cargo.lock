@@ -8608,8 +8608,7 @@ checksum = "e53debba6bda7a793e5f99b8dacf19e626084f525f7829104ba9898f367d85ff"
 [[package]]
 name = "mio"
 version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2886843bf800fba2e3377cff24abf6379b4c4d5c6681eaf9ea5b0d15090450bd"
+source = "git+https://github.com/ConradIrwin/mio?rev=d30ff26870457cdeee2f638be65543d65faff37d#d30ff26870457cdeee2f638be65543d65faff37d"
 dependencies = [
  "libc",
  "log",
@@ -14623,8 +14622,7 @@ dependencies = [
 [[package]]
 name = "tokio"
 version = "1.44.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6b88822cbe49de4185e3a4cbf8321dd487cf5fe0c5c65695fef6346371e9c48"
+source = "git+https://github.com/ConradIrwin/tokio?rev=5499df6df21837104cff5f85b51d3529179ed6f4#5499df6df21837104cff5f85b51d3529179ed6f4"
 dependencies = [
  "backtrace",
  "bytes 1.10.1",
@@ -14652,8 +14650,7 @@ dependencies = [
 [[package]]
 name = "tokio-macros"
 version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e06d43f1345a3bcd39f6a56dbb7dcab2ba47e68e8ac134855e7e2bdbaf8cab8"
+source = "git+https://github.com/ConradIrwin/tokio?rev=5499df6df21837104cff5f85b51d3529179ed6f4#5499df6df21837104cff5f85b51d3529179ed6f4"
 dependencies = [
  "proc-macro2",
  "quote",
