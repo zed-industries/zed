@@ -369,7 +369,7 @@ impl Render for MessageEditor {
         let inline_context_picker = self.inline_context_picker.clone();
 
         let is_editor_expanded = self.expanded_editor;
-        let expand_icon = if self.expanded_editor {
+        let expand_icon = if is_editor_expanded {
             IconName::Minimize
         } else {
             IconName::Maximize
@@ -698,8 +698,14 @@ impl Render for MessageEditor {
                                     .icon_color(Color::Muted)
                                     .tooltip(move |window, cx| {
                                         let focus_handle = focus_handle.clone();
+                                        let expand_label = if is_editor_expanded {
+                                            "Minimize Message Editor".to_string()
+                                        } else {
+                                            "Expand Message Editor".to_string()
+                                        };
+
                                         Tooltip::for_action_in(
-                                            "Expand Message Editor",
+                                            expand_label,
                                             &ExpandMessageEditor,
                                             &focus_handle,
                                             window,
