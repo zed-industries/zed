@@ -465,6 +465,7 @@ jobs:
       - job_spec
       - style
       - migration_checks
+      # run_tests: If adding required tests, add them here and to script below.
       - workspace_hack
       - linux_tests
       - build_remote_server
@@ -482,11 +483,14 @@ jobs:
 
           # Only check test jobs if they were supposed to run
           if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
+            [[ "${{ needs.workspace_hack.result }}"       != 'success' ]] && { RET_CODE=1; echo "Workspace Hack failed"; }
             [[ "${{ needs.macos_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "macOS tests failed"; }
             [[ "${{ needs.linux_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "Linux tests failed"; }
             [[ "${{ needs.windows_tests.result }}"        != 'success' ]] && { RET_CODE=1; echo "Windows tests failed"; }
             [[ "${{ needs.windows_clippy.result }}"       != 'success' ]] && { RET_CODE=1; echo "Windows clippy failed"; }
             [[ "${{ needs.build_remote_server.result }}"  != 'success' ]] && { RET_CODE=1; echo "Remote server build failed"; }
+            # This check is intentionally disabled. See: https://github.com/zed-industries/zed/pull/28431
+            # [[ "${{ needs.migration_checks.result }}"     != 'success' ]] && { RET_CODE=1; echo "Migration Checks failed"; }
           fi
           if [[ "$RET_CODE" -eq 0 ]]; then
             echo "All tests passed successfully!"
