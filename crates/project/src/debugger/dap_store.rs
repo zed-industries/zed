@@ -38,7 +38,7 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashSet},
     ffi::OsStr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering::SeqCst},
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
@@ -57,7 +57,7 @@ pub enum DapStoreEvent {
     RunInTerminal {
         session_id: SessionId,
         title: Option<String>,
-        cwd: PathBuf,
+        cwd: Option<Arc<Path>>,
         command: Option<String>,
         args: Vec<String>,
         envs: HashMap<String, String>,
@@ -549,10 +549,10 @@ impl DapStore {
 
         let seq = request.seq;
 
-        let cwd = PathBuf::from(request_args.cwd);
+        let cwd = Path::new(&request_args.cwd);
+
         match cwd.try_exists() {
-            Ok(true) => (),
-            Ok(false) | Err(_) => {
+            Ok(false) | Err(_) if !request_args.cwd.is_empty() => {
                 return session.update(cx, |session, cx| {
                     session.respond_to_client(
                         seq,
@@ -574,8 +574,8 @@ impl DapStore {
                     )
                 });
             }
+            _ => (),
         }
-
         let mut args = request_args.args.clone();
 
         // Handle special case for NodeJS debug adapter
@@ -602,7 +602,19 @@ impl DapStore {
         }
 
         let (tx, mut rx) = mpsc::channel::<Result<u32>>(1);
-
+        let cwd = Some(cwd)
+            .filter(|cwd| cwd.as_os_str().len() > 0)
+            .map(Arc::from)
+            .or_else(|| {
+                self.session_by_id(session_id)
+                    .and_then(|session| {
+                        session
+                            .read(cx)
+                            .configuration()
+                            .and_then(|config| config.request.cwd())
+                    })
+                    .map(Arc::from)
+            });
         cx.emit(DapStoreEvent::RunInTerminal {
             session_id,
             title: request_args.title,
