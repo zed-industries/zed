@@ -1,6 +1,5 @@
 mod models;
 
-use std::alloc::System;
 use anyhow::{Context, Error, Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
@@ -19,11 +18,10 @@ pub use bedrock::types::{
     ToolResultContentBlock as BedrockToolResultContentBlock,
     ToolResultStatus as BedrockToolResultStatus, ToolUseBlock as BedrockToolUseBlock,
 };
-use futures::stream::{self, BoxStream, Stream};
+use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 pub use crate::models::*;
@@ -31,7 +29,6 @@ pub use crate::models::*;
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
-    handle: tokio::runtime::Handle,
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>, Error> {
     let mut response = bedrock::Client::converse_stream(&client)
         .model_id(request.model.clone())
@@ -61,23 +58,14 @@ pub async fn stream_completion(
     {
         response = response.set_tool_config(request.tools);
     }
-    // Send the request and create the stream
-    let output = handle
-        .spawn({
-            let sent = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
-            dbg!(format!("Request sent: {sent}"));
-            response.send()
-        })
-        .await?
-        .context("Failed to send API request to Bedrock");
+
+    let output = response.send().await.context("Failed to send API request to Bedrock");
 
     let stream = Box::pin(stream::unfold(
         output?.stream,
         move |mut stream| async move {
             match stream.recv().await {
                 Ok(Some(output)) => {
-                    let rcvd = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
-                    dbg!(format!("Received at: {rcvd}"));
                     Some((Ok(output), stream))
                 },
                 Ok(None) => None,

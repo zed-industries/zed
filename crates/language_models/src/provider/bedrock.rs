@@ -40,10 +40,8 @@ use smol::lock::OnceCell;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
-use tokio::runtime::Handle;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::{ResultExt, default};
 
@@ -480,23 +478,24 @@ impl BedrockModel {
     fn stream_completion(
         &self,
         request: bedrock::Request,
-        handle: tokio::runtime::Handle,
         cx: &AsyncApp,
-    ) -> Result<
-        BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
-    > {
-        let runtime_client = self
-            .get_or_init_client(cx)
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>> {
+        let Ok(runtime_client) = self
+            .get_or_init_client(&cx)
             .cloned()
-            .context("Bedrock client not initialized")?;
+            .context("Bedrock client not initialized")
+        else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
 
-        Ok(async move {
-            let request = bedrock::stream_completion(runtime_client, request, handle);
-            request.await.unwrap_or_else(|e| {
-                futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
-            })
+        match Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request)) {
+            Ok(res) => {
+                async {res.await.map_err(|err| anyhow!(err))?}.boxed()
+            }
+            Err(err) => {
+                futures::future::ready(Err(anyhow!(err))).boxed()
+            }
         }
-        .boxed())
     }
 }
 
@@ -577,11 +576,9 @@ impl LanguageModel for BedrockModel {
             Err(err) => return futures::future::ready(Err(err)).boxed(),
         };
 
-        let owned_handle = self.handler.clone();
-
-        let request = self.stream_completion(request, owned_handle.clone(), cx);
+        let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.map_err(|err| anyhow!(err))?.await;
+            let response = request.await.map_err(|e| anyhow!(e))?;
             Ok(map_to_language_model_completion_events(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -802,13 +799,6 @@ pub fn map_to_language_model_completion_events(
                     let result = match event {
                         ConverseStreamOutput::ContentBlockDelta(cb_delta) => match cb_delta.delta {
                             Some(ContentBlockDelta::Text(text)) => {
-                                let rcvd = SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)
-                                    .unwrap()
-                                    .as_millis();
-                                dbg!(format!(
-                                    "Converted Chunk: {rcvd}, {text}",
-                                ));
                                 Some(Ok(LanguageModelCompletionEvent::Text(text)))
                             }
                             Some(ContentBlockDelta::ToolUse(tool_output)) => {
