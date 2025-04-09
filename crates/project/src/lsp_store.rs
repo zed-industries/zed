@@ -3091,7 +3091,7 @@ impl LocalLspStore {
                                 .as_local()
                                 .map_or(false, |local| !local.buffers_being_formatted.is_empty())
                         });
-                        // finalizing last transaction breaks workspace edits recieved due to
+                        // finalizing last transaction breaks workspace edits received due to
                         // code actions that are run as part of formatting because formatting
                         // groups transactions from format steps together to allow undoing all formatting with
                         // a single undo, and to bail when the user modifies the buffer during formatting
