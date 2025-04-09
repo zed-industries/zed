@@ -100,9 +100,9 @@ pub enum CodeBlockRenderer {
 }
 
 pub type CodeBlockRenderFn =
-    Arc<dyn Fn(usize, &CodeBlockKind, &ParsedMarkdown, Range<usize>, &mut Window, &App) -> Div>;
+    Arc<dyn Fn(&CodeBlockKind, &ParsedMarkdown, Range<usize>, &mut Window, &App) -> Div>;
 
-pub type CodeBlockTransformFn = Arc<dyn Fn(usize, AnyDiv, &mut Window, &App) -> AnyDiv>;
+pub type CodeBlockTransformFn = Arc<dyn Fn(AnyDiv, Range<usize>, &mut Window, &App) -> AnyDiv>;
 
 actions!(markdown, [Copy, CopyAsMarkdown]);
 
@@ -603,7 +603,7 @@ impl Element for MarkdownElement {
             0
         };
 
-        for (_, (range, event)) in parsed_markdown.events.iter().enumerate() {
+        for (range, event) in parsed_markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
@@ -686,14 +686,8 @@ impl Element for MarkdownElement {
                                     builder.push_div(code_block, range, markdown_end);
                                 }
                                 (CodeBlockRenderer::Custom { render, .. }, _) => {
-                                    let parent_container = render(
-                                        range.start,
-                                        kind,
-                                        &parsed_markdown,
-                                        range.clone(),
-                                        window,
-                                        cx,
-                                    );
+                                    let parent_container =
+                                        render(kind, &parsed_markdown, range.clone(), window, cx);
 
                                     builder.push_div(parent_container, range, markdown_end);
 
@@ -863,7 +857,7 @@ impl Element for MarkdownElement {
                             ..
                         } = &self.code_block_renderer
                         {
-                            builder.modify_current_div(|el| modify(range.start, el, window, cx));
+                            builder.modify_current_div(|el| modify(el, range.clone(), window, cx));
                         }
 
                         if matches!(

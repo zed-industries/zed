@@ -298,7 +298,7 @@ fn render_markdown_code_block(
     codeblock_range: Range<usize>,
     active_thread: Entity<ActiveThread>,
     workspace: WeakEntity<Workspace>,
-    _window: &mut Window,
+    _window: &Window,
     cx: &App,
 ) -> Div {
     let label = match kind {
@@ -467,6 +467,12 @@ fn render_markdown_code_block(
         .element_background
         .blend(cx.theme().colors().editor_foreground.opacity(0.01));
 
+    let line_count = without_fences(&parsed_markdown.source()[codeblock_range.clone()])
+        .lines()
+        .count();
+
+    const MAX_COLLAPSED_LINES: usize = 5;
+
     let codeblock_header = h_flex()
         .group("codeblock_header")
         .p_1()
@@ -527,56 +533,55 @@ fn render_markdown_code_block(
                         }),
                     ),
                 )
-                .child(
-                    IconButton::new(
-                        ("expand-collapse-code", ix),
-                        if is_expanded {
-                            IconName::ChevronUp
+                .when(line_count > MAX_COLLAPSED_LINES, |header| {
+                    header.child(
+                        IconButton::new(
+                            ("expand-collapse-code", ix),
+                            if is_expanded {
+                                IconName::ChevronUp
+                            } else {
+                                IconName::ChevronDown
+                            },
+                        )
+                        .icon_color(Color::Muted)
+                        .shape(ui::IconButtonShape::Square)
+                        .tooltip(Tooltip::text(if is_expanded {
+                            "Collapse Code"
                         } else {
-                            IconName::ChevronDown
-                        },
+                            "Expand Code"
+                        }))
+                        .on_click({
+                            let active_thread = active_thread.clone();
+                            move |_event, _window, cx| {
+                                active_thread.update(cx, |this, cx| {
+                                    let is_expanded = this
+                                        .expanded_code_blocks
+                                        .entry((message_id, ix))
+                                        .or_insert(false);
+                                    *is_expanded = !*is_expanded;
+                                    cx.notify();
+                                });
+                            }
+                        }),
                     )
-                    .icon_color(Color::Muted)
-                    .shape(ui::IconButtonShape::Square)
-                    .tooltip(Tooltip::text(if is_expanded {
-                        "Collapse Code"
-                    } else {
-                        "Expand Code"
-                    }))
-                    .on_click({
-                        let active_thread = active_thread.clone();
-                        move |_event, _window, cx| {
-                            active_thread.update(cx, |this, cx| {
-                                let is_expanded = this
-                                    .expanded_code_blocks
-                                    .entry((message_id, ix))
-                                    .or_insert(false);
-                                *is_expanded = !*is_expanded;
-                                cx.notify();
-                            });
-                        }
-                    }),
-                ),
+                }),
         );
 
-    let code_block = v_flex()
+    v_flex()
         .my_2()
-        .relative()
         .overflow_hidden()
         .rounded_lg()
         .border_1()
         .border_color(cx.theme().colors().border_variant)
         .bg(cx.theme().colors().editor_background)
         .child(codeblock_header)
-        .map(|this| {
+        .when(line_count > MAX_COLLAPSED_LINES, |this| {
             if is_expanded {
                 this.h_full()
             } else {
                 this.max_h_40()
             }
-        });
-
-    code_block
+        })
 }
 
 fn open_markdown_link(
@@ -1896,10 +1901,10 @@ impl ActiveThread {
                                     render: Arc::new({
                                         let workspace = workspace.clone();
                                         let active_thread = cx.entity();
-                                        move |id, kind, parsed_markdown, range, window, cx| {
+                                        move |kind, parsed_markdown, range, window, cx| {
                                             render_markdown_code_block(
                                                 message_id,
-                                                id,
+                                                range.start,
                                                 kind,
                                                 parsed_markdown,
                                                 range,
@@ -1912,11 +1917,11 @@ impl ActiveThread {
                                     }),
                                     transform: Some(Arc::new({
                                         let active_thread = cx.entity();
-                                        move |id, el, _, cx| {
+                                        move |el, range, _, cx| {
                                             let is_expanded = active_thread
                                                 .read(cx)
                                                 .expanded_code_blocks
-                                                .get(&(message_id, id))
+                                                .get(&(message_id, range.start))
                                                 .copied()
                                                 .unwrap_or(false);
 
@@ -1929,8 +1934,7 @@ impl ActiveThread {
                                                     .bottom_0()
                                                     .left_0()
                                                     .w_full()
-                                                    .min_h_16()
-                                                    .h(relative(0.2))
+                                                    .h_1_4()
                                                     .rounded_b_lg()
                                                     .bg(gpui::linear_gradient(
                                                         0.,
