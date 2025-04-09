@@ -1262,8 +1262,18 @@ impl ActiveThread {
 
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
-        // let show_feedback = is_last_message && message.role != Role::User;
-        let show_feedback = message.role == Role::Assistant;
+
+        let show_feedback = (!is_generating && is_last_message && message.role != Role::User)
+            || self.messages.get(ix + 1).map_or(false, |next_id| {
+                self.thread
+                    .read(cx)
+                    .message(*next_id)
+                    .map_or(false, |next_message| {
+                        next_message.role == Role::User
+                            && thread.tool_uses_for_message(*next_id, cx).is_empty()
+                            && thread.tool_results_for_message(*next_id).is_empty()
+                    })
+            });
 
         let needs_confirmation = tool_uses.iter().any(|tool_use| tool_use.needs_confirmation);
 
@@ -1356,6 +1366,7 @@ impl ActiveThread {
                 )
                 .child(
                     h_flex()
+                        .pr_1()
                         .gap_1()
                         .child(
                             IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
@@ -1729,7 +1740,7 @@ impl ActiveThread {
                         .child(generating_label.unwrap()),
                 )
             })
-            .when(show_feedback && !is_generating, |parent| {
+            .when(show_feedback, |parent| {
                 let message_id_for_feedback = message_id;
                 let feedback_status = self
                     .thread
