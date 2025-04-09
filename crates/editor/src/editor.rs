@@ -6418,6 +6418,7 @@ impl Editor {
 
                         window.dispatch_action(Box::new(DebuggerRunToCursor), cx);
                     })
+                    .separator()
                 })
                 .when_some(toggle_state_msg, |this, msg| {
                     this.entry(msg, None, {
