@@ -1,5 +1,6 @@
 mod models;
 
+use std::alloc::System;
 use anyhow::{Context, Error, Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
@@ -22,6 +23,7 @@ use futures::stream::{self, BoxStream, Stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 pub use crate::models::*;
@@ -59,10 +61,13 @@ pub async fn stream_completion(
     {
         response = response.set_tool_config(request.tools);
     }
-
     // Send the request and create the stream
     let output = handle
-        .spawn(response.send())
+        .spawn({
+            let sent = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+            dbg!(format!("Request sent: {sent}"));
+            response.send()
+        })
         .await?
         .context("Failed to send API request to Bedrock");
 
@@ -70,7 +75,11 @@ pub async fn stream_completion(
         output?.stream,
         move |mut stream| async move {
             match stream.recv().await {
-                Ok(Some(output)) => Some((Ok(output), stream)),
+                Ok(Some(output)) => {
+                    let rcvd = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+                    dbg!(format!("Received at: {rcvd}"));
+                    Some((Ok(output), stream))
+                },
                 Ok(None) => None,
                 Err(err) => Some((
                     Err(BedrockError::ClientError(anyhow!(

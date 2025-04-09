@@ -802,12 +802,12 @@ pub fn map_to_language_model_completion_events(
                     let result = match event {
                         ConverseStreamOutput::ContentBlockDelta(cb_delta) => match cb_delta.delta {
                             Some(ContentBlockDelta::Text(text)) => {
+                                let rcvd = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis();
                                 dbg!(format!(
-                                    "Converted Chunk: {}, {text}",
-                                    SystemTime::now()
-                                        .duration_since(UNIX_EPOCH)
-                                        .unwrap()
-                                        .as_millis()
+                                    "Converted Chunk: {rcvd}, {text}",
                                 ));
                                 Some(Ok(LanguageModelCompletionEvent::Text(text)))
                             }
