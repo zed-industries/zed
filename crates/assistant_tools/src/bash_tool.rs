@@ -3,7 +3,7 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt, AsyncReadExt};
-use gpui::{App, Entity, Task};
+use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -123,89 +123,90 @@ impl Tool for BashTool {
             worktree.read(cx).abs_path()
         };
 
-        cx.spawn(async move |_| {
-            // Add 2>&1 to merge stderr into stdout for proper interleaving.
-            let command = format!("({}) 2>&1", input.command);
-
-            let mut cmd = new_smol_command("bash")
-                .arg("-c")
-                .arg(&command)
-                .current_dir(working_dir)
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-                .context("Failed to execute bash command")?;
-
-            // Capture stdout with a limit
-            let stdout = cmd.stdout.take().unwrap();
-            let mut reader = BufReader::new(stdout);
-
-            const LIMIT: usize = 8192;
-
-            // Read one more byte to determine whether the output was truncated
-            let mut buffer = vec![0; LIMIT + 1];
-            let mut bytes_read = 0;
-
-            // Read until we reach the limit
-            loop {
-                let read = reader.read(&mut buffer[bytes_read..]).await?;
-                if read == 0 {
-                    break;
-                }
-
-                bytes_read += read;
-                if bytes_read > LIMIT {
-                    bytes_read = LIMIT + 1;
-                    break;
-                }
-            }
-
-            // Repeatedly fill the output reader's buffer without copying it.
-            loop {
-                let skipped_bytes = reader.fill_buf().await?;
-                if skipped_bytes.is_empty() {
-                    break;
-                }
-                let skipped_bytes_len = skipped_bytes.len();
-                reader.consume_unpin(skipped_bytes_len);
-            }
-
-            let output_bytes = &buffer[..bytes_read];
-
-            // Let the process continue running
-            let status = cmd.status().await.context("Failed to get command status")?;
-
-            let output_string = if bytes_read > LIMIT {
-                // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
-                // multi-byte characters.
-                let last_line_ix = output_bytes.iter().rposition(|b| *b == b'\n');
-                let output_string = String::from_utf8_lossy(
-                    &output_bytes[..last_line_ix.unwrap_or(output_bytes.len())],
-                );
-
-                format!(
-                    "Command output too long. The first {} bytes:\n\n```\n{}\n```",
-                    output_string.len(),
-                    output_string
-                )
-            } else {
-                format!("```\n{}\n```", String::from_utf8_lossy(&output_bytes))
-            };
-
-            let output_with_status = if status.success() {
-                if output_string.is_empty() {
-                    "Command executed successfully.".to_string()
-                } else {
-                    output_string.to_string()
-                }
-            } else {
-                format!(
-                    "Command failed with exit code {}\n\n{}",
-                    status.code().unwrap_or(-1),
-                    output_string,
-                )
-            };
-
-            Ok(output_with_status)
-        })
+        cx.background_spawn(run_command_limited(working_dir, input.command))
     }
+}
+
+async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
+    // Add 2>&1 to merge stderr into stdout for proper interleaving.
+    let command = format!("({}) 2>&1", command);
+
+    let mut cmd = new_smol_command("bash")
+        .arg("-c")
+        .arg(&command)
+        .current_dir(working_dir)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .context("Failed to execute bash command")?;
+
+    // Capture stdout with a limit
+    let stdout = cmd.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    const LIMIT: usize = 8192;
+
+    // Read one more byte to determine whether the output was truncated
+    let mut buffer = vec![0; LIMIT + 1];
+    let mut bytes_read = 0;
+
+    // Read until we reach the limit
+    loop {
+        let read = reader.read(&mut buffer[bytes_read..]).await?;
+        if read == 0 {
+            break;
+        }
+
+        bytes_read += read;
+        if bytes_read > LIMIT {
+            bytes_read = LIMIT + 1;
+            break;
+        }
+    }
+
+    // Repeatedly fill the output reader's buffer without copying it.
+    loop {
+        let skipped_bytes = reader.fill_buf().await?;
+        if skipped_bytes.is_empty() {
+            break;
+        }
+        let skipped_bytes_len = skipped_bytes.len();
+        reader.consume_unpin(skipped_bytes_len);
+    }
+
+    let output_bytes = &buffer[..bytes_read];
+
+    // Let the process continue running
+    let status = cmd.status().await.context("Failed to get command status")?;
+
+    let output_string = if bytes_read > LIMIT {
+        // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
+        // multi-byte characters.
+        let last_line_ix = output_bytes.iter().rposition(|b| *b == b'\n');
+        let output_string =
+            String::from_utf8_lossy(&output_bytes[..last_line_ix.unwrap_or(output_bytes.len())]);
+
+        format!(
+            "Command output too long. The first {} bytes:\n\n```\n{}\n```",
+            output_string.len(),
+            output_string
+        )
+    } else {
+        format!("```\n{}\n```", String::from_utf8_lossy(&output_bytes))
+    };
+
+    let output_with_status = if status.success() {
+        if output_string.is_empty() {
+            "Command executed successfully.".to_string()
+        } else {
+            output_string.to_string()
+        }
+    } else {
+        format!(
+            "Command failed with exit code {}\n\n{}",
+            status.code().unwrap_or(-1),
+            output_string,
+        )
+    };
+
+    Ok(output_with_status)
 }
