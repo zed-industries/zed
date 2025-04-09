@@ -6,7 +6,7 @@ use std::sync::Arc;
 use agent_rules::load_worktree_rules_file;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
-use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, Tool, ToolResult, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
@@ -1433,8 +1433,11 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
-            Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
+        let tool_result = if self.tools.is_disabled(&tool.source(), &tool_name) {
+            ToolResult {
+                output: Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))),
+                card: None,
+            }
         } else {
             tool.run(
                 input,
@@ -1447,7 +1450,7 @@ impl Thread {
 
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
-                let output = run_tool.await;
+                let output = tool_result.output.await;
 
                 thread
                     .update(cx, |thread, cx| {
