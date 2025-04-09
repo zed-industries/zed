@@ -4434,6 +4434,16 @@ impl BackgroundScanner {
         )
         .await;
 
+        let new_ancestor_repo = if relative_paths
+            .iter()
+            .any(|path| path.as_ref() == Path::new(""))
+        {
+            let (ignores, repo) = discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
+            repo
+        } else {
+            None
+        };
+
         let mut state = self.state.lock();
         let doing_recursive_update = scan_queue_tx.is_some();
 
@@ -4485,6 +4495,19 @@ impl BackgroundScanner {
                     }
 
                     state.insert_entry(fs_entry.clone(), self.fs.as_ref(), self.watcher.as_ref());
+
+                    if path.as_ref() == Path::new("") {
+                        if let Some((ancestor_dot_git, work_directory)) = new_ancestor_repo.as_ref()
+                        {
+                            log::trace!("updating ancestor git repository");
+                            state.insert_git_repository_for_path(
+                                work_directory.clone(),
+                                ancestor_dot_git.as_path().into(),
+                                self.fs.as_ref(),
+                                self.watcher.as_ref(),
+                            );
+                        }
+                    }
                 }
                 Ok(None) => {
                     self.remove_repo_path(path, &mut state.snapshot);

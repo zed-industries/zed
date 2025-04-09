@@ -2025,6 +2025,7 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
 
+    eprintln!(">>>>>>>>>> touch");
     fs.touch_path(path!("/root/subproject")).await;
     worktree
         .update(cx, |worktree, _| {
