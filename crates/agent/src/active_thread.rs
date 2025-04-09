@@ -21,7 +21,9 @@ use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
-use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role};
+use language_model::{
+    ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role, StringToolOutput, ToolOutput,
+};
 use markdown::parser::CodeBlockKind;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown, without_fences};
 use project::ProjectItem as _;
@@ -75,6 +77,7 @@ struct RenderedToolUse {
     label: Entity<Markdown>,
     input: Entity<Markdown>,
     output: Entity<Markdown>,
+    tool_output: ToolOutput,
 }
 
 impl RenderedMessage {
@@ -743,7 +746,8 @@ impl ActiveThread {
                 self.language_registry.clone(),
                 cx,
             ),
-            output: render_tool_use_markdown(tool_output, self.language_registry.clone(), cx),
+            output: render_tool_use_markdown(tool_output.clone(), self.language_registry.clone(), cx),
+            tool_output: StringToolOutput::new(tool_output),
         };
         self.rendered_tool_uses
             .insert(tool_use_id.clone(), rendered);
@@ -2101,7 +2105,7 @@ impl ActiveThread {
 
                                 if let Some(_tool) = tool_registry.tool(&tool_name) {
                                     // Tool doesn't have a render method, but ToolOutput does
-                                    match None {
+                                    match rendered.tool_output.render(window, cx) {
                                         Some(rendered) => rendered,
                                         None => {
                                             // Default to rendering the output as markdown
