@@ -2581,7 +2581,7 @@ impl ActiveThread {
         let label_text = match rules_files.as_slice() {
             &[] => return div().into_any(),
             &[rules_file] => {
-                format!("Using {:?} file", rules_file.rel_path)
+                format!("Using {:?} file", rules_file.path_in_worktree)
             }
             rules_files => {
                 format!("Using {} rules files", rules_files.len())

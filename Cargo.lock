@@ -52,6 +52,7 @@ dependencies = [
 name = "agent"
 version = "0.1.0"
 dependencies = [
+ "agent_rules",
  "anyhow",
  "assistant_context_editor",
  "assistant_settings",
@@ -159,6 +160,19 @@ dependencies = [
  "util",
  "walkdir",
  "workspace-hack",
+]
+
+[[package]]
+name = "agent_rules"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "gpui",
+ "indoc",
+ "prompt_store",
+ "util",
+ "worktree",
 ]
 
 [[package]]
