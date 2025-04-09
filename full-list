@@ -101,6 +101,7 @@ editor.quickSuggestions
 editor.quickSuggestionsDelay
 
 
+if we merge minimap soon...
 editor.minimap.enabled
 editor.minimap.showSlider
 editor.minimap.size

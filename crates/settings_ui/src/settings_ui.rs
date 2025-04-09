@@ -18,7 +18,7 @@ impl FeatureFlag for SettingsUiFeatureFlag {
     const NAME: &'static str = "settings-ui";
 }
 
-actions!(zed, [OpenSettingsEditor]);
+actions!(zed, [OpenSettingsEditor, ImportVSCodeSettings]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
