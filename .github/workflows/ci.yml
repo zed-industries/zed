@@ -464,6 +464,7 @@ jobs:
     needs:
       - job_spec
       - style
+      # run_tests: If adding required tests, you must add them to the shell script below too.
       - migration_checks
       - workspace_hack
       - linux_tests
@@ -482,6 +483,8 @@ jobs:
 
           # Only check test jobs if they were supposed to run
           if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
+            [[ "${{ needs.migration_checks.result }}"     != 'success' ]] && { RET_CODE=1; echo "Migration Checks failed"; }
+            [[ "${{ needs.workspace_hack.result }}"       != 'success' ]] && { RET_CODE=1; echo "Workspace Hack failed"; }
             [[ "${{ needs.macos_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "macOS tests failed"; }
             [[ "${{ needs.linux_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "Linux tests failed"; }
             [[ "${{ needs.windows_tests.result }}"        != 'success' ]] && { RET_CODE=1; echo "Windows tests failed"; }
