@@ -672,6 +672,7 @@
           "path_search": true,
           "read_file": true,
           "regex_search": true,
+          "rename": true,
           "symbol_info": true,
           "thinking": true
         }

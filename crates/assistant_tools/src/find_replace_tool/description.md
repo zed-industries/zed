@@ -1,8 +1,6 @@
 Find one unique part of a file in the project and replace that text with new text.
 
-This tool is the preferred way to make edits to files, *unless* those edits could be done by a code action. For example, you must always use a code action (if available) to rename something, to add missing imports, or to remove unused imports, instead of using this tool. You should only use this tool for one of those purposes if you already tried and failed to use a code action tool to accomplish those tasks. If you are renaming, adding missing imports, removing unused imports, or doing anything else that a code action tool could have done, and you have not already tried and failed to use a code action tool for that instead (assuming one was available), then you have made a mistake. Always prefer code action tools over this tool when both are available. The same rule applies to all other code actions that are available to you.
-
-To be extremely direct about this, you must not use this for renaming if there is a code action available. If your task involves renaming something, do not use this tool unless you have already tried and failed to use another tool for that purpose.
+This tool is the preferred way to make edits to files *except* when making a rename. When making a rename specifically, the rename tool must always be used instead.
 
 If you have multiple edits to make, including edits across multiple files, then make a plan to respond with a single message containing a batch of calls to this tool - one call for each find/replace operation.
 

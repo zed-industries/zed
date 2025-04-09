@@ -16,6 +16,7 @@ mod open_tool;
 mod path_search_tool;
 mod read_file_tool;
 mod regex_search_tool;
+mod rename_tool;
 mod replace;
 mod schema;
 mod symbol_info_tool;
@@ -45,6 +46,7 @@ use crate::open_tool::OpenTool;
 use crate::path_search_tool::PathSearchTool;
 use crate::read_file_tool::ReadFileTool;
 use crate::regex_search_tool::RegexSearchTool;
+use crate::rename_tool::RenameTool;
 use crate::symbol_info_tool::SymbolInfoTool;
 use crate::thinking_tool::ThinkingTool;
 
@@ -70,6 +72,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(PathSearchTool);
     registry.register_tool(ReadFileTool);
     registry.register_tool(RegexSearchTool);
+    registry.register_tool(RenameTool);
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
 }
