@@ -113,7 +113,9 @@ pub fn init(cx: &mut App) {
                                 .active_session()
                                 .and_then(|session| session.read(cx).mode().as_running().cloned())
                         }) {
-                            active_item.update(cx, |item, cx| item.stop_thread(cx))
+                            cx.defer(move |cx| {
+                                active_item.update(cx, |item, cx| item.stop_thread(cx))
+                            })
                         }
                     }
                 })
