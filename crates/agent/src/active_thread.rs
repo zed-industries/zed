@@ -856,8 +856,8 @@ impl ActiveThread {
                         &tool_use.input,
                         self.thread
                             .read(cx)
-                            .tool_result(&tool_use.id)
-                            .map(|result| result.content.clone().into())
+                            .output_for_tool(&tool_use.id)
+                            .map(|output| output.clone().into())
                             .unwrap_or("".into()),
                         cx,
                     );
@@ -2166,18 +2166,23 @@ impl ActiveThread {
                                 .buffer_font(cx),
                         )
                         .child(div().w_full().text_ui_sm(cx).children(
-                            rendered_tool_use.as_ref().map(|rendered| {
-                                MarkdownElement::new(
-                                    rendered.output.clone(),
-                                    tool_use_markdown_style(window, cx),
-                                )
-                                .on_url_click({
-                                    let workspace = self.workspace.clone();
-                                    move |text, window, cx| {
-                                        open_markdown_link(text, workspace.clone(), window, cx);
-                                    }
+                            if let Some(card) = self.thread.read(cx).card_for_tool(&tool_use.id) {
+                                Some(card.clone().into_any_element())
+                            } else {
+                                rendered_tool_use.as_ref().map(|rendered| {
+                                    MarkdownElement::new(
+                                        rendered.output.clone(),
+                                        tool_use_markdown_style(window, cx),
+                                    )
+                                    .on_url_click({
+                                        let workspace = self.workspace.clone();
+                                        move |text, window, cx| {
+                                            open_markdown_link(text, workspace.clone(), window, cx);
+                                        }
+                                    })
+                                    .into_any_element()
                                 })
-                            }),
+                            },
                         )),
                 ),
                 ToolUseStatus::Running => container.child(
@@ -2219,10 +2224,11 @@ impl ActiveThread {
                                 .color(Color::Muted)
                                 .buffer_font(cx),
                         )
-                        .child(
-                            div()
-                                .text_ui_sm(cx)
-                                .children(rendered_tool_use.as_ref().map(|rendered| {
+                        .child(div().text_ui_sm(cx).children(
+                            if let Some(card) = self.thread.read(cx).card_for_tool(&tool_use.id) {
+                                Some(card.clone().into_any_element())
+                            } else {
+                                rendered_tool_use.as_ref().map(|rendered| {
                                     MarkdownElement::new(
                                         rendered.output.clone(),
                                         tool_use_markdown_style(window, cx),
@@ -2233,8 +2239,10 @@ impl ActiveThread {
                                             open_markdown_link(text, workspace.clone(), window, cx);
                                         }
                                     })
-                                })),
-                        ),
+                                    .into_any_element()
+                                })
+                            },
+                        )),
                 ),
                 ToolUseStatus::Pending => container,
                 ToolUseStatus::NeedsConfirmation => container.child(

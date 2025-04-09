@@ -149,7 +149,7 @@ impl HeadlessAssistant {
                         .entry(pending_tool_use.name.clone())
                         .or_insert(0) += 1;
                 }
-                if let Some(tool_result) = thread.read(cx).tool_result(tool_use_id) {
+                if let Some(tool_result) = thread.read(cx).output_for_tool(tool_use_id) {
                     println!("Tool result: {:?}", tool_result);
                 }
                 if thread.read(cx).all_tools_finished() {

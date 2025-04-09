@@ -601,8 +601,12 @@ impl Thread {
         self.tool_use.tool_results_for_message(id)
     }
 
-    pub fn tool_result(&self, id: &LanguageModelToolUseId) -> Option<&LanguageModelToolResult> {
-        self.tool_use.tool_result(id)
+    pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {
+        Some(&self.tool_use.tool_result(id)?.content)
+    }
+
+    pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&gpui::AnyView> {
+        self.tool_use.tool_result_card(id)
     }
 
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
@@ -1447,6 +1451,12 @@ impl Thread {
                 cx,
             )
         };
+
+        // Store the card separately if it exists
+        if let Some(card) = tool_result.card.clone() {
+            self.tool_use
+                .insert_tool_result_card(tool_use_id.clone(), card);
+        }
 
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
