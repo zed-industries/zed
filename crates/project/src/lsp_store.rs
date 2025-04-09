@@ -1768,6 +1768,11 @@ impl LocalLspStore {
                                 })?;
                             }
                             if let Some(command) = action.lsp_action.command() {
+                                zlog::warn!(
+                                    logger =>
+                                    "Executing code action command '{}'. This may cause formatting to abort unnecessarily as well as splitting formatting into two entries in the undo history",
+                                    &command.command,
+                                );
                                 // bail early and command is invalid
                                 {
                                     let server_capabilities = server.capabilities();
@@ -1786,6 +1791,18 @@ impl LocalLspStore {
                                         continue 'actions;
                                     }
                                 }
+
+                                if let Some(err) = err_if_buffer_edited_since_start(
+                                    buffer,
+                                    transaction_id_format,
+                                    &cx,
+                                ) {
+                                    zlog::warn!(logger => "Buffer edited while formatting. Aborting");
+                                    result = Err(err);
+                                    break 'formatters;
+                                }
+                                zlog::info!(logger => "Executing command {}", &command.command);
+
                                 lsp_store.update(cx, |this, _| {
                                     this.as_local_mut()
                                         .unwrap()
@@ -1828,6 +1845,12 @@ impl LocalLspStore {
                                 if let Some(transaction) =
                                     project_transaction_command.0.remove(&buffer.handle)
                                 {
+                                    zlog::trace!(
+                                        logger =>
+                                        "Successfully captured {} edits that resulted from command {}",
+                                        transaction.edit_ids.len(),
+                                        &command.command,
+                                    );
                                     if let Some(transaction_id_format) = transaction_id_format {
                                         let transaction_id_project_transaction = transaction.id;
                                         buffer.handle.update(cx, |buffer, _| {
