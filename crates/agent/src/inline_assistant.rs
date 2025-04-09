@@ -262,13 +262,7 @@ impl InlineAssistant {
                 }
                 InlineAssistTarget::Terminal(active_terminal) => {
                     TerminalInlineAssistant::update_global(cx, |assistant, cx| {
-                        assistant.assist(
-                            &active_terminal,
-                            cx.entity().downgrade(),
-                            thread_store,
-                            window,
-                            cx,
-                        )
+                        assistant.assist(&active_terminal, cx.entity(), thread_store, window, cx)
                     })
                 }
             };
@@ -322,6 +316,13 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let Some(project) = workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().downgrade())
+        else {
+            return;
+        };
+
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
             (
                 editor.snapshot(window, cx),
@@ -425,7 +426,7 @@ impl InlineAssistant {
         for range in codegen_ranges {
             let assist_id = self.next_assist_id.post_inc();
             let context_store =
-                cx.new(|_cx| ContextStore::new(workspace.clone(), thread_store.clone()));
+                cx.new(|_cx| ContextStore::new(project.clone(), thread_store.clone()));
             let codegen = cx.new(|cx| {
                 BufferCodegen::new(
                     editor.read(cx).buffer().clone(),
@@ -519,7 +520,7 @@ impl InlineAssistant {
         initial_prompt: String,
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
-        workspace: WeakEntity<Workspace>,
+        workspace: Entity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
         cx: &mut App,
@@ -537,8 +538,8 @@ impl InlineAssistant {
             range.end = range.end.bias_right(&snapshot);
         }
 
-        let context_store =
-            cx.new(|_cx| ContextStore::new(workspace.clone(), thread_store.clone()));
+        let project = workspace.read(cx).project().downgrade();
+        let context_store = cx.new(|_cx| ContextStore::new(project, thread_store.clone()));
 
         let codegen = cx.new(|cx| {
             BufferCodegen::new(
@@ -562,7 +563,7 @@ impl InlineAssistant {
                 codegen.clone(),
                 self.fs.clone(),
                 context_store,
-                workspace.clone(),
+                workspace.downgrade(),
                 thread_store,
                 window,
                 cx,
@@ -589,7 +590,7 @@ impl InlineAssistant {
                 end_block_id,
                 range,
                 codegen.clone(),
-                workspace.clone(),
+                workspace.downgrade(),
                 window,
                 cx,
             ),
@@ -1779,6 +1780,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         let workspace = self.workspace.clone();
         let thread_store = self.thread_store.clone();
         window.spawn(cx, async move |cx| {
+            let workspace = workspace.upgrade().context("workspace was released")?;
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
                 .update(cx, |editor, cx| {
