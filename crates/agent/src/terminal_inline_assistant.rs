@@ -66,7 +66,7 @@ impl TerminalInlineAssistant {
     pub fn assist(
         &mut self,
         terminal_view: &Entity<TerminalView>,
-        workspace: WeakEntity<Workspace>,
+        workspace: Entity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
         cx: &mut App,
@@ -75,8 +75,8 @@ impl TerminalInlineAssistant {
         let assist_id = self.next_assist_id.post_inc();
         let prompt_buffer =
             cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
-        let context_store =
-            cx.new(|_cx| ContextStore::new(workspace.clone(), thread_store.clone()));
+        let project = workspace.read(cx).project().downgrade();
+        let context_store = cx.new(|_cx| ContextStore::new(project, thread_store.clone()));
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new(|cx| {
@@ -87,7 +87,7 @@ impl TerminalInlineAssistant {
                 codegen,
                 self.fs.clone(),
                 context_store.clone(),
-                workspace.clone(),
+                workspace.downgrade(),
                 thread_store.clone(),
                 window,
                 cx,
@@ -106,7 +106,7 @@ impl TerminalInlineAssistant {
             assist_id,
             terminal_view,
             prompt_editor,
-            workspace.clone(),
+            workspace.downgrade(),
             context_store,
             window,
             cx,
