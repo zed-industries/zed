@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language::{self, Anchor, Buffer, ToPointUtf16};
@@ -80,7 +80,7 @@ pub struct CodeActionTool;
 
 impl Tool for CodeActionTool {
     fn name(&self) -> String {
-        "code-action".into()
+        "code_actions".into()
     }
 
     fn needs_confirmation(&self) -> bool {
