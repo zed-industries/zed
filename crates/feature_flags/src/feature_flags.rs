@@ -95,6 +95,11 @@ impl FeatureFlag for Debugger {
     const NAME: &'static str = "debugger";
 }
 
+pub struct ThreadAutoCapture {}
+impl FeatureFlag for ThreadAutoCapture {
+    const NAME: &'static str = "thread-auto-capture";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where

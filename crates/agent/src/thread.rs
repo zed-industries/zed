@@ -30,7 +30,7 @@ use settings::Settings;
 use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
 use uuid::Uuid;
 
-use crate::auto_capture::AutoCaptureConfig;
+// No import needed here anymore
 use crate::context::{AssistantContext, ContextId, format_context_as_string};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
@@ -1817,40 +1817,68 @@ impl Thread {
             return;
         }
 
-        let project = self.project.read(cx);
-
-        if let Some(current_user) = project.user_store().read(cx).current_user() {
-            let github_handle = &current_user.github_login;
-
-            let auto_capture_config = AutoCaptureConfig::get();
-            if !auto_capture_config.should_track(github_handle) {
+        // Check if this thread should be auto-captured for telemetry
+        if cfg!(debug_assertions) {
+            // In development, check env var for auto capture
+            if std::env::var("ZED_ENABLE_THREAD_AUTO_CAPTURE").is_ok() {
+                // Continue with auto capture
+            } else {
                 return;
             }
+        } else {
+            // In production, only capture for specific handles
+            let should_capture = self
+                .project
+                .read(cx)
+                .user_store()
+                .read(cx)
+                .current_user()
+                .map_or(false, |user| {
+                    static TRACKED_HANDLES: &[&str] = &["tmickleydoyle"];
+                    TRACKED_HANDLES.contains(&user.github_login.as_str())
+                });
 
-            let thread_id = self.id().clone();
-            let client = project.client().clone();
-            let serialized_thread = self.serialize(cx);
-            let github_handle_clone = github_handle.clone();
-
-            cx.foreground_executor()
-                .spawn(async move {
-                    if let Ok(serialized_thread) = serialized_thread.await {
-                        let thread_data = serde_json::to_value(serialized_thread)
-                            .unwrap_or_else(|_| serde_json::Value::Null);
-
-                        telemetry::event!(
-                            "Assistant Thread AutoCapture",
-                            thread_id = thread_id.to_string(),
-                            thread_data = thread_data,
-                            auto_capture_reason = "tracked_user",
-                            github_handle = github_handle_clone
-                        );
-
-                        client.telemetry().flush_events();
-                    }
-                })
-                .detach();
+            if !should_capture {
+                return;
+            }
         }
+
+        let thread_id = self.id().clone();
+
+        // Get GitHub handle for logging purposes if available
+        let github_handle = self
+            .project
+            .read(cx)
+            .user_store()
+            .read(cx)
+            .current_user()
+            .map(|user| user.github_login.clone());
+
+        // We need to separate the immutable borrows from the mutable borrow needed for serialization
+        let client = self.project.read(cx).client().clone();
+
+        // Now that we've gathered everything using immutable borrows, we can serialize the thread
+        let serialized_thread = self.serialize(cx);
+
+        // Spawn a task to handle the telemetry event
+        cx.foreground_executor()
+            .spawn(async move {
+                if let Ok(serialized_thread) = serialized_thread.await {
+                    let thread_data = serde_json::to_value(serialized_thread)
+                        .unwrap_or_else(|_| serde_json::Value::Null);
+
+                    telemetry::event!(
+                        "Assistant Thread AutoCapture",
+                        thread_id = thread_id.to_string(),
+                        thread_data = thread_data,
+                        auto_capture_reason = "tracked_user",
+                        github_handle = github_handle
+                    );
+
+                    client.telemetry().flush_events();
+                }
+            })
+            .detach();
     }
 
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
