@@ -112,20 +112,6 @@ pub struct ToggleComments {
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct FoldAt {
-    #[serde(skip)]
-    pub buffer_row: MultiBufferRow,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct UnfoldAt {
-    #[serde(skip)]
-    pub buffer_row: MultiBufferRow,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct MoveUpByLines {
     #[serde(default)]
     pub(super) lines: u32,
@@ -226,7 +212,6 @@ impl_actions!(
         ExpandExcerpts,
         ExpandExcerptsDown,
         ExpandExcerptsUp,
-        FoldAt,
         HandleInput,
         MoveDownByLines,
         MovePageDown,
@@ -244,7 +229,6 @@ impl_actions!(
         ShowCompletions,
         ToggleCodeActions,
         ToggleComments,
-        UnfoldAt,
         FoldAtLevel,
     ]
 );
