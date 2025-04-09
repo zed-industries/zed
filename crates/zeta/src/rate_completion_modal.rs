@@ -498,10 +498,12 @@ impl RateCompletionModal {
                                             cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.thumbs_down_active(
-                                                &ThumbsDownActiveCompletion,
-                                                window, cx,
-                                            );
+                                            if this.active_completion.is_some() {
+                                                this.thumbs_down_active(
+                                                    &ThumbsDownActiveCompletion,
+                                                    window, cx,
+                                                );
+                                            }
                                         })),
                                 )
                                 .child(
@@ -517,7 +519,9 @@ impl RateCompletionModal {
                                             cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
+                                            if this.active_completion.is_some() {
+                                                this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
+                                            }
                                         })),
                                 ),
                         ),
