@@ -1343,8 +1343,8 @@ impl ActiveThread {
         let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
         let feedback_container = h_flex().py_2().px_4().gap_1().justify_between();
-        dbg!(ix);
-        let feedback_items = match dbg!(self.thread.read(cx).message_feedback(message_id)) {
+
+        let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
                 .child(
                     Label::new(match feedback {
