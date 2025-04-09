@@ -1298,22 +1298,26 @@ impl LocalLspStore {
         // so we check that the last transaction id on the undo stack matches the one we expect
         // This check should be done after each "gather" step where we generate a diff or edits to apply,
         // and before applying them to the buffer to avoid messing up the user's buffer
-        fn err_if_buffer_edited_since_start(
+        fn extend_formatting_transaction(
             buffer: &FormattableBuffer,
             formatting_transaction_id: text::TransactionId,
-            cx: &AsyncApp,
+            cx: &mut AsyncApp,
+            operation: impl FnOnce(&mut Buffer, &mut Context<Buffer>),
         ) -> anyhow::Result<()> {
-            let last_transaction_id = buffer
-                .handle
-                .read_with(cx, |buffer, _| {
-                    buffer.peek_undo_stack().map(|t| t.transaction_id())
-                })
-                .ok()
-                .flatten();
-            if last_transaction_id != Some(formatting_transaction_id) {
-                anyhow::bail!("Buffer edited while formatting. Aborting")
-            }
-            Ok(())
+            buffer.handle.update(cx, |buffer, cx| {
+                let last_transaction_id = buffer.peek_undo_stack().map(|t| t.transaction_id());
+                if last_transaction_id != Some(formatting_transaction_id) {
+                    anyhow::bail!("Buffer edited while formatting. Aborting")
+                }
+
+                buffer.start_transaction();
+
+                operation(buffer, cx);
+                if let Some(transaction_id) = buffer.end_transaction(cx) {
+                    buffer.merge_transactions(transaction_id, formatting_transaction_id);
+                }
+                Ok(())
+            })?
         }
 
         // handle whitespace formatting
@@ -1325,19 +1329,15 @@ impl LocalLspStore {
                 .read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))?
                 .await;
 
-            err_if_buffer_edited_since_start(buffer, formatting_transaction_id, &cx)?;
-
-            buffer.handle.update(cx, |buffer, cx| {
+            extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.apply_diff(diff, cx);
-                buffer.group_until_transaction(formatting_transaction_id);
             })?;
         }
 
         if settings.ensure_final_newline_on_save {
             zlog::trace!(logger => "ensuring final newline");
-            buffer.handle.update(cx, |buffer, cx| {
+            extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.ensure_final_newline(cx);
-                buffer.group_until_transaction(formatting_transaction_id);
             })?;
         }
 
@@ -1399,13 +1399,15 @@ impl LocalLspStore {
                         zlog::trace!(logger => "No changes");
                         continue 'formatters;
                     };
-                    err_if_buffer_edited_since_start(buffer, formatting_transaction_id, &cx)?;
 
-                    zlog::trace!(logger => "Applying changes");
-                    buffer.handle.update(cx, |buffer, cx| {
-                        buffer.apply_diff(diff, cx);
-                        buffer.group_until_transaction(formatting_transaction_id);
-                    })?;
+                    extend_formatting_transaction(
+                        buffer,
+                        formatting_transaction_id,
+                        cx,
+                        |buffer, cx| {
+                            buffer.apply_diff(diff, cx);
+                        },
+                    )?;
                 }
                 Formatter::External { command, arguments } => {
                     let logger = zlog::scoped!(logger => "command");
@@ -1426,14 +1428,15 @@ impl LocalLspStore {
                         zlog::trace!(logger => "No changes");
                         continue 'formatters;
                     };
-                    err_if_buffer_edited_since_start(buffer, formatting_transaction_id, &cx)?;
 
-                    zlog::trace!(logger => "Applying changes");
-
-                    buffer.handle.update(cx, |buffer, cx| {
-                        buffer.apply_diff(diff, cx);
-                        buffer.group_until_transaction(formatting_transaction_id);
-                    })?;
+                    extend_formatting_transaction(
+                        buffer,
+                        formatting_transaction_id,
+                        cx,
+                        |buffer, cx| {
+                            buffer.apply_diff(diff, cx);
+                        },
+                    )?;
                 }
                 Formatter::LanguageServer { name } => {
                     let logger = zlog::scoped!(logger => "language-server");
@@ -1503,12 +1506,14 @@ impl LocalLspStore {
                         zlog::trace!(logger => "No changes");
                         continue 'formatters;
                     }
-                    err_if_buffer_edited_since_start(buffer, formatting_transaction_id, &cx)?;
-                    zlog::trace!(logger => "Applying changes");
-                    buffer.handle.update(cx, |buffer, cx| {
-                        buffer.edit(edits, None, cx);
-                        buffer.group_until_transaction(formatting_transaction_id);
-                    })?;
+                    extend_formatting_transaction(
+                        buffer,
+                        formatting_transaction_id,
+                        cx,
+                        |buffer, cx| {
+                            buffer.edit(edits, None, cx);
+                        },
+                    )?;
                 }
                 Formatter::CodeActions(code_actions) => {
                     let logger = zlog::scoped!(logger => "code-actions");
@@ -1733,17 +1738,16 @@ impl LocalLspStore {
                                 continue 'actions;
                             }
 
-                            err_if_buffer_edited_since_start(
+                            extend_formatting_transaction(
                                 buffer,
                                 formatting_transaction_id,
-                                &cx,
+                                cx,
+                                |buffer, cx| {
+                                    buffer.edit(edits, None, cx);
+                                },
                             )?;
-                            zlog::info!(logger => "Applying changes");
-                            buffer.handle.update(cx, |buffer, cx| {
-                                buffer.edit(edits, None, cx);
-                                buffer.group_until_transaction(formatting_transaction_id);
-                            })?;
                         }
+
                         if let Some(command) = action.lsp_action.command() {
                             zlog::warn!(
                                 logger =>
@@ -1769,10 +1773,12 @@ impl LocalLspStore {
                                 }
                             }
 
-                            err_if_buffer_edited_since_start(
+                            // noop so we just ensure buffer hasn't been edited since resolving code actions
+                            extend_formatting_transaction(
                                 buffer,
                                 formatting_transaction_id,
-                                &cx,
+                                cx,
+                                |_, _| {},
                             )?;
                             zlog::info!(logger => "Executing command {}", &command.command);
 
