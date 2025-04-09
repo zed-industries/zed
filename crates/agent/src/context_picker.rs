@@ -451,6 +451,15 @@ fn supported_context_picker_modes(
     modes
 }
 
+pub fn active_singleton_buffer_path(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+    let active_item = workspace.active_item(cx)?;
+
+    let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
+    let buffer = editor.buffer().read(cx).as_singleton()?;
+
+    let path = buffer.read(cx).file()?.path().to_path_buf();
+    Some(path)
+}
 fn recent_context_picker_entries(
     context_store: Entity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,

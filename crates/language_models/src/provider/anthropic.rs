@@ -548,15 +548,22 @@ pub fn into_anthropic(
         }
     }
 
+    // Create a StringOrContents value explicitly
+    let system_value = if !system_message.is_empty() {
+        Some({
+            // Use String variant directly with a qualified path for clarity
+            let string_variant = anthropic::StringOrContents::String(system_message);
+            string_variant
+        })
+    } else {
+        None
+    };
+    
     anthropic::Request {
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
-        system: if system_message.is_empty() {
-            None
-        } else {
-            Some(anthropic::StringOrContents::String(system_message))
-        },
+        system: system_value,
         thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
             Some(anthropic::Thinking::Enabled { budget_tokens })
         } else {

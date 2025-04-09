@@ -107,6 +107,7 @@ impl ThreadStore {
                 self.project.clone(),
                 self.tools.clone(),
                 self.prompt_builder.clone(),
+                None,
                 cx,
             )
         })
@@ -134,6 +135,7 @@ impl ThreadStore {
                         this.project.clone(),
                         this.tools.clone(),
                         this.prompt_builder.clone(),
+                        None,
                         cx,
                     )
                 })

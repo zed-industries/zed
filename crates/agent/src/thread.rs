@@ -21,6 +21,7 @@ use language_model::{
 };
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use project::{Project, Worktree};
+use workspace::Workspace;
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
 };
@@ -31,6 +32,7 @@ use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
 use uuid::Uuid;
 
 use crate::context::{AssistantContext, ContextId, format_context_as_string};
+use crate::context_picker::active_singleton_buffer_path;
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse,
@@ -261,6 +263,7 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
+    workspace: Option<WeakEntity<Workspace>>,
 }
 
 impl Thread {
@@ -268,6 +271,7 @@ impl Thread {
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
+        workspace: Option<WeakEntity<Workspace>>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
@@ -299,6 +303,7 @@ impl Thread {
             },
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
+            workspace,
         }
     }
 
@@ -308,6 +313,7 @@ impl Thread {
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
+        workspace: Option<WeakEntity<Workspace>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(
@@ -362,6 +368,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
+            workspace,
         }
     }
 
@@ -829,8 +836,15 @@ impl Thread {
                 )
             })
             .collect::<Vec<_>>();
+        
+        // Try to get active tab path
+        let active_tab_path = self.workspace
+            .as_ref()
+            .and_then(|weak_workspace| weak_workspace.upgrade())
+            .and_then(|workspace| active_singleton_buffer_path(&workspace.read(cx), cx))
+            .map(|path| path.to_string_lossy().to_string());
 
-        cx.spawn(async |_cx| {
+        cx.spawn(async move |_cx| {
             let results = futures::future::join_all(tasks).await;
             let mut first_err = None;
             let worktrees = results
@@ -842,7 +856,7 @@ impl Thread {
                     worktree
                 })
                 .collect::<Vec<_>>();
-            (AssistantSystemPromptContext::new(worktrees), first_err)
+            (AssistantSystemPromptContext::new(worktrees).with_active_tab_path(active_tab_path), first_err)
         })
     }
 

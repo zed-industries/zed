@@ -20,6 +20,7 @@ use util::ResultExt;
 pub struct AssistantSystemPromptContext {
     pub worktrees: Vec<WorktreeInfoForSystemPrompt>,
     pub has_rules: bool,
+    pub active_tab_path: Option<String>,
 }
 
 impl AssistantSystemPromptContext {
@@ -30,7 +31,13 @@ impl AssistantSystemPromptContext {
         Self {
             worktrees,
             has_rules,
+            active_tab_path: None,
         }
+    }
+    
+    pub fn with_active_tab_path(mut self, path: Option<String>) -> Self {
+        self.active_tab_path = path;
+        self
     }
 }
 

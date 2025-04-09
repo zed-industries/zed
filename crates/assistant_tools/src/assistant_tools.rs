@@ -1,3 +1,4 @@
+mod active_tab_tool;
 mod bash_tool;
 mod batch_tool;
 mod code_symbol_iter;
@@ -23,6 +24,7 @@ mod thinking_tool;
 
 use std::sync::Arc;
 
+use active_tab_tool::ActiveTabTool;
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
 use gpui::App;
@@ -51,6 +53,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
 
     let registry = ToolRegistry::global(cx);
+    registry.register_tool(ActiveTabTool);
     registry.register_tool(BashTool);
     registry.register_tool(BatchTool);
     registry.register_tool(CreateDirectoryTool);
