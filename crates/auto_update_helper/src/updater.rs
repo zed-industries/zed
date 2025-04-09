@@ -129,9 +129,12 @@ fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Resu
             match config.as_str() {
                 "inf" => {
                     std::thread::sleep(Duration::from_millis(500));
-                    Err(anyhow::anyhow!("Simulated timeout"))
+                    Err(anyhow::anyhow!("Test timeout"))
                 }
-                "err" => return Err(anyhow::anyhow!("Test error")),
+                "err" => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    Err(anyhow::anyhow!("Test error"))
+                }
                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
         } else {
@@ -163,6 +166,6 @@ mod test {
         // Simulate a test error
         unsafe { std::env::set_var("ZED_AUTO_UPDATE", "err") };
         let ret = perform_update(app_dir, None);
-        assert!(ret.is_err_and(|e| e.to_string().as_str() == "Test error"));
+        assert!(ret.is_err_and(|e| e.to_string().as_str() == "Update timed out"));
     }
 }
