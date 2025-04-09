@@ -599,7 +599,7 @@ wit-component = "0.221"
 workspace-hack = "0.1.0"
 zed_llm_client = "0.4"
 zstd = "0.11"
-metal = "0.29"
+metal = "0.32"
 
 [workspace.dependencies.async-stripe]
 git = "https://github.com/zed-industries/async-stripe"
