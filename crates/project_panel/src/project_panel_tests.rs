@@ -766,6 +766,50 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "      .dockerignore",
         ]
     );
+
+    // Test empty filename and filename with only whitespace
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    > .git",
+            "    > a",
+            "    v b",
+            "        > 3",
+            "        > 4",
+            "        > new-dir",
+            "          [EDITOR: '']  <== selected",
+            "          a-different-filename.tar.gz",
+            "    > C",
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
+        assert!(panel.confirm_edit(window, cx).is_none());
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("   ", window, cx);
+        });
+        assert!(panel.confirm_edit(window, cx).is_none());
+        panel.cancel(&menu::Cancel, window, cx)
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    > .git",
+            "    > a",
+            "    v b",
+            "        > 3",
+            "        > 4",
+            "        > new-dir",
+            "          a-different-filename.tar.gz  <== selected",
+            "    > C",
+            "      .dockerignore",
+        ]
+    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -1835,13 +1879,21 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         assert!(
             panel.confirm_edit(window, cx).is_none(),
             "Should not allow to confirm on conflicting new directory name"
-        )
+        );
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.edit_state.is_some(),
+            "Edit state should not be None after conflicting new directory name"
+        );
+        panel.cancel(&menu::Cancel, window, cx);
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             //
-            "v src",
+            "v src  <== selected",
             "    > test"
         ],
         "File list should be unchanged after failed folder create confirmation"
@@ -1880,13 +1932,21 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         assert!(
             panel.confirm_edit(window, cx).is_none(),
             "Should not allow to confirm on conflicting new file name"
-        )
+        );
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.edit_state.is_some(),
+            "Edit state should not be None after conflicting new file name"
+        );
+        panel.cancel(&menu::Cancel, window, cx);
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v src",
-            "    v test",
+            "    v test  <== selected",
             "          first.rs",
             "          second.rs",
             "          third.rs"
@@ -1929,6 +1989,14 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             panel.confirm_edit(window, cx).is_none(),
             "Should not allow to confirm on conflicting file rename"
         )
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.edit_state.is_some(),
+            "Edit state should not be None after conflicting file rename"
+        );
+        panel.cancel(&menu::Cancel, window, cx);
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),

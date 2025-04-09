@@ -213,6 +213,7 @@ iframe {
 }
 
 table {
+  margin-top: 1.4rem;
   width: 100%;
   border-collapse: collapse;
   font-size: 1.4rem;

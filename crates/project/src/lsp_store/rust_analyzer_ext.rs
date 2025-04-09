@@ -8,7 +8,7 @@ pub const RUST_ANALYZER_NAME: &str = "rust-analyzer";
 
 /// Experimental: Informs the end user about the state of the server
 ///
-/// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
+/// [Rust Analyzer Specification](https://rust-analyzer.github.io/book/contributing/lsp-extensions.html#server-status)
 #[derive(Debug)]
 enum ServerStatus {}
 
@@ -38,13 +38,10 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
     let name = language_server.name();
     let server_id = language_server.server_id();
 
-    let this = lsp_store;
-
     language_server
         .on_notification::<ServerStatus, _>({
             let name = name.to_string();
             move |params, cx| {
-                let this = this.clone();
                 let name = name.to_string();
                 if let Some(ref message) = params.message {
                     let message = message.trim();
@@ -53,10 +50,10 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
                             "Language server {name} (id {server_id}) status update: {message}"
                         );
                         match params.health {
-                            ServerHealthStatus::Ok => log::info!("{}", formatted_message),
-                            ServerHealthStatus::Warning => log::warn!("{}", formatted_message),
+                            ServerHealthStatus::Ok => log::info!("{formatted_message}"),
+                            ServerHealthStatus::Warning => log::warn!("{formatted_message}"),
                             ServerHealthStatus::Error => {
-                                log::error!("{}", formatted_message);
+                                log::error!("{formatted_message}");
                                 let (tx, _rx) = smol::channel::bounded(1);
                                 let request = LanguageServerPromptRequest {
                                     level: PromptLevel::Critical,
@@ -65,7 +62,7 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
                                     response_channel: tx,
                                     lsp_name: name.clone(),
                                 };
-                                let _ = this
+                                lsp_store
                                     .update(cx, |_, cx| {
                                         cx.emit(LspStoreEvent::LanguageServerPrompt(request));
                                     })

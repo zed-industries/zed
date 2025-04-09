@@ -242,7 +242,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-y": "agent::Keep",
-      "cmd-alt-z": "agent::Reject"
+      "cmd-n": "agent::Reject"
     }
   },
   {
@@ -289,6 +289,13 @@
       "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-e": "agent::ChatMode",
       "cmd-alt-e": "agent::RemoveAllContext"
+    }
+  },
+  {
+    "context": "AgentPanel > Markdown",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-c": "markdown::CopyAsMarkdown"
     }
   },
   {
@@ -339,9 +346,27 @@
     }
   },
   {
+    "context": "AgentConfiguration",
+    "bindings": {
+      "ctrl--": "pane::GoBack"
+    }
+  },
+  {
     "context": "ThreadHistory",
     "bindings": {
-      "backspace": "agent::RemoveSelectedThread"
+      "ctrl--": "pane::GoBack"
+    }
+  },
+  {
+    "context": "ThreadHistory",
+    "bindings": {
+      "ctrl--": "pane::GoBack"
+    }
+  },
+  {
+    "context": "ThreadHistory > Editor",
+    "bindings": {
+      "shift-backspace": "agent::RemoveSelectedThread"
     }
   },
   {
@@ -430,7 +455,8 @@
       "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
       "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "cmd-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
-      "cmd-k cmd-w": ["pane::CloseAllItems", { "close_pinned": false }],
+      "cmd-k w": ["pane::CloseAllItems", { "close_pinned": false }],
+      "cmd-k cmd-w": "workspace::CloseAllItemsAndPanes",
       "cmd-f": "project_search::ToggleFocus",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPreviousMatch",
@@ -499,7 +525,7 @@
       "cmd-k cmd-9": ["editor::FoldAtLevel", 9],
       "cmd-k cmd-0": "editor::FoldAll",
       "cmd-k cmd-j": "editor::UnfoldAll",
-      // Using `ctrl-space` in Zed requires disabling the macOS global shortcut.
+      // Using `ctrl-space` / `ctrl-shift-space` in Zed requires disabling the macOS global shortcut.
       // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-shift-space": "editor::ShowWordCompletions",
@@ -607,6 +633,8 @@
       "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
+      // or by tag:
+      // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
     }
   },
   // Bindings from Sublime Text
@@ -653,6 +681,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::ConfirmCompletion",
+      "shift-enter": "editor::ConfirmCompletionReplace",
       "tab": "editor::ComposeCompletion"
     }
   },
@@ -975,6 +1004,8 @@
       "cmd-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
       "cmd-end": "terminal::ScrollToBottom",
+      // Using `ctrl-shift-space` in Zed requires disabling the macOS global shortcut.
+      // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-shift-space": "terminal::ToggleViMode",
       "ctrl-k up": "pane::SplitUp",
       "ctrl-k down": "pane::SplitDown",

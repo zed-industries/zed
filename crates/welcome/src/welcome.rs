@@ -267,6 +267,7 @@ impl Render for WelcomePage {
                     )
                     .child(
                         v_container()
+                            .px_2()
                             .gap_2()
                             .child(
                                 h_flex()

@@ -127,8 +127,6 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
         .and_then(parse_pixel_position_env_var)
 });
 
-actions!(assistant, [ShowConfiguration]);
-
 actions!(
     workspace,
     [
@@ -4423,18 +4421,6 @@ impl Workspace {
         None
     }
 
-    #[cfg(target_os = "windows")]
-    fn shared_screen_for_peer(
-        &self,
-        _peer_id: PeerId,
-        _pane: &Entity<Pane>,
-        _window: &mut Window,
-        _cx: &mut App,
-    ) -> Option<Entity<SharedScreen>> {
-        None
-    }
-
-    #[cfg(not(target_os = "windows"))]
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
@@ -5575,12 +5561,16 @@ impl Render for Workspace {
                                                             this.child(p.border_r_1())
                                                         })
                                                         .child(self.center.render(
-                                                            &self.project,
-                                                            &self.follower_states,
-                                                            self.active_call(),
-                                                            &self.active_pane,
                                                             self.zoomed.as_ref(),
-                                                            &self.app_state,
+                                                            &PaneRenderContext {
+                                                                follower_states:
+                                                                    &self.follower_states,
+                                                                active_call: self.active_call(),
+                                                                active_pane: &self.active_pane,
+                                                                app_state: &self.app_state,
+                                                                project: &self.project,
+                                                                workspace: &self.weak_self,
+                                                            },
                                                             window,
                                                             cx,
                                                         ))
@@ -5820,7 +5810,17 @@ pub fn last_session_workspace_locations(
         .log_err()
 }
 
-actions!(collab, [OpenChannelNotes]);
+actions!(
+    collab,
+    [
+        OpenChannelNotes,
+        Mute,
+        Deafen,
+        LeaveCall,
+        ShareProject,
+        ScreenShare
+    ]
+);
 actions!(zed, [OpenLog]);
 
 async fn join_channel_internal(

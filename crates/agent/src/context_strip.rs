@@ -59,6 +59,7 @@ impl ContextStrip {
         let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
+            cx.observe(&context_store, |_, _, cx| cx.notify()),
             cx.subscribe_in(&context_picker, window, Self::handle_context_picker_event),
             cx.on_focus(&focus_handle, window, Self::handle_focus),
             cx.on_blur(&focus_handle, window, Self::handle_blur),
@@ -290,9 +291,9 @@ impl ContextStrip {
         if let Some(index) = self.focused_index {
             let mut is_empty = false;
 
-            self.context_store.update(cx, |this, _cx| {
+            self.context_store.update(cx, |this, cx| {
                 if let Some(item) = this.context().get(index) {
-                    this.remove_context(item.id());
+                    this.remove_context(item.id(), cx);
                 }
 
                 is_empty = this.context().is_empty();
@@ -475,8 +476,8 @@ impl Render for ContextStrip {
                             Some({
                                 let context_store = self.context_store.clone();
                                 Rc::new(cx.listener(move |_this, _event, _window, cx| {
-                                    context_store.update(cx, |this, _cx| {
-                                        this.remove_context(id);
+                                    context_store.update(cx, |this, cx| {
+                                        this.remove_context(id, cx);
                                     });
                                     cx.notify();
                                 }))

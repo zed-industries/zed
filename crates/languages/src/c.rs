@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::AsyncApp;
+use gpui::{App, AsyncApp};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
@@ -273,6 +273,7 @@ impl super::LspAdapter for CLspAdapter {
     fn prepare_initialize_params(
         &self,
         mut original: InitializeParams,
+        _: &App,
     ) -> Result<InitializeParams> {
         let experimental = json!({
             "textDocument": {

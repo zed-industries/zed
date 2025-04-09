@@ -7,8 +7,11 @@ use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
-use lsp::LanguageServerBinary;
+use lsp::{InitializeParams, LanguageServerBinary};
+use project::project_settings::ProjectSettings;
 use regex::Regex;
+use serde_json::json;
+use settings::Settings as _;
 use smol::fs::{self};
 use std::fmt::Display;
 use std::{
@@ -18,6 +21,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskType, TaskVariables, VariableName};
+use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
 
 use crate::language_settings::language_settings;
@@ -48,9 +52,9 @@ impl RustLspAdapter {
     const ARCH_SERVER_NAME: &str = "pc-windows-msvc";
 }
 
-impl RustLspAdapter {
-    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
+const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 
+impl RustLspAdapter {
     fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
@@ -60,7 +64,7 @@ impl RustLspAdapter {
 
         format!(
             "{}-{}-{}.{}",
-            Self::SERVER_NAME,
+            SERVER_NAME,
             std::env::consts::ARCH,
             Self::ARCH_SERVER_NAME,
             extension
@@ -98,7 +102,7 @@ impl ManifestProvider for CargoManifestProvider {
 #[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        SERVER_NAME.clone()
     }
 
     fn manifest_name(&self) -> Option<ManifestName> {
@@ -473,6 +477,30 @@ impl LspAdapter for RustLspAdapter {
             filter_range,
         })
     }
+
+    fn prepare_initialize_params(
+        &self,
+        mut original: InitializeParams,
+        cx: &App,
+    ) -> Result<InitializeParams> {
+        let enable_lsp_tasks = ProjectSettings::get_global(cx)
+            .lsp
+            .get(&SERVER_NAME)
+            .map_or(false, |s| s.enable_lsp_tasks);
+        if enable_lsp_tasks {
+            let experimental = json!({
+                "runnables": {
+                    "kinds": [ "cargo", "shell" ],
+                },
+            });
+            if let Some(ref mut original_experimental) = original.capabilities.experimental {
+                merge_json_value_into(experimental, original_experimental);
+            } else {
+                original.capabilities.experimental = Some(experimental);
+            }
+        }
+        Ok(original)
+    }
 }
 
 pub(crate) struct RustContextProvider;
@@ -775,6 +803,10 @@ impl ContextProvider for RustContextProvider {
         }
 
         Some(TaskTemplates(task_templates))
+    }
+
+    fn lsp_task_source(&self) -> Option<LanguageServerName> {
+        Some(SERVER_NAME)
     }
 }
 

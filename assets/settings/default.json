@@ -644,7 +644,7 @@
         "tools": {
           "diagnostics": true,
           "fetch": true,
-          "list_directory": true,
+          "list_directory": false,
           "now": true,
           "path_search": true,
           "read_file": true,
@@ -659,15 +659,14 @@
           "bash": true,
           "batch_tool": true,
           "code_symbols": true,
-          "copy_path": true,
+          "copy_path": false,
           "create_file": true,
-          "delete_path": true,
+          "delete_path": false,
           "diagnostics": true,
           "find_replace_file": true,
-          "edit_files": false,
           "fetch": true,
-          "list_directory": true,
-          "move_path": true,
+          "list_directory": false,
+          "move_path": false,
           "now": true,
           "path_search": true,
           "read_file": true,
@@ -1137,7 +1136,8 @@
   "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
-    "variables": {}
+    "variables": {},
+    "enabled": true
   },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
@@ -1457,6 +1457,8 @@
   "lsp": {
     // Specify the LSP name as a key here.
     // "rust-analyzer": {
+    //     // A special flag for rust-analyzer integration, to use server-provided tasks
+    //     enable_lsp_tasks": true,
     //     // These initialization options are merged into Zed's defaults
     //     "initialization_options": {
     //         "check": {

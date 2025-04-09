@@ -22,10 +22,6 @@ fn test_action_macros() {
             unimplemented!()
         }
 
-        fn as_any(&self) -> &dyn std::any::Any {
-            unimplemented!()
-        }
-
         fn partial_eq(&self, _action: &dyn gpui::Action) -> bool {
             unimplemented!()
         }

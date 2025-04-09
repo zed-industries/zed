@@ -1,11 +1,14 @@
 #![allow(non_snake_case)]
 
+pub use ::proto::*;
+
 use anyhow::anyhow;
 use async_tungstenite::tungstenite::Message as WebSocketMessage;
 use futures::{SinkExt as _, StreamExt as _};
-pub use proto::{Message as _, *};
+use proto::Message as _;
 use std::time::Instant;
 use std::{fmt::Debug, io};
+use zstd::zstd_safe::WriteBuf;
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
@@ -32,10 +35,6 @@ impl<S> MessageStream<S> {
             encoding_buffer: Vec::new(),
         }
     }
-
-    pub fn inner_mut(&mut self) -> &mut S {
-        &mut self.stream
-    }
 }
 
 impl<S> MessageStream<S>
@@ -61,7 +60,9 @@ where
 
                 self.encoding_buffer.clear();
                 self.encoding_buffer.shrink_to(MAX_BUFFER_LEN);
-                self.stream.send(WebSocketMessage::Binary(buffer)).await?;
+                self.stream
+                    .send(WebSocketMessage::Binary(buffer.into()))
+                    .await?;
             }
             Message::Ping => {
                 self.stream
