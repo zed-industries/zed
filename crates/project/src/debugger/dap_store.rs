@@ -606,7 +606,7 @@ impl DapStore {
         let (tx, mut rx) = mpsc::channel::<Result<u32>>(1);
         let cwd = Some(cwd)
             .filter(|cwd| cwd.as_os_str().len() > 0)
-            .map(|cwd| Arc::from(cwd))
+            .map(Arc::from)
             .or_else(|| {
                 self.session_by_id(session_id)
                     .and_then(|session| {
@@ -615,7 +615,7 @@ impl DapStore {
                             .configuration()
                             .and_then(|config| config.request.cwd())
                     })
-                    .map(|cwd| Arc::from(cwd))
+                    .map(Arc::from)
             });
         cx.emit(DapStoreEvent::RunInTerminal {
             session_id,
