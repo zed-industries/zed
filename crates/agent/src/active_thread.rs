@@ -1122,18 +1122,19 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let report = self.thread.update(cx, |thread, cx| {
+            thread.report_message_feedback(message_id, feedback, cx)
+        });
+
+        cx.spawn(async move |this, cx| {
+            report.await?;
+            this.update(cx, |_this, cx| cx.notify())
+        })
+        .detach_and_log_err(cx);
+
         match feedback {
             ThreadFeedback::Positive => {
-                let report = self.thread.update(cx, |thread, cx| {
-                    thread.report_message_feedback(message_id, feedback, cx)
-                });
-
-                let this = cx.entity().downgrade();
-                cx.spawn(async move |_, cx| {
-                    report.await?;
-                    this.update(cx, |_this, cx| cx.notify())
-                })
-                .detach_and_log_err(cx);
+                self.open_feedback_editor.take();
             }
             ThreadFeedback::Negative => {
                 self.handle_show_feedback_comments(message_id, window, cx);
@@ -1147,10 +1148,6 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.open_feedback_editor.is_some() {
-            return;
-        }
-
         let buffer = cx.new(|cx| {
             let empty_string = String::new();
             MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
@@ -1346,12 +1343,8 @@ impl ActiveThread {
         let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
         let feedback_container = h_flex().py_2().px_4().gap_1().justify_between();
-        let message_id_for_feedback = message.id;
-        let feedback_items = match self
-            .thread
-            .read(cx)
-            .message_feedback(message_id_for_feedback)
-        {
+        dbg!(ix);
+        let feedback_items = match dbg!(self.thread.read(cx).message_feedback(message_id)) {
             Some(feedback) => feedback_container
                 .child(
                     Label::new(match feedback {
@@ -1368,17 +1361,17 @@ impl ActiveThread {
                         .pr_1()
                         .gap_1()
                         .child(
-                            IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                            IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
+                                .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Accent,
                                     ThreadFeedback::Negative => Color::Ignored,
                                 })
-                                .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Helpful Response"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
-                                        message_id_for_feedback,
+                                        message_id,
                                         ThreadFeedback::Positive,
                                         window,
                                         cx,
@@ -1386,17 +1379,17 @@ impl ActiveThread {
                                 })),
                         )
                         .child(
-                            IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                            IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
+                                .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Ignored,
                                     ThreadFeedback::Negative => Color::Accent,
                                 })
-                                .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Not Helpful"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
-                                        message_id_for_feedback,
+                                        message_id,
                                         ThreadFeedback::Negative,
                                         window,
                                         cx,
@@ -1417,13 +1410,12 @@ impl ActiveThread {
                     h_flex()
                         .gap_1()
                         .child(
-                            IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                            IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
                                 .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Helpful Response"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    let message_id = message_id_for_feedback;
                                     this.handle_feedback_click(
                                         message_id,
                                         ThreadFeedback::Positive,
@@ -1433,13 +1425,12 @@ impl ActiveThread {
                                 })),
                         )
                         .child(
-                            IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                            IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
                                 .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Not Helpful"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    let message_id = message_id_for_feedback;
                                     this.handle_feedback_click(
                                         message_id,
                                         ThreadFeedback::Negative,
