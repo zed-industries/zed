@@ -901,12 +901,18 @@ impl Terminal {
                     term.grid().display_offset(),
                 )
                 .grid_clamp(term, Boundary::Grid);
-                if let Some((mut target, hyperlink_match)) =
+
+                if let Some((hyperlink_word, is_url, hyperlink_match)) =
                     self.hyperlink_finder.find_from_grid_point(point, term)
                 {
-                    if let MaybeNavigationTarget::PathLike(path_like_target) = &mut target {
-                        path_like_target.terminal_dir = self.working_directory();
-                    }
+                    let target = if is_url {
+                        MaybeNavigationTarget::Url(hyperlink_word)
+                    } else {
+                        MaybeNavigationTarget::PathLike(PathLikeTarget {
+                            maybe_path: hyperlink_word,
+                            terminal_dir: self.working_directory(),
+                        })
+                    };
 
                     if *open {
                         cx.emit(Event::Open(target));
