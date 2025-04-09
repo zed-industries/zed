@@ -193,6 +193,7 @@ actions!(
     [
         ExpandSelectedEntry,
         CollapseSelectedEntry,
+        CollapseSelectedEntryAndChildren,
         CollapseAllEntries,
         NewDirectory,
         NewFile,
@@ -751,6 +752,10 @@ impl ProjectPanel {
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
+                                    .action(
+                                        "Collapse All",
+                                        Box::new(CollapseSelectedEntryAndChildren),
+                                    )
                             })
                             .when(is_unfoldable, |menu| {
                                 menu.action("Unfold Directory", Box::new(UnfoldDirectory))
@@ -793,10 +798,6 @@ impl ProjectPanel {
                                         Box::new(workspace::AddFolderToProject),
                                     )
                                     .action("Remove from Project", Box::new(RemoveFromProject))
-                            })
-                            .when(is_root, |menu| {
-                                menu.separator()
-                                    .action("Collapse All", Box::new(CollapseAllEntries))
                             })
                     }
                 })
@@ -936,7 +937,27 @@ impl ProjectPanel {
         }
     }
 
-    pub fn collapse_all_entries(
+    fn collapse_selected_entry_and_children(
+        &mut self,
+        _: &CollapseSelectedEntryAndChildren,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let worktree_id = worktree.id();
+            let entry_id = entry.id;
+
+            if self.project.read(cx).entry_is_worktree_root(entry_id, cx) {
+                self.collapse_all_entries(&CollapseAllEntries, window, cx);
+            } else {
+                self.collapse_all_for_entry(worktree_id, entry_id, cx);
+                self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+            }
+            cx.notify();
+        }
+    }
+
+    fn collapse_all_entries(
         &mut self,
         _: &CollapseAllEntries,
         _: &mut Window,
@@ -4631,6 +4652,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
+                .on_action(cx.listener(Self::collapse_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::confirm))
