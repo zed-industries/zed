@@ -19748,16 +19748,14 @@ impl EntityInputHandler for Editor {
             this.set_use_autoclose(use_autoclose);
             this.set_use_auto_surround(use_auto_surround);
 
-            if let Some(new_selected_range) = new_selected_range_utf16 {
+            if !text.is_empty() {
                 let snapshot = this.buffer.read(cx).read(cx);
                 let new_selected_ranges = marked_ranges
                     .into_iter()
                     .map(|marked_range| {
-                        let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
-                        let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
-                        let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
-                        snapshot.clip_offset_utf16(new_start, Bias::Left)
-                            ..snapshot.clip_offset_utf16(new_end, Bias::Right)
+                        let start = marked_range.start.to_offset_utf16(&snapshot);
+                        let end = marked_range.start.to_offset_utf16(&snapshot);
+                        start..end
                     })
                     .collect::<Vec<_>>();
 
