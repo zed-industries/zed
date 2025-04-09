@@ -62,7 +62,8 @@ pub struct ActiveThread {
     copied_code_block_ids: HashSet<(MessageId, usize)>,
     _subscriptions: Vec<Subscription>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    feedback_message_editor: Option<Entity<Editor>>,
+    showing_feedback_comments_for: Option<MessageId>,
+    feedback_comments_editor: Option<Entity<Editor>>,
 }
 
 struct RenderedMessage {
@@ -636,7 +637,8 @@ impl ActiveThread {
             notifications: Vec::new(),
             _subscriptions: subscriptions,
             notification_subscriptions: HashMap::default(),
-            feedback_message_editor: None,
+            showing_feedback_comments_for: None,
+            feedback_comments_editor: None,
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -939,7 +941,7 @@ impl ActiveThread {
                         |this, _, event, window, cx| match event {
                             AgentNotificationEvent::Accepted => {
                                 let handle = window.window_handle();
-                                cx.activate(true); // Switch back to the Zed application
+                                cx.activate(true);
 
                                 let workspace_handle = this.workspace.clone();
 
@@ -1111,15 +1113,16 @@ impl ActiveThread {
 
     fn handle_feedback_click(
         &mut self,
+        message_id: MessageId,
         feedback: ThreadFeedback,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match feedback {
             ThreadFeedback::Positive => {
-                let report = self
-                    .thread
-                    .update(cx, |thread, cx| thread.report_feedback(feedback, cx));
+                let report = self.thread.update(cx, |thread, cx| {
+                    thread.report_message_feedback(message_id, feedback, cx)
+                });
 
                 let this = cx.entity().downgrade();
                 cx.spawn(async move |_, cx| {
@@ -1129,15 +1132,22 @@ impl ActiveThread {
                 .detach_and_log_err(cx);
             }
             ThreadFeedback::Negative => {
-                self.handle_show_feedback_comments(window, cx);
+                self.handle_show_feedback_comments(message_id, window, cx);
             }
         }
     }
 
-    fn handle_show_feedback_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.feedback_message_editor.is_some() {
+    fn handle_show_feedback_comments(
+        &mut self,
+        message_id: MessageId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.feedback_comments_editor.is_some() {
             return;
         }
+
+        self.showing_feedback_comments_for = Some(message_id);
 
         let buffer = cx.new(|cx| {
             let empty_string = String::new();
@@ -1160,34 +1170,72 @@ impl ActiveThread {
         });
 
         editor.read(cx).focus_handle(cx).focus(window);
-        self.feedback_message_editor = Some(editor);
+        self.feedback_comments_editor = Some(editor);
         cx.notify();
     }
 
     fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
-        let Some(editor) = self.feedback_message_editor.clone() else {
+        let Some(editor) = self.feedback_comments_editor.clone() else {
             return;
         };
 
-        let report_task = self.thread.update(cx, |thread, cx| {
-            thread.report_feedback(ThreadFeedback::Negative, cx)
-        });
+        if let Some(message_id) = self.showing_feedback_comments_for {
+            let report_task = self.thread.update(cx, |thread, cx| {
+                thread.report_message_feedback(message_id, ThreadFeedback::Negative, cx)
+            });
 
-        let comments = editor.read(cx).text(cx);
-        if !comments.is_empty() {
-            let thread_id = self.thread.read(cx).id().clone();
+            let comments = editor.read(cx).text(cx);
+            if !comments.is_empty() {
+                let thread_id = self.thread.read(cx).id().clone();
+                let comments_value = String::from(comments.as_str());
 
-            telemetry::event!("Assistant Thread Feedback Comments", thread_id, comments);
+                let message_content = self
+                    .thread
+                    .read(cx)
+                    .message(message_id)
+                    .map(|msg| msg.to_string())
+                    .unwrap_or_default();
+
+                telemetry::event!(
+                    "Assistant Thread Feedback Comments",
+                    thread_id,
+                    message_id = message_id.0,
+                    message_content,
+                    comments = comments_value
+                );
+            }
+
+            self.showing_feedback_comments_for = None;
+            self.feedback_comments_editor = None;
+
+            let this = cx.entity().downgrade();
+            cx.spawn(async move |_, cx| {
+                report_task.await?;
+                this.update(cx, |_this, cx| cx.notify())
+            })
+            .detach_and_log_err(cx);
         }
+    }
 
-        self.feedback_message_editor = None;
+    fn handle_cancel_comments(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.showing_feedback_comments_for = None;
+        self.feedback_comments_editor = None;
+        cx.notify();
+    }
 
-        let this = cx.entity().downgrade();
-        cx.spawn(async move |_, cx| {
-            report_task.await?;
-            this.update(cx, |_this, cx| cx.notify())
-        })
-        .detach_and_log_err(cx);
+    fn handle_submit_comments(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.submit_feedback_message(cx);
+        cx.notify();
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1214,7 +1262,8 @@ impl ActiveThread {
 
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
-        let show_feedback = is_last_message && message.role != Role::User;
+        // let show_feedback = is_last_message && message.role != Role::User;
+        let show_feedback = message.role == Role::Assistant;
 
         let needs_confirmation = tool_uses.iter().any(|tool_use| tool_use.needs_confirmation);
 
@@ -1288,7 +1337,12 @@ impl ActiveThread {
         let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
         let feedback_container = h_flex().pt_2().pb_4().px_4().gap_1().justify_between();
-        let feedback_items = match self.thread.read(cx).feedback() {
+        let message_id_for_feedback = message.id;
+        let feedback_items = match self
+            .thread
+            .read(cx)
+            .message_feedback(message_id_for_feedback)
+        {
             Some(feedback) => feedback_container
                 .child(
                     Label::new(match feedback {
@@ -1314,6 +1368,7 @@ impl ActiveThread {
                                 .tooltip(Tooltip::text("Helpful Response"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
+                                        message_id_for_feedback,
                                         ThreadFeedback::Positive,
                                         window,
                                         cx,
@@ -1331,6 +1386,7 @@ impl ActiveThread {
                                 .tooltip(Tooltip::text("Not Helpful"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
+                                        message_id_for_feedback,
                                         ThreadFeedback::Negative,
                                         window,
                                         cx,
@@ -1357,7 +1413,9 @@ impl ActiveThread {
                                 .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Helpful Response"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
+                                    let message_id = message_id_for_feedback;
                                     this.handle_feedback_click(
+                                        message_id,
                                         ThreadFeedback::Positive,
                                         window,
                                         cx,
@@ -1371,7 +1429,9 @@ impl ActiveThread {
                                 .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Not Helpful"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
+                                    let message_id = message_id_for_feedback;
                                     this.handle_feedback_click(
+                                        message_id,
                                         ThreadFeedback::Negative,
                                         window,
                                         cx,
@@ -1670,15 +1730,21 @@ impl ActiveThread {
                 )
             })
             .when(show_feedback && !is_generating, |parent| {
+                let message_id_for_feedback = message_id;
+                let feedback_status = self
+                    .thread
+                    .read(cx)
+                    .message_feedback(message_id_for_feedback);
+
                 parent.child(feedback_items).when_some(
-                    self.feedback_message_editor.clone(),
+                    self.feedback_comments_editor.clone(),
                     |parent, feedback_editor| {
                         let focus_handle = feedback_editor.focus_handle(cx);
                         parent.child(
                             v_flex()
                                 .key_context("AgentFeedbackMessageEditor")
                                 .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                                    this.feedback_message_editor = None;
+                                    this.feedback_comments_editor = None;
                                     cx.notify();
                                 }))
                                 .on_action(cx.listener(|this, _: &menu::Confirm, _, cx| {
@@ -1710,10 +1776,9 @@ impl ActiveThread {
                                                     )
                                                     .map(|kb| kb.size(rems_from_px(10.))),
                                                 )
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.feedback_message_editor = None;
-                                                    cx.notify();
-                                                })),
+                                                .on_click(
+                                                    cx.listener(Self::handle_cancel_comments),
+                                                ),
                                         )
                                         .child(
                                             Button::new(
@@ -1731,12 +1796,7 @@ impl ActiveThread {
                                                 )
                                                 .map(|kb| kb.size(rems_from_px(10.))),
                                             )
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.submit_feedback_message(cx);
-                                                    cx.notify();
-                                                }),
-                                            ),
+                                            .on_click(cx.listener(Self::handle_submit_comments)),
                                         ),
                                 ),
                         )
