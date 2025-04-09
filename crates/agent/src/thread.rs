@@ -2266,7 +2266,7 @@ fn main() {{
         });
 
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
-        let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
+        let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
 
         (
             workspace,

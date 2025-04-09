@@ -867,7 +867,7 @@ mod tests {
                 .expect("Opened test file wasn't an editor")
         });
 
-        let context_store = cx.new(|_| ContextStore::new(project.downgrade(), None));
+        let context_store = cx.new(|_| ContextStore::new(workspace.downgrade(), None));
 
         let editor_entity = editor.downgrade();
         editor.update_in(&mut cx, |editor, window, cx| {
