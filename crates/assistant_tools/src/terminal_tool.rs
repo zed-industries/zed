@@ -135,7 +135,7 @@ const LIMIT: usize = 16 * 1024;
 async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
     let shell = std::env::var("SHELL").unwrap_or("bash".to_string());
 
-    let mut cmd = new_smol_command(shell)
+    let mut cmd = new_smol_command(&shell)
         .arg("-c")
         .arg(&command)
         .current_dir(working_dir)
@@ -219,8 +219,9 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
         }
     } else {
         format!(
-            "Command failed with exit code {}\n\n{}",
+            "Command failed with exit code {} (shell: {}).\n\n{}",
             status.code().unwrap_or(-1),
+            shell,
             output_string,
         )
     };
@@ -334,5 +335,24 @@ mod tests {
         let content_length = content_end - content_start;
 
         assert!(content_length <= LIMIT);
+    }
+
+    #[gpui::test]
+    async fn test_command_failure(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let result = run_command_limited(Path::new(".").into(), "exit 42".to_string()).await;
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        // Extract the shell name from path for cleaner test output
+        let shell_path = std::env::var("SHELL").unwrap_or("bash".to_string());
+
+        let expected_output = format!(
+            "Command failed with exit code 42 (shell: {}).\n\n```\n\n```",
+            shell_path
+        );
+        assert_eq!(output, expected_output);
     }
 }
