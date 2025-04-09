@@ -697,7 +697,7 @@ impl GitStore {
                     }
                 }
 
-                diff_state.diff_bases_changed(text_snapshot, diff_bases_change, 0, cx);
+                diff_state.diff_bases_changed(text_snapshot, Some(diff_bases_change), 0, cx);
                 let rx = diff_state.wait_for_recalculation();
 
                 anyhow::Ok(async move {
@@ -1329,7 +1329,6 @@ impl GitStore {
                 repo_path,
                 has_unstaged_diff.then(|| diff_state.index_text.clone()),
                 has_uncommitted_diff.then(|| diff_state.head_text.clone()),
-                diff_state.index_changed || diff_state.head_changed,
                 diff_state.hunk_staging_operation_count,
             );
             diff_state_updates.entry(repo).or_default().push(update);
@@ -1360,7 +1359,6 @@ impl GitStore {
                                     repo_path,
                                     current_index_text,
                                     current_head_text,
-                                    already_needs_diff_update,
                                     hunk_staging_operation_count,
                                 ) in &repo_diff_state_updates
                                 {
@@ -1375,40 +1373,50 @@ impl GitStore {
                                         None
                                     };
 
-                                    // Avoid triggering a diff update if the base text has not changed.
-                                    if let Some((current_index, current_head)) =
-                                        current_index_text.as_ref().zip(current_head_text.as_ref())
-                                    {
-                                        if current_index.as_deref() == index_text.as_ref()
-                                            && current_head.as_deref() == head_text.as_ref()
-                                            && !already_needs_diff_update
-                                        {
-                                            continue;
-                                        }
-                                    }
-
-                                    let diff_bases_change = match (
-                                        current_index_text.is_some(),
-                                        current_head_text.is_some(),
+                                    let change = match (
+                                        current_index_text.as_ref(),
+                                        current_head_text.as_ref(),
                                     ) {
-                                        (true, true) => Some(if index_text == head_text {
-                                            DiffBasesChange::SetBoth(head_text)
-                                        } else {
-                                            DiffBasesChange::SetEach {
-                                                index: index_text,
-                                                head: head_text,
+                                        (Some(current_index), Some(current_head)) => {
+                                            let index_changed =
+                                                index_text.as_ref() != current_index.as_deref();
+                                            let head_changed =
+                                                head_text.as_ref() != current_head.as_deref();
+                                            if index_changed && head_changed {
+                                                if index_text == head_text {
+                                                    Some(DiffBasesChange::SetBoth(head_text))
+                                                } else {
+                                                    Some(DiffBasesChange::SetEach {
+                                                        index: index_text,
+                                                        head: head_text,
+                                                    })
+                                                }
+                                            } else if index_changed {
+                                                Some(DiffBasesChange::SetIndex(index_text))
+                                            } else if head_changed {
+                                                Some(DiffBasesChange::SetHead(head_text))
+                                            } else {
+                                                None
                                             }
-                                        }),
-                                        (true, false) => {
-                                            Some(DiffBasesChange::SetIndex(index_text))
                                         }
-                                        (false, true) => Some(DiffBasesChange::SetHead(head_text)),
-                                        (false, false) => None,
+                                        (Some(current_index), None) => {
+                                            let index_changed =
+                                                index_text.as_ref() != current_index.as_deref();
+                                            index_changed
+                                                .then_some(DiffBasesChange::SetIndex(index_text))
+                                        }
+                                        (None, Some(current_head)) => {
+                                            let head_changed =
+                                                head_text.as_ref() != current_head.as_deref();
+                                            head_changed
+                                                .then_some(DiffBasesChange::SetHead(head_text))
+                                        }
+                                        (None, None) => None,
                                     };
 
                                     changes.push((
                                         buffer.clone(),
-                                        diff_bases_change,
+                                        change,
                                         *hunk_staging_operation_count,
                                     ))
                                 }
@@ -1421,12 +1429,9 @@ impl GitStore {
                                 for (buffer, diff_bases_change, hunk_staging_operation_count) in
                                     buffer_diff_base_changes
                                 {
-                                    let Some(diff_state) =
-                                        git_store.diffs.get(&buffer.read(cx).remote_id())
-                                    else {
-                                        continue;
-                                    };
-                                    let Some(diff_bases_change) = diff_bases_change else {
+                                    let buffer_snapshot = buffer.read(cx).text_snapshot();
+                                    let buffer_id = buffer_snapshot.remote_id();
+                                    let Some(diff_state) = git_store.diffs.get(&buffer_id) else {
                                         continue;
                                     };
 
@@ -1434,10 +1439,11 @@ impl GitStore {
                                     diff_state.update(cx, |diff_state, cx| {
                                         use proto::update_diff_bases::Mode;
 
-                                        let buffer = buffer.read(cx);
-                                        if let Some((client, project_id)) = downstream_client {
+                                        if let Some((diff_bases_change, (client, project_id))) =
+                                            diff_bases_change.clone().zip(downstream_client)
+                                        {
                                             let (staged_text, committed_text, mode) =
-                                                match diff_bases_change.clone() {
+                                                match diff_bases_change {
                                                     DiffBasesChange::SetIndex(index) => {
                                                         (index, None, Mode::IndexOnly)
                                                     }
@@ -1451,19 +1457,19 @@ impl GitStore {
                                                         (None, text, Mode::IndexMatchesHead)
                                                     }
                                                 };
-                                            let message = proto::UpdateDiffBases {
-                                                project_id: project_id.to_proto(),
-                                                buffer_id: buffer.remote_id().to_proto(),
-                                                staged_text,
-                                                committed_text,
-                                                mode: mode as i32,
-                                            };
-
-                                            client.send(message).log_err();
+                                            client
+                                                .send(proto::UpdateDiffBases {
+                                                    project_id: project_id.to_proto(),
+                                                    buffer_id: buffer_id.to_proto(),
+                                                    staged_text,
+                                                    committed_text,
+                                                    mode: mode as i32,
+                                                })
+                                                .log_err();
                                         }
 
                                         diff_state.diff_bases_changed(
-                                            buffer.text_snapshot(),
+                                            buffer_snapshot,
                                             diff_bases_change,
                                             hunk_staging_operation_count,
                                             cx,
@@ -2315,7 +2321,7 @@ impl BufferDiffState {
 
         self.diff_bases_changed(
             buffer,
-            diff_bases_change,
+            Some(diff_bases_change),
             self.hunk_staging_operation_count,
             cx,
         );
@@ -2343,26 +2349,26 @@ impl BufferDiffState {
     fn diff_bases_changed(
         &mut self,
         buffer: text::BufferSnapshot,
-        diff_bases_change: DiffBasesChange,
+        diff_bases_change: Option<DiffBasesChange>,
         prev_hunk_staging_operation_count: usize,
         cx: &mut Context<Self>,
     ) {
         match diff_bases_change {
-            DiffBasesChange::SetIndex(index) => {
+            Some(DiffBasesChange::SetIndex(index)) => {
                 self.index_text = index.map(|mut index| {
                     text::LineEnding::normalize(&mut index);
                     Arc::new(index)
                 });
                 self.index_changed = true;
             }
-            DiffBasesChange::SetHead(head) => {
+            Some(DiffBasesChange::SetHead(head)) => {
                 self.head_text = head.map(|mut head| {
                     text::LineEnding::normalize(&mut head);
                     Arc::new(head)
                 });
                 self.head_changed = true;
             }
-            DiffBasesChange::SetBoth(text) => {
+            Some(DiffBasesChange::SetBoth(text)) => {
                 let text = text.map(|mut text| {
                     text::LineEnding::normalize(&mut text);
                     Arc::new(text)
@@ -2372,7 +2378,7 @@ impl BufferDiffState {
                 self.head_changed = true;
                 self.index_changed = true;
             }
-            DiffBasesChange::SetEach { index, head } => {
+            Some(DiffBasesChange::SetEach { index, head }) => {
                 self.index_text = index.map(|mut index| {
                     text::LineEnding::normalize(&mut index);
                     Arc::new(index)
@@ -2384,6 +2390,7 @@ impl BufferDiffState {
                 });
                 self.head_changed = true;
             }
+            None => {}
         }
 
         self.recalculate_diffs(buffer, prev_hunk_staging_operation_count, cx)
