@@ -212,7 +212,7 @@ async fn test_basic_fetch_initial_scope_and_variables(
     running_state.update(cx, |running_state, cx| {
         let (stack_frame_list, stack_frame_id) =
             running_state.stack_frame_list().update(cx, |list, _| {
-                (list.flatten_entries(), list.current_stack_frame_id())
+                (list.flatten_entries(), list.selected_stack_frame_id())
             });
 
         assert_eq!(stack_frames, stack_frame_list);
@@ -483,7 +483,7 @@ async fn test_fetch_variables_for_multiple_scopes(
     running_state.update(cx, |running_state, cx| {
         let (stack_frame_list, stack_frame_id) =
             running_state.stack_frame_list().update(cx, |list, _| {
-                (list.flatten_entries(), list.current_stack_frame_id())
+                (list.flatten_entries(), list.selected_stack_frame_id())
             });
 
         assert_eq!(Some(1), stack_frame_id);
@@ -1565,7 +1565,7 @@ async fn test_variable_list_only_sends_requests_when_rendering(
     running_state.update(cx, |running_state, cx| {
         let (stack_frame_list, stack_frame_id) =
             running_state.stack_frame_list().update(cx, |list, _| {
-                (list.flatten_entries(), list.current_stack_frame_id())
+                (list.flatten_entries(), list.selected_stack_frame_id())
             });
 
         assert_eq!(Some(1), stack_frame_id);
@@ -1877,7 +1877,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
     running_state.update(cx, |running_state, cx| {
         let (stack_frame_list, stack_frame_id) =
             running_state.stack_frame_list().update(cx, |list, _| {
-                (list.flatten_entries(), list.current_stack_frame_id())
+                (list.flatten_entries(), list.selected_stack_frame_id())
             });
 
         let variable_list = running_state.variable_list().read(cx);
@@ -1888,7 +1888,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
             running_state
                 .stack_frame_list()
                 .read(cx)
-                .current_stack_frame_id(),
+                .selected_stack_frame_id(),
             Some(1)
         );
 
@@ -1934,7 +1934,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
     running_state.update(cx, |running_state, cx| {
         let (stack_frame_list, stack_frame_id) =
             running_state.stack_frame_list().update(cx, |list, _| {
-                (list.flatten_entries(), list.current_stack_frame_id())
+                (list.flatten_entries(), list.selected_stack_frame_id())
             });
 
         let variable_list = running_state.variable_list().read(cx);

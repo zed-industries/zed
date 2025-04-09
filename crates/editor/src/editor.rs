@@ -8907,30 +8907,6 @@ impl Editor {
         }
     }
 
-    pub fn debugger_run_to_cursor(
-        &mut self,
-        _: &crate::actions::DebuggerRunToCursor,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(dap_store) = self
-            .project
-            .as_ref()
-            .map(|project| project.read(cx).dap_store().clone())
-        {
-            let cursor_position: Point = self.selections.newest(cx).head();
-            if let Some((buffer, position, _)) = self
-                .buffer
-                .read(cx)
-                .point_to_buffer_point(cursor_position, cx)
-            {
-                dap_store.update(cx, |dap_store, cx| {
-                    dap_store.run_to_position(buffer, position, cx);
-                });
-            }
-        }
-    }
-
     pub fn toggle_breakpoint(
         &mut self,
         _: &crate::actions::ToggleBreakpoint,

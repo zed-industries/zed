@@ -666,7 +666,6 @@ impl Mode {
 struct ThreadStates {
     global_state: Option<ThreadStatus>,
     known_thread_states: IndexMap<ThreadId, ThreadStatus>,
-    active_thread_id: Option<ThreadId>,
 }
 
 impl ThreadStates {
@@ -1051,12 +1050,14 @@ impl Session {
         }
     }
 
-    pub(super) fn run_to_position(&mut self, breakpoint: SourceBreakpoint, cx: &mut Context<Self>) {
+    pub fn run_to_position(
+        &mut self,
+        breakpoint: SourceBreakpoint,
+        active_thread_id: ThreadId,
+        cx: &mut Context<Self>,
+    ) {
         match &mut self.mode {
             Mode::Local(local_mode) => {
-                let Some(active_thread_id) = self.thread_states.active_thread_id else {
-                    return;
-                };
                 if !matches!(
                     self.thread_states.thread_state(active_thread_id),
                     Some(ThreadStatus::Stopped)
@@ -1397,10 +1398,6 @@ impl Session {
             .and_modify(|request_map| {
                 request_map.remove(&key);
             });
-    }
-
-    pub fn set_active_thread_state(&mut self, thread_id: Option<ThreadId>) {
-        self.thread_states.active_thread_id = thread_id;
     }
 
     pub fn thread_status(&self, thread_id: ThreadId) -> ThreadStatus {

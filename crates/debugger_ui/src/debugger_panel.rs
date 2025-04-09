@@ -15,6 +15,7 @@ use gpui::{
     Action, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity, actions,
 };
+
 use project::{
     Project,
     debugger::{
@@ -110,26 +111,33 @@ impl DebugPanel {
                 });
 
                 cx.observe(&debug_panel, |_, debug_panel, cx| {
-                    let (has_active_session, supports_restart, support_step_back) = debug_panel
-                        .update(cx, |this, cx| {
-                            this.active_session()
-                                .map(|item| {
-                                    let running = item.read(cx).mode().as_running().cloned();
+                    let (
+                        has_active_session,
+                        supports_restart,
+                        support_step_back,
+                        selected_thread_stopped,
+                    ) = debug_panel.update(cx, |this, cx| {
+                        this.active_session()
+                            .map(|item| {
+                                let running = item.read(cx).mode().as_running().cloned();
 
-                                    match running {
-                                        Some(running) => {
-                                            let caps = running.read(cx).capabilities(cx);
-                                            (
-                                                true,
-                                                caps.supports_restart_request.unwrap_or_default(),
-                                                caps.supports_step_back.unwrap_or_default(),
-                                            )
-                                        }
-                                        None => (false, false, false),
+                                match running {
+                                    Some(running) => {
+                                        let caps = running.read(cx).capabilities(cx);
+                                        (
+                                            true,
+                                            caps.supports_restart_request.unwrap_or_default(),
+                                            caps.supports_step_back.unwrap_or_default(),
+                                            running.read(cx).thread_status(cx).is_some_and(
+                                                |status| status == ThreadStatus::Stopped,
+                                            ),
+                                        )
                                     }
-                                })
-                                .unwrap_or((false, false, false))
-                        });
+                                    None => (false, false, false, false),
+                                }
+                            })
+                            .unwrap_or((false, false, false, false))
+                    });
 
                     let filter = CommandPaletteFilter::global_mut(cx);
                     let debugger_action_types = [
@@ -141,6 +149,11 @@ impl DebugPanel {
                         TypeId::of::<Disconnect>(),
                         TypeId::of::<Pause>(),
                         TypeId::of::<ToggleIgnoreBreakpoints>(),
+                    ];
+
+                    let stopped_action_type = [
+                        TypeId::of::<editor::actions::DebuggerRunToCursor>(),
+                        TypeId::of::<editor::actions::DebuggerEvaluateSelectedText>(),
                     ];
 
                     let step_back_action_type = [TypeId::of::<StepBack>()];
@@ -160,11 +173,20 @@ impl DebugPanel {
                         } else {
                             filter.hide_action_types(&step_back_action_type);
                         }
+
+                        // todo(debugger) find out why selected_thread_stopped is never true
+                        filter.show_action_types(stopped_action_type.iter());
+                        if selected_thread_stopped {
+                            filter.show_action_types(stopped_action_type.iter());
+                        } else {
+                            // filter.hide_action_types(&stopped_action_type);
+                        }
                     } else {
                         // show only the `debug: start`
                         filter.hide_action_types(&debugger_action_types);
                         filter.hide_action_types(&step_back_action_type);
                         filter.hide_action_types(&restart_action_type);
+                        filter.hide_action_types(&stopped_action_type);
                     }
                 })
                 .detach();
@@ -176,26 +198,6 @@ impl DebugPanel {
 
     pub fn active_session(&self) -> Option<Entity<DebugSession>> {
         self.active_session.clone()
-    }
-
-    fn set_active_session(
-        &mut self,
-        session: Option<Entity<DebugSession>>,
-        cx: &mut Context<Self>,
-    ) {
-        self.active_session = session;
-        let session_id = self
-            .active_session
-            .as_ref()
-            .map(|session| session.read(cx).session_id(cx));
-
-        let _ = self.project.update(cx, |project, cx| {
-            project.dap_store().update(cx, |dap_store, _| {
-                dap_store.active_session_id = session_id;
-            })
-        });
-
-        cx.notify();
     }
 
     pub fn debug_panel_items_by_client(
@@ -375,9 +377,11 @@ impl DebugPanel {
             .map(|session| session.entity_id())
         {
             if active_session_id == entity_id {
-                self.set_active_session(self.sessions.first().cloned(), cx);
+                self.active_session = self.sessions.first().cloned();
             }
         }
+
+        cx.notify();
     }
 
     fn sessions_drop_down_menu(
@@ -694,7 +698,8 @@ impl DebugPanel {
                 });
             }
         });
-        self.set_active_session(Some(session_item), cx);
+        self.active_session = Some(session_item);
+        cx.notify();
     }
 }
 

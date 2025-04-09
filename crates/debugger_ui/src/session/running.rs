@@ -432,6 +432,10 @@ impl RunningState {
         self.session_id
     }
 
+    pub(crate) fn selected_stack_frame_id(&self, cx: &App) -> Option<dap::StackFrameId> {
+        self.stack_frame_list.read(cx).selected_stack_frame_id()
+    }
+
     #[cfg(test)]
     pub fn stack_frame_list(&self) -> &Entity<StackFrameList> {
         &self.stack_frame_list
@@ -492,7 +496,6 @@ impl RunningState {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn selected_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
@@ -508,9 +511,6 @@ impl RunningState {
         }
 
         self.thread_id = Some(thread_id);
-        self.session.update(cx, |session, _| {
-            session.set_active_thread_state(Some(thread_id));
-        });
 
         self.stack_frame_list
             .update(cx, |list, cx| list.refresh(cx));

@@ -421,6 +421,7 @@ actions!(
         EnableBreakpoint,
         EditLogBreakpoint,
         DebuggerRunToCursor,
+        DebuggerEvaluateSelectedText,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
         OpenGitBlameCommit,

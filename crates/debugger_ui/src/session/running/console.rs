@@ -141,7 +141,7 @@ impl Console {
             state.evaluate(
                 expression,
                 Some(dap::EvaluateArgumentsContext::Variables),
-                self.stack_frame_list.read(cx).current_stack_frame_id(),
+                self.stack_frame_list.read(cx).selected_stack_frame_id(),
                 None,
                 cx,
             );
@@ -384,7 +384,7 @@ impl ConsoleQueryBarCompletionProvider {
     ) -> Task<Result<Option<Vec<Completion>>>> {
         let completion_task = console.update(cx, |console, cx| {
             console.session.update(cx, |state, cx| {
-                let frame_id = console.stack_frame_list.read(cx).current_stack_frame_id();
+                let frame_id = console.stack_frame_list.read(cx).selected_stack_frame_id();
 
                 state.completions(
                     CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),
