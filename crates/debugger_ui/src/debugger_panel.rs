@@ -400,7 +400,7 @@ impl DebugPanel {
             ContextMenu::build(window, cx, move |mut this, _, _| {
                 for session in sessions.into_iter() {
                     let weak_session = session.downgrade();
-                    let weak_id = weak_session.entity_id();
+                    let weak_session_id = weak_session.entity_id();
 
                     this = this.custom_entry(
                         {
@@ -422,7 +422,8 @@ impl DebugPanel {
                                                     let weak = weak.clone();
                                                     move |_, _, cx| {
                                                         weak.update(cx, |panel, cx| {
-                                                            panel.close_session(weak_id, cx);
+                                                            panel
+                                                                .close_session(weak_session_id, cx);
                                                         })
                                                         .ok();
                                                     }
