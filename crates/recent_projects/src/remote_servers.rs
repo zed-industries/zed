@@ -1336,7 +1336,7 @@ impl RemoteServerProjects {
         Modal::new("remote-projects", None)
             .header(
                 ModalHeader::new()
-                    .child(Headline::new("Remote Projects (beta)").size(HeadlineSize::XSmall)),
+                    .child(Headline::new("Remote Projects").size(HeadlineSize::XSmall)),
             )
             .section(
                 Section::new().padded(false).child(
