@@ -62,13 +62,7 @@ pub struct ActiveThread {
     copied_code_block_ids: HashSet<(MessageId, usize)>,
     _subscriptions: Vec<Subscription>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    open_feedback_editor: Option<OpenFeedbackEditor>,
-}
-
-#[derive(Clone)]
-struct OpenFeedbackEditor {
-    message_id: MessageId,
-    editor: Entity<Editor>,
+    open_feedback_editors: HashMap<MessageId, Entity<Editor>>,
 }
 
 struct RenderedMessage {
@@ -642,7 +636,7 @@ impl ActiveThread {
             notifications: Vec::new(),
             _subscriptions: subscriptions,
             notification_subscriptions: HashMap::default(),
-            open_feedback_editor: None,
+            open_feedback_editors: HashMap::default(),
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -1134,7 +1128,7 @@ impl ActiveThread {
 
         match feedback {
             ThreadFeedback::Positive => {
-                self.open_feedback_editor.take();
+                self.open_feedback_editors.remove(&message_id);
             }
             ThreadFeedback::Negative => {
                 self.handle_show_feedback_comments(message_id, window, cx);
@@ -1169,13 +1163,12 @@ impl ActiveThread {
         });
 
         editor.read(cx).focus_handle(cx).focus(window);
-        self.open_feedback_editor = Some(OpenFeedbackEditor { message_id, editor });
+        self.open_feedback_editors.insert(message_id, editor);
         cx.notify();
     }
 
-    fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
-        let Some(OpenFeedbackEditor { message_id, editor }) = self.open_feedback_editor.clone()
-        else {
+    fn submit_feedback_message(&mut self, message_id: MessageId, cx: &mut Context<Self>) {
+        let Some(editor) = self.open_feedback_editors.get(&message_id) else {
             return;
         };
 
@@ -1203,35 +1196,14 @@ impl ActiveThread {
                 comments = comments_value
             );
 
-            self.open_feedback_editor = None;
+            self.open_feedback_editors.remove(&message_id);
 
-            let this = cx.entity().downgrade();
-            cx.spawn(async move |_, cx| {
+            cx.spawn(async move |this, cx| {
                 report_task.await?;
                 this.update(cx, |_this, cx| cx.notify())
             })
             .detach_and_log_err(cx);
         }
-    }
-
-    fn handle_cancel_comments(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_feedback_editor = None;
-        cx.notify();
-    }
-
-    fn handle_submit_comments(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.submit_feedback_message(cx);
-        cx.notify();
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1730,24 +1702,20 @@ impl ActiveThread {
                         .child(generating_label.unwrap()),
                 )
             })
-            .when(show_feedback, |parent| {
+            .when(show_feedback, move |parent| {
                 parent.child(feedback_items).when_some(
-                    self.open_feedback_editor.clone(),
-                    |parent, feedback_editor| {
-                        if feedback_editor.message_id != message_id {
-                            return parent;
-                        }
-
-                        let focus_handle = feedback_editor.editor.focus_handle(cx);
+                    self.open_feedback_editors.get(&message_id),
+                    move |parent, feedback_editor| {
+                        let focus_handle = feedback_editor.focus_handle(cx);
                         parent.child(
                             v_flex()
                                 .key_context("AgentFeedbackMessageEditor")
-                                .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                                    this.open_feedback_editor = None;
+                                .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
+                                    this.open_feedback_editors.remove(&message_id);
                                     cx.notify();
                                 }))
-                                .on_action(cx.listener(|this, _: &menu::Confirm, _, cx| {
-                                    this.submit_feedback_message(cx);
+                                .on_action(cx.listener(move |this, _: &menu::Confirm, _, cx| {
+                                    this.submit_feedback_message(message_id, cx);
                                     cx.notify();
                                 }))
                                 .on_action(cx.listener(Self::confirm_editing_message))
@@ -1758,7 +1726,7 @@ impl ActiveThread {
                                 .border_1()
                                 .border_color(cx.theme().colors().border)
                                 .bg(cx.theme().colors().editor_background)
-                                .child(feedback_editor.editor)
+                                .child(feedback_editor.clone())
                                 .child(
                                     h_flex()
                                         .gap_1()
@@ -1775,9 +1743,13 @@ impl ActiveThread {
                                                     )
                                                     .map(|kb| kb.size(rems_from_px(10.))),
                                                 )
-                                                .on_click(
-                                                    cx.listener(Self::handle_cancel_comments),
-                                                ),
+                                                .on_click(cx.listener(
+                                                    move |this, _, _window, cx| {
+                                                        this.open_feedback_editors
+                                                            .remove(&message_id);
+                                                        cx.notify();
+                                                    },
+                                                )),
                                         )
                                         .child(
                                             Button::new(
@@ -1795,7 +1767,12 @@ impl ActiveThread {
                                                 )
                                                 .map(|kb| kb.size(rems_from_px(10.))),
                                             )
-                                            .on_click(cx.listener(Self::handle_submit_comments)),
+                                            .on_click(
+                                                cx.listener(move |this, _, _window, cx| {
+                                                    this.submit_feedback_message(message_id, cx);
+                                                    cx.notify()
+                                                }),
+                                            ),
                                         ),
                                 ),
                         )
