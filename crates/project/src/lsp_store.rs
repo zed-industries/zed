@@ -1185,6 +1185,7 @@ impl LocalLspStore {
         let mut project_transaction = ProjectTransaction::default();
 
         for buffer in &buffers {
+            // Create an empty transaction to hold all of the formatting edits.
             let formatting_transaction_id = buffer.handle.update(cx, |buffer, cx| {
                 // ensure no transactions created while formatting are
                 // grouped with the previous transaction in the history
@@ -1199,28 +1200,14 @@ impl LocalLspStore {
                     .clone();
                 buffer.end_transaction(cx);
                 buffer.push_transaction(transaction, cx.background_executor().now());
+                buffer.finalize_last_transaction();
                 anyhow::Ok(transaction_id)
             })??;
-
-            // see handling of code action formatting for why there might already be transactions
-            // in project_transaction for this buffer
-            if let Some(transaction_existing) = project_transaction.0.remove(&buffer.handle) {
-                buffer.handle.update(cx, |buffer, _| {
-                    // ensure the transaction is in the history so we can group with it
-                    let transaction_id = transaction_existing.id;
-                    if buffer.get_transaction(transaction_id).is_none() {
-                        buffer.push_transaction(transaction_existing, Instant::now());
-                    }
-                    buffer.merge_transactions(transaction_id, formatting_transaction_id);
-                })?;
-            }
 
             let result = Self::format_buffer_locally(
                 lsp_store.clone(),
                 buffer,
-                &mut project_transaction,
                 formatting_transaction_id,
-                push_to_history,
                 trigger,
                 logger,
                 cx,
@@ -1228,64 +1215,47 @@ impl LocalLspStore {
             .await;
 
             buffer.handle.update(cx, |buffer, cx| {
-                let Some(transaction_id_last) =
-                    buffer.peek_undo_stack().map(|t| t.transaction_id())
+                let Some(formatting_transaction) =
+                    buffer.get_transaction(formatting_transaction_id).cloned()
                 else {
-                    // unwrapping should work here, how would we get a transaction id
-                    // with no transaction on the undo stack?
-                    // *but* it occasionally panics. Avoiding panics for now...
-                    zlog::warn!(logger => "No transaction present on undo stack, despite having a formatting transaction id?");
+                    zlog::warn!(logger => "no formatting transaction");
                     return;
                 };
-                if transaction_id_last != formatting_transaction_id {
-                    zlog::trace!(logger => "Last transaction on undo stack is not the formatting transaction, skipping finalization & update of project transaction");
+                if formatting_transaction.edit_ids.is_empty() {
+                    buffer.forget_transaction(formatting_transaction_id);
                     return;
                 }
-                let transaction = buffer
-                    .finalize_last_transaction()
-                    .cloned()
-                    .expect("There is a transaction on the undo stack if we were able to peek it");
-
                 if !push_to_history {
                     zlog::trace!(logger => "forgetting format transaction");
-                    buffer.forget_transaction(transaction.id);
+                    buffer.forget_transaction(formatting_transaction.id);
                 }
-
                 project_transaction
                     .0
-                    .insert(cx.entity(), transaction);
+                    .insert(cx.entity(), formatting_transaction);
             })?;
 
             result?;
         }
 
-        return Ok(project_transaction);
+        Ok(project_transaction)
     }
 
     async fn format_buffer_locally(
         lsp_store: WeakEntity<LspStore>,
         buffer: &FormattableBuffer,
-        project_transaction: &mut ProjectTransaction,
         formatting_transaction_id: clock::Lamport,
-        push_to_history: bool,
         trigger: FormatTrigger,
         logger: zlog::Logger,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let (adapters_and_servers, settings) = lsp_store.update(cx, |lsp_store, cx| {
             buffer.handle.update(cx, |buffer, cx| {
-                // ensure no transactions created while formatting are
-                // grouped with the previous transaction in the history
-                // based on the transaction group interval
-                buffer.finalize_last_transaction();
-
                 let adapters_and_servers = lsp_store
                     .as_local()
                     .unwrap()
                     .language_servers_for_buffer(buffer, cx)
                     .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
                     .collect::<Vec<_>>();
-
                 let settings =
                     language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
                         .into_owned();
@@ -1293,11 +1263,8 @@ impl LocalLspStore {
             })
         })?;
 
-        // helper function to avoid duplicate logic between formatter handlers below
-        // We want to avoid continuing to format the buffer if it has been edited since the start
-        // so we check that the last transaction id on the undo stack matches the one we expect
-        // This check should be done after each "gather" step where we generate a diff or edits to apply,
-        // and before applying them to the buffer to avoid messing up the user's buffer
+        // Apply edits to the buffer that will become part of the formatting transaction.
+        // Fails if the buffer has been edited since the start of that transaction.
         fn extend_formatting_transaction(
             buffer: &FormattableBuffer,
             formatting_transaction_id: text::TransactionId,
@@ -1309,9 +1276,7 @@ impl LocalLspStore {
                 if last_transaction_id != Some(formatting_transaction_id) {
                     anyhow::bail!("Buffer edited while formatting. Aborting")
                 }
-
                 buffer.start_transaction();
-
                 operation(buffer, cx);
                 if let Some(transaction_id) = buffer.end_transaction(cx) {
                     buffer.merge_transactions(transaction_id, formatting_transaction_id);
@@ -1323,12 +1288,10 @@ impl LocalLspStore {
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
             zlog::trace!(logger => "removing trailing whitespace");
-
             let diff = buffer
                 .handle
                 .read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))?
                 .await;
-
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.apply_diff(diff, cx);
             })?;
@@ -1382,7 +1345,7 @@ impl LocalLspStore {
 
         let formatters = code_actions_on_format_formatter.iter().chain(formatters);
 
-        'formatters: for formatter in formatters {
+        for formatter in formatters {
             match formatter {
                 Formatter::Prettier => {
                     let logger = zlog::scoped!(logger => "prettier");
@@ -1397,7 +1360,7 @@ impl LocalLspStore {
                         .transpose()?;
                     let Some(diff) = diff else {
                         zlog::trace!(logger => "No changes");
-                        continue 'formatters;
+                        continue;
                     };
 
                     extend_formatting_transaction(
@@ -1426,7 +1389,7 @@ impl LocalLspStore {
                     })?;
                     let Some(diff) = diff else {
                         zlog::trace!(logger => "No changes");
-                        continue 'formatters;
+                        continue;
                     };
 
                     extend_formatting_transaction(
@@ -1445,7 +1408,7 @@ impl LocalLspStore {
 
                     let Some(buffer_path_abs) = buffer.abs_path.as_ref() else {
                         zlog::warn!(logger => "Cannot format buffer that is not backed by a file on disk using language servers. Skipping");
-                        continue 'formatters;
+                        continue;
                     };
 
                     let language_server = if let Some(name) = name.as_deref() {
@@ -1465,7 +1428,7 @@ impl LocalLspStore {
                             "No language server found to format buffer '{:?}'. Skipping",
                             buffer_path_abs.as_path().to_string_lossy()
                         );
-                        continue 'formatters;
+                        continue;
                     };
 
                     zlog::trace!(
@@ -1504,7 +1467,7 @@ impl LocalLspStore {
 
                     if edits.is_empty() {
                         zlog::trace!(logger => "No changes");
-                        continue 'formatters;
+                        continue;
                     }
                     extend_formatting_transaction(
                         buffer,
@@ -1522,7 +1485,7 @@ impl LocalLspStore {
 
                     let Some(buffer_path_abs) = buffer.abs_path.as_ref() else {
                         zlog::warn!(logger => "Cannot format buffer that is not backed by a file on disk using code actions. Skipping");
-                        continue 'formatters;
+                        continue;
                     };
                     let code_action_kinds = code_actions
                         .iter()
@@ -1532,7 +1495,7 @@ impl LocalLspStore {
                         .collect::<Vec<_>>();
                     if code_action_kinds.is_empty() {
                         zlog::trace!(logger => "No code action kinds enabled, skipping");
-                        continue 'formatters;
+                        continue;
                     }
                     zlog::trace!(logger => "Attempting to resolve code actions {:?}", &code_action_kinds);
 
@@ -1570,7 +1533,7 @@ impl LocalLspStore {
 
                     if actions_and_servers.is_empty() {
                         zlog::warn!(logger => "No code actions were resolved, continuing");
-                        continue 'formatters;
+                        continue;
                     }
 
                     'actions: for (mut action, server_index) in actions_and_servers {
@@ -1598,7 +1561,7 @@ impl LocalLspStore {
                                 describe_code_action(&action),
                                 err
                             );
-                            continue 'actions;
+                            continue;
                         }
 
                         if let Some(edit) = action.lsp_action.edit().cloned() {
@@ -1621,7 +1584,7 @@ impl LocalLspStore {
                                     "No changes for code action. Skipping {}",
                                     describe_code_action(&action),
                                 );
-                                continue 'actions;
+                                continue;
                             }
 
                             let mut operations = Vec::new();
@@ -1653,7 +1616,7 @@ impl LocalLspStore {
                                     "No changes for code action. Skipping {}",
                                     describe_code_action(&action),
                                 );
-                                continue 'actions;
+                                continue;
                             }
                             for operation in operations {
                                 let op = match operation {
@@ -1735,7 +1698,7 @@ impl LocalLspStore {
 
                             if edits.is_empty() {
                                 zlog::warn!(logger => "No edits resolved from LSP");
-                                continue 'actions;
+                                continue;
                             }
 
                             extend_formatting_transaction(
@@ -1754,23 +1717,22 @@ impl LocalLspStore {
                                 "Executing code action command '{}'. This may cause formatting to abort unnecessarily as well as splitting formatting into two entries in the undo history",
                                 &command.command,
                             );
-                            // bail early and command is invalid
-                            {
-                                let server_capabilities = server.capabilities();
-                                let available_commands = server_capabilities
-                                    .execute_command_provider
-                                    .as_ref()
-                                    .map(|options| options.commands.as_slice())
-                                    .unwrap_or_default();
-                                if !available_commands.contains(&command.command) {
-                                    zlog::warn!(
-                                        logger =>
-                                        "Cannot execute a command {} not listed in the language server capabilities of server {}",
-                                        command.command,
-                                        server.name(),
-                                    );
-                                    continue 'actions;
-                                }
+
+                            // bail early if command is invalid
+                            let server_capabilities = server.capabilities();
+                            let available_commands = server_capabilities
+                                .execute_command_provider
+                                .as_ref()
+                                .map(|options| options.commands.as_slice())
+                                .unwrap_or_default();
+                            if !available_commands.contains(&command.command) {
+                                zlog::warn!(
+                                    logger =>
+                                    "Cannot execute a command {} not listed in the language server capabilities of server {}",
+                                    command.command,
+                                    server.name(),
+                                );
+                                continue;
                             }
 
                             // noop so we just ensure buffer hasn't been edited since resolving code actions
@@ -1843,6 +1805,7 @@ impl LocalLspStore {
                                     );
                                 })?;
                             }
+
                             if !project_transaction_command.0.is_empty() {
                                 let extra_buffers = project_transaction_command
                                     .0
@@ -1861,52 +1824,9 @@ impl LocalLspStore {
                                     &command.command,
                                     extra_buffers,
                                 );
-                                for (buffer_handle, transaction) in project_transaction_command.0 {
-                                    let entry = project_transaction.0.entry(buffer_handle);
-                                    use std::collections::hash_map::Entry;
-                                    match entry {
-                                        // if project_transaction already contains a transaction for this buffer, then
-                                        // we already formatted it, and we need to merge the new transaction into the one
-                                        // in project_transaction that we created while formatting
-                                        Entry::Occupied(mut occupied_entry) => {
-                                            let buffer_handle = occupied_entry.key();
-                                            buffer_handle.update(cx, |buffer, _| {
-                                                // if push_to_history is true, then we need to make sure it is merged in the
-                                                // buffer history as well
-                                                if push_to_history {
-                                                    let transaction_id_project_transaction =
-                                                        transaction.id;
-                                                    // ensure transaction from command project transaction
-                                                    // is in history so we can merge
-                                                    if buffer
-                                                        .get_transaction(transaction.id)
-                                                        .is_none()
-                                                    {
-                                                        buffer.push_transaction(
-                                                            transaction.clone(),
-                                                            Instant::now(),
-                                                        );
-                                                    }
-                                                    let transaction_id_existing =
-                                                        occupied_entry.get().id;
-                                                    buffer.merge_transactions(
-                                                        transaction_id_project_transaction,
-                                                        transaction_id_existing,
-                                                    );
-                                                }
-                                            })?;
-                                            let transaction_existing = occupied_entry.get_mut();
-                                            transaction_existing.merge_in(transaction);
-                                        }
-                                        // if there is no transaction in project_transaction, we either haven't formatted the buffer yet,
-                                        // or we won't format this buffer
-                                        // later iterations over the formattable_buffers list will use this as the starting transaction
-                                        // for the formatting on that buffer
-                                        Entry::Vacant(vacant_entry) => {
-                                            vacant_entry.insert(transaction);
-                                        }
-                                    }
-                                }
+                                // NOTE: if this case is hit, the proper thing to do is to for each buffer, merge the extra transaction
+                                // into the existing transaction in project_transaction if there is one, and if there isn't one in project_transaction,
+                                // add it so it's included, and merge it into the format transaction when its created later
                             }
                         }
                     }
@@ -2995,19 +2915,7 @@ impl LocalLspStore {
                         .await?;
 
                     let transaction = buffer_to_edit.update(cx, |buffer, cx| {
-                        let is_formatting = this.read_with(cx, |lsp_store, _| {
-                            lsp_store
-                                .as_local()
-                                .map_or(false, |local| !local.buffers_being_formatted.is_empty())
-                        });
-                        // finalizing last transaction breaks workspace edits received due to
-                        // code actions that are run as part of formatting because formatting
-                        // groups transactions from format steps together to allow undoing all formatting with
-                        // a single undo, and to bail when the user modifies the buffer during formatting
-                        // finalizing the transaction prevents the necessary grouping from happening
-                        if !is_formatting {
-                            buffer.finalize_last_transaction();
-                        }
+                        buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         for (range, text) in edits {
                             buffer.edit([(range, text)], None, cx);
@@ -3015,10 +2923,7 @@ impl LocalLspStore {
 
                         let transaction = buffer.end_transaction(cx).and_then(|transaction_id| {
                             if push_to_history {
-                                if !is_formatting {
-                                    // see comment above about finalizing during formatting
-                                    buffer.finalize_last_transaction();
-                                }
+                                buffer.finalize_last_transaction();
                                 buffer.get_transaction(transaction_id).cloned()
                             } else {
                                 buffer.forget_transaction(transaction_id)
