@@ -127,6 +127,8 @@ impl Tool for BashTool {
     }
 }
 
+const LIMIT: usize = 16 * 1024;
+
 async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
     // Add 2>&1 to merge stderr into stdout for proper interleaving.
     let command = format!("({}) 2>&1", command);
@@ -142,8 +144,6 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
     // Capture stdout with a limit
     let stdout = cmd.stdout.take().unwrap();
     let mut reader = BufReader::new(stdout);
-
-    const LIMIT: usize = 8192;
 
     // Read one more byte to determine whether the output was truncated
     let mut buffer = vec![0; LIMIT + 1];
@@ -173,25 +173,24 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
         reader.consume_unpin(skipped_bytes_len);
     }
 
-    let output_bytes = &buffer[..bytes_read];
+    let output_bytes = &buffer[..bytes_read.min(LIMIT)];
 
-    // Let the process continue running
     let status = cmd.status().await.context("Failed to get command status")?;
 
     let output_string = if bytes_read > LIMIT {
         // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
         // multi-byte characters.
         let last_line_ix = output_bytes.iter().rposition(|b| *b == b'\n');
-        let output_string =
-            String::from_utf8_lossy(&output_bytes[..last_line_ix.unwrap_or(output_bytes.len())]);
+        let until_last_line = &output_bytes[..last_line_ix.unwrap_or(output_bytes.len())];
+        let output_string = String::from_utf8_lossy(until_last_line);
 
         format!(
-            "Command output too long. The first {} bytes:\n\n```\n{}\n```",
+            "Command output too long. The first {} bytes:\n\n{}",
             output_string.len(),
-            output_string
+            output_block(&output_string),
         )
     } else {
-        format!("```\n{}\n```", String::from_utf8_lossy(&output_bytes))
+        output_block(&String::from_utf8_lossy(&output_bytes))
     };
 
     let output_with_status = if status.success() {
@@ -209,4 +208,98 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
     };
 
     Ok(output_with_status)
+}
+
+fn output_block(output: &str) -> String {
+    format!(
+        "```\n{}{}```",
+        output,
+        if output.ends_with('\n') { "" } else { "\n" }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_run_command_simple(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let result =
+            run_command_limited(Path::new(".").into(), "echo 'Hello, World!'".to_string()).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "```\nHello, World!\n```");
+    }
+
+    #[gpui::test]
+    async fn test_interleaved_stdout_stderr(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let command =
+            "echo 'stdout 1' && echo 'stderr 1' >&2 && echo 'stdout 2' && echo 'stderr 2' >&2";
+        let result = run_command_limited(Path::new(".").into(), command.to_string()).await;
+
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "```\nstdout 1\nstderr 1\nstdout 2\nstderr 2\n```"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_multiple_output_reads(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        // Command with multiple outputs that might require multiple reads
+        let result = run_command_limited(
+            Path::new(".").into(),
+            "echo '1'; sleep 0.01; echo '2'; sleep 0.01; echo '3'".to_string(),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "```\n1\n2\n3\n```");
+    }
+
+    #[gpui::test]
+    async fn test_output_truncation_single_line(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let cmd = format!("echo '{}';", "X".repeat(LIMIT * 2));
+
+        let result = run_command_limited(Path::new(".").into(), cmd).await;
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        let content_start = output.find("```\n").map(|i| i + 4).unwrap_or(0);
+        let content_end = output.rfind("\n```").unwrap_or(output.len());
+        let content_length = content_end - content_start;
+
+        // Output should be exactly the limit
+        assert_eq!(content_length, LIMIT);
+    }
+
+    #[gpui::test]
+    async fn test_output_truncation_multiline(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let cmd = format!("echo '{}'; ", "X".repeat(120)).repeat(160);
+        let result = run_command_limited(Path::new(".").into(), cmd).await;
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        assert!(output.starts_with("Command output too long. The first 16334 bytes:\n\n"));
+
+        let content_start = output.find("```\n").map(|i| i + 4).unwrap_or(0);
+        let content_end = output.rfind("\n```").unwrap_or(output.len());
+        let content_length = content_end - content_start;
+
+        assert!(content_length <= LIMIT);
+    }
 }
