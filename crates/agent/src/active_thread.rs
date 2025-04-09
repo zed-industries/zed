@@ -559,31 +559,20 @@ fn render_markdown_code_block(
                 ),
         );
 
-    let gradient_overlay =
-        div()
-            .size_full()
-            .rounded_b_lg()
-            .absolute()
-            .bottom_0()
-            .bg(linear_gradient(
-                180.,
-                linear_color_stop(cx.theme().colors().editor_background, 1.),
-                linear_color_stop(cx.theme().colors().editor_background.opacity(0.2), 0.),
-            ));
-
     let code_block = v_flex()
-        .mb_2()
+        .my_2()
         .relative()
         .overflow_hidden()
         .rounded_lg()
         .border_1()
         .border_color(cx.theme().colors().border_variant)
+        .bg(cx.theme().colors().editor_background)
         .child(codeblock_header)
         .map(|this| {
             if is_expanded {
                 this.h_full()
             } else {
-                this.h_40().rounded_b_lg()
+                this.h_40()
             }
         });
 
@@ -1921,6 +1910,45 @@ impl ActiveThread {
                                             )
                                         }
                                     }),
+                                    transform: Some(Arc::new({
+                                        let active_thread = cx.entity();
+                                        move |id, el, _, cx| {
+                                            let is_expanded = active_thread
+                                                .read(cx)
+                                                .expanded_code_blocks
+                                                .get(&(message_id, id))
+                                                .copied()
+                                                .unwrap_or(false);
+
+                                            if is_expanded {
+                                                return el;
+                                            }
+                                            el.child(
+                                                div()
+                                                    .absolute()
+                                                    .bottom_0()
+                                                    .left_0()
+                                                    .w_full()
+                                                    .min_h_16()
+                                                    .h(relative(0.2))
+                                                    .rounded_b_lg()
+                                                    .bg(gpui::linear_gradient(
+                                                        0.,
+                                                        gpui::linear_color_stop(
+                                                            cx.theme().colors().editor_background,
+                                                            0.,
+                                                        ),
+                                                        gpui::linear_color_stop(
+                                                            cx.theme()
+                                                                .colors()
+                                                                .editor_background
+                                                                .opacity(0.),
+                                                            1.,
+                                                        ),
+                                                    )),
+                                            )
+                                        }
+                                    })),
                                 })
                                 .on_url_click({
                                     let workspace = self.workspace.clone();
