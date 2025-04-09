@@ -98,19 +98,6 @@ pub fn parse_markdown(
                 // HTML entities or smart punctuation has occurred. When these substitutions occur,
                 // `parsed` only consists of the result of a single substitution.
                 if !cow_str_points_inside(&parsed, text) {
-                    // Attempt to detect cases where the assumptions here are not valid or the
-                    // behavior has changed.
-                    if parsed.len() > 4 {
-                        log::error!(
-                            "Bug in markdown parser. \
-                            pulldown_cmark::Event::Text expected to a substituted HTML entity, \
-                            but it was longer than expected.\n\
-                            Source: {}\n\
-                            Parsed: {}",
-                            &text[range.clone()],
-                            parsed
-                        );
-                    }
                     events.push((range, MarkdownEvent::SubstitutedText(parsed.into())));
                 } else {
                     // Automatically detect links in text if not already within a markdown link.
@@ -219,7 +206,7 @@ pub enum MarkdownEvent {
     Start(MarkdownTag),
     /// End of a tagged element.
     End(MarkdownTagEnd),
-    /// Text that uses the associated range from the mardown source.
+    /// Text that uses the associated range from the markdown source.
     Text,
     /// Text that differs from the markdown source - typically due to substitution of HTML entities
     /// and smart punctuation.
@@ -432,10 +419,16 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
 /// more efficient - it fits within a `pulldown_cmark::InlineStr` in all known cases.
 ///
 /// Same as `pulldown_cmark::CowStr` but without the `Borrow` case.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum CompactStr {
     Boxed(Box<str>),
     Inlined(InlineStr),
+}
+
+impl std::fmt::Debug for CompactStr {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        self.deref().fmt(formatter)
+    }
 }
 
 impl Deref for CompactStr {
@@ -551,10 +544,10 @@ mod tests {
     #[test]
     fn test_smart_punctuation() {
         assert_eq!(
-            parse_markdown("-- --- ... \"double quoted\" 'single quoted'"),
+            parse_markdown("-- --- ... \"double quoted\" 'single quoted' ----------"),
             (
                 vec![
-                    (0..42, Start(Paragraph)),
+                    (0..53, Start(Paragraph)),
                     (0..2, SubstitutedText("–".into())),
                     (2..3, Text),
                     (3..6, SubstitutedText("—".into())),
@@ -568,7 +561,9 @@ mod tests {
                     (27..28, SubstitutedText("‘".into())),
                     (28..41, Text),
                     (41..42, SubstitutedText("’".into())),
-                    (0..42, End(MarkdownTagEnd::Paragraph))
+                    (42..43, Text),
+                    (43..53, SubstitutedText("–––––".into())),
+                    (0..53, End(MarkdownTagEnd::Paragraph))
                 ],
                 HashSet::new(),
                 HashSet::new()

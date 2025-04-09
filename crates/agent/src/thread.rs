@@ -1414,7 +1414,7 @@ impl Thread {
 
         for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                if tool.needs_confirmation()
+                if tool.needs_confirmation(&tool_use.input, cx)
                     && !AssistantSettings::get_global(cx).always_allow_tool_actions
                 {
                     self.tool_use.confirm_tool_use(
@@ -1487,6 +1487,7 @@ impl Thread {
                             tool_use_id.clone(),
                             tool_name,
                             output,
+                            cx,
                         );
 
                         cx.emit(ThreadEvent::ToolFinished {
@@ -1831,7 +1832,7 @@ impl Thread {
         ));
 
         self.tool_use
-            .insert_tool_output(tool_use_id.clone(), tool_name, err);
+            .insert_tool_output(tool_use_id.clone(), tool_name, err, cx);
 
         cx.emit(ThreadEvent::ToolFinished {
             tool_use_id,

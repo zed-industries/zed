@@ -33,8 +33,7 @@ impl From<IconName> for ToastIcon {
     }
 }
 
-#[derive(IntoComponent)]
-#[component(scope = "Notification")]
+#[derive(RegisterComponent)]
 pub struct StatusToast {
     icon: Option<ToastIcon>,
     text: SharedString,
@@ -135,8 +134,12 @@ impl Focusable for StatusToast {
 
 impl EventEmitter<DismissEvent> for StatusToast {}
 
-impl ComponentPreview for StatusToast {
-    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+impl Component for StatusToast {
+    fn scope() -> ComponentScope {
+        ComponentScope::Notification
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let text_example = StatusToast::new("Operation completed", cx, |this, _| this);
 
         let action_example = StatusToast::new("Update ready to install", cx, |this, _cx| {
@@ -175,29 +178,40 @@ impl ComponentPreview for StatusToast {
                     })
             });
 
-        v_flex()
-            .gap_6()
-            .p_4()
-            .children(vec![
-                example_group_with_title(
-                    "Basic Toast",
-                    vec![
-                        single_example("Text", div().child(text_example).into_any_element()),
-                        single_example("Action", div().child(action_example).into_any_element()),
-                        single_example("Icon", div().child(icon_example).into_any_element()),
-                    ],
-                ),
-                example_group_with_title(
-                    "Examples",
-                    vec![
-                        single_example("Success", div().child(success_example).into_any_element()),
-                        single_example("Error", div().child(error_example).into_any_element()),
-                        single_example("Warning", div().child(warning_example).into_any_element()),
-                        single_example("Create PR", div().child(pr_example).into_any_element()),
-                    ],
-                )
-                .vertical(),
-            ])
-            .into_any_element()
+        Some(
+            v_flex()
+                .gap_6()
+                .p_4()
+                .children(vec![
+                    example_group_with_title(
+                        "Basic Toast",
+                        vec![
+                            single_example("Text", div().child(text_example).into_any_element()),
+                            single_example(
+                                "Action",
+                                div().child(action_example).into_any_element(),
+                            ),
+                            single_example("Icon", div().child(icon_example).into_any_element()),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Examples",
+                        vec![
+                            single_example(
+                                "Success",
+                                div().child(success_example).into_any_element(),
+                            ),
+                            single_example("Error", div().child(error_example).into_any_element()),
+                            single_example(
+                                "Warning",
+                                div().child(warning_example).into_any_element(),
+                            ),
+                            single_example("Create PR", div().child(pr_example).into_any_element()),
+                        ],
+                    )
+                    .vertical(),
+                ])
+                .into_any_element(),
+        )
     }
 }

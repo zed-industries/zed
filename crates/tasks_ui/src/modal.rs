@@ -7,6 +7,7 @@ use gpui::{
     Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
     WeakEntity, Window, rems,
 };
+use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
 use task::{
@@ -221,42 +222,66 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Task<()> {
         let task_type = self.task_modal_type.clone();
-        cx.spawn_in(window, async move |picker, cx| {
-            let Some(candidates) = picker
-                .update(cx, |picker, cx| match &mut picker.delegate.candidates {
-                    Some(candidates) => string_match_candidates(candidates.iter(), task_type),
-                    None => {
-                        let Some(task_inventory) = picker
-                            .delegate
-                            .task_store
-                            .read(cx)
-                            .task_inventory()
-                            .cloned()
-                        else {
+        let candidates = match &self.candidates {
+            Some(candidates) => Task::ready(string_match_candidates(candidates, task_type)),
+            None => {
+                if let Some(task_inventory) = self.task_store.read(cx).task_inventory().cloned() {
+                    let (used, current) = task_inventory
+                        .read(cx)
+                        .used_and_current_resolved_tasks(&self.task_contexts, cx);
+                    let workspace = self.workspace.clone();
+                    let lsp_task_sources = self.task_contexts.lsp_task_sources.clone();
+                    let task_position = self.task_contexts.latest_selection;
+
+                    cx.spawn(async move |picker, cx| {
+                        let Ok(lsp_tasks) = workspace.update(cx, |workspace, cx| {
+                            editor::lsp_tasks(
+                                workspace.project().clone(),
+                                &lsp_task_sources,
+                                task_position,
+                                cx,
+                            )
+                        }) else {
                             return Vec::new();
                         };
 
-                        let (used, current) = task_inventory
-                            .read(cx)
-                            .used_and_current_resolved_tasks(&picker.delegate.task_contexts, cx);
-                        picker.delegate.last_used_candidate_index = if used.is_empty() {
-                            None
-                        } else {
-                            Some(used.len() - 1)
-                        };
+                        let lsp_tasks = lsp_tasks.await;
+                        picker
+                            .update(cx, |picker, _| {
+                                picker.delegate.last_used_candidate_index = if used.is_empty() {
+                                    None
+                                } else {
+                                    Some(used.len() - 1)
+                                };
 
-                        let mut new_candidates = used;
-                        new_candidates.extend(current);
-                        let match_candidates =
-                            string_match_candidates(new_candidates.iter(), task_type);
-                        let _ = picker.delegate.candidates.insert(new_candidates);
-                        match_candidates
-                    }
-                })
-                .ok()
-            else {
-                return;
-            };
+                                let mut new_candidates = used;
+                                new_candidates.extend(lsp_tasks.into_iter().flat_map(
+                                    |(kind, tasks_with_locations)| {
+                                        tasks_with_locations
+                                            .into_iter()
+                                            .sorted_by_key(|(location, task)| {
+                                                (location.is_none(), task.resolved_label.clone())
+                                            })
+                                            .map(move |(_, task)| (kind.clone(), task))
+                                    },
+                                ));
+                                new_candidates.extend(current);
+                                let match_candidates =
+                                    string_match_candidates(&new_candidates, task_type);
+                                let _ = picker.delegate.candidates.insert(new_candidates);
+                                match_candidates
+                            })
+                            .ok()
+                            .unwrap_or_default()
+                    })
+                } else {
+                    Task::ready(Vec::new())
+                }
+            }
+        };
+
+        cx.spawn_in(window, async move |picker, cx| {
+            let candidates = candidates.await;
             let matches = fuzzy::match_strings(
                 &candidates,
                 &query,
@@ -426,6 +451,7 @@ impl PickerDelegate for TasksModalDelegate {
             color: Color::Default,
         };
         let icon = match source_kind {
+            TaskSourceKind::Lsp(..) => Some(Icon::new(IconName::Bolt)),
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
             TaskSourceKind::AbsPath { .. } => Some(Icon::new(IconName::Settings)),
             TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),
@@ -697,10 +723,11 @@ impl PickerDelegate for TasksModalDelegate {
 }
 
 fn string_match_candidates<'a>(
-    candidates: impl Iterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
+    candidates: impl IntoIterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
     task_modal_type: TaskModal,
 ) -> Vec<StringMatchCandidate> {
     candidates
+        .into_iter()
         .enumerate()
         .filter(|(_, (_, candidate))| match candidate.task_type() {
             TaskType::Script => task_modal_type == TaskModal::ScriptModal,

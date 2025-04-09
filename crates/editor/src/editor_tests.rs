@@ -9218,7 +9218,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
         initial_state: String,
         buffer_marked_text: String,
         completion_text: &'static str,
-        expected_with_insertion_mode: String,
+        expected_with_insert_mode: String,
         expected_with_replace_mode: String,
         expected_with_replace_subsequence_mode: String,
         expected_with_replace_suffix_mode: String,
@@ -9230,7 +9230,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "before ediˇ after".into(),
             buffer_marked_text: "before <edi|> after".into(),
             completion_text: "editor",
-            expected_with_insertion_mode: "before editorˇ after".into(),
+            expected_with_insert_mode: "before editorˇ after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
             expected_with_replace_subsequence_mode: "before editorˇ after".into(),
             expected_with_replace_suffix_mode: "before editorˇ after".into(),
@@ -9240,7 +9240,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "before ediˇtor after".into(),
             buffer_marked_text: "before <edi|tor> after".into(),
             completion_text: "editor",
-            expected_with_insertion_mode: "before editorˇtor after".into(),
+            expected_with_insert_mode: "before editorˇtor after".into(),
             expected_with_replace_mode: "before ediˇtor after".into(),
             expected_with_replace_subsequence_mode: "before ediˇtor after".into(),
             expected_with_replace_suffix_mode: "before ediˇtor after".into(),
@@ -9250,7 +9250,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "before torˇ after".into(),
             buffer_marked_text: "before <tor|> after".into(),
             completion_text: "editor",
-            expected_with_insertion_mode: "before editorˇ after".into(),
+            expected_with_insert_mode: "before editorˇ after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
             expected_with_replace_subsequence_mode: "before editorˇ after".into(),
             expected_with_replace_suffix_mode: "before editorˇ after".into(),
@@ -9260,7 +9260,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "before ˇtor after".into(),
             buffer_marked_text: "before <|tor> after".into(),
             completion_text: "editor",
-            expected_with_insertion_mode: "before editorˇtor after".into(),
+            expected_with_insert_mode: "before editorˇtor after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
             expected_with_replace_subsequence_mode: "before editorˇ after".into(),
             expected_with_replace_suffix_mode: "before editorˇ after".into(),
@@ -9270,7 +9270,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "pˇfield: bool".into(),
             buffer_marked_text: "<p|field>: bool".into(),
             completion_text: "pub ",
-            expected_with_insertion_mode: "pub ˇfield: bool".into(),
+            expected_with_insert_mode: "pub ˇfield: bool".into(),
             expected_with_replace_mode: "pub ˇ: bool".into(),
             expected_with_replace_subsequence_mode: "pub ˇfield: bool".into(),
             expected_with_replace_suffix_mode: "pub ˇfield: bool".into(),
@@ -9280,7 +9280,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "[element_ˇelement_2]".into(),
             buffer_marked_text: "[<element_|element_2>]".into(),
             completion_text: "element_1",
-            expected_with_insertion_mode: "[element_1ˇelement_2]".into(),
+            expected_with_insert_mode: "[element_1ˇelement_2]".into(),
             expected_with_replace_mode: "[element_1ˇ]".into(),
             expected_with_replace_subsequence_mode: "[element_1ˇelement_2]".into(),
             expected_with_replace_suffix_mode: "[element_1ˇelement_2]".into(),
@@ -9290,7 +9290,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "[elˇelement]".into(),
             buffer_marked_text: "[<el|element>]".into(),
             completion_text: "element",
-            expected_with_insertion_mode: "[elementˇelement]".into(),
+            expected_with_insert_mode: "[elementˇelement]".into(),
             expected_with_replace_mode: "[elˇement]".into(),
             expected_with_replace_subsequence_mode: "[elementˇelement]".into(),
             expected_with_replace_suffix_mode: "[elˇement]".into(),
@@ -9300,7 +9300,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "SubˇError".into(),
             buffer_marked_text: "<Sub|Error>".into(),
             completion_text: "SubscriptionError",
-            expected_with_insertion_mode: "SubscriptionErrorˇError".into(),
+            expected_with_insert_mode: "SubscriptionErrorˇError".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_subsequence_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_suffix_mode: "SubscriptionErrorˇ".into(),
@@ -9310,7 +9310,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "SubˇErr".into(),
             buffer_marked_text: "<Sub|Err>".into(),
             completion_text: "SubscriptionError",
-            expected_with_insertion_mode: "SubscriptionErrorˇErr".into(),
+            expected_with_insert_mode: "SubscriptionErrorˇErr".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_subsequence_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_suffix_mode: "SubscriptionErrorˇErr".into(),
@@ -9320,7 +9320,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "Suˇscrirr".into(),
             buffer_marked_text: "<Su|scrirr>".into(),
             completion_text: "SubscriptionError",
-            expected_with_insertion_mode: "SubscriptionErrorˇscrirr".into(),
+            expected_with_insert_mode: "SubscriptionErrorˇscrirr".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_subsequence_mode: "SubscriptionErrorˇ".into(),
             expected_with_replace_suffix_mode: "SubscriptionErrorˇscrirr".into(),
@@ -9330,7 +9330,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             initial_state: "foo(indˇix)".into(),
             buffer_marked_text: "foo(<ind|ix>)".into(),
             completion_text: "node_index",
-            expected_with_insertion_mode: "foo(node_indexˇix)".into(),
+            expected_with_insert_mode: "foo(node_indexˇix)".into(),
             expected_with_replace_mode: "foo(node_indexˇ)".into(),
             expected_with_replace_subsequence_mode: "foo(node_indexˇix)".into(),
             expected_with_replace_suffix_mode: "foo(node_indexˇix)".into(),
@@ -9339,7 +9339,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 
     for run in runs {
         let run_variations = [
-            (LspInsertMode::Insert, run.expected_with_insertion_mode),
+            (LspInsertMode::Insert, run.expected_with_insert_mode),
             (LspInsertMode::Replace, run.expected_with_replace_mode),
             (
                 LspInsertMode::ReplaceSubsequence,
@@ -9393,6 +9393,98 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             apply_additional_edits.await.unwrap();
         }
     }
+}
+
+#[gpui::test]
+async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let initial_state = "SubˇError";
+    let buffer_marked_text = "<Sub|Error>";
+    let completion_text = "SubscriptionError";
+    let expected_with_insert_mode = "SubscriptionErrorˇError";
+    let expected_with_replace_mode = "SubscriptionErrorˇ";
+
+    update_test_language_settings(&mut cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            // set the opposite here to ensure that the action is overriding the default behavior
+            lsp_insert_mode: LspInsertMode::Insert,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    cx.set_state(initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        &buffer_marked_text,
+        vec![completion_text],
+        counter.clone(),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(&expected_with_replace_mode);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
+
+    update_test_language_settings(&mut cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            // set the opposite here to ensure that the action is overriding the default behavior
+            lsp_insert_mode: LspInsertMode::Replace,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    cx.set_state(initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        &buffer_marked_text,
+        vec![completion_text],
+        counter.clone(),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 2);
+
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_insert(&ConfirmCompletionInsert, window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(&expected_with_insert_mode);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
 }
 
 #[gpui::test]
@@ -12539,6 +12631,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "some other init value": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12558,6 +12651,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12577,6 +12671,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12594,6 +12689,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 binary: None,
                 settings: None,
                 initialization_options: None,
+                enable_lsp_tasks: false,
             },
         );
     });

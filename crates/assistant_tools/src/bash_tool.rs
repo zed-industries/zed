@@ -1,6 +1,8 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
+use futures::io::BufReader;
+use futures::{AsyncBufReadExt, AsyncReadExt};
 use gpui::{App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -14,7 +16,7 @@ use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BashToolInput {
-    /// The bash command to execute as a one-liner.
+    /// The bash one-liner command to execute.
     command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     cd: String,
@@ -27,7 +29,7 @@ impl Tool for BashTool {
         "bash".to_string()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         true
     }
 
@@ -125,29 +127,104 @@ impl Tool for BashTool {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
             let command = format!("({}) 2>&1", input.command);
 
-            let output = new_smol_command("bash")
+            let mut cmd = new_smol_command("bash")
                 .arg("-c")
                 .arg(&command)
                 .current_dir(working_dir)
-                .output()
-                .await
+                .stdout(std::process::Stdio::piped())
+                .spawn()
                 .context("Failed to execute bash command")?;
 
-            let output_string = String::from_utf8_lossy(&output.stdout).to_string();
+            // Capture stdout with a limit
+            let stdout = cmd.stdout.take().unwrap();
+            let mut reader = BufReader::new(stdout);
 
-            if output.status.success() {
+            const MESSAGE_1: &str = "Command output too long. The first ";
+            const MESSAGE_2: &str = " bytes:\n\n";
+            const ERR_MESSAGE_1: &str = "Command failed with exit code ";
+            const ERR_MESSAGE_2: &str = "\n\n";
+
+            const STDOUT_LIMIT: usize = 8192;
+
+            const LIMIT: usize = STDOUT_LIMIT
+                - (MESSAGE_1.len()
+                    + (STDOUT_LIMIT.ilog10() as usize + 1) // byte count
+                    + MESSAGE_2.len()
+                    + ERR_MESSAGE_1.len()
+                    + 3 // status code
+                    + ERR_MESSAGE_2.len());
+
+            // Read one more byte to determine whether the output was truncated
+            let mut buffer = vec![0; LIMIT + 1];
+            let mut bytes_read = 0;
+
+            // Read until we reach the limit
+            loop {
+                let read = reader.read(&mut buffer).await?;
+                if read == 0 {
+                    break;
+                }
+
+                bytes_read += read;
+                if bytes_read > LIMIT {
+                    bytes_read = LIMIT + 1;
+                    break;
+                }
+            }
+
+            // Repeatedly fill the output reader's buffer without copying it.
+            loop {
+                let skipped_bytes = reader.fill_buf().await?;
+                if skipped_bytes.is_empty() {
+                    break;
+                }
+                let skipped_bytes_len = skipped_bytes.len();
+                reader.consume_unpin(skipped_bytes_len);
+            }
+
+            let output_bytes = &buffer[..bytes_read];
+
+            // Let the process continue running
+            let status = cmd.status().await.context("Failed to get command status")?;
+
+            let output_string = if bytes_read > LIMIT {
+                // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
+                // multi-byte characters.
+                let last_line_ix = output_bytes.iter().rposition(|b| *b == b'\n');
+                let output_string = String::from_utf8_lossy(
+                    &output_bytes[..last_line_ix.unwrap_or(output_bytes.len())],
+                );
+
+                format!(
+                    "{}{}{}{}",
+                    MESSAGE_1,
+                    output_string.len(),
+                    MESSAGE_2,
+                    output_string
+                )
+            } else {
+                String::from_utf8_lossy(&output_bytes).into()
+            };
+
+            let output_with_status = if status.success() {
                 if output_string.is_empty() {
-                    Ok("Command executed successfully.".to_string())
+                    "Command executed successfully.".to_string()
                 } else {
-                    Ok(output_string)
+                    output_string.to_string()
                 }
             } else {
-                Ok(format!(
-                    "Command failed with exit code {}\n{}",
-                    output.status.code().unwrap_or(-1),
-                    &output_string
-                ))
-            }
+                format!(
+                    "{}{}{}{}",
+                    ERR_MESSAGE_1,
+                    status.code().unwrap_or(-1),
+                    ERR_MESSAGE_2,
+                    output_string,
+                )
+            };
+
+            debug_assert!(output_with_status.len() <= STDOUT_LIMIT);
+
+            Ok(output_with_status)
         })
     }
 }
