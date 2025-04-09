@@ -141,6 +141,7 @@ pub enum IconName {
     InlayHint,
     Keyboard,
     Library,
+    LightBulb,
     LineHeight,
     Link,
     ListTree,

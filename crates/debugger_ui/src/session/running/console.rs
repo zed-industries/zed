@@ -356,7 +356,7 @@ impl ConsoleQueryBarCompletionProvider {
                         let variable_value = variables.get(&string_match.string)?;
 
                         Some(project::Completion {
-                            old_range: buffer_position..buffer_position,
+                            replace_range: buffer_position..buffer_position,
                             new_text: string_match.string.clone(),
                             label: CodeLabel {
                                 filter_range: 0..string_match.string.len(),
@@ -428,10 +428,10 @@ impl ConsoleQueryBarCompletionProvider {
                         let buffer_offset = buffer_position.to_offset(&snapshot);
                         let start = buffer_offset - word_bytes_length;
                         let start = snapshot.anchor_before(start);
-                        let old_range = start..buffer_position;
+                        let replace_range = start..buffer_position;
 
                         project::Completion {
-                            old_range,
+                            replace_range,
                             new_text,
                             label: CodeLabel {
                                 filter_range: 0..completion.label.len(),
