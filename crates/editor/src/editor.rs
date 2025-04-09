@@ -9143,6 +9143,17 @@ impl Editor {
         });
     }
 
+    pub fn toggle_case(&mut self, _: &ToggleCase, window: &mut Window, cx: &mut Context<Self>) {
+        self.manipulate_text(window, cx, |text| {
+            let should_convert_to_lower = text.chars().any(|c| c.is_uppercase());
+            if should_convert_to_lower {
+                text.to_lowercase()
+            } else {
+                text.to_uppercase()
+            }
+        })
+    }
+
     pub fn convert_to_upper_case(
         &mut self,
         _: &ConvertToUpperCase,

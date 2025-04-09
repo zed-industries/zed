@@ -3876,6 +3876,41 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_case(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // If all lower case -> upper case
+    cx.set_state(indoc! {"
+        «hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+
+    // If all upper case -> lower case
+    cx.set_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
+    "});
+
+    // If any upper case characters are identified -> lower case
+    // This matches JetBrains IDEs
+    cx.set_state(indoc! {"
+        «hEllo worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
