@@ -495,7 +495,6 @@ impl Vim {
                                 display_lines: false,
                             },
                             None,
-                            false,
                             window,
                             cx,
                         )

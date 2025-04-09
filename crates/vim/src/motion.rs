@@ -671,12 +671,10 @@ impl Vim {
                 }
             }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                self.visual_motion(motion.clone(), count, forced_motion, window, cx)
+                self.visual_motion(motion.clone(), count, window, cx)
             }
 
-            Mode::HelixNormal => {
-                self.helix_normal_motion(motion.clone(), count, forced_motion, window, cx)
-            }
+            Mode::HelixNormal => self.helix_normal_motion(motion.clone(), count, window, cx),
         }
         self.clear_operator(window, cx);
         if let Some(operator) = waiting_operator {
@@ -835,7 +833,6 @@ impl Motion {
         goal: SelectionGoal,
         maybe_times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
-        forced_motion: bool,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
         let times = maybe_times.unwrap_or(1);
         use Motion::*;
@@ -1194,8 +1191,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
         };
-
-        (new_point != point || infallible || forced_motion).then_some((new_point, goal))
+        (new_point != point || infallible).then_some((new_point, goal))
     }
 
     // Get the range value after self is applied to the specified selection.
@@ -1233,15 +1229,20 @@ impl Motion {
                 return None;
             }
         }
-
-        let (new_head, goal) = self.move_point(
+        let maybe_new_point = self.move_point(
             map,
             selection.head(),
             selection.goal,
             times,
             text_layout_details,
-            forced_motion,
-        )?;
+        );
+
+        let (new_head, goal) = match (maybe_new_point, forced_motion) {
+            (Some((p, g)), _) => Some((p, g)),
+            (None, false) => None,
+            (None, true) => Some((selection.head(), selection.goal)),
+        }?;
+
         let mut selection = selection.clone();
         selection.set_head(new_head, goal);
 

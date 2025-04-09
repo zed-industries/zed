@@ -159,7 +159,6 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -175,7 +174,7 @@ impl Vim {
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
                 vim.visual_block_motion(is_up_or_down, editor, window, cx, |map, point, goal| {
-                    motion.move_point(map, point, goal, times, &text_layout_details, forced_motion)
+                    motion.move_point(map, point, goal, times, &text_layout_details)
                 })
             } else {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -204,7 +203,6 @@ impl Vim {
                             selection.goal,
                             times,
                             &text_layout_details,
-                            forced_motion,
                         ) else {
                             return;
                         };

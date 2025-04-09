@@ -81,7 +81,6 @@ impl Vim {
                                 selection.goal,
                                 None,
                                 &text_layout_details,
-                                forced_motion,
                             ) {
                                 selection.start = point;
                             }

@@ -183,7 +183,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         match operator {
-            None => self.move_cursor(motion, times, forced_motion, window, cx),
+            None => self.move_cursor(motion, times, window, cx),
             Some(Operator::Change) => self.change_motion(motion, times, forced_motion, window, cx),
             Some(Operator::Delete) => self.delete_motion(motion, times, forced_motion, window, cx),
             Some(Operator::Yank) => self.yank_motion(motion, times, forced_motion, window, cx),
@@ -349,7 +349,6 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -358,14 +357,7 @@ impl Vim {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
                     motion
-                        .move_point(
-                            map,
-                            cursor,
-                            goal,
-                            times,
-                            &text_layout_details,
-                            forced_motion,
-                        )
+                        .move_point(map, cursor, goal, times, &text_layout_details)
                         .unwrap_or((cursor, goal))
                 })
             })
@@ -537,7 +529,6 @@ impl Vim {
                             goal,
                             None,
                             &text_layout_details,
-                            false,
                         )
                     });
                 });
