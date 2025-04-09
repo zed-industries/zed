@@ -33,7 +33,7 @@ impl Tool for ThinkingTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Brain
+        IconName::LightBulb
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {

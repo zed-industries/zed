@@ -12,6 +12,7 @@ use workspace::{Toast, Workspace};
 pub mod buffer_search;
 pub mod project_search;
 pub(crate) mod search_bar;
+pub mod search_status_button;
 
 pub fn init(cx: &mut App) {
     menu::init();
