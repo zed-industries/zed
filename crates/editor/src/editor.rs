@@ -11567,7 +11567,7 @@ impl Editor {
             window: &mut Window,
             cx: &mut Context<Editor>,
         ) {
-            this.unfold_ranges(&[range.clone()], false, true, cx);
+            this.unfold_ranges(&[range.clone()], false, auto_scroll.is_some(), cx);
             this.change_selections(auto_scroll, window, cx, |s| {
                 if replace_newest {
                     s.delete(s.newest_anchor().id);
@@ -11770,7 +11770,7 @@ impl Editor {
 
         select_next_state.done = true;
         self.unfold_ranges(&new_selections.clone(), false, false, cx);
-        self.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+        self.change_selections(None, window, cx, |selections| {
             selections.select_ranges(new_selections)
         });
 
