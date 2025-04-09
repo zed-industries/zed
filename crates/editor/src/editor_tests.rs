@@ -12539,6 +12539,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "some other init value": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12558,6 +12559,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12577,6 +12579,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12594,6 +12597,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 binary: None,
                 settings: None,
                 initialization_options: None,
+                enable_lsp_tasks: false,
             },
         );
     });

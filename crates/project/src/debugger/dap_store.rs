@@ -1,7 +1,7 @@
 use super::{
     breakpoint_store::BreakpointStore,
     locator_store::LocatorStore,
-    session::{self, Session},
+    session::{self, Session, SessionStateEvent},
 };
 use crate::{ProjectEnvironment, debugger, worktree_store::WorktreeStore};
 use anyhow::{Result, anyhow};
@@ -869,6 +869,15 @@ fn create_new_session(
         }
 
         this.update(cx, |_, cx| {
+            cx.subscribe(
+                &session,
+                move |this: &mut DapStore, _, event: &SessionStateEvent, cx| match event {
+                    SessionStateEvent::Shutdown => {
+                        this.shutdown_session(session_id, cx).detach_and_log_err(cx);
+                    }
+                },
+            )
+            .detach();
             cx.emit(DapStoreEvent::DebugSessionInitialized(session_id));
         })?;
 

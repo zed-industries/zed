@@ -699,3 +699,18 @@ message LanguageServerIdForName {
 message LanguageServerIdForNameResponse {
     optional uint64 server_id = 1;
 }
+
+message LspExtRunnables {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    optional Anchor position = 3;
+}
+
+message LspExtRunnablesResponse {
+    repeated LspRunnable runnables = 1;
+}
+
+message LspRunnable {
+    bytes task_template = 1;
+    optional LocationLink location = 2;
+}

@@ -242,6 +242,7 @@ fn new_debugger_pane(
         })));
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
+        pane.set_render_tab_bar_buttons(cx, |_, _, _| (None, None));
         pane
     });
 
@@ -343,12 +344,13 @@ impl RunningState {
                     SharedString::new_static("Modules"),
                     cx,
                 )),
-                true,
+                false,
                 false,
                 None,
                 window,
                 cx,
             );
+            this.activate_item(0, false, false, window, cx);
         });
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         rightmost_pane.update(cx, |this, cx| {
@@ -446,7 +448,7 @@ impl RunningState {
     }
 
     #[cfg(test)]
-    pub(crate) fn activate_variable_list(&self, window: &mut Window, cx: &mut App) {
+    pub(crate) fn activate_modules_list(&self, window: &mut Window, cx: &mut App) {
         let (variable_list_position, pane) = self
             .panes
             .panes()
@@ -454,7 +456,7 @@ impl RunningState {
             .find_map(|pane| {
                 pane.read(cx)
                     .items_of_type::<SubView>()
-                    .position(|view| view.read(cx).tab_name == *"Variables")
+                    .position(|view| view.read(cx).tab_name == *"Modules")
                     .map(|view| (view, pane))
             })
             .unwrap();

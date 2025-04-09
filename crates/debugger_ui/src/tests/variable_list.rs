@@ -207,9 +207,6 @@ async fn test_basic_fetch_initial_scope_and_variables(
                 .expect("Session should be running by this point")
                 .clone()
         });
-    running_state.update_in(cx, |this, window, cx| {
-        this.activate_variable_list(window, cx);
-    });
     cx.run_until_parked();
 
     running_state.update(cx, |running_state, cx| {
@@ -481,9 +478,6 @@ async fn test_fetch_variables_for_multiple_scopes(
                 .expect("Session should be running by this point")
                 .clone()
         });
-    running_state.update_in(cx, |this, window, cx| {
-        this.activate_variable_list(window, cx);
-    });
     cx.run_until_parked();
 
     running_state.update(cx, |running_state, cx| {
@@ -800,10 +794,6 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
             variable_list.update(cx, |_, cx| cx.focus_self(window));
             running
         });
-    running_state.update_in(cx, |this, window, cx| {
-        this.activate_variable_list(window, cx);
-    });
-    cx.run_until_parked();
     cx.dispatch_action(SelectFirst);
     cx.dispatch_action(SelectFirst);
     cx.run_until_parked();
@@ -1572,21 +1562,6 @@ async fn test_variable_list_only_sends_requests_when_rendering(
 
     cx.run_until_parked();
 
-    // We shouldn't make any variable requests unless we're rendering the variable list
-    running_state.update_in(cx, |running_state, window, cx| {
-        let variable_list = running_state.variable_list().read(cx);
-        let empty: Vec<dap::Variable> = vec![];
-
-        assert_eq!(empty, variable_list.variables());
-        assert!(!made_scopes_request.load(Ordering::SeqCst));
-
-        cx.focus_self(window);
-    });
-    running_state.update_in(cx, |this, window, cx| {
-        this.activate_variable_list(window, cx);
-    });
-    cx.run_until_parked();
-
     running_state.update(cx, |running_state, cx| {
         let (stack_frame_list, stack_frame_id) =
             running_state.stack_frame_list().update(cx, |list, _| {
@@ -1898,10 +1873,6 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
                 .expect("Session should be running by this point")
                 .clone()
         });
-    running_state.update_in(cx, |this, window, cx| {
-        this.activate_variable_list(window, cx);
-    });
-    cx.run_until_parked();
 
     running_state.update(cx, |running_state, cx| {
         let (stack_frame_list, stack_frame_id) =

@@ -138,7 +138,8 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
                 .clone()
         });
 
-    running_state.update(cx, |_, cx| {
+    running_state.update_in(cx, |this, window, cx| {
+        this.activate_modules_list(window, cx);
         cx.refresh_windows();
     });
 
