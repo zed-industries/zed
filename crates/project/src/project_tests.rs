@@ -8233,6 +8233,7 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     .await;
 }
 
+#[gpui::test]
 async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
