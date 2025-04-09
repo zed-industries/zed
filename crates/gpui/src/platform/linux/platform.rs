@@ -18,7 +18,6 @@ use anyhow::{Context as _, anyhow};
 use async_task::Runnable;
 use calloop::{LoopSignal, channel::Channel};
 use futures::channel::oneshot;
-use smallvec::SmallVec;
 use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
@@ -441,8 +440,8 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| Some(common.menus.clone()))
     }
 
-    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) -> Vec<SmallVec<[PathBuf; 2]>> {
-        Vec::new()
+    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {
+        // todo(linux)
     }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {

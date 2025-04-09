@@ -8,7 +8,6 @@ use anyhow::Result;
 use collections::VecDeque;
 use futures::channel::oneshot;
 use parking_lot::Mutex;
-use smallvec::SmallVec;
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -361,13 +360,7 @@ impl Platform for TestPlatform {
     }
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
-    fn set_dock_menu(
-        &self,
-        _menu: Vec<crate::MenuItem>,
-        _keymap: &Keymap,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
-        Vec::new()
-    }
+    fn set_dock_menu(&self, _menu: Vec<crate::MenuItem>, _keymap: &Keymap) {}
 
     fn add_recent_document(&self, _paths: &Path) {}
 
