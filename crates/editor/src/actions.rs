@@ -420,6 +420,7 @@ actions!(
         Tab,
         Backtab,
         ToggleBreakpoint,
+        ToggleCase,
         DisableBreakpoint,
         EnableBreakpoint,
         EditLogBreakpoint,
