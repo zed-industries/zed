@@ -30,8 +30,8 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AgentDiff, Chat, ChatMode, NewThread, OpenAgentDiff, RemoveAllContext, ThreadEvent,
-    ToggleContextPicker, ToggleProfileSelector,
+    AgentDiff, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
+    ThreadEvent, ToggleContextPicker, ToggleProfileSelector,
 };
 
 pub struct MessageEditor {
@@ -48,6 +48,7 @@ pub struct MessageEditor {
     model_selector: Entity<AssistantModelSelector>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
+    height_expanded: bool,
     waiting_for_summaries_to_send: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -142,6 +143,7 @@ impl MessageEditor {
                 )
             }),
             edits_expanded: false,
+            height_expanded: false,
             waiting_for_summaries_to_send: false,
             profile_selector: cx
                 .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
@@ -150,6 +152,16 @@ impl MessageEditor {
     }
 
     fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.notify();
+    }
+
+    fn toggle_height(
+        &mut self,
+        _: &ExpandMessageEditor,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.height_expanded = !self.height_expanded;
         cx.notify();
     }
 
@@ -344,6 +356,7 @@ impl Render for MessageEditor {
         let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
 
         let focus_handle = self.editor.focus_handle(cx);
+        let focus_handle_clone = focus_handle.clone();
         let inline_context_picker = self.inline_context_picker.clone();
 
         let thread = self.thread.read(cx);
@@ -652,16 +665,42 @@ impl Render for MessageEditor {
                     .on_action(cx.listener(Self::remove_all_context))
                     .on_action(cx.listener(Self::move_up))
                     .on_action(cx.listener(Self::toggle_chat_mode))
+                    .on_action(cx.listener(Self::toggle_height))
+
                     .gap_2()
                     .p_2()
                     .bg(editor_bg_color)
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
-                    .child(h_flex().justify_between().child(self.context_strip.clone()))
+                    .child(
+                        h_flex()
+                            .items_start()
+                            .justify_between()
+                            .child(self.context_strip.clone())
+                            .child(
+                                IconButton::new("toggle-height", IconName::Maximize)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |window, cx| {
+                                        let focus_handle = focus_handle.clone();
+                                        Tooltip::for_action_in(
+                                            "Expand Message Editor",
+                                            &ExpandMessageEditor,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(|_, _, window, cx| {
+                                        window.dispatch_action(Box::new(ExpandMessageEditor), cx);
+                                    }))
+                            )
+                    )
                     .child(
                         v_flex()
+                            .size_full()
                             .gap_5()
-                            .child({
+                            .child(div().when(self.height_expanded, |this| this.h_96()).debug_bg_red().child({
                                     let settings = ThemeSettings::get_global(cx);
                                     let text_style = TextStyle {
                                         color: cx.theme().colors().text,
@@ -684,7 +723,7 @@ impl Render for MessageEditor {
                                             ..Default::default()
                                         },
                                     ).into_any()
-                            })
+                            }))
                             .child(
                                 PopoverMenu::new("inline-context-picker")
                                     .menu(move |window, cx| {
@@ -704,11 +743,15 @@ impl Render for MessageEditor {
                             )
                             .child(
                                 h_flex()
+                                    .debug_bg_cyan()
+                                    // .mt_auto()
+                                    .flex_none()
                                     .justify_between()
                                     .child(h_flex().gap_2().child(self.profile_selector.clone()))
                                     .child(
-                                        h_flex().gap_1().child(self.model_selector.clone())
-                                            .map(|parent| {
+                                        h_flex().gap_1()
+                                            .child(self.model_selector.clone())
+                                            .map(move |parent| {
                                                 if is_generating {
                                                     parent.child(
                                                         IconButton::new("stop-generation", IconName::StopFilled)
@@ -722,12 +765,15 @@ impl Render for MessageEditor {
                                                                     cx,
                                                                 )
                                                             })
-                                                            .on_click(move |_event, window, cx| {
-                                                                focus_handle.dispatch_action(
-                                                                    &editor::actions::Cancel,
-                                                                    window,
-                                                                    cx,
-                                                                );
+                                                            .on_click({
+                                                                let focus_handle = focus_handle_clone.clone();
+                                                                move |_event, window, cx| {
+                                                                    focus_handle.dispatch_action(
+                                                                        &editor::actions::Cancel,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                }
                                                             })
                                                             .with_animation(
                                                                 "pulsating-label",
@@ -747,8 +793,11 @@ impl Render for MessageEditor {
                                                                     || !is_model_selected
                                                                     || self.waiting_for_summaries_to_send
                                                             )
-                                                            .on_click(move |_event, window, cx| {
-                                                                focus_handle.dispatch_action(&Chat, window, cx);
+                                                            .on_click({
+                                                                let focus_handle = focus_handle_clone.clone();
+                                                                move |_event, window, cx| {
+                                                                    focus_handle.dispatch_action(&Chat, window, cx);
+                                                                }
                                                             })
                                                             .when(!is_editor_empty && is_model_selected, |button| {
                                                                 button.tooltip(move |window, cx| {
