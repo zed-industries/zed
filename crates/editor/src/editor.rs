@@ -818,6 +818,7 @@ pub struct Editor {
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
     hide_mouse_mode: HideMouseMode,
+    drag_selection: Option<Selection<Anchor>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1602,6 +1603,7 @@ impl Editor {
             hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
                 .unwrap_or_default(),
+            drag_selection: None,
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -2993,6 +2995,23 @@ impl Editor {
 
     pub fn has_pending_selection(&self) -> bool {
         self.selections.pending_anchor().is_some() || self.columnar_selection_tail.is_some()
+    }
+
+    pub fn is_intersect_drag_selection(
+        &self,
+        point: DisplayPoint,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        if self.drag_selection.is_some() {
+            let selection = self.drag_selection.as_ref().unwrap();
+            let snapshot = self.snapshot(window, cx);
+            let start = selection.start.to_display_point(&snapshot);
+            let end = selection.end.to_display_point(&snapshot);
+            point >= start && point <= end
+        } else {
+            false
+        }
     }
 
     pub fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
@@ -9322,6 +9341,40 @@ impl Editor {
 
             this.request_autoscroll(Autoscroll::fit(), cx);
         });
+    }
+
+    pub fn drop_selection(
+        &mut self,
+        point: DisplayPoint,
+        is_cut: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        let mut edits = Vec::new();
+        if let Some(selection) = self.drag_selection.take() {
+            let start = selection.start;
+            let end = selection.end;
+            let text = buffer.text_for_range(start..end).collect::<String>();
+            if is_cut {
+                edits.push(((selection.start..selection.end), String::new()));
+            }
+            let insert_position = display_map
+                .clip_point(point, Bias::Left)
+                .to_point(&display_map);
+            let insert_position = buffer.anchor_before(insert_position);
+            edits.push(((insert_position..insert_position), text));
+            self.transact(window, cx, |this, window, cx| {
+                this.buffer.update(cx, |buffer, cx| {
+                    buffer.edit(edits, None, cx);
+                });
+                let selections = this.selections.all::<usize>(cx);
+                this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select(selections);
+                });
+            });
+        }
     }
 
     pub fn duplicate(
