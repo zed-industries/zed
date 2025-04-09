@@ -15678,6 +15678,12 @@ impl Editor {
         });
     }
 
+    pub fn set_autoheight_max_lines(&mut self, new_max_lines: usize) {
+        if let EditorMode::AutoHeight { max_lines } = &mut self.mode {
+            *max_lines = new_max_lines;
+        }
+    }
+
     pub fn display_text(&self, cx: &mut App) -> String {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))

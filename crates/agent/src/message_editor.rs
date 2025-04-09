@@ -48,7 +48,7 @@ pub struct MessageEditor {
     model_selector: Entity<AssistantModelSelector>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
-    height_expanded: bool,
+    expanded_editor: bool,
     waiting_for_summaries_to_send: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -143,7 +143,7 @@ impl MessageEditor {
                 )
             }),
             edits_expanded: false,
-            height_expanded: false,
+            expanded_editor: false,
             waiting_for_summaries_to_send: false,
             profile_selector: cx
                 .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
@@ -161,7 +161,16 @@ impl MessageEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.height_expanded = !self.height_expanded;
+        self.expanded_editor = !self.expanded_editor;
+
+        self.editor.update(cx, |editor, _| {
+            if self.expanded_editor {
+                editor.set_autoheight_max_lines(22)
+            } else {
+                editor.set_autoheight_max_lines(10)
+            }
+        });
+
         cx.notify();
     }
 
@@ -352,12 +361,19 @@ impl Focusable for MessageEditor {
 
 impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let font_size = TextSize::Default.rems(cx);
+        let font_size = TextSize::Small.rems(cx);
         let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
 
         let focus_handle = self.editor.focus_handle(cx);
         let focus_handle_clone = focus_handle.clone();
         let inline_context_picker = self.inline_context_picker.clone();
+
+        let is_editor_expanded = self.expanded_editor;
+        let expand_icon = if self.expanded_editor {
+            IconName::Minimize
+        } else {
+            IconName::Maximize
+        };
 
         let thread = self.thread.read(cx);
         let is_generating = thread.is_generating();
@@ -666,7 +682,6 @@ impl Render for MessageEditor {
                     .on_action(cx.listener(Self::move_up))
                     .on_action(cx.listener(Self::toggle_chat_mode))
                     .on_action(cx.listener(Self::toggle_height))
-
                     .gap_2()
                     .p_2()
                     .bg(editor_bg_color)
@@ -678,7 +693,7 @@ impl Render for MessageEditor {
                             .justify_between()
                             .child(self.context_strip.clone())
                             .child(
-                                IconButton::new("toggle-height", IconName::Maximize)
+                                IconButton::new("toggle-height", expand_icon)
                                     .icon_size(IconSize::XSmall)
                                     .icon_color(Color::Muted)
                                     .tooltip(move |window, cx| {
@@ -699,8 +714,8 @@ impl Render for MessageEditor {
                     .child(
                         v_flex()
                             .size_full()
-                            .gap_5()
-                            .child(div().when(self.height_expanded, |this| this.h_96()).debug_bg_red().child({
+                            .gap_4()
+                            .child(div().when(is_editor_expanded, |this| this.h_96()).child({
                                     let settings = ThemeSettings::get_global(cx);
 
                                     let text_style = TextStyle {
@@ -743,7 +758,6 @@ impl Render for MessageEditor {
                             )
                             .child(
                                 h_flex()
-                                    .debug_bg_cyan()
                                     .mt_auto()
                                     .flex_none()
                                     .justify_between()
