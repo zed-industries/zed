@@ -4434,12 +4434,11 @@ impl BackgroundScanner {
         )
         .await;
 
-        let new_ancestor_repo = if relative_paths
+        let mut new_ancestor_repo = if relative_paths
             .iter()
             .any(|path| path.as_ref() == Path::new(""))
         {
-            let (ignores, repo) = discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
-            repo
+            Some(discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await)
         } else {
             None
         };
@@ -4497,15 +4496,17 @@ impl BackgroundScanner {
                     state.insert_entry(fs_entry.clone(), self.fs.as_ref(), self.watcher.as_ref());
 
                     if path.as_ref() == Path::new("") {
-                        if let Some((ancestor_dot_git, work_directory)) = new_ancestor_repo.as_ref()
-                        {
+                        if let Some((ignores, repo)) = new_ancestor_repo.take() {
                             log::trace!("updating ancestor git repository");
-                            state.insert_git_repository_for_path(
-                                work_directory.clone(),
-                                ancestor_dot_git.as_path().into(),
-                                self.fs.as_ref(),
-                                self.watcher.as_ref(),
-                            );
+                            state.snapshot.ignores_by_parent_abs_path.extend(ignores);
+                            if let Some((ancestor_dot_git, work_directory)) = repo {
+                                state.insert_git_repository_for_path(
+                                    work_directory,
+                                    ancestor_dot_git.as_path().into(),
+                                    self.fs.as_ref(),
+                                    self.watcher.as_ref(),
+                                );
+                            }
                         }
                     }
                 }
