@@ -61,7 +61,7 @@ pub fn all_language_settings<'a>(
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
     pub edit_predictions: EditPredictionSettings,
-    defaults: LanguageSettings,
+    pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
@@ -329,6 +329,11 @@ pub struct CompletionSettings {
     /// Default: 0
     #[serde(default = "default_lsp_fetch_timeout_ms")]
     pub lsp_fetch_timeout_ms: u64,
+    /// Controls how LSP completions are inserted.
+    ///
+    /// Default: "replace_suffix"
+    #[serde(default = "default_lsp_insert_mode")]
+    pub lsp_insert_mode: LspInsertMode,
 }
 
 /// Controls how document's words are completed.
@@ -345,8 +350,27 @@ pub enum WordsCompletionMode {
     Disabled,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LspInsertMode {
+    /// Replaces text before the cursor, using the `insert` range described in the LSP specification.
+    Insert,
+    /// Replaces text before and after the cursor, using the `replace` range described in the LSP specification.
+    Replace,
+    /// Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text,
+    /// and like `"insert"` otherwise.
+    ReplaceSubsequence,
+    /// Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
+    /// `"insert"` otherwise.
+    ReplaceSuffix,
+}
+
 fn default_words_completion_mode() -> WordsCompletionMode {
     WordsCompletionMode::Fallback
+}
+
+fn default_lsp_insert_mode() -> LspInsertMode {
+    LspInsertMode::ReplaceSuffix
 }
 
 fn default_lsp_fetch_timeout_ms() -> u64 {
@@ -1005,7 +1029,10 @@ fn scroll_debounce_ms() -> u64 {
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
 pub struct LanguageTaskConfig {
     /// Extra task variables to set for a particular language.
+    #[serde(default)]
     pub variables: HashMap<String, String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 impl InlayHintSettings {

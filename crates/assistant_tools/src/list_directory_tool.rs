@@ -41,10 +41,10 @@ pub struct ListDirectoryTool;
 
 impl Tool for ListDirectoryTool {
     fn name(&self) -> String {
-        "list-directory".into()
+        "list_directory".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 

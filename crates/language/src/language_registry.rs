@@ -680,7 +680,7 @@ impl LanguageRegistry {
         // `Path.extension()` returns None for files with a leading '.'
         // and no other extension which is not the desired behavior here,
         // as we want `.zshrc` to result in extension being `Some("zshrc")`
-        let extension = filename.and_then(|filename| filename.split('.').last());
+        let extension = filename.and_then(|filename| filename.split('.').next_back());
         let path_suffixes = [extension, filename, path.to_str()];
         let empty = GlobSet::empty();
 

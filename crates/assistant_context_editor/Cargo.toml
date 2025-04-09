@@ -22,6 +22,7 @@ clock.workspace = true
 collections.workspace = true
 context_server.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -53,7 +54,9 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
+workspace-hack.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 language_model = { workspace = true, features = ["test-support"] }

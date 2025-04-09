@@ -7,7 +7,6 @@ use futures::{FutureExt, StreamExt, channel::mpsc, future::BoxFuture, stream::Bo
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
 use http_client::Result;
 use parking_lot::Mutex;
-use serde::Serialize;
 use std::sync::Arc;
 
 pub fn language_model_id() -> LanguageModelId {
@@ -88,7 +87,6 @@ pub struct ToolUseRequest {
 #[derive(Default)]
 pub struct FakeLanguageModel {
     current_completion_txs: Mutex<Vec<(LanguageModelRequest, mpsc::UnboundedSender<String>)>>,
-    current_tool_use_txs: Mutex<Vec<(ToolUseRequest, mpsc::UnboundedSender<String>)>>,
 }
 
 impl FakeLanguageModel {
@@ -126,13 +124,6 @@ impl FakeLanguageModel {
 
     pub fn end_last_completion_stream(&self) {
         self.end_completion_stream(self.pending_completions().last().unwrap());
-    }
-
-    pub fn respond_to_last_tool_use<T: Serialize>(&self, response: T) {
-        let response = serde_json::to_string(&response).unwrap();
-        let mut current_tool_call_txs = self.current_tool_use_txs.lock();
-        let (_, tx) = current_tool_call_txs.pop().unwrap();
-        tx.unbounded_send(response).unwrap();
     }
 }
 
@@ -182,25 +173,6 @@ impl LanguageModel for FakeLanguageModel {
                 .boxed())
         }
         .boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        name: String,
-        description: String,
-        schema: serde_json::Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let (tx, rx) = mpsc::unbounded();
-        let tool_call = ToolUseRequest {
-            request,
-            name,
-            description,
-            schema,
-        };
-        self.current_tool_use_txs.lock().push((tool_call, tx));
-        async move { Ok(rx.map(Ok).boxed()) }.boxed()
     }
 
     fn as_fake(&self) -> &Self {

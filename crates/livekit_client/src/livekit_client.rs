@@ -61,7 +61,7 @@ impl Room {
         let task = cx.background_executor().spawn(async move {
             while let Some(event) = events.recv().await {
                 if let Some(event) = room_event_from_livekit(event) {
-                    tx.send(event.into()).await.ok();
+                    tx.send(event).await.ok();
                 }
             }
         });
@@ -112,33 +112,6 @@ impl Room {
         Ok((publication, stream))
     }
 
-    // pub async fn publish_local_wav_track(
-    //     &self,
-    //     cx: &mut AsyncApp,
-    // ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
-    //     let apm = self.apm.clone();
-    //     let executor = cx.background_executor().clone();
-    //     let (track, stream) =
-    //         Tokio::spawn(
-    //             cx,
-    //             async move { capture_local_wav_track(apm, &executor).await },
-    //         )?
-    //         .await??;
-    //     let publication = self
-    //         .local_participant()
-    //         .publish_track(
-    //             livekit::track::LocalTrack::Audio(track.0),
-    //             livekit::options::TrackPublishOptions {
-    //                 source: livekit::track::TrackSource::Microphone,
-    //                 ..Default::default()
-    //             },
-    //             cx,
-    //         )
-    //         .await?;
-
-    //     Ok((publication, stream))
-    // }
-
     pub async fn unpublish_local_track(
         &self,
         sid: TrackSid,
@@ -162,7 +135,7 @@ impl LocalParticipant {
         source: &dyn ScreenCaptureSource,
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, Box<dyn ScreenCaptureStream>)> {
-        let (track, stream) = capture_local_video_track(&*source, cx).await?;
+        let (track, stream) = capture_local_video_track(source, cx).await?;
         let options = livekit::options::TrackPublishOptions {
             source: livekit::track::TrackSource::Screenshare,
             video_codec: livekit::options::VideoCodec::VP8,
@@ -186,7 +159,7 @@ impl LocalParticipant {
             participant.publish_track(track, options).await
         })?
         .await?
-        .map(|p| LocalTrackPublication(p))
+        .map(LocalTrackPublication)
         .map_err(|error| anyhow::anyhow!("failed to publish track: {error}"))
     }
 
@@ -198,7 +171,7 @@ impl LocalParticipant {
         let participant = self.0.clone();
         Tokio::spawn(cx, async move { participant.unpublish_track(&sid).await })?
             .await?
-            .map(|p| LocalTrackPublication(p))
+            .map(LocalTrackPublication)
             .map_err(|error| anyhow::anyhow!("failed to unpublish track: {error}"))
     }
 }
@@ -279,23 +252,6 @@ impl RemoteTrackPublication {
 
     pub fn sid(&self) -> TrackSid {
         self.0.sid()
-    }
-}
-
-impl RemoteTrack {
-    pub fn set_enabled(&self, enabled: bool, cx: &App) {
-        let this = self.clone();
-        Tokio::spawn(cx, async move {
-            match this {
-                RemoteTrack::Audio(remote_audio_track) => {
-                    remote_audio_track.0.rtc_track().set_enabled(enabled)
-                }
-                RemoteTrack::Video(remote_video_track) => {
-                    remote_video_track.0.rtc_track().set_enabled(enabled)
-                }
-            }
-        })
-        .detach();
     }
 }
 
@@ -476,7 +432,7 @@ fn room_event_from_livekit(event: livekit::RoomEvent) -> Option<RoomEvent> {
                     |(p, t)| {
                         (
                             RemoteParticipant(p),
-                            t.into_iter().map(|t| RemoteTrackPublication(t)).collect(),
+                            t.into_iter().map(RemoteTrackPublication).collect(),
                         )
                     }
                 })

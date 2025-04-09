@@ -483,8 +483,8 @@ async fn run_eval_project(
             for (ix, result) in results.iter().enumerate() {
                 if result.path.as_ref() == Path::new(&expected_result.file) {
                     file_matched = true;
-                    let start_matched = result.row_range.contains(&expected_result.lines.start());
-                    let end_matched = result.row_range.contains(&expected_result.lines.end());
+                    let start_matched = result.row_range.contains(expected_result.lines.start());
+                    let end_matched = result.row_range.contains(expected_result.lines.end());
 
                     if start_matched || end_matched {
                         range_overlapped = true;

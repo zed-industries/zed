@@ -468,15 +468,9 @@ impl Matches {
                 path: found_path.clone(),
                 panel_match: None,
             };
-            self.matches
-                .extend(currently_opened.into_iter().map(path_to_entry));
 
-            self.matches.extend(
-                history_items
-                    .into_iter()
-                    .filter(|found_path| Some(*found_path) != currently_opened)
-                    .map(path_to_entry),
-            );
+            self.matches
+                .extend(history_items.into_iter().map(path_to_entry));
             return;
         };
 
@@ -530,17 +524,77 @@ impl Matches {
         match (&a, &b) {
             // bubble currently opened files to the top
             (Match::History { path, .. }, _) if Some(path) == currently_opened => {
-                cmp::Ordering::Greater
+                return cmp::Ordering::Greater;
             }
             (_, Match::History { path, .. }) if Some(path) == currently_opened => {
-                cmp::Ordering::Less
+                return cmp::Ordering::Less;
             }
 
-            (Match::History { .. }, Match::Search(_)) if separate_history => cmp::Ordering::Greater,
-            (Match::Search(_), Match::History { .. }) if separate_history => cmp::Ordering::Less,
-
-            _ => a.panel_match().cmp(&b.panel_match()),
+            _ => {}
         }
+
+        if separate_history {
+            match (a, b) {
+                (Match::History { .. }, Match::Search(_)) => return cmp::Ordering::Greater,
+                (Match::Search(_), Match::History { .. }) => return cmp::Ordering::Less,
+
+                _ => {}
+            }
+        }
+
+        let a_panel_match = match a.panel_match() {
+            Some(pm) => pm,
+            None => {
+                return if b.panel_match().is_some() {
+                    cmp::Ordering::Less
+                } else {
+                    cmp::Ordering::Equal
+                };
+            }
+        };
+
+        let b_panel_match = match b.panel_match() {
+            Some(pm) => pm,
+            None => return cmp::Ordering::Greater,
+        };
+
+        let a_in_filename = Self::is_filename_match(a_panel_match);
+        let b_in_filename = Self::is_filename_match(b_panel_match);
+
+        match (a_in_filename, b_in_filename) {
+            (true, false) => return cmp::Ordering::Greater,
+            (false, true) => return cmp::Ordering::Less,
+            _ => {} // Both are filename matches or both are path matches
+        }
+
+        a_panel_match.cmp(b_panel_match)
+    }
+
+    /// Determines if the match occurred within the filename rather than in the path
+    fn is_filename_match(panel_match: &ProjectPanelOrdMatch) -> bool {
+        if panel_match.0.positions.is_empty() {
+            return false;
+        }
+
+        if let Some(filename) = panel_match.0.path.file_name() {
+            let path_str = panel_match.0.path.to_string_lossy();
+            let filename_str = filename.to_string_lossy();
+
+            if let Some(filename_pos) = path_str.rfind(&*filename_str) {
+                if panel_match.0.positions[0] >= filename_pos {
+                    let mut prev_position = panel_match.0.positions[0];
+                    for p in &panel_match.0.positions[1..] {
+                        if *p != prev_position + 1 {
+                            return false;
+                        }
+                        prev_position = *p;
+                    }
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 

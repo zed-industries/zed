@@ -161,13 +161,11 @@ pub struct Remote {
 }
 
 pub enum ResetMode {
-    // reset the branch pointer, leave index and worktree unchanged
-    // (this will make it look like things that were committed are now
-    // staged)
+    /// Reset the branch pointer, leave index and worktree unchanged (this will make it look like things that were
+    /// committed are now staged).
     Soft,
-    // reset the branch pointer and index, leave worktree unchanged
-    // (this makes it look as though things that were committed are now
-    // unstaged)
+    /// Reset the branch pointer and index, leave worktree unchanged (this makes it look as though things that were
+    /// committed are now unstaged).
     Mixed,
 }
 
@@ -369,7 +367,6 @@ impl RealGitRepository {
 #[derive(Clone, Debug)]
 pub struct GitRepositoryCheckpoint {
     ref_name: String,
-    head_sha: Option<Oid>,
     commit_sha: Oid,
 }
 
@@ -596,7 +593,7 @@ impl GitRepository for RealGitRepository {
                     };
 
                     let content = repo.find_blob(oid)?.content().to_owned();
-                    Ok(Some(String::from_utf8(content)?))
+                    Ok(String::from_utf8(content).ok())
                 }
 
                 match logic(&repo.lock(), &path) {
@@ -619,8 +616,7 @@ impl GitRepository for RealGitRepository {
                     return None;
                 }
                 let content = repo.find_blob(entry.id()).log_err()?.content().to_owned();
-                let content = String::from_utf8(content).log_err()?;
-                Some(content)
+                String::from_utf8(content).ok()
             })
             .boxed()
     }
@@ -1200,11 +1196,6 @@ impl GitRepository for RealGitRepository {
 
                     Ok(GitRepositoryCheckpoint {
                         ref_name,
-                        head_sha: if let Some(head_sha) = head_sha {
-                            Some(head_sha.parse()?)
-                        } else {
-                            None
-                        },
                         commit_sha: checkpoint_sha.parse()?,
                     })
                 })
@@ -1239,13 +1230,6 @@ impl GitRepository for RealGitRepository {
                 })
                 .await?;
 
-                if let Some(head_sha) = checkpoint.head_sha {
-                    git.run(&["reset", "--mixed", &head_sha.to_string()])
-                        .await?;
-                } else {
-                    git.run(&["update-ref", "-d", "HEAD"]).await?;
-                }
-
                 Ok(())
             })
             .boxed()
@@ -1256,10 +1240,6 @@ impl GitRepository for RealGitRepository {
         left: GitRepositoryCheckpoint,
         right: GitRepositoryCheckpoint,
     ) -> BoxFuture<Result<bool>> {
-        if left.head_sha != right.head_sha {
-            return future::ready(Ok(false)).boxed();
-        }
-
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
@@ -1755,7 +1735,6 @@ fn checkpoint_author_envs() -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::status::FileStatus;
     use gpui::TestAppContext;
 
     #[gpui::test]
@@ -1790,7 +1769,6 @@ mod tests {
         smol::fs::write(repo_dir.path().join("new_file_before_checkpoint"), "1")
             .await
             .unwrap();
-        let sha_before_checkpoint = repo.head_sha().unwrap();
         let checkpoint = repo.checkpoint().await.unwrap();
 
         // Ensure the user can't see any branches after creating a checkpoint.
@@ -1824,7 +1802,6 @@ mod tests {
         repo.gc().await.unwrap();
         repo.restore_checkpoint(checkpoint.clone()).await.unwrap();
 
-        assert_eq!(repo.head_sha().unwrap(), sha_before_checkpoint);
         assert_eq!(
             smol::fs::read_to_string(&file_path).await.unwrap(),
             "modified before checkpoint"
@@ -1885,83 +1862,6 @@ mod tests {
                 .await
                 .ok(),
             None
-        );
-    }
-
-    #[gpui::test]
-    async fn test_undoing_commit_via_checkpoint(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let repo_dir = tempfile::tempdir().unwrap();
-
-        git2::Repository::init(repo_dir.path()).unwrap();
-        let file_path = repo_dir.path().join("file");
-        smol::fs::write(&file_path, "initial").await.unwrap();
-
-        let repo =
-            RealGitRepository::new(&repo_dir.path().join(".git"), None, cx.executor()).unwrap();
-        repo.stage_paths(
-            vec![RepoPath::from_str("file")],
-            Arc::new(HashMap::default()),
-        )
-        .await
-        .unwrap();
-        repo.commit(
-            "Initial commit".into(),
-            None,
-            Arc::new(checkpoint_author_envs()),
-        )
-        .await
-        .unwrap();
-
-        let initial_commit_sha = repo.head_sha().unwrap();
-
-        smol::fs::write(repo_dir.path().join("new_file1"), "content1")
-            .await
-            .unwrap();
-        smol::fs::write(repo_dir.path().join("new_file2"), "content2")
-            .await
-            .unwrap();
-
-        let checkpoint = repo.checkpoint().await.unwrap();
-
-        repo.stage_paths(
-            vec![
-                RepoPath::from_str("new_file1"),
-                RepoPath::from_str("new_file2"),
-            ],
-            Arc::new(HashMap::default()),
-        )
-        .await
-        .unwrap();
-        repo.commit(
-            "Commit new files".into(),
-            None,
-            Arc::new(checkpoint_author_envs()),
-        )
-        .await
-        .unwrap();
-
-        repo.restore_checkpoint(checkpoint).await.unwrap();
-        assert_eq!(repo.head_sha().unwrap(), initial_commit_sha);
-        assert_eq!(
-            smol::fs::read_to_string(repo_dir.path().join("new_file1"))
-                .await
-                .unwrap(),
-            "content1"
-        );
-        assert_eq!(
-            smol::fs::read_to_string(repo_dir.path().join("new_file2"))
-                .await
-                .unwrap(),
-            "content2"
-        );
-        assert_eq!(
-            repo.status(&[]).await.unwrap().entries.as_ref(),
-            &[
-                (RepoPath::from_str("new_file1"), FileStatus::Untracked),
-                (RepoPath::from_str("new_file2"), FileStatus::Untracked)
-            ]
         );
     }
 

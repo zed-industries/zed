@@ -29,7 +29,6 @@ use settings::{Settings, SettingsStore};
 use smol::Timer;
 use smol::io::{AsyncReadExt, BufReader};
 use std::{
-    future,
     sync::{Arc, LazyLock},
     time::Duration,
 };
@@ -505,10 +504,14 @@ impl CloudLanguageModel {
         let mut retry_delay = Duration::from_secs(1);
 
         loop {
-            let request_builder = http_client::Request::builder();
+            let request_builder = http_client::Request::builder().method(Method::POST);
+            let request_builder = if let Ok(completions_url) = std::env::var("ZED_COMPLETIONS_URL")
+            {
+                request_builder.uri(completions_url)
+            } else {
+                request_builder.uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
+            };
             let request = request_builder
-                .method(Method::POST)
-                .uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .body(serde_json::to_string(&body)?.into())?;
@@ -588,7 +591,7 @@ impl LanguageModel for CloudLanguageModel {
         match self.model {
             CloudModel::Anthropic(_) => true,
             CloudModel::Google(_) => true,
-            CloudModel::OpenAi(_) => false,
+            CloudModel::OpenAi(_) => true,
         }
     }
 
@@ -691,7 +694,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
-                let request = into_open_ai(request, model.id().into(), model.max_output_tokens());
+                let request = into_open_ai(request, model, model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
@@ -706,15 +709,13 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok(open_ai::extract_text_from_events(response_lines(response)))
+                    Ok(
+                        crate::provider::open_ai::map_to_language_model_completion_events(
+                            Box::pin(response_lines(response)),
+                        ),
+                    )
                 });
-                async move {
-                    Ok(future
-                        .await?
-                        .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                        .boxed())
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::Google(model) => {
                 let client = self.client.clone();
@@ -740,109 +741,6 @@ impl LanguageModel for CloudLanguageModel {
                     )
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
-            }
-        }
-    }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        input_schema: serde_json::Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let client = self.client.clone();
-        let llm_api_token = self.llm_api_token.clone();
-
-        match &self.model {
-            CloudModel::Anthropic(model) => {
-                let mut request = into_anthropic(
-                    request,
-                    model.tool_model_id().into(),
-                    model.default_temperature(),
-                    model.max_output_tokens(),
-                    model.mode(),
-                );
-                request.tool_choice = Some(anthropic::ToolChoice::Tool {
-                    name: tool_name.clone(),
-                });
-                request.tools = vec![anthropic::Tool {
-                    name: tool_name.clone(),
-                    description: tool_description,
-                    input_schema,
-                }];
-
-                self.request_limiter
-                    .run(async move {
-                        let response = Self::perform_llm_completion(
-                            client.clone(),
-                            llm_api_token,
-                            PerformCompletionParams {
-                                provider: client::LanguageModelProvider::Anthropic,
-                                model: request.model.clone(),
-                                provider_request: RawValue::from_string(serde_json::to_string(
-                                    &request,
-                                )?)?,
-                            },
-                        )
-                        .await?;
-
-                        Ok(anthropic::extract_tool_args_from_events(
-                            tool_name,
-                            Box::pin(response_lines(response)),
-                        )
-                        .await?
-                        .boxed())
-                    })
-                    .boxed()
-            }
-            CloudModel::OpenAi(model) => {
-                let mut request =
-                    into_open_ai(request, model.id().into(), model.max_output_tokens());
-                request.tool_choice = Some(open_ai::ToolChoice::Other(
-                    open_ai::ToolDefinition::Function {
-                        function: open_ai::FunctionDefinition {
-                            name: tool_name.clone(),
-                            description: None,
-                            parameters: None,
-                        },
-                    },
-                ));
-                request.tools = vec![open_ai::ToolDefinition::Function {
-                    function: open_ai::FunctionDefinition {
-                        name: tool_name.clone(),
-                        description: Some(tool_description),
-                        parameters: Some(input_schema),
-                    },
-                }];
-
-                self.request_limiter
-                    .run(async move {
-                        let response = Self::perform_llm_completion(
-                            client.clone(),
-                            llm_api_token,
-                            PerformCompletionParams {
-                                provider: client::LanguageModelProvider::OpenAi,
-                                model: request.model.clone(),
-                                provider_request: RawValue::from_string(serde_json::to_string(
-                                    &request,
-                                )?)?,
-                            },
-                        )
-                        .await?;
-
-                        Ok(open_ai::extract_tool_args_from_events(
-                            tool_name,
-                            Box::pin(response_lines(response)),
-                        )
-                        .await?
-                        .boxed())
-                    })
-                    .boxed()
-            }
-            CloudModel::Google(_) => {
-                future::ready(Err(anyhow!("tool use not implemented for Google AI"))).boxed()
             }
         }
     }
