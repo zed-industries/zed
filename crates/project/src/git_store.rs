@@ -2479,7 +2479,7 @@ impl BufferDiffState {
                     if language_changed {
                         diff.language_changed(cx);
                     }
-                    diff.set_snapshot(new_unstaged_diff, &buffer, None, cx)
+                    diff.set_snapshot(new_unstaged_diff, &buffer, cx)
                 })?
             } else {
                 None
@@ -2492,7 +2492,12 @@ impl BufferDiffState {
                     if language_changed {
                         diff.language_changed(cx);
                     }
-                    diff.set_snapshot(new_uncommitted_diff, &buffer, unstaged_changed_range, cx);
+                    diff.set_snapshot_with_secondary(
+                        new_uncommitted_diff,
+                        &buffer,
+                        unstaged_changed_range.map(|range| (range, index_changed)),
+                        cx,
+                    );
                 })?;
             }
 

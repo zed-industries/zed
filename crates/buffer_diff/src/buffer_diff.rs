@@ -3,7 +3,7 @@ use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as 
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::{Language, LanguageRegistry};
 use rope::Rope;
-use std::{cmp::Ordering, future::Future, iter, mem, ops::Range, sync::Arc};
+use std::{cmp::Ordering, future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _};
 use util::ResultExt;
@@ -631,28 +631,6 @@ impl BufferDiffInner {
         })
     }
 
-    fn set_state(
-        &mut self,
-        new_state: Self,
-        buffer: &text::BufferSnapshot,
-    ) -> Option<Range<Anchor>> {
-        let (base_text_changed, changed_range) =
-            match (self.base_text_exists, new_state.base_text_exists) {
-                (false, false) => (true, None),
-                (true, true) if self.base_text.remote_id() == new_state.base_text.remote_id() => {
-                    (false, new_state.compare(&self, buffer))
-                }
-                _ => (true, Some(text::Anchor::MIN..text::Anchor::MAX)),
-            };
-
-        let pending_hunks = mem::replace(&mut self.pending_hunks, SumTree::new(buffer));
-        *self = new_state;
-        if !base_text_changed {
-            self.pending_hunks = pending_hunks;
-        }
-        changed_range
-    }
-
     fn compare(&self, old: &Self, new_snapshot: &text::BufferSnapshot) -> Option<Range<Anchor>> {
         let mut new_cursor = self.hunks.cursor::<()>(new_snapshot);
         let mut old_cursor = old.hunks.cursor::<()>(new_snapshot);
@@ -1011,26 +989,51 @@ impl BufferDiff {
         &mut self,
         new_snapshot: BufferDiffSnapshot,
         buffer: &text::BufferSnapshot,
-        secondary_changed_range: Option<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) -> Option<Range<Anchor>> {
-        let changed_range = self.inner.set_state(new_snapshot.inner, buffer);
+        self.set_snapshot_with_secondary(new_snapshot, buffer, None, cx)
+    }
 
-        let changed_range = match (secondary_changed_range, changed_range) {
-            (None, None) => None,
-            (Some(unstaged_range), None) => self.range_to_hunk_range(unstaged_range, &buffer, cx),
-            (None, Some(uncommitted_range)) => Some(uncommitted_range),
-            (Some(unstaged_range), Some(uncommitted_range)) => {
-                let mut start = uncommitted_range.start;
-                let mut end = uncommitted_range.end;
-                if let Some(unstaged_range) = self.range_to_hunk_range(unstaged_range, &buffer, cx)
-                {
-                    start = unstaged_range.start.min(&uncommitted_range.start, &buffer);
-                    end = unstaged_range.end.max(&uncommitted_range.end, &buffer);
+    pub fn set_snapshot_with_secondary(
+        &mut self,
+        new_snapshot: BufferDiffSnapshot,
+        buffer: &text::BufferSnapshot,
+        secondary_diff_change: Option<(Range<Anchor>, bool)>,
+        cx: &mut Context<Self>,
+    ) -> Option<Range<Anchor>> {
+        let state = &mut self.inner;
+        let new_state = new_snapshot.inner;
+        let (mut base_text_changed, mut changed_range) =
+            match (state.base_text_exists, new_state.base_text_exists) {
+                (false, false) => (true, None),
+                (true, true) if state.base_text.remote_id() == new_state.base_text.remote_id() => {
+                    (false, new_state.compare(&state, buffer))
                 }
-                Some(start..end)
+                _ => (true, Some(text::Anchor::MIN..text::Anchor::MAX)),
+            };
+
+        if let Some((secondary_changed_range, secondary_base_text_changed)) = secondary_diff_change
+        {
+            base_text_changed |= secondary_base_text_changed;
+            if let Some(secondary_hunk_range) =
+                self.range_to_hunk_range(secondary_changed_range, &buffer, cx)
+            {
+                if let Some(range) = &mut changed_range {
+                    range.start = secondary_hunk_range.start.min(&range.start, &buffer);
+                    range.end = secondary_hunk_range.end.max(&range.end, &buffer);
+                } else {
+                    changed_range = Some(secondary_hunk_range);
+                }
             }
-        };
+        }
+
+        let state = &mut self.inner;
+        state.base_text_exists = new_state.base_text_exists;
+        state.base_text = new_state.base_text;
+        state.hunks = new_state.hunks;
+        if base_text_changed {
+            state.pending_hunks = SumTree::new(buffer);
+        }
 
         cx.emit(BufferDiffEvent::DiffChanged {
             changed_range: changed_range.clone(),
@@ -1138,7 +1141,7 @@ impl BufferDiff {
                 return;
             };
             this.update(cx, |this, cx| {
-                this.set_snapshot(snapshot, &buffer, None, cx);
+                this.set_snapshot(snapshot, &buffer, cx);
             })
             .log_err();
             drop(complete_on_drop)
@@ -1163,7 +1166,7 @@ impl BufferDiff {
             cx,
         );
         let snapshot = cx.background_executor().block(snapshot);
-        self.set_snapshot(snapshot, &buffer, None, cx);
+        self.set_snapshot(snapshot, &buffer, cx);
     }
 }
 
@@ -1752,13 +1755,13 @@ mod tests {
 
             let unstaged_diff = cx.new(|cx| {
                 let mut diff = BufferDiff::new(&buffer, cx);
-                diff.set_snapshot(unstaged, &buffer, None, cx);
+                diff.set_snapshot(unstaged, &buffer, cx);
                 diff
             });
 
             let uncommitted_diff = cx.new(|cx| {
                 let mut diff = BufferDiff::new(&buffer, cx);
-                diff.set_snapshot(uncommitted, &buffer, None, cx);
+                diff.set_snapshot(uncommitted, &buffer, cx);
                 diff.set_secondary_diff(unstaged_diff);
                 diff
             });
@@ -1819,12 +1822,12 @@ mod tests {
         let uncommitted = BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
         let unstaged_diff = cx.new(|cx| {
             let mut diff = BufferDiff::new(&buffer, cx);
-            diff.set_snapshot(unstaged, &buffer, None, cx);
+            diff.set_snapshot(unstaged, &buffer, cx);
             diff
         });
         let uncommitted_diff = cx.new(|cx| {
             let mut diff = BufferDiff::new(&buffer, cx);
-            diff.set_snapshot(uncommitted, &buffer, None, cx);
+            diff.set_snapshot(uncommitted, &buffer, cx);
             diff.set_secondary_diff(unstaged_diff.clone());
             diff
         });

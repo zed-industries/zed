@@ -235,7 +235,7 @@ impl ActionLog {
                     .await;
 
                 diff.update(cx, |diff, cx| {
-                    diff.set_snapshot(diff_snapshot, &buffer_snapshot, None, cx)
+                    diff.set_snapshot(diff_snapshot, &buffer_snapshot, cx)
                 })?;
             }
             this.update(cx, |this, cx| {

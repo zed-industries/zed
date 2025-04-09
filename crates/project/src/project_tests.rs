@@ -6605,7 +6605,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(0, 0)..Point::new(5, 0));
+        assert_eq!(changed_range, Point::new(0, 0)..Point::new(4, 0));
     } else {
         panic!("Unexpected event {event:?}");
     }
