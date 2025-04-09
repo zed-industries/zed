@@ -170,6 +170,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let mut count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         self.clear_operator(window, cx);
 
         let globals = Vim::globals(cx);
@@ -201,6 +202,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
 
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
@@ -250,7 +252,13 @@ impl Vim {
         match selection {
             RecordedSelection::SingleLine { cols } => {
                 if cols > 1 {
-                    self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx)
+                    self.visual_motion(
+                        Motion::Right,
+                        Some(cols as usize - 1),
+                        forced_motion,
+                        window,
+                        cx,
+                    )
                 }
             }
             RecordedSelection::Visual { rows, cols } => {
@@ -259,6 +267,7 @@ impl Vim {
                         display_lines: false,
                     },
                     Some(rows as usize),
+                    forced_motion,
                     window,
                     cx,
                 );
@@ -267,11 +276,18 @@ impl Vim {
                         display_lines: false,
                     },
                     None,
+                    forced_motion,
                     window,
                     cx,
                 );
                 if cols > 1 {
-                    self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx)
+                    self.visual_motion(
+                        Motion::Right,
+                        Some(cols as usize - 1),
+                        forced_motion,
+                        window,
+                        cx,
+                    )
                 }
             }
             RecordedSelection::VisualBlock { rows, cols } => {
@@ -280,11 +296,18 @@ impl Vim {
                         display_lines: false,
                     },
                     Some(rows as usize),
+                    forced_motion,
                     window,
                     cx,
                 );
                 if cols > 1 {
-                    self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx);
+                    self.visual_motion(
+                        Motion::Right,
+                        Some(cols as usize - 1),
+                        forced_motion,
+                        window,
+                        cx,
+                    );
                 }
             }
             RecordedSelection::VisualLine { rows } => {
@@ -293,6 +316,7 @@ impl Vim {
                         display_lines: false,
                     },
                     Some(rows as usize),
+                    forced_motion,
                     window,
                     cx,
                 );

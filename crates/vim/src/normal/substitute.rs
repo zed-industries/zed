@@ -13,7 +13,14 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Substitute, window, cx| {
         vim.start_recording(cx);
         let count = Vim::take_count(cx);
-        vim.substitute(count, vim.mode == Mode::VisualLine, window, cx);
+        let forced_motion = Vim::take_forced_motion(cx);
+        vim.substitute(
+            count,
+            vim.mode == Mode::VisualLine,
+            forced_motion,
+            window,
+            cx,
+        );
     });
 
     Vim::action(editor, cx, |vim, _: &SubstituteLine, window, cx| {
@@ -22,7 +29,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             vim.switch_mode(Mode::VisualLine, false, window, cx)
         }
         let count = Vim::take_count(cx);
-        vim.substitute(count, true, window, cx)
+        let forced_motion = Vim::take_forced_motion(cx);
+        vim.substitute(count, true, forced_motion, window, cx)
     });
 }
 
@@ -31,10 +39,10 @@ impl Vim {
         &mut self,
         count: Option<usize>,
         line_mode: bool,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let forced_motion = self.forced_motion;
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);

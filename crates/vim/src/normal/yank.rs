@@ -7,7 +7,7 @@ use crate::{
     state::{Mode, Register},
 };
 use collections::HashMap;
-use editor::{ClipboardSelection, Editor, display_map::ToDisplayPoint};
+use editor::{ClipboardSelection, Editor};
 use gpui::Context;
 use gpui::Window;
 use language::Point;
@@ -21,10 +21,10 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let forced_motion = self.forced_motion;
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
@@ -34,7 +34,6 @@ impl Vim {
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let original_position = (selection.head(), selection.goal);
-                        original_positions.insert(selection.id, original_position);
                         kind = motion.expand_selection(
                             map,
                             selection,
@@ -42,6 +41,12 @@ impl Vim {
                             &text_layout_details,
                             forced_motion,
                         );
+                        if kind == Some(MotionKind::Exclusive) {
+                            original_positions
+                                .insert(selection.id, (selection.start, selection.goal));
+                        } else {
+                            original_positions.insert(selection.id, original_position);
+                        }
                     })
                 });
                 let Some(kind) = kind else { return };
@@ -55,8 +60,6 @@ impl Vim {
             });
         });
         self.exit_temporary_normal(window, cx);
-        // Exit forced motion mode (if active).
-        self.exit_forced_motion();
     }
 
     pub fn yank_object(
@@ -87,8 +90,6 @@ impl Vim {
             });
         });
         self.exit_temporary_normal(window, cx);
-        // Exit forced motion mode (if active).
-        self.exit_forced_motion();
     }
 
     pub fn yank_selections_content(

@@ -18,6 +18,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Indent, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         vim.store_visual_marks(window, cx);
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -36,6 +37,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Outdent, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         vim.store_visual_marks(window, cx);
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -54,6 +56,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &AutoIndent, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         vim.store_visual_marks(window, cx);
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -75,11 +78,11 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         dir: IndentDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let forced_motion = self.forced_motion;
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);

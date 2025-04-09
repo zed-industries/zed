@@ -34,10 +34,11 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.helix_move_cursor(motion, times, window, cx);
+        self.helix_move_cursor(motion, times, forced_motion, window, cx);
     }
 
     fn helix_find_range_forward(
@@ -154,10 +155,10 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let forced_motion = self.forced_motion;
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -190,6 +191,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -243,7 +245,7 @@ impl Vim {
                     found
                 })
             }
-            _ => self.helix_move_and_collapse(motion, times, window, cx),
+            _ => self.helix_move_and_collapse(motion, times, forced_motion, window, cx),
         }
     }
 

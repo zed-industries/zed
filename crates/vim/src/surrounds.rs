@@ -27,8 +27,8 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
         let mode = self.mode;
-        let forced_motion = self.forced_motion;
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {

@@ -234,6 +234,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         let n = if count > 1 {
             format!(".,.+{}", count.saturating_sub(1))
         } else {
@@ -1323,11 +1324,11 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
-        let forced_motion = self.forced_motion;
         let Some(workspace) = self.workspace(window) else {
             return;
         };

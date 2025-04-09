@@ -28,6 +28,7 @@ impl Vim {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
 
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -247,11 +248,11 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        let forced_motion = self.forced_motion;
         let selected_register = self.selected_register.take();
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);

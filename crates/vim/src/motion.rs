@@ -650,6 +650,7 @@ impl Vim {
         }
 
         let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
         let active_operator = self.active_operator();
         let mut waiting_operator: Option<Operator> = None;
         match self.mode {
@@ -659,14 +660,23 @@ impl Vim {
                         target: Some(SurroundsType::Motion(motion)),
                     });
                 } else {
-                    self.normal_motion(motion.clone(), active_operator.clone(), count, window, cx)
+                    self.normal_motion(
+                        motion.clone(),
+                        active_operator.clone(),
+                        count,
+                        forced_motion,
+                        window,
+                        cx,
+                    )
                 }
             }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                self.visual_motion(motion.clone(), count, window, cx)
+                self.visual_motion(motion.clone(), count, forced_motion, window, cx)
             }
 
-            Mode::HelixNormal => self.helix_normal_motion(motion.clone(), count, window, cx),
+            Mode::HelixNormal => {
+                self.helix_normal_motion(motion.clone(), count, forced_motion, window, cx)
+            }
         }
         self.clear_operator(window, cx);
         if let Some(operator) = waiting_operator {
@@ -825,6 +835,7 @@ impl Motion {
         goal: SelectionGoal,
         maybe_times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
+        forced_motion: bool,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
         let times = maybe_times.unwrap_or(1);
         use Motion::*;
@@ -1184,7 +1195,7 @@ impl Motion {
             ),
         };
 
-        (new_point != point || infallible).then_some((new_point, goal))
+        (new_point != point || infallible || forced_motion).then_some((new_point, goal))
     }
 
     // Get the range value after self is applied to the specified selection.
@@ -1194,6 +1205,7 @@ impl Motion {
         selection: Selection<DisplayPoint>,
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
+        forced_motion: bool,
     ) -> Option<(Range<DisplayPoint>, MotionKind)> {
         if let Motion::ZedSearchResult {
             prior_selections,
@@ -1228,11 +1240,17 @@ impl Motion {
             selection.goal,
             times,
             text_layout_details,
+            forced_motion,
         )?;
         let mut selection = selection.clone();
         selection.set_head(new_head, goal);
 
-        let mut kind = self.default_kind();
+        let mut kind = match (self.default_kind(), forced_motion) {
+            (MotionKind::Linewise, true) => MotionKind::Exclusive,
+            (MotionKind::Exclusive, true) => MotionKind::Inclusive,
+            (MotionKind::Inclusive, true) => MotionKind::Exclusive,
+            (kind, false) => kind,
+        };
 
         if let Motion::NextWordStart {
             ignore_punctuation: _,
@@ -1304,8 +1322,15 @@ impl Motion {
         selection: &mut Selection<DisplayPoint>,
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
+        forced_motion: bool,
     ) -> Option<MotionKind> {
-        let (range, kind) = self.range(map, selection.clone(), times, text_layout_details)?;
+        let (range, kind) = self.range(
+            map,
+            selection.clone(),
+            times,
+            text_layout_details,
+            forced_motion,
+        )?;
         selection.start = range.start;
         selection.end = range.end;
         Some(kind)
@@ -3826,17 +3851,19 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_inclusive_delete(cx: &mut gpui::TestAppContext) {
+    async fn test_forced_motion_delete_to_start_of_line(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
-            ˇthe quick brown fox
-            jumped over the lazy dog"})
+             ˇthe quick brown fox
+             jumped over the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("d v 0").await;
         cx.shared_state().await.assert_eq(indoc! {"
-            ˇhe quick brown fox
-            jumped over the lazy dog"});
+             ˇhe quick brown fox
+             jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
         cx.set_shared_state(indoc! {"
             the quick bˇrown fox
             jumped over the lazy dog"})
@@ -3845,13 +3872,99 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇown fox
             jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
         cx.set_shared_state(indoc! {"
-            the quick brown foxˇ
+            the quick brown foˇx
             jumped over the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("d v 0").await;
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ
             jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+    }
+
+    #[gpui::test]
+    async fn test_forced_motion_yank(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+               ˇthe quick brown fox
+               jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("y v j p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+               the quick brown fox
+               ˇthe quick brown fox
+               jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+              the quick bˇrown fox
+              jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("y v j p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+              the quick brˇrown fox
+              jumped overown fox
+              jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+             the quick brown foˇx
+             jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("y v j p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+             the quick brown foxˇx
+             jumped over the la
+             jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+             the quick brown fox
+             jˇumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("y v k p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            thˇhe quick brown fox
+            je quick brown fox
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+    }
+
+    #[gpui::test]
+    async fn test_inclusive_to_exclusive_delete(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+              ˇthe quick brown fox
+              jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v e").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+              ˇe quick brown fox
+              jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+              the quick bˇrown fox
+              jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v e").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+              the quick bˇn fox
+              jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+             the quick brown foˇx
+             jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v e").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+        the quick brown foˇd over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
     }
 }

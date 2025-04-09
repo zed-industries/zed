@@ -27,6 +27,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             return;
         }
         let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         vim.undo_replace(count, window, cx)
     });
 }
@@ -179,10 +180,10 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let forced_motion = self.forced_motion;
         self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);
