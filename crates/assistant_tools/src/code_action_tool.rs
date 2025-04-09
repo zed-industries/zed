@@ -253,7 +253,7 @@ impl Tool for CodeActionTool {
 
                 Ok(response)
             } else {
-                // No action specified, so list the avilable ones.
+                // No action specified, so list the available ones.
                 let (position_start, position_end) = buffer.read_with(cx, |buffer, _| {
                     let snapshot = buffer.snapshot();
                     (
