@@ -6391,6 +6391,9 @@ impl Editor {
             "Set Breakpoint"
         };
 
+        let filter = command_palette_hooks::CommandPaletteFilter::global_mut(cx);
+        let run_to_cusor = !filter.is_hidden(&DebuggerRunToCursor);
+
         let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
             BreakpointState::Enabled => Some("Disable"),
             BreakpointState::Disabled => Some("Enable"),
@@ -6402,6 +6405,20 @@ impl Editor {
         ui::ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
+                .when(run_to_cusor, |this| {
+                    let weak_editor = weak_editor.clone();
+                    this.entry("Run to cusor", None, move |window, cx| {
+                        weak_editor
+                            .update(cx, |editor, cx| {
+                                editor.change_selections(None, window, cx, |s| {
+                                    s.select_ranges([Point::new(row, 0)..Point::new(row, 0)])
+                                });
+                            })
+                            .ok();
+
+                        window.dispatch_action(Box::new(DebuggerRunToCursor), cx);
+                    })
+                })
                 .when_some(toggle_state_msg, |this, msg| {
                     this.entry(msg, None, {
                         let weak_editor = weak_editor.clone();

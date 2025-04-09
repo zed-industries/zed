@@ -1131,7 +1131,7 @@ impl Session {
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
         if let Some((local, path)) = self.as_local_mut().and_then(|local| {
-            let breakpoint = local.tmp_breakpoint.as_ref()?;
+            let breakpoint = local.tmp_breakpoint.take()?;
             let path = breakpoint.path.clone();
             Some((local, path))
         }) {

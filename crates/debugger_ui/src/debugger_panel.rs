@@ -93,6 +93,79 @@ impl DebugPanel {
         })
     }
 
+    fn filter_action_types(&self, cx: &mut App) {
+        let (has_active_session, supports_restart, support_step_back, selected_thread_stopped) =
+            self.active_session()
+                .map(|item| {
+                    let running = item.read(cx).mode().as_running().cloned();
+
+                    match running {
+                        Some(running) => {
+                            let caps = running.read(cx).capabilities(cx);
+                            (
+                                !running.read(cx).session().read(cx).is_terminated(),
+                                caps.supports_restart_request.unwrap_or_default(),
+                                caps.supports_step_back.unwrap_or_default(),
+                                running
+                                    .read(cx)
+                                    .thread_status(cx)
+                                    .is_some_and(|status| status == ThreadStatus::Stopped),
+                            )
+                        }
+                        None => (false, false, false, false),
+                    }
+                })
+                .unwrap_or((false, false, false, false));
+
+        let filter = CommandPaletteFilter::global_mut(cx);
+        let debugger_action_types = [
+            TypeId::of::<Continue>(),
+            TypeId::of::<StepOver>(),
+            TypeId::of::<StepInto>(),
+            TypeId::of::<StepOut>(),
+            TypeId::of::<Stop>(),
+            TypeId::of::<Disconnect>(),
+            TypeId::of::<Pause>(),
+            TypeId::of::<ToggleIgnoreBreakpoints>(),
+        ];
+
+        let stopped_action_type = [
+            TypeId::of::<editor::actions::DebuggerRunToCursor>(),
+            TypeId::of::<editor::actions::DebuggerEvaluateSelectedText>(),
+        ];
+
+        let step_back_action_type = [TypeId::of::<StepBack>()];
+        let restart_action_type = [TypeId::of::<Restart>()];
+
+        if has_active_session {
+            filter.show_action_types(debugger_action_types.iter());
+
+            if supports_restart {
+                filter.show_action_types(restart_action_type.iter());
+            } else {
+                filter.hide_action_types(&restart_action_type);
+            }
+
+            if support_step_back {
+                filter.show_action_types(step_back_action_type.iter());
+            } else {
+                filter.hide_action_types(&step_back_action_type);
+            }
+
+            if selected_thread_stopped {
+                filter.show_action_types(stopped_action_type.iter());
+            } else {
+                filter.hide_action_types(&stopped_action_type);
+            }
+        } else {
+            // show only the `debug: start`
+            filter.hide_action_types(&debugger_action_types);
+            filter.hide_action_types(&step_back_action_type);
+            filter.hide_action_types(&restart_action_type);
+            filter.hide_action_types(&stopped_action_type);
+        }
+    }
+
     pub fn load(
         workspace: WeakEntity<Workspace>,
         cx: AsyncWindowContext,
@@ -110,84 +183,15 @@ impl DebugPanel {
                     )
                 });
 
+                cx.observe_new::<DebugPanel>(|debug_panel, _, cx| {
+                    Self::filter_action_types(debug_panel, cx);
+                })
+                .detach();
+
                 cx.observe(&debug_panel, |_, debug_panel, cx| {
-                    let (
-                        has_active_session,
-                        supports_restart,
-                        support_step_back,
-                        selected_thread_stopped,
-                    ) = debug_panel.update(cx, |this, cx| {
-                        this.active_session()
-                            .map(|item| {
-                                let running = item.read(cx).mode().as_running().cloned();
-
-                                match running {
-                                    Some(running) => {
-                                        let caps = running.read(cx).capabilities(cx);
-                                        (
-                                            true,
-                                            caps.supports_restart_request.unwrap_or_default(),
-                                            caps.supports_step_back.unwrap_or_default(),
-                                            running.read(cx).thread_status(cx).is_some_and(
-                                                |status| status == ThreadStatus::Stopped,
-                                            ),
-                                        )
-                                    }
-                                    None => (false, false, false, false),
-                                }
-                            })
-                            .unwrap_or((false, false, false, false))
+                    debug_panel.update(cx, |debug_panel, cx| {
+                        Self::filter_action_types(debug_panel, cx);
                     });
-
-                    let filter = CommandPaletteFilter::global_mut(cx);
-                    let debugger_action_types = [
-                        TypeId::of::<Continue>(),
-                        TypeId::of::<StepOver>(),
-                        TypeId::of::<StepInto>(),
-                        TypeId::of::<StepOut>(),
-                        TypeId::of::<Stop>(),
-                        TypeId::of::<Disconnect>(),
-                        TypeId::of::<Pause>(),
-                        TypeId::of::<ToggleIgnoreBreakpoints>(),
-                    ];
-
-                    let stopped_action_type = [
-                        TypeId::of::<editor::actions::DebuggerRunToCursor>(),
-                        TypeId::of::<editor::actions::DebuggerEvaluateSelectedText>(),
-                    ];
-
-                    let step_back_action_type = [TypeId::of::<StepBack>()];
-                    let restart_action_type = [TypeId::of::<Restart>()];
-
-                    if has_active_session {
-                        filter.show_action_types(debugger_action_types.iter());
-
-                        if supports_restart {
-                            filter.show_action_types(restart_action_type.iter());
-                        } else {
-                            filter.hide_action_types(&restart_action_type);
-                        }
-
-                        if support_step_back {
-                            filter.show_action_types(step_back_action_type.iter());
-                        } else {
-                            filter.hide_action_types(&step_back_action_type);
-                        }
-
-                        // todo(debugger) find out why selected_thread_stopped is never true
-                        filter.show_action_types(stopped_action_type.iter());
-                        if selected_thread_stopped {
-                            filter.show_action_types(stopped_action_type.iter());
-                        } else {
-                            // filter.hide_action_types(&stopped_action_type);
-                        }
-                    } else {
-                        // show only the `debug: start`
-                        filter.hide_action_types(&debugger_action_types);
-                        filter.hide_action_types(&step_back_action_type);
-                        filter.hide_action_types(&restart_action_type);
-                        filter.hide_action_types(&stopped_action_type);
-                    }
                 })
                 .detach();
 
@@ -262,6 +266,12 @@ impl DebugPanel {
                     window,
                     cx,
                 );
+
+                if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
+                    // We might want to make this an event subscription and only notify when a new thread is selected
+                    // This is used to filter the command menu correctly
+                    cx.observe(&running, |_, _, cx| cx.notify()).detach();
+                }
 
                 self.sessions.push(session_item.clone());
                 self.activate_session(session_item, window, cx);
