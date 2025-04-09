@@ -9,7 +9,8 @@ use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
-    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
+    LspStore, LspStoreEvent, PrettierStore, ProjectEnvironment, ProjectPath, ToolchainStore,
+    WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
@@ -85,7 +86,7 @@ impl HeadlessProject {
             store
         });
 
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let environment = cx.new(|_| ProjectEnvironment::new(None));
 
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(

@@ -306,7 +306,7 @@ pub enum BufferEvent {
 }
 
 /// The file associated with a buffer.
-pub trait File: Send + Sync {
+pub trait File: Send + Sync + Any {
     /// Returns the [`LocalFile`] associated with this file, if the
     /// file is local.
     fn as_local(&self) -> Option<&dyn LocalFile>;
@@ -335,9 +335,6 @@ pub trait File: Send + Sync {
     ///
     /// This is needed for looking up project-specific settings.
     fn worktree_id(&self, cx: &App) -> WorktreeId;
-
-    /// Converts this file into an [`Any`] trait object.
-    fn as_any(&self) -> &dyn Any;
 
     /// Converts this file into a protobuf message.
     fn to_proto(&self, cx: &App) -> rpc::proto::File;
@@ -2018,11 +2015,16 @@ impl Buffer {
     }
 
     /// Manually remove a transaction from the buffer's undo history
-    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
-        self.text.forget_transaction(transaction_id);
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        self.text.forget_transaction(transaction_id)
     }
 
-    /// Manually merge two adjacent transactions in the buffer's undo history.
+    /// Retrieve a transaction from the buffer's undo history
+    pub fn get_transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.text.get_transaction(transaction_id)
+    }
+
+    /// Manually merge two transactions in the buffer's undo history.
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         self.text.merge_transactions(transaction, destination);
     }
@@ -4608,10 +4610,6 @@ impl File for TestFile {
 
     fn worktree_id(&self, _: &App) -> WorktreeId {
         WorktreeId::from_usize(0)
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        unimplemented!()
     }
 
     fn to_proto(&self, _: &App) -> rpc::proto::File {

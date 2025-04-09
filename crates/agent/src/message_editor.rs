@@ -3,14 +3,16 @@ use std::sync::Arc;
 use crate::assistant_model_selector::ModelType;
 use collections::HashSet;
 use editor::actions::MoveUp;
-use editor::{ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorStyle};
+use editor::{
+    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorStyle, MultiBuffer,
+};
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
     WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
-use language::Buffer;
+use language::{Buffer, Language};
 use language_model::{ConfiguredModel, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
@@ -66,8 +68,24 @@ impl MessageEditor {
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
+        let language = Language::new(
+            language::LanguageConfig {
+                completion_query_characters: HashSet::from_iter(['.', '-', '_', '@']),
+                ..Default::default()
+            },
+            None,
+        );
+
         let editor = cx.new(|cx| {
-            let mut editor = Editor::auto_height(10, window, cx);
+            let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let mut editor = Editor::new(
+                editor::EditorMode::AutoHeight { max_lines: 10 },
+                buffer,
+                None,
+                window,
+                cx,
+            );
             editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_context_menu_options(ContextMenuOptions {
@@ -75,7 +93,6 @@ impl MessageEditor {
                 max_entries_visible: 12,
                 placement: Some(ContextMenuPlacement::Above),
             });
-
             editor
         });
 

@@ -38,12 +38,12 @@ impl AssistantSystemPromptContext {
 pub struct WorktreeInfoForSystemPrompt {
     pub root_name: String,
     pub abs_path: Arc<Path>,
-    pub rules_file: Option<RulesFile>,
+    pub rules_file: Option<SystemPromptRulesFile>,
 }
 
 #[derive(Serialize)]
-pub struct RulesFile {
-    pub rel_path: Arc<Path>,
+pub struct SystemPromptRulesFile {
+    pub path_in_worktree: Arc<Path>,
     pub abs_path: Arc<Path>,
     pub text: String,
 }
@@ -259,6 +259,12 @@ impl PromptBuilder {
         self.handlebars
             .lock()
             .render("assistant_system_prompt", context)
+    }
+
+    pub fn generate_assistant_system_prompt_reminder(&self) -> Result<String, RenderError> {
+        self.handlebars
+            .lock()
+            .render("assistant_system_prompt_reminder", &())
     }
 
     pub fn generate_inline_transformation_prompt(
