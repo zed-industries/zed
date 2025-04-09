@@ -14915,8 +14915,12 @@ impl Editor {
         self.fold_creases(to_fold, true, window, cx);
     }
 
-    pub fn fold_at(&mut self, fold_at: &FoldAt, window: &mut Window, cx: &mut Context<Self>) {
-        let buffer_row = fold_at.buffer_row;
+    pub fn fold_at(
+        &mut self,
+        buffer_row: MultiBufferRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(crease) = display_map.crease_for_buffer_row(buffer_row) {
@@ -14986,16 +14990,16 @@ impl Editor {
 
     pub fn unfold_at(
         &mut self,
-        unfold_at: &UnfoldAt,
+        buffer_row: MultiBufferRow,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        let intersection_range = Point::new(unfold_at.buffer_row.0, 0)
+        let intersection_range = Point::new(buffer_row.0, 0)
             ..Point::new(
-                unfold_at.buffer_row.0,
-                display_map.buffer_snapshot.line_len(unfold_at.buffer_row),
+                buffer_row.0,
+                display_map.buffer_snapshot.line_len(buffer_row),
             );
 
         let autoscroll = self
@@ -19364,15 +19368,11 @@ impl EditorSnapshot {
                             Arc::new(move |folded, window: &mut Window, cx: &mut App| {
                                 if folded {
                                     editor.update(cx, |editor, cx| {
-                                        editor.fold_at(&crate::FoldAt { buffer_row }, window, cx)
+                                        editor.fold_at(buffer_row, window, cx)
                                     });
                                 } else {
                                     editor.update(cx, |editor, cx| {
-                                        editor.unfold_at(
-                                            &crate::UnfoldAt { buffer_row },
-                                            window,
-                                            cx,
-                                        )
+                                        editor.unfold_at(buffer_row, window, cx)
                                     });
                                 }
                             });
@@ -19396,9 +19396,9 @@ impl EditorSnapshot {
                     .toggle_state(folded)
                     .on_click(window.listener_for(&editor, move |this, _e, window, cx| {
                         if folded {
-                            this.unfold_at(&UnfoldAt { buffer_row }, window, cx);
+                            this.unfold_at(buffer_row, window, cx);
                         } else {
-                            this.fold_at(&FoldAt { buffer_row }, window, cx);
+                            this.fold_at(buffer_row, window, cx);
                         }
                     }))
                     .into_any_element(),
