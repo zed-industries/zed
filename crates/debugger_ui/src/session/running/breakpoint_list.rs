@@ -440,11 +440,20 @@ impl ExceptionBreakpoint {
                 .child(Indicator::icon(Icon::new(IconName::Flame)).color(color)),
         )
         .child(
-            div().py_1().child(
-                Label::new(self.data.label)
-                    .size(LabelSize::Small)
-                    .line_height_style(ui::LineHeightStyle::UiLabel),
-            ),
+            div()
+                .py_1()
+                .gap_1()
+                .child(
+                    Label::new(self.data.label)
+                        .size(LabelSize::Small)
+                        .line_height_style(ui::LineHeightStyle::UiLabel),
+                )
+                .children(self.data.description.map(|description| {
+                    Label::new(description)
+                        .size(LabelSize::XSmall)
+                        .line_height_style(ui::LineHeightStyle::UiLabel)
+                        .color(Color::Muted)
+                })),
         )
     }
 }
