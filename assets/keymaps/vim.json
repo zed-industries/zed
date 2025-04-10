@@ -203,6 +203,7 @@
       "c": "vim::PushChange",
       "shift-c": "vim::ChangeToEndOfLine",
       "d": "vim::PushDelete",
+      "delete": "vim::DeleteRight",
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "g shift-j": "vim::JoinLinesNoWhitespace",
