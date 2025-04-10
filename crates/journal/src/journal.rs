@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
-use editor::scroll::Autoscroll;
 use editor::Editor;
-use gpui::{actions, App, AppContext as _, Context, Window};
+use editor::scroll::Autoscroll;
+use gpui::{App, AppContext as _, Context, Window, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -118,7 +118,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
     let view_snapshot = workspace.weak_handle().clone();
 
     window
-        .spawn(cx, |mut cx| async move {
+        .spawn(cx, async move |cx| {
             let (journal_dir, entry_path) = create_entry.await?;
             let opened = if open_new_workspace {
                 let (new_workspace, _) = cx
@@ -132,21 +132,39 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
                     })?
                     .await?;
                 new_workspace
-                    .update(&mut cx, |workspace, window, cx| {
-                        workspace.open_paths(vec![entry_path], OpenVisible::All, None, window, cx)
+                    .update(cx, |workspace, window, cx| {
+                        workspace.open_paths(
+                            vec![entry_path],
+                            workspace::OpenOptions {
+                                visible: Some(OpenVisible::All),
+                                ..Default::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
                     })?
                     .await
             } else {
                 view_snapshot
-                    .update_in(&mut cx, |workspace, window, cx| {
-                        workspace.open_paths(vec![entry_path], OpenVisible::All, None, window, cx)
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_paths(
+                            vec![entry_path],
+                            workspace::OpenOptions {
+                                visible: Some(OpenVisible::All),
+                                ..Default::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
                     })?
                     .await
             };
 
             if let Some(Some(Ok(item))) = opened.first() {
                 if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
-                    editor.update_in(&mut cx, |editor, window, cx| {
+                    editor.update_in(cx, |editor, window, cx| {
                         let len = editor.buffer().read(cx).len(cx);
                         editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
                             s.select_ranges([len..len])

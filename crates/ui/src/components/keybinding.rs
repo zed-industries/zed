@@ -1,12 +1,12 @@
 use crate::PlatformStyle;
-use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
+use crate::{Icon, IconName, IconSize, h_flex, prelude::*};
 use gpui::{
-    relative, Action, AnyElement, App, FocusHandle, Global, IntoElement, Keystroke, Modifiers,
-    Window,
+    Action, AnyElement, App, FocusHandle, Global, IntoElement, Keystroke, Modifiers, Window,
+    relative,
 };
 use itertools::Itertools;
 
-#[derive(Debug, IntoElement, Clone)]
+#[derive(Debug, IntoElement, Clone, RegisterComponent)]
 pub struct KeyBinding {
     /// A keybinding consists of a key and a set of modifier keys.
     /// More then one keybinding produces a chord.
@@ -20,6 +20,9 @@ pub struct KeyBinding {
 
     /// Determines whether the keybinding is meant for vim mode.
     vim_mode: bool,
+
+    /// Indicates whether the keybinding is currently disabled.
+    disabled: bool,
 }
 
 struct VimStyle(bool);
@@ -29,9 +32,11 @@ impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
     pub fn for_action(action: &dyn Action, window: &mut Window, cx: &App) -> Option<Self> {
+        if let Some(focused) = window.focused(cx) {
+            return Self::for_action_in(action, &focused, window, cx);
+        }
         let key_binding =
-            gpui::Keymap::binding_to_display_from_bindings(&window.bindings_for_action(action))
-                .cloned()?;
+            gpui::Keymap::binding_to_display_from_bindings(window.bindings_for_action(action))?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -43,9 +48,8 @@ impl KeyBinding {
         cx: &App,
     ) -> Option<Self> {
         let key_binding = gpui::Keymap::binding_to_display_from_bindings(
-            &window.bindings_for_action_in(action, focus),
-        )
-        .cloned()?;
+            window.bindings_for_action_in(action, focus),
+        )?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -63,6 +67,7 @@ impl KeyBinding {
             platform_style: PlatformStyle::platform(),
             size: None,
             vim_mode: KeyBinding::is_vim_mode(cx),
+            disabled: false,
         }
     }
 
@@ -75,6 +80,13 @@ impl KeyBinding {
     /// Sets the size for this [`KeyBinding`].
     pub fn size(mut self, size: impl Into<AbsoluteLength>) -> Self {
         self.size = Some(size.into());
+        self
+    }
+
+    /// Sets whether this keybinding is currently disabled.
+    /// Disabled keybinds will be rendered in a dimmed state.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -97,6 +109,7 @@ impl KeyBinding {
 
 impl RenderOnce for KeyBinding {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let color = self.disabled.then_some(Color::Disabled);
         let use_text = self.vim_mode
             || matches!(
                 self.platform_style,
@@ -120,13 +133,13 @@ impl RenderOnce for KeyBinding {
                 h_flex()
                     .flex_none()
                     .py_0p5()
-                    .rounded_sm()
+                    .rounded_xs()
                     .text_color(cx.theme().colors().text_muted)
                     .when(use_text, |el| {
                         el.child(
                             Key::new(
                                 keystroke_text(&keystroke, self.platform_style, self.vim_mode),
-                                None,
+                                color,
                             )
                             .size(self.size),
                         )
@@ -135,11 +148,11 @@ impl RenderOnce for KeyBinding {
                         el.children(render_modifiers(
                             &keystroke.modifiers,
                             self.platform_style,
-                            None,
+                            color,
                             self.size,
                             true,
                         ))
-                        .map(|el| el.child(self.render_key(&keystroke, None)))
+                        .map(|el| el.child(self.render_key(&keystroke, color)))
                     })
             }))
     }
@@ -434,6 +447,93 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
     }
 
     text
+}
+
+impl Component for KeyBinding {
+    fn scope() -> ComponentScope {
+        ComponentScope::Input
+    }
+
+    fn name() -> &'static str {
+        "KeyBinding"
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "A component that displays a key binding, supporting different platform styles and vim mode.",
+        )
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Basic Usage",
+                        vec![
+                            single_example(
+                                "Default",
+                                KeyBinding::new(
+                                    gpui::KeyBinding::new("ctrl-s", gpui::NoAction, None),
+                                    cx,
+                                )
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "Mac Style",
+                                KeyBinding::new(
+                                    gpui::KeyBinding::new("cmd-s", gpui::NoAction, None),
+                                    cx,
+                                )
+                                .platform_style(PlatformStyle::Mac)
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "Windows Style",
+                                KeyBinding::new(
+                                    gpui::KeyBinding::new("ctrl-s", gpui::NoAction, None),
+                                    cx,
+                                )
+                                .platform_style(PlatformStyle::Windows)
+                                .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Vim Mode",
+                        vec![single_example(
+                            "Vim Mode Enabled",
+                            KeyBinding::new(gpui::KeyBinding::new("dd", gpui::NoAction, None), cx)
+                                .vim_mode(true)
+                                .into_any_element(),
+                        )],
+                    ),
+                    example_group_with_title(
+                        "Complex Bindings",
+                        vec![
+                            single_example(
+                                "Multiple Keys",
+                                KeyBinding::new(
+                                    gpui::KeyBinding::new("ctrl-k ctrl-b", gpui::NoAction, None),
+                                    cx,
+                                )
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "With Shift",
+                                KeyBinding::new(
+                                    gpui::KeyBinding::new("shift-cmd-p", gpui::NoAction, None),
+                                    cx,
+                                )
+                                .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
+    }
 }
 
 #[cfg(test)]

@@ -23,9 +23,53 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  job_spec:
+    name: Decide which jobs to run
+    if: github.repository_owner == 'zed-industries'
+    outputs:
+      run_tests: ${{ steps.filter.outputs.run_tests }}
+      run_license: ${{ steps.filter.outputs.run_license }}
+    runs-on:
+      - ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          # 350 is arbitrary; ~10days of history on main (5secs); full history is ~25secs
+          fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
+      - name: Fetch git history and generate output filters
+        id: filter
+        run: |
+          if [ -z "$GITHUB_BASE_REF" ]; then
+            echo "Not in a PR context (i.e., push to main/stable/preview)"
+            COMPARE_REV=$(git rev-parse HEAD~1)
+          else
+            echo "In a PR context comparing to pull_request.base.ref"
+            git fetch origin "$GITHUB_BASE_REF" --depth=350
+            COMPARE_REV=$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)
+          fi
+          # Specify anything which should skip full CI in this regex:
+          # - docs/
+          # - .github/ISSUE_TEMPLATE/
+          # - .github/workflows/  (except .github/workflows/ci.yml)
+          SKIP_REGEX='^(docs/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))'
+          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep -vP "$SKIP_REGEX") ]]; then
+            echo "run_tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_tests=false" >> $GITHUB_OUTPUT
+          fi
+          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep '^Cargo.lock') ]]; then
+            echo "run_license=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_license=false" >> $GITHUB_OUTPUT
+          fi
+
   migration_checks:
     name: Check Postgres and Protobuf migrations, mergability
-    if: github.repository_owner == 'zed-industries'
+    needs: [job_spec]
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      needs.job_spec.outputs.run_tests == 'true'
     timeout-minutes: 60
     runs-on:
       - self-hosted
@@ -66,15 +110,64 @@ jobs:
           input: "crates/proto/proto/"
           against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
 
+  workspace_hack:
+    timeout-minutes: 60
+    name: Check workspace-hack crate
+    needs: [job_spec]
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      needs.job_spec.outputs.run_tests == 'true'
+    runs-on:
+      - buildjet-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install cargo-hakari
+        uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
+        with:
+          command: install
+          args: cargo-hakari@0.9.35
+
+      - name: Check workspace-hack Cargo.toml is up-to-date
+        run: |
+          cargo hakari generate --diff || {
+            echo "To fix, run script/update-workspace-hack or script/update-workspace-hack.ps1";
+            false
+          }
+      - name: Check all crates depend on workspace-hack
+        run: |
+          cargo hakari manage-deps --dry-run || {
+            echo "To fix, run script/update-workspace-hack or script/update-workspace-hack.ps1"
+            false
+          }
+
   style:
     timeout-minutes: 60
     name: Check formatting and spelling
+    needs: [job_spec]
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
+        with:
+          version: 9
+
+      - name: Prettier Check on /docs
+        working-directory: ./docs
+        run: |
+          pnpm dlx prettier@${PRETTIER_VERSION} . --check || {
+            echo "To fix, run from the root of the zed repo:"
+            echo "  cd docs && pnpm dlx prettier@${PRETTIER_VERSION} . --write && cd .."
+            false
+          }
+        env:
+          PRETTIER_VERSION: 3.5.0
 
       # To support writing comments that they will certainly be revisited.
       - name: Check for todo! and FIXME comments
@@ -91,7 +184,10 @@ jobs:
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
-    if: github.repository_owner == 'zed-industries'
+    needs: [job_spec]
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - self-hosted
       - test
@@ -123,11 +219,13 @@ jobs:
       - name: Check licenses
         run: |
           script/check-licenses
-          script/generate-licenses /tmp/zed_licenses_output
+          if [[ "${{ needs.job_spec.outputs.run_license }}" == "true" ]]; then
+            script/generate-licenses /tmp/zed_licenses_output
+          fi
 
       - name: Check for new vulnerable dependencies
         if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4
+        uses: actions/dependency-review-action@67d4f4bd7a9b17a0db54d2a7519187c65e339de8 # v4
         with:
           license-check: false
 
@@ -144,7 +242,6 @@ jobs:
           cargo check -p workspace
           cargo build -p remote_server
           cargo check -p gpui --examples
-          script/check-rust-livekit-macos
 
       # Since the macOS runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
@@ -154,7 +251,10 @@ jobs:
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
-    if: github.repository_owner == 'zed-industries'
+    needs: [job_spec]
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
@@ -167,7 +267,7 @@ jobs:
           clean: false
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
@@ -203,9 +303,12 @@ jobs:
   build_remote_server:
     timeout-minutes: 60
     name: (Linux) Build Remote Server
-    if: github.repository_owner == 'zed-industries'
+    needs: [job_spec]
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      needs.job_spec.outputs.run_tests == 'true'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - buildjet-8vcpu-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -216,7 +319,7 @@ jobs:
           clean: false
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
@@ -239,21 +342,12 @@ jobs:
   windows_clippy:
     timeout-minutes: 60
     name: (Windows) Run Clippy
-    if: github.repository_owner == 'zed-industries'
-    runs-on: hosted-windows-2
+    needs: [job_spec]
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      needs.job_spec.outputs.run_tests == 'true'
+    runs-on: windows-2025-16
     steps:
-      # Temporarily Collect some metadata about the hardware behind our runners.
-      - name: GHA Runner Info
-        run: |
-          Invoke-RestMethod -Headers @{"Metadata"="true"} -Method GET -Uri "http://169.254.169.254/metadata/instance/compute?api-version=2023-07-01" |
-            ConvertTo-Json -Depth 10 |
-            jq "{ vm_size: .vmSize, location: .location, os_disk_gb: (.storageProfile.osDisk.diskSizeGB | tonumber), rs_disk_gb: (.storageProfile.resourceDisk.size | tonumber / 1024) }"
-          @{
-              Cores = (Get-CimInstance Win32_Processor).NumberOfCores
-              vCPUs = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
-              RamGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
-              cpuid = (Get-CimInstance Win32_Processor).Name.Trim()
-          } | ConvertTo-Json
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
         run: git config --system core.longpaths true
@@ -272,7 +366,7 @@ jobs:
           Copy-Item -Path "${{ github.workspace }}" -Destination "${{ env.ZED_WORKSPACE }}" -Recurse
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: ${{ env.ZED_WORKSPACE }}
@@ -306,21 +400,13 @@ jobs:
   windows_tests:
     timeout-minutes: 60
     name: (Windows) Run Tests
-    if: ${{ github.repository_owner == 'zed-industries' && (github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'windows')) }}
-    runs-on: hosted-windows-2
+    needs: [job_spec]
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      needs.job_spec.outputs.run_tests == 'true'
+    # Use bigger runners for PRs (speed); smaller for async (cost)
+    runs-on: ${{ github.event_name == 'pull_request' && 'windows-2025-32' || 'windows-2025-16' }}
     steps:
-      # Temporarily Collect some metadata about the hardware behind our runners.
-      - name: GHA Runner Info
-        run: |
-          Invoke-RestMethod -Headers @{"Metadata"="true"} -Method GET -Uri "http://169.254.169.254/metadata/instance/compute?api-version=2023-07-01" |
-            ConvertTo-Json -Depth 10 |
-            jq "{ vm_size: .vmSize, location: .location, os_disk_gb: (.storageProfile.osDisk.diskSizeGB | tonumber), rs_disk_gb: (.storageProfile.resourceDisk.size | tonumber / 1024) }"
-          @{
-              Cores = (Get-CimInstance Win32_Processor).NumberOfCores
-              vCPUs = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
-              RamGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
-              cpuid = (Get-CimInstance Win32_Processor).Name.Trim()
-          } | ConvertTo-Json
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
         run: git config --system core.longpaths true
@@ -339,7 +425,7 @@ jobs:
           Copy-Item -Path "${{ github.workspace }}" -Destination "${{ env.ZED_WORKSPACE }}" -Recurse
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: ${{ env.ZED_WORKSPACE }}
@@ -372,13 +458,54 @@ jobs:
             Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
           }
 
+  tests_pass:
+    name: Tests Pass
+    runs-on: ubuntu-latest
+    needs:
+      - job_spec
+      - style
+      - migration_checks
+      # run_tests: If adding required tests, add them here and to script below.
+      - workspace_hack
+      - linux_tests
+      - build_remote_server
+      - macos_tests
+      - windows_clippy
+      - windows_tests
+    if: always()
+    steps:
+      - name: Check all tests passed
+        run: |
+          # Check dependent jobs...
+          RET_CODE=0
+          # Always check style
+          [[ "${{ needs.style.result }}" != 'success' ]] && { RET_CODE=1; echo "style tests failed"; }
+
+          # Only check test jobs if they were supposed to run
+          if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
+            [[ "${{ needs.workspace_hack.result }}"       != 'success' ]] && { RET_CODE=1; echo "Workspace Hack failed"; }
+            [[ "${{ needs.macos_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "macOS tests failed"; }
+            [[ "${{ needs.linux_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "Linux tests failed"; }
+            [[ "${{ needs.windows_tests.result }}"        != 'success' ]] && { RET_CODE=1; echo "Windows tests failed"; }
+            [[ "${{ needs.windows_clippy.result }}"       != 'success' ]] && { RET_CODE=1; echo "Windows clippy failed"; }
+            [[ "${{ needs.build_remote_server.result }}"  != 'success' ]] && { RET_CODE=1; echo "Remote server build failed"; }
+            # This check is intentionally disabled. See: https://github.com/zed-industries/zed/pull/28431
+            # [[ "${{ needs.migration_checks.result }}"     != 'success' ]] && { RET_CODE=1; echo "Migration Checks failed"; }
+          fi
+          if [[ "$RET_CODE" -eq 0 ]]; then
+            echo "All tests passed successfully!"
+          fi
+          exit $RET_CODE
+
   bundle-mac:
     timeout-minutes: 120
     name: Create a macOS bundle
     runs-on:
       - self-hosted
       - bundle
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    if: |
+      startsWith(github.ref, 'refs/tags/v')
+      || contains(github.event.pull_request.labels.*.name, 'run-bundling')
     needs: [macos_tests]
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -392,7 +519,7 @@ jobs:
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4
         with:
           node-version: "18"
 
@@ -436,14 +563,14 @@ jobs:
           mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
       - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
           path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
 
       - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
@@ -468,7 +595,9 @@ jobs:
     name: Linux x86_x64 release bundle
     runs-on:
       - buildjet-16vcpu-ubuntu-2004
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    if: |
+      startsWith(github.ref, 'refs/tags/v')
+      || contains(github.event.pull_request.labels.*.name, 'run-bundling')
     needs: [linux_tests]
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -485,7 +614,7 @@ jobs:
         run: ./script/linux && ./script/install-mold 2.34.0
 
       - name: Determine version and release channel
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
           script/determine-release-channel
@@ -494,15 +623,19 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
-        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: |
+          github.ref == 'refs/heads/main'
+          || contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
           path: target/release/zed-*.tar.gz
 
       - name: Upload Linux remote server to workflow run if main branch or specific label
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
-        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: |
+          github.ref == 'refs/heads/main'
+          || contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
           name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.gz
           path: target/zed-remote-server-linux-x86_64.gz
@@ -523,7 +656,9 @@ jobs:
     name: Linux arm64 release bundle
     runs-on:
       - buildjet-16vcpu-ubuntu-2204-arm
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    if: |
+      startsWith(github.ref, 'refs/tags/v')
+      || contains(github.event.pull_request.labels.*.name, 'run-bundling')
     needs: [linux_tests]
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -540,7 +675,7 @@ jobs:
         run: ./script/linux
 
       - name: Determine version and release channel
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
           script/determine-release-channel
@@ -549,15 +684,19 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
-        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: |
+          github.ref == 'refs/heads/main'
+          || contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
           path: target/release/zed-*.tar.gz
 
       - name: Upload Linux remote server to workflow run if main branch or specific label
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
-        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: |
+          github.ref == 'refs/heads/main'
+          || contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
           name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.gz
           path: target/zed-remote-server-linux-aarch64.gz
@@ -573,9 +712,56 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  nix-build:
+    timeout-minutes: 60
+    name: Nix Build
+    continue-on-error: true
+    if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
+    strategy:
+      fail-fast: false
+      matrix:
+        system:
+          - os: x86 Linux
+            runner: buildjet-16vcpu-ubuntu-2204
+            install_nix: true
+          - os: arm Mac
+            runner: [macOS, ARM64, test]
+            install_nix: false
+    runs-on: ${{ matrix.system.runner }}
+    env:
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      GIT_LFS_SKIP_SMUDGE: 1 # breaks the livekit rust sdk examples which we don't actually depend on
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+      - name: Set path
+        if: ${{ ! matrix.system.install_nix }}
+        run: |
+          echo "/nix/var/nix/profiles/default/bin" >> $GITHUB_PATH
+          echo "/Users/administrator/.nix-profile/bin" >> $GITHUB_PATH
+
+      - uses: cachix/install-nix-action@d1ca217b388ee87b2507a9a93bf01368bde7cec2 # v31
+        if: ${{ matrix.system.install_nix }}
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
+        with:
+          name: zed-industries
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          skipPush: true
+      - run: nix build .#debug
+      - name: Limit /nix/store to 50GB
+        run: "[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d"
+
   auto-release-preview:
     name: Auto release preview
-    if: ${{ startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre') }}
+    if: |
+      startsWith(github.ref, 'refs/tags/v')
+      && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
     needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64]
     runs-on:
       - self-hosted

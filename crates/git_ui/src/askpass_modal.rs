@@ -2,9 +2,9 @@ use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Styled};
 use ui::{
-    div, h_flex, v_flex, ActiveTheme, App, Context, DynamicSpacing, Headline, HeadlineSize, Icon,
-    IconName, IconSize, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StyledExt, StyledTypography, Window,
+    ActiveTheme, App, Context, DynamicSpacing, Headline, HeadlineSize, Icon, IconName, IconSize,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, StyledExt,
+    StyledTypography, Window, div, h_flex, v_flex,
 };
 use workspace::ModalView;
 
@@ -74,7 +74,7 @@ impl Render for AskPassModal {
                     .px(DynamicSpacing::Base12.rems(cx))
                     .pt(DynamicSpacing::Base08.rems(cx))
                     .pb(DynamicSpacing::Base04.rems(cx))
-                    .rounded_t_md()
+                    .rounded_t_sm()
                     .w_full()
                     .gap_1p5()
                     .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))

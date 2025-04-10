@@ -1,20 +1,21 @@
-use crate::{seal::Sealed, App, AppContext, VisualContext, Window};
-use anyhow::{anyhow, Result};
+use crate::{App, AppContext, VisualContext, Window, seal::Sealed};
+use anyhow::{Result, anyhow};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{KeyData, SecondaryMap, SlotMap};
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{Any, TypeId, type_name},
     cell::RefCell,
+    cmp::Ordering,
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
     num::NonZeroU64,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
     thread::panicking,
 };
@@ -178,6 +179,7 @@ impl EntityMap {
     }
 }
 
+#[track_caller]
 fn double_lease_panic<T>(operation: &str) -> ! {
     panic!(
         "cannot {operation} {} while it is already being updated",
@@ -349,6 +351,18 @@ impl PartialEq for AnyEntity {
 
 impl Eq for AnyEntity {}
 
+impl Ord for AnyEntity {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.entity_id.cmp(&other.entity_id)
+    }
+}
+
+impl PartialOrd for AnyEntity {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl std::fmt::Debug for AnyEntity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AnyEntity")
@@ -433,7 +447,7 @@ impl<T: 'static> Entity<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> C::Result<R>
     where
         C: AppContext,
@@ -447,7 +461,7 @@ impl<T: 'static> Entity<T> {
     pub fn update_in<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Window, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> C::Result<R>
     where
         C: VisualContext,
@@ -491,6 +505,18 @@ impl<T> Eq for Entity<T> {}
 impl<T> PartialEq<WeakEntity<T>> for Entity<T> {
     fn eq(&self, other: &WeakEntity<T>) -> bool {
         self.any_entity.entity_id() == other.entity_id()
+    }
+}
+
+impl<T: 'static> Ord for Entity<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.entity_id().cmp(&other.entity_id())
+    }
+}
+
+impl<T: 'static> PartialOrd for Entity<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -598,6 +624,18 @@ impl PartialEq for AnyWeakEntity {
 
 impl Eq for AnyWeakEntity {}
 
+impl Ord for AnyWeakEntity {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.entity_id.cmp(&other.entity_id)
+    }
+}
+
+impl PartialOrd for AnyWeakEntity {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// A weak reference to a entity of the given type.
 #[derive(Deref, DerefMut)]
 pub struct WeakEntity<T> {
@@ -641,7 +679,7 @@ impl<T: 'static> WeakEntity<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Result<R>
     where
         C: AppContext,
@@ -660,7 +698,7 @@ impl<T: 'static> WeakEntity<T> {
     pub fn update_in<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Window, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Result<R>
     where
         C: VisualContext,
@@ -707,6 +745,18 @@ impl<T> Eq for WeakEntity<T> {}
 impl<T> PartialEq<Entity<T>> for WeakEntity<T> {
     fn eq(&self, other: &Entity<T>) -> bool {
         self.entity_id() == other.any_entity.entity_id()
+    }
+}
+
+impl<T: 'static> Ord for WeakEntity<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.entity_id().cmp(&other.entity_id())
+    }
+}
+
+impl<T: 'static> PartialOrd for WeakEntity<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

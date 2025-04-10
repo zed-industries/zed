@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::{
     fmt::{self, Display, Formatter},
@@ -634,7 +634,7 @@ impl Display for ColorSpace {
 }
 
 /// A background color, which can be either a solid color or a linear gradient.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Background {
     pub(crate) tag: BackgroundTag,
@@ -644,6 +644,28 @@ pub struct Background {
     pub(crate) colors: [LinearColorStop; 2],
     /// Padding for alignment for repr(C) layout.
     pad: u32,
+}
+
+impl std::fmt::Debug for Background {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self.tag {
+            BackgroundTag::Solid => write!(f, "Solid({:?})", self.solid),
+            BackgroundTag::LinearGradient => {
+                write!(
+                    f,
+                    "LinearGradient({}, {:?}, {:?})",
+                    self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
+                )
+            }
+            BackgroundTag::PatternSlash => {
+                write!(
+                    f,
+                    "PatternSlash({:?}, {})",
+                    self.solid, self.gradient_angle_or_pattern_height
+                )
+            }
+        }
+    }
 }
 
 impl Eq for Background {}
@@ -661,11 +683,15 @@ impl Default for Background {
 }
 
 /// Creates a hash pattern background
-pub fn pattern_slash(color: Hsla, thickness: f32) -> Background {
+pub fn pattern_slash(color: Hsla, width: f32, interval: f32) -> Background {
+    let width_scaled = (width * 255.0) as u32;
+    let interval_scaled = (interval * 255.0) as u32;
+    let height = ((width_scaled * 0xFFFF) + interval_scaled) as f32;
+
     Background {
         tag: BackgroundTag::PatternSlash,
         solid: color,
-        gradient_angle_or_pattern_height: thickness,
+        gradient_angle_or_pattern_height: height,
         ..Default::default()
     }
 }

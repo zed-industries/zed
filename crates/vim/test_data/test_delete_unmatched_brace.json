@@ -1,0 +1,12 @@
+{"Put":{"state":"fn o(wow: i32) {\n  othˇ(wow)\n  oth(wow)\n}\n"}}
+{"Key":"d"}
+{"Key":"]"}
+{"Key":"}"}
+{"Get":{"state":"fn o(wow: i32) {\n  otˇh\n}\n","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"(wow)\n  oth(wow)"}}
+{"Put":{"state":"fn o(wow: i32) {\n  ˇoth(wow)\n  oth(wow)\n}\n"}}
+{"Key":"d"}
+{"Key":"]"}
+{"Key":"}"}
+{"Get":{"state":"fn o(wow: i32) {\nˇ}\n","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"  oth(wow)\n  oth(wow)\n"}}

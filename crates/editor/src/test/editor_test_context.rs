@@ -1,14 +1,14 @@
 use crate::{
-    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
-    RowExt,
+    AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer, RowExt,
+    display_map::ToDisplayPoint,
 };
 use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
 use futures::Future;
 
 use gpui::{
-    prelude::*, AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
-    VisualTestContext, Window, WindowHandle,
+    AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
+    VisualTestContext, Window, WindowHandle, prelude::*,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
@@ -20,8 +20,8 @@ use std::{
     ops::{Deref, DerefMut, Range},
     path::Path,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 use util::{
@@ -120,10 +120,9 @@ impl EditorTestContext {
                 let buffer = cx.new(|cx| Buffer::local(text, cx));
                 multibuffer.push_excerpts(
                     buffer,
-                    ranges.into_iter().map(|range| ExcerptRange {
-                        context: range,
-                        primary: None,
-                    }),
+                    ranges
+                        .into_iter()
+                        .map(|range| ExcerptRange::new(range.clone())),
                     cx,
                 );
             }
@@ -339,7 +338,8 @@ impl EditorTestContext {
         let mut found = None;
         fs.with_git_state(&Self::root_path().join(".git"), false, |git_state| {
             found = git_state.index_contents.get(path.as_ref()).cloned();
-        });
+        })
+        .unwrap();
         assert_eq!(expected, found.as_deref());
     }
 
@@ -429,12 +429,14 @@ impl EditorTestContext {
                 if expected_selections.len() > 0 {
                     assert!(
                         is_selected,
-                        "excerpt {} should be selected. Got {:?}",
-                        ix,
-                        self.editor_state()
+                        "excerpt {ix} should be selected. got {:?}",
+                        self.editor_state(),
                     );
                 } else {
-                    assert!(!is_selected, "excerpt {} should not be selected", ix);
+                    assert!(
+                        !is_selected,
+                        "excerpt {ix} should not be selected, got: {selections:?}",
+                    );
                 }
                 continue;
             }

@@ -2,10 +2,10 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::anyhow;
 use gpui::{
-    black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
-    Application, Asset, AssetLogger, AssetSource, Bounds, Context, Hsla, ImageAssetLoader,
-    ImageCacheError, ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString,
-    Window, WindowBounds, WindowOptions, LOADING_DELAY,
+    Animation, AnimationExt, App, Application, Asset, AssetLogger, AssetSource, Bounds, Context,
+    Hsla, ImageAssetLoader, ImageCacheError, ImgResourceLoader, LOADING_DELAY, Length, Pixels,
+    RenderImage, Resource, SharedString, Window, WindowBounds, WindowOptions, black, div, img,
+    prelude::*, pulsating_between, px, red, size,
 };
 
 struct Assets {}
@@ -69,7 +69,7 @@ struct ImageLoadingExample {}
 
 impl ImageLoadingExample {
     fn loading_element() -> impl IntoElement {
-        div().size_full().flex_none().p_0p5().rounded_sm().child(
+        div().size_full().flex_none().p_0p5().rounded_xs().child(
             div().size_full().with_animation(
                 "loading-bg",
                 Animation::new(Duration::from_secs(3))
@@ -89,7 +89,7 @@ impl ImageLoadingExample {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_sm()
+                .rounded_xs()
                 .text_sm()
                 .text_color(fallback_color)
                 .border_1()

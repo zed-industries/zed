@@ -10,17 +10,15 @@ use std::sync::Arc;
 
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
-use assistant_slash_commands::{ProjectSlashCommandFeatureFlag, SearchSlashCommandFeatureFlag};
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::{actions, App, Global, UpdateGlobal};
+use gpui::{App, Global, ReadGlobal, UpdateGlobal, actions};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
 use prompt_store::PromptBuilder;
-use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 
@@ -86,6 +84,10 @@ impl Assistant {
             filter.show_namespace(Self::NAMESPACE);
         });
     }
+
+    pub fn enabled(cx: &App) -> bool {
+        Self::global(cx).enabled
+    }
 }
 
 pub fn init(
@@ -98,33 +100,6 @@ pub fn init(
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
 
-    cx.spawn(|mut cx| {
-        let client = client.clone();
-        async move {
-            let is_search_slash_command_enabled = cx
-                .update(|cx| cx.wait_for_flag::<SearchSlashCommandFeatureFlag>())?
-                .await;
-            let is_project_slash_command_enabled = cx
-                .update(|cx| cx.wait_for_flag::<ProjectSlashCommandFeatureFlag>())?
-                .await;
-
-            if !is_search_slash_command_enabled && !is_project_slash_command_enabled {
-                return Ok(());
-            }
-
-            let embedding_provider = CloudEmbeddingProvider::new(client.clone());
-            let semantic_index = SemanticDb::new(
-                paths::embeddings_dir().join("semantic-index-db.0.mdb"),
-                Arc::new(embedding_provider),
-                &mut cx,
-            )
-            .await?;
-
-            cx.update(|cx| cx.set_global(semantic_index))
-        }
-    })
-    .detach();
-
     assistant_context_editor::init(client.clone(), cx);
     prompt_library::init(cx);
     init_language_model_settings(cx);
@@ -133,7 +108,7 @@ pub fn init(
     assistant_panel::init(cx);
     context_server::init(cx);
 
-    register_slash_commands(Some(prompt_builder.clone()), cx);
+    register_slash_commands(cx);
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
@@ -186,8 +161,38 @@ fn init_language_model_settings(cx: &mut App) {
 
 fn update_active_language_model_from_settings(cx: &mut App) {
     let settings = AssistantSettings::get_global(cx);
-    let provider_name = LanguageModelProviderId::from(settings.default_model.provider.clone());
-    let model_id = LanguageModelId::from(settings.default_model.model.clone());
+    // Default model - used as fallback
+    let active_model_provider_name =
+        LanguageModelProviderId::from(settings.default_model.provider.clone());
+    let active_model_id = LanguageModelId::from(settings.default_model.model.clone());
+
+    // Inline assistant model
+    let inline_assistant_model = settings
+        .inline_assistant_model
+        .as_ref()
+        .unwrap_or(&settings.default_model);
+    let inline_assistant_provider_name =
+        LanguageModelProviderId::from(inline_assistant_model.provider.clone());
+    let inline_assistant_model_id = LanguageModelId::from(inline_assistant_model.model.clone());
+
+    // Commit message model
+    let commit_message_model = settings
+        .commit_message_model
+        .as_ref()
+        .unwrap_or(&settings.default_model);
+    let commit_message_provider_name =
+        LanguageModelProviderId::from(commit_message_model.provider.clone());
+    let commit_message_model_id = LanguageModelId::from(commit_message_model.model.clone());
+
+    // Thread summary model
+    let thread_summary_model = settings
+        .thread_summary_model
+        .as_ref()
+        .unwrap_or(&settings.default_model);
+    let thread_summary_provider_name =
+        LanguageModelProviderId::from(thread_summary_model.provider.clone());
+    let thread_summary_model_id = LanguageModelId::from(thread_summary_model.model.clone());
+
     let inline_alternatives = settings
         .inline_alternatives
         .iter()
@@ -198,13 +203,34 @@ fn update_active_language_model_from_settings(cx: &mut App) {
             )
         })
         .collect::<Vec<_>>();
+
     LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-        registry.select_active_model(&provider_name, &model_id, cx);
+        // Set the default model
+        registry.select_default_model(&active_model_provider_name, &active_model_id, cx);
+
+        // Set the specific models
+        registry.select_inline_assistant_model(
+            &inline_assistant_provider_name,
+            &inline_assistant_model_id,
+            cx,
+        );
+        registry.select_commit_message_model(
+            &commit_message_provider_name,
+            &commit_message_model_id,
+            cx,
+        );
+        registry.select_thread_summary_model(
+            &thread_summary_provider_name,
+            &thread_summary_model_id,
+            cx,
+        );
+
+        // Set the alternatives
         registry.select_inline_alternative_models(inline_alternatives, cx);
     });
 }
 
-fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut App) {
+fn register_slash_commands(cx: &mut App) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
 
     slash_command_registry.register_command(assistant_slash_commands::FileSlashCommand, true);
@@ -222,33 +248,6 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
         .register_command(assistant_slash_commands::DiagnosticsSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::FetchSlashCommand, true);
 
-    if let Some(prompt_builder) = prompt_builder {
-        cx.observe_flag::<assistant_slash_commands::ProjectSlashCommandFeatureFlag, _>({
-            let slash_command_registry = slash_command_registry.clone();
-            move |is_enabled, _cx| {
-                if is_enabled {
-                    slash_command_registry.register_command(
-                        assistant_slash_commands::ProjectSlashCommand::new(prompt_builder.clone()),
-                        true,
-                    );
-                }
-            }
-        })
-        .detach();
-    }
-
-    cx.observe_flag::<assistant_slash_commands::AutoSlashCommandFeatureFlag, _>({
-        let slash_command_registry = slash_command_registry.clone();
-        move |is_enabled, _cx| {
-            if is_enabled {
-                // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
-                slash_command_registry
-                    .register_command(assistant_slash_commands::AutoCommand, true);
-            }
-        }
-    })
-    .detach();
-
     cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();
         move |is_enabled, _cx| {
@@ -265,17 +264,6 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     update_slash_commands_from_settings(cx);
     cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
         .detach();
-
-    cx.observe_flag::<assistant_slash_commands::SearchSlashCommandFeatureFlag, _>({
-        let slash_command_registry = slash_command_registry.clone();
-        move |is_enabled, _cx| {
-            if is_enabled {
-                slash_command_registry
-                    .register_command(assistant_slash_commands::SearchSlashCommand, true);
-            }
-        }
-    })
-    .detach();
 }
 
 fn update_slash_commands_from_settings(cx: &mut App) {

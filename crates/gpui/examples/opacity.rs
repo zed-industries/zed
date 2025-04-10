@@ -2,8 +2,9 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use gpui::{
-    div, hsla, img, point, prelude::*, px, rgb, size, svg, App, Application, AssetSource, Bounds,
-    BoxShadow, ClickEvent, Context, SharedString, Task, Timer, Window, WindowBounds, WindowOptions,
+    App, Application, AssetSource, Bounds, BoxShadow, ClickEvent, Context, SharedString, Task,
+    Timer, Window, WindowBounds, WindowOptions, div, hsla, img, point, prelude::*, px, rgb, size,
+    svg,
 };
 
 struct Assets {
@@ -50,7 +51,7 @@ impl HelloWorld {
         self.opacity = 0.0;
         cx.notify();
 
-        self._task = Some(cx.spawn_in(window, |view, mut cx| async move {
+        self._task = Some(cx.spawn_in(window, async move |view, cx| {
             loop {
                 Timer::after(Duration::from_secs_f32(0.05)).await;
                 let mut stop = false;

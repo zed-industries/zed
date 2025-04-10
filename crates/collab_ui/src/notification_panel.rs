@@ -1,4 +1,4 @@
-use crate::{chat_panel::ChatPanel, NotificationPanelSettings};
+use crate::{NotificationPanelSettings, chat_panel::ChatPanel};
 use anyhow::Result;
 use channel::ChannelStore;
 use client::{ChannelId, Client, Notification, User, UserStore};
@@ -6,10 +6,10 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, img, list, px, AnyElement, App, AsyncWindowContext, Context, CursorStyle,
-    DismissEvent, Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ListAlignment, ListScrollEvent, ListState, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, WeakEntity, Window,
+    AnyElement, App, AsyncWindowContext, Context, CursorStyle, DismissEvent, Element, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ListAlignment,
+    ListScrollEvent, ListState, ParentElement, Render, StatefulInteractiveElement, Styled, Task,
+    WeakEntity, Window, actions, div, img, list, px,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -19,13 +19,13 @@ use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip,
+    Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip, h_flex, prelude::*, v_flex,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::notifications::{Notification as WorkspaceNotification, NotificationId};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
     Workspace,
+    dock::{DockPosition, Panel, PanelEvent},
 };
 
 const LOADING_THRESHOLD: usize = 30;
@@ -96,10 +96,10 @@ impl NotificationPanel {
 
         cx.new(|cx| {
             let mut status = client.status();
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 while (status.next().await).is_some() {
                     if this
-                        .update(&mut cx, |_: &mut Self, cx| {
+                        .update(cx, |_: &mut Self, cx| {
                             cx.notify();
                         })
                         .is_err()
@@ -181,7 +181,7 @@ impl NotificationPanel {
         workspace: WeakEntity<Workspace>,
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let serialized_panel = if let Some(panel) = cx
                 .background_spawn(async move { KEY_VALUE_STORE.read_kvp(NOTIFICATION_PANEL_KEY) })
                 .await
@@ -193,7 +193,7 @@ impl NotificationPanel {
                 None
             };
 
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let panel = Self::new(workspace, window, cx);
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
@@ -300,7 +300,7 @@ impl NotificationPanel {
                                         .hover(|style| {
                                             style
                                                 .bg(cx.theme().colors().element_selected)
-                                                .rounded_md()
+                                                .rounded_sm()
                                         })
                                         .child(Label::new(relative_timestamp).color(Color::Muted))
                                         .tooltip(move |_, cx| {
@@ -445,12 +445,12 @@ impl NotificationPanel {
                 .entry(notification_id)
                 .or_insert_with(|| {
                     let client = self.client.clone();
-                    cx.spawn_in(window, |this, mut cx| async move {
+                    cx.spawn_in(window, async move |this, cx| {
                         cx.background_executor().timer(MARK_AS_READ_DELAY).await;
                         client
                             .request(proto::MarkNotificationRead { notification_id })
                             .await?;
-                        this.update(&mut cx, |this, _| {
+                        this.update(cx, |this, _| {
                             this.mark_as_read_tasks.remove(&notification_id);
                         })?;
                         Ok(())
@@ -556,9 +556,9 @@ impl NotificationPanel {
         let notification_id = entry.id;
         self.current_notification_toast = Some((
             notification_id,
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor().timer(TOAST_DURATION).await;
-                this.update(&mut cx, |this, cx| this.remove_toast(notification_id, cx))
+                this.update(cx, |this, cx| this.remove_toast(notification_id, cx))
                     .ok();
             }),
         ));
@@ -643,7 +643,7 @@ impl Render for NotificationPanel {
                                         move |_, window, cx| {
                                             let client = client.clone();
                                             window
-                                                .spawn(cx, move |cx| async move {
+                                                .spawn(cx, async move |cx| {
                                                     client
                                                         .authenticate_and_connect(true, &cx)
                                                         .log_err()

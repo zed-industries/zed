@@ -1,17 +1,17 @@
 use fs::Fs;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
     Window,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{update_settings_file, Settings as _, SettingsStore};
+use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::sync::Arc;
 use theme::{Appearance, IconTheme, ThemeMeta, ThemeRegistry, ThemeSettings};
-use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
+use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
-use workspace::{ui::HighlightedLabel, ModalView};
-use zed_actions::Extensions;
+use workspace::{ModalView, ui::HighlightedLabel};
+use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 pub(crate) struct IconThemeSelector {
     picker: Entity<Picker<IconThemeSelectorDelegate>>,
@@ -218,7 +218,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
             .map(|(id, meta)| StringMatchCandidate::new(id, &meta.name))
             .collect::<Vec<_>>();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -242,7 +242,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.delegate.matches = matches;
                 this.delegate.selected_index = this
                     .delegate
@@ -301,7 +301,12 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                 .child(
                     Button::new("more-icon-themes", "Install Icon Themes").on_click(
                         move |_event, window, cx| {
-                            window.dispatch_action(Box::new(Extensions), cx);
+                            window.dispatch_action(
+                                Box::new(Extensions {
+                                    category_filter: Some(ExtensionCategoryFilter::IconThemes),
+                                }),
+                                cx,
+                            );
                         },
                     ),
                 )

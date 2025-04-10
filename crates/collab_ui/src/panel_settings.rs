@@ -11,57 +11,13 @@ pub struct CollaborationPanelSettings {
     pub default_width: Pixels,
 }
 
-#[derive(Clone, Copy, Default, Serialize, JsonSchema, Debug)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatPanelButton {
     Never,
     Always,
     #[default]
     WhenInCall,
-}
-
-impl<'de> Deserialize<'de> for ChatPanelButton {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct Visitor;
-
-        impl serde::de::Visitor<'_> for Visitor {
-            type Value = ChatPanelButton;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(
-                    f,
-                    r#"a boolean or one of "never", "always", "when_in_call""#
-                )
-            }
-
-            fn visit_bool<E>(self, b: bool) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                match b {
-                    false => Ok(ChatPanelButton::Never),
-                    true => Ok(ChatPanelButton::Always),
-                }
-            }
-
-            fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                match s {
-                    "never" => Ok(ChatPanelButton::Never),
-                    "always" => Ok(ChatPanelButton::Always),
-                    "when_in_call" => Ok(ChatPanelButton::WhenInCall),
-                    _ => Err(E::unknown_variant(s, &["never", "always", "when_in_call"])),
-                }
-            }
-        }
-
-        deserializer.deserialize_any(Visitor)
-    }
 }
 
 #[derive(Deserialize, Debug)]

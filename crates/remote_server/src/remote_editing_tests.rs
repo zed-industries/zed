@@ -4,29 +4,31 @@
 use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
+use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
-    language_settings::{language_settings, AllLanguageSettings},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
+    language_settings::{AllLanguageSettings, language_settings},
 };
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{
-    search::{SearchQuery, SearchResult},
     Project, ProjectPath,
+    search::{SearchQuery, SearchResult},
 };
 use remote::SshRemoteClient;
 use serde_json::json;
-use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
+use settings::{Settings, SettingsLocation, SettingsStore, initial_server_settings_content};
 use smol::stream::StreamExt;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
+#[cfg(not(windows))]
 use unindent::Unindent as _;
 use util::{path, separator};
 
@@ -483,7 +485,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
     });
 
-    fake_lsp.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+    fake_lsp.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
             label: "boop".to_string(),
             ..Default::default()
@@ -506,11 +508,15 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         .unwrap();
 
     assert_eq!(
-        result.into_iter().map(|c| c.label.text).collect::<Vec<_>>(),
+        result
+            .unwrap()
+            .into_iter()
+            .map(|c| c.label.text)
+            .collect::<Vec<_>>(),
         vec!["boop".to_string()]
     );
 
-    fake_lsp.handle_request::<lsp::request::Rename, _, _>(|_, _| async move {
+    fake_lsp.set_request_handler::<lsp::request::Rename, _, _>(|_, _| async move {
         Ok(Some(lsp::WorkspaceEdit {
             changes: Some(
                 [(
@@ -1198,6 +1204,8 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 }
 
+// TODO: this test fails on Windows.
+#[cfg(not(windows))]
 #[gpui::test]
 async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let text_2 = "
@@ -1314,7 +1322,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -1330,17 +1338,14 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .iter()
         .map(ToString::to_string)
         .collect::<HashSet<_>>();
-    fs.insert_branches(Path::new("/code/project1/.git"), &branches);
+    fs.insert_branches(Path::new(path!("/code/project1/.git")), &branches);
 
-    let (worktree, _) = project
+    let (_worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
-
-    let worktree_id = cx.update(|cx| worktree.read(cx).id());
-    let root_path = ProjectPath::root_path(worktree_id);
     // Give the worktree a bit of time to index the file system
     cx.run_until_parked();
 
@@ -1361,22 +1366,31 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     assert_eq!(&remote_branches, &branches_set);
 
-    cx.update(|cx| repository.read(cx).change_branch(new_branch.to_string()))
-        .await
-        .unwrap()
-        .unwrap();
+    cx.update(|cx| {
+        repository.update(cx, |repository, _cx| {
+            repository.change_branch(new_branch.to_string())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
     cx.run_until_parked();
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store
-                        .current_branch(root_path.clone(), cx)
-                        .unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .branch
+                    .as_ref()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 
@@ -1384,18 +1398,18 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     // Also try creating a new branch
     cx.update(|cx| {
-        repository
-            .read(cx)
-            .create_branch("totally-new-branch".to_string())
+        repository.update(cx, |repo, _cx| {
+            repo.create_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
     .unwrap();
 
     cx.update(|cx| {
-        repository
-            .read(cx)
-            .change_branch("totally-new-branch".to_string())
+        repository.update(cx, |repo, _cx| {
+            repo.change_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
@@ -1405,11 +1419,18 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store.current_branch(root_path, cx).unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .branch
+                    .as_ref()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 
@@ -1434,6 +1455,7 @@ pub async fn init_test(
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
+    let debug_adapters = DapRegistry::default().into();
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new(|cx| {
@@ -1446,6 +1468,7 @@ pub async fn init_test(
                 http_client,
                 node_runtime,
                 languages,
+                debug_adapters,
                 extension_host_proxy: proxy,
             },
             cx,

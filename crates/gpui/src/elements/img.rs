@@ -1,16 +1,16 @@
 use crate::{
-    px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds,
-    DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window,
-    SMOOTH_SVG_SCALE_FACTOR,
+    AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds, DefiniteLength, Element,
+    ElementId, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR,
+    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window, px,
+    swap_rgba_pa_to_bgra,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use futures::{AsyncReadExt, Future};
 use image::{
-    codecs::{gif::GifDecoder, webp::WebPDecoder},
     AnimationDecoder, DynamicImage, Frame, ImageBuffer, ImageError, ImageFormat, Rgba,
+    codecs::{gif::GifDecoder, webp::WebPDecoder},
 };
 use smallvec::SmallVec;
 use std::{
@@ -357,7 +357,7 @@ impl Element for Img {
                                     }
                                 } else {
                                     let current_view = window.current_view();
-                                    let task = window.spawn(cx, |mut cx| async move {
+                                    let task = window.spawn(cx, async move |cx| {
                                         cx.background_executor().timer(LOADING_DELAY).await;
                                         cx.update(move |_, cx| {
                                             cx.notify(current_view);
@@ -421,13 +421,15 @@ impl Element for Img {
             window,
             cx,
             |style, window, cx| {
-                let corner_radii = style.corner_radii.to_pixels(bounds.size, window.rem_size());
-
                 if let Some(Ok(data)) = source.use_data(window, cx) {
                     let new_bounds = self
                         .style
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
+                    let corner_radii = style
+                        .corner_radii
+                        .to_pixels(window.rem_size())
+                        .clamp_radii_for_quad_size(new_bounds.size);
                     window
                         .paint_image(
                             new_bounds,

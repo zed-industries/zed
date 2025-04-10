@@ -4,9 +4,9 @@ use anyhow::Result;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
-use schemars::gen::SchemaGenerator;
-use schemars::schema::{Schema, SchemaObject};
 use schemars::JsonSchema;
+use schemars::r#gen::SchemaGenerator;
+use schemars::schema::{Schema, SchemaObject};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -98,7 +98,8 @@ impl ThemeStyleContent {
     /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeContent`].
     #[inline(always)]
     pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
-        self.colors.theme_colors_refinement()
+        self.colors
+            .theme_colors_refinement(&self.status_colors_refinement())
     }
 
     /// Returns a [`StatusColorsRefinement`] based on the colors in the [`ThemeContent`].
@@ -188,7 +189,7 @@ pub struct ThemeColorsContent {
 
     /// Background Color. Used for the active state of an element that should have a different background than the surface it's on.
     ///
-    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressed.
     #[serde(rename = "element.active")]
     pub element_active: Option<String>,
 
@@ -226,7 +227,7 @@ pub struct ThemeColorsContent {
 
     /// Background Color. Used for the active state of a ghost element that should have the same background as the surface it's on.
     ///
-    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressd.
+    /// Active states are triggered by the mouse button being pressed down on an element, or the Return button or other activator being pressed.
     #[serde(rename = "ghost_element.active")]
     pub ghost_element_active: Option<String>,
 
@@ -291,6 +292,11 @@ pub struct ThemeColorsContent {
     /// This might be used to show when a toggleable icon button is selected.
     #[serde(rename = "icon.accent")]
     pub icon_accent: Option<String>,
+
+    /// Color used to accent some of the debuggers elements
+    /// Only accent breakpoint & breakpoint related symbols right now
+    #[serde(rename = "debugger.accent")]
+    pub debugger_accent: Option<String>,
 
     #[serde(rename = "status_bar.background")]
     pub status_bar_background: Option<String>,
@@ -381,6 +387,10 @@ pub struct ThemeColorsContent {
 
     #[serde(rename = "editor.highlighted_line.background")]
     pub editor_highlighted_line_background: Option<String>,
+
+    /// Background of active line of debugger
+    #[serde(rename = "editor.debugger_active_line.background")]
+    pub editor_debugger_active_line_background: Option<String>,
 
     /// Text Color. Used for the text of the line number in the editor gutter.
     #[serde(rename = "editor.line_number")]
@@ -557,25 +567,13 @@ pub struct ThemeColorsContent {
     #[serde(rename = "version_control.added")]
     pub version_control_added: Option<String>,
 
-    /// Added version control background color.
-    #[serde(rename = "version_control.added_background")]
-    pub version_control_added_background: Option<String>,
-
     /// Deleted version control color.
     #[serde(rename = "version_control.deleted")]
     pub version_control_deleted: Option<String>,
 
-    /// Deleted version control background color.
-    #[serde(rename = "version_control.deleted_background")]
-    pub version_control_deleted_background: Option<String>,
-
     /// Modified version control color.
     #[serde(rename = "version_control.modified")]
     pub version_control_modified: Option<String>,
-
-    /// Modified version control background color.
-    #[serde(rename = "version_control.modified_background")]
-    pub version_control_modified_background: Option<String>,
 
     /// Renamed version control color.
     #[serde(rename = "version_control.renamed")]
@@ -585,10 +583,6 @@ pub struct ThemeColorsContent {
     #[serde(rename = "version_control.conflict")]
     pub version_control_conflict: Option<String>,
 
-    /// Conflict version control background color.
-    #[serde(rename = "version_control.conflict_background")]
-    pub version_control_conflict_background: Option<String>,
-
     /// Ignored version control color.
     #[serde(rename = "version_control.ignored")]
     pub version_control_ignored: Option<String>,
@@ -596,7 +590,10 @@ pub struct ThemeColorsContent {
 
 impl ThemeColorsContent {
     /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeColorsContent`].
-    pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
+    pub fn theme_colors_refinement(
+        &self,
+        status_colors: &StatusColorsRefinement,
+    ) -> ThemeColorsRefinement {
         let border = self
             .border
             .as_ref()
@@ -723,6 +720,10 @@ impl ThemeColorsContent {
                 .icon_accent
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            debugger_accent: self
+                .debugger_accent
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
             status_bar_background: self
                 .status_bar_background
                 .as_ref()
@@ -831,6 +832,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             editor_highlighted_line_background: self
                 .editor_highlighted_line_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_debugger_active_line_background: self
+                .editor_debugger_active_line_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             editor_line_number: self
@@ -999,43 +1004,39 @@ impl ThemeColorsContent {
             version_control_added: self
                 .version_control_added
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_added_background: self
-                .version_control_added_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+                .and_then(|color| try_parse_color(color).ok())
+                // Fall back to `created`, for backwards compatibility.
+                .or(status_colors.created),
             version_control_deleted: self
                 .version_control_deleted
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_deleted_background: self
-                .version_control_deleted_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+                .and_then(|color| try_parse_color(color).ok())
+                // Fall back to `deleted`, for backwards compatibility.
+                .or(status_colors.deleted),
             version_control_modified: self
                 .version_control_modified
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_modified_background: self
-                .version_control_modified_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+                .and_then(|color| try_parse_color(color).ok())
+                // Fall back to `modified`, for backwards compatibility.
+                .or(status_colors.modified),
             version_control_renamed: self
                 .version_control_renamed
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+                .and_then(|color| try_parse_color(color).ok())
+                // Fall back to `modified`, for backwards compatibility.
+                .or(status_colors.modified),
             version_control_conflict: self
                 .version_control_conflict
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_background: self
-                .version_control_conflict_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+                .and_then(|color| try_parse_color(color).ok())
+                // Fall back to `ignored`, for backwards compatibility.
+                .or(status_colors.ignored),
             version_control_ignored: self
                 .version_control_ignored
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+                .and_then(|color| try_parse_color(color).ok())
+                // Fall back to `conflict`, for backwards compatibility.
+                .or(status_colors.ignored),
         }
     }
 }

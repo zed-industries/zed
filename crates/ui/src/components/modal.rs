@@ -1,6 +1,6 @@
 use crate::{
-    h_flex, v_flex, Clickable, Color, DynamicSpacing, Headline, HeadlineSize, IconButton,
-    IconButtonShape, IconName, Label, LabelCommon, LabelSize,
+    Clickable, Color, DynamicSpacing, Headline, HeadlineSize, IconButton, IconButtonShape,
+    IconName, Label, LabelCommon, LabelSize, h_flex, v_flex,
 };
 use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
@@ -332,7 +332,7 @@ impl RenderOnce for Section {
                 .child(
                     v_flex()
                         .w_full()
-                        .rounded_md()
+                        .rounded_sm()
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .bg(section_bg)

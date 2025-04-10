@@ -2,29 +2,30 @@ mod authorization;
 pub mod db;
 mod token;
 
-use crate::api::events::SnowflakeRow;
 use crate::api::CloudflareIpCountryHeader;
+use crate::api::events::SnowflakeRow;
 use crate::build_kinesis_client;
-use crate::{db::UserId, executor::Executor, Cents, Config, Error, Result};
-use anyhow::{anyhow, Context as _};
+use crate::rpc::MIN_ACCOUNT_AGE_FOR_LLM_USE;
+use crate::{Cents, Config, Error, Result, db::UserId, executor::Executor};
+use anyhow::{Context as _, anyhow};
 use authorization::authorize_access_to_language_model;
 use axum::routing::get;
 use axum::{
+    Extension, Json, Router, TypedHeader,
     body::Body,
     http::{self, HeaderName, HeaderValue, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::post,
-    Extension, Json, Router, TypedHeader,
 };
 use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::TokenUsage;
-use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
+use db::{ActiveUserCount, LlmDatabase, usage_measure::UsageMeasure};
 use futures::{Stream, StreamExt as _};
 use reqwest_client::ReqwestClient;
 use rpc::{
-    proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    EXPIRED_LLM_TOKEN_HEADER_NAME, LanguageModelProvider, PerformCompletionParams, proto::Plan,
 };
 use rpc::{ListModelsResponse, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME};
 use serde_json::json;
@@ -217,6 +218,13 @@ async fn perform_completion(
         params.model,
     );
 
+    let bypass_account_age_check = claims.has_llm_subscription || claims.bypass_account_age_check;
+    if !bypass_account_age_check {
+        if Utc::now().naive_utc() - claims.account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
+            Err(anyhow!("account too young"))?
+        }
+    }
+
     authorize_access_to_language_model(
         &state.config,
         &claims,
@@ -308,10 +316,14 @@ async fn perform_completion(
                     is_staff = claims.is_staff,
                     provider = params.provider.to_string(),
                     model = model,
-                    tokens_remaining = rate_limit_info.tokens_remaining,
-                    requests_remaining = rate_limit_info.requests_remaining,
-                    requests_reset = ?rate_limit_info.requests_reset,
-                    tokens_reset = ?rate_limit_info.tokens_reset,
+                    tokens_remaining = rate_limit_info.tokens.as_ref().map(|limits| limits.remaining),
+                    input_tokens_remaining = rate_limit_info.input_tokens.as_ref().map(|limits| limits.remaining),
+                    output_tokens_remaining = rate_limit_info.output_tokens.as_ref().map(|limits| limits.remaining),
+                    requests_remaining = rate_limit_info.requests.as_ref().map(|limits| limits.remaining),
+                    requests_reset = ?rate_limit_info.requests.as_ref().map(|limits| limits.reset),
+                    tokens_reset = ?rate_limit_info.tokens.as_ref().map(|limits| limits.reset),
+                    input_tokens_reset = ?rate_limit_info.input_tokens.as_ref().map(|limits| limits.reset),
+                    output_tokens_reset = ?rate_limit_info.output_tokens.as_ref().map(|limits| limits.reset),
                 );
             }
 
@@ -491,6 +503,10 @@ async fn check_usage_limit(
         model.max_requests_per_minute as usize / users_in_recent_minutes;
     let per_user_max_tokens_per_minute =
         model.max_tokens_per_minute as usize / users_in_recent_minutes;
+    let per_user_max_input_tokens_per_minute =
+        model.max_input_tokens_per_minute as usize / users_in_recent_minutes;
+    let per_user_max_output_tokens_per_minute =
+        model.max_output_tokens_per_minute as usize / users_in_recent_minutes;
     let per_user_max_tokens_per_day = model.max_tokens_per_day as usize / users_in_recent_days;
 
     let usage = state
@@ -498,29 +514,55 @@ async fn check_usage_limit(
         .get_usage(user_id, provider, model_name, Utc::now())
         .await?;
 
-    let checks = [
-        (
-            usage.requests_this_minute,
-            per_user_max_requests_per_minute,
-            UsageMeasure::RequestsPerMinute,
-        ),
-        (
-            usage.tokens_this_minute,
-            per_user_max_tokens_per_minute,
-            UsageMeasure::TokensPerMinute,
-        ),
-        (
-            usage.tokens_this_day,
-            per_user_max_tokens_per_day,
-            UsageMeasure::TokensPerDay,
-        ),
-    ];
+    let checks = match (provider, model_name) {
+        (LanguageModelProvider::Anthropic, "claude-3-7-sonnet") => vec![
+            (
+                usage.requests_this_minute,
+                per_user_max_requests_per_minute,
+                UsageMeasure::RequestsPerMinute,
+            ),
+            (
+                usage.input_tokens_this_minute,
+                per_user_max_tokens_per_minute,
+                UsageMeasure::InputTokensPerMinute,
+            ),
+            (
+                usage.output_tokens_this_minute,
+                per_user_max_tokens_per_minute,
+                UsageMeasure::OutputTokensPerMinute,
+            ),
+            (
+                usage.tokens_this_day,
+                per_user_max_tokens_per_day,
+                UsageMeasure::TokensPerDay,
+            ),
+        ],
+        _ => vec![
+            (
+                usage.requests_this_minute,
+                per_user_max_requests_per_minute,
+                UsageMeasure::RequestsPerMinute,
+            ),
+            (
+                usage.tokens_this_minute,
+                per_user_max_tokens_per_minute,
+                UsageMeasure::TokensPerMinute,
+            ),
+            (
+                usage.tokens_this_day,
+                per_user_max_tokens_per_day,
+                UsageMeasure::TokensPerDay,
+            ),
+        ],
+    };
 
     for (used, limit, usage_measure) in checks {
         if used > limit {
             let resource = match usage_measure {
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",
                 UsageMeasure::TokensPerMinute => "tokens_per_minute",
+                UsageMeasure::InputTokensPerMinute => "input_tokens_per_minute",
+                UsageMeasure::OutputTokensPerMinute => "output_tokens_per_minute",
                 UsageMeasure::TokensPerDay => "tokens_per_day",
             };
 
@@ -532,19 +574,24 @@ async fn check_usage_limit(
                 is_staff = claims.is_staff,
                 provider = provider.to_string(),
                 model = model.name,
+                usage_measure = resource,
                 requests_this_minute = usage.requests_this_minute,
                 tokens_this_minute = usage.tokens_this_minute,
+                input_tokens_this_minute = usage.input_tokens_this_minute,
+                output_tokens_this_minute = usage.output_tokens_this_minute,
                 tokens_this_day = usage.tokens_this_day,
                 users_in_recent_minutes = users_in_recent_minutes,
                 users_in_recent_days = users_in_recent_days,
                 max_requests_per_minute = per_user_max_requests_per_minute,
                 max_tokens_per_minute = per_user_max_tokens_per_minute,
+                max_input_tokens_per_minute = per_user_max_input_tokens_per_minute,
+                max_output_tokens_per_minute = per_user_max_output_tokens_per_minute,
                 max_tokens_per_day = per_user_max_tokens_per_day,
             );
 
             SnowflakeRow::new(
                 "Language Model Rate Limited",
-                claims.metrics_id,
+                Some(claims.metrics_id),
                 claims.is_staff,
                 claims.system_id.clone(),
                 json!({
@@ -553,6 +600,8 @@ async fn check_usage_limit(
                     "users_in_recent_days": users_in_recent_days,
                     "max_requests_per_minute": per_user_max_requests_per_minute,
                     "max_tokens_per_minute": per_user_max_tokens_per_minute,
+                    "max_input_tokens_per_minute": per_user_max_input_tokens_per_minute,
+                    "max_output_tokens_per_minute": per_user_max_output_tokens_per_minute,
                     "max_tokens_per_day": per_user_max_tokens_per_day,
                     "plan": match claims.plan {
                         Plan::Free => "free".to_string(),
@@ -648,8 +697,12 @@ impl<S> Drop for TokenCountingStream<S> {
                     login = claims.github_user_login,
                     authn.jti = claims.jti,
                     is_staff = claims.is_staff,
+                    provider = provider.to_string(),
+                    model = model,
                     requests_this_minute = usage.requests_this_minute,
                     tokens_this_minute = usage.tokens_this_minute,
+                    input_tokens_this_minute = usage.input_tokens_this_minute,
+                    output_tokens_this_minute = usage.output_tokens_this_minute,
                 );
 
                 let properties = json!({
@@ -666,7 +719,7 @@ impl<S> Drop for TokenCountingStream<S> {
                 });
                 SnowflakeRow::new(
                     "Language Model Used",
-                    claims.metrics_id,
+                    Some(claims.metrics_id),
                     claims.is_staff,
                     claims.system_id.clone(),
                     properties,
@@ -718,6 +771,8 @@ pub fn log_usage_periodically(state: Arc<LlmState>) {
                         model = usage.model,
                         requests_this_minute = usage.requests_this_minute,
                         tokens_this_minute = usage.tokens_this_minute,
+                        input_tokens_this_minute = usage.input_tokens_this_minute,
+                        output_tokens_this_minute = usage.output_tokens_this_minute,
                     );
                 }
             }

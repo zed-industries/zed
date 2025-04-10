@@ -4,15 +4,17 @@ pub mod editor_test_context;
 use std::sync::LazyLock;
 
 use crate::{
-    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
+    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
 };
 use gpui::{
-    font, AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels,
-    Window,
+    AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels, Window,
+    font,
 };
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
+
+pub use crate::rust_analyzer_ext::expand_macro_recursively;
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -61,8 +63,6 @@ pub fn marked_display_snapshot(
             font,
             font_size,
             None,
-            true,
-            1,
             1,
             1,
             FoldPlaceholder::test(),
@@ -108,7 +108,7 @@ pub(crate) fn build_editor(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+    Editor::new(EditorMode::Full, buffer, None, window, cx)
 }
 
 pub(crate) fn build_editor_with_project(
@@ -117,5 +117,5 @@ pub(crate) fn build_editor_with_project(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::Full, buffer, Some(project), true, window, cx)
+    Editor::new(EditorMode::Full, buffer, Some(project), window, cx)
 }

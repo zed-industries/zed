@@ -401,10 +401,7 @@ impl DispatchTree {
             .bindings_for_action(action)
             .filter(|binding| {
                 let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
-                bindings
-                    .iter()
-                    .next()
-                    .is_some_and(|b| b.action.partial_eq(action))
+                bindings.iter().any(|b| b.action.partial_eq(action))
             })
             .cloned()
             .collect()
@@ -491,7 +488,7 @@ impl DispatchTree {
             let (bindings, _) = self.bindings_for_input(&input[0..=last], dispatch_path);
             if !bindings.is_empty() {
                 to_replay.push(Replay {
-                    keystroke: input.drain(0..=last).last().unwrap(),
+                    keystroke: input.drain(0..=last).next_back().unwrap(),
                     bindings,
                 });
                 break;
@@ -598,10 +595,6 @@ mod tests {
 
         fn boxed_clone(&self) -> std::boxed::Box<dyn Action> {
             Box::new(TestAction)
-        }
-
-        fn as_any(&self) -> &dyn ::std::any::Any {
-            self
         }
 
         fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn Action>>

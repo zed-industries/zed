@@ -591,6 +591,7 @@ impl<'a> Cursor<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Chunks<'a> {
     chunks: sum_tree::Cursor<'a, Chunk, usize>,
     range: Range<usize>,
@@ -779,6 +780,40 @@ impl<'a> Chunks<'a> {
             done: false,
             reversed,
         }
+    }
+
+    pub fn equals_str(&self, other: &str) -> bool {
+        let chunk = self.clone();
+        if chunk.reversed {
+            let mut offset = other.len();
+            for chunk in chunk {
+                if other[0..offset].ends_with(chunk) {
+                    offset -= chunk.len();
+                } else {
+                    return false;
+                }
+            }
+            if offset != 0 {
+                return false;
+            }
+        } else {
+            let mut offset = 0;
+            for chunk in chunk {
+                if offset >= other.len() {
+                    return false;
+                }
+                if other[offset..].starts_with(chunk) {
+                    offset += chunk.len();
+                } else {
+                    return false;
+                }
+            }
+            if offset != other.len() {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
 
@@ -1393,10 +1428,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use Bias::{Left, Right};
     use rand::prelude::*;
     use std::{cmp::Ordering, env, io::Read};
     use util::RandomCharIter;
-    use Bias::{Left, Right};
 
     #[ctor::ctor]
     fn init_logger() {
@@ -1639,7 +1674,7 @@ mod tests {
                 chunks.seek(offset);
 
                 for _ in 0..5 {
-                    if rng.gen() {
+                    if rng.r#gen() {
                         let expected_next_line_start = expected[offset..end_ix]
                             .find('\n')
                             .map(|newline_ix| offset + newline_ix + 1);
@@ -1728,7 +1763,7 @@ mod tests {
                     }
 
                     assert!((start_ix..=end_ix).contains(&chunks.offset()));
-                    if rng.gen() {
+                    if rng.r#gen() {
                         offset = rng.gen_range(start_ix..=end_ix);
                         while !expected.is_char_boundary(offset) {
                             offset -= 1;
@@ -1853,6 +1888,59 @@ mod tests {
                 longest_line_len,
             );
         }
+    }
+
+    #[test]
+    fn test_chunks_equals_str() {
+        let text = "This is a multi-chunk\n& multi-line test string!";
+        let rope = Rope::from(text);
+        for start in 0..text.len() {
+            for end in start..text.len() {
+                let range = start..end;
+                let correct_substring = &text[start..end];
+
+                // Test that correct range returns true
+                assert!(
+                    rope.chunks_in_range(range.clone())
+                        .equals_str(correct_substring)
+                );
+                assert!(
+                    rope.reversed_chunks_in_range(range.clone())
+                        .equals_str(correct_substring)
+                );
+
+                // Test that all other ranges return false (unless they happen to match)
+                for other_start in 0..text.len() {
+                    for other_end in other_start..text.len() {
+                        if other_start == start && other_end == end {
+                            continue;
+                        }
+                        let other_substring = &text[other_start..other_end];
+
+                        // Only assert false if the substrings are actually different
+                        if other_substring == correct_substring {
+                            continue;
+                        }
+                        assert!(
+                            !rope
+                                .chunks_in_range(range.clone())
+                                .equals_str(other_substring)
+                        );
+                        assert!(
+                            !rope
+                                .reversed_chunks_in_range(range.clone())
+                                .equals_str(other_substring)
+                        );
+                    }
+                }
+            }
+        }
+
+        let rope = Rope::from("");
+        assert!(rope.chunks_in_range(0..0).equals_str(""));
+        assert!(rope.reversed_chunks_in_range(0..0).equals_str(""));
+        assert!(!rope.chunks_in_range(0..0).equals_str("foo"));
+        assert!(!rope.reversed_chunks_in_range(0..0).equals_str("foo"));
     }
 
     fn clip_offset(text: &str, mut offset: usize, bias: Bias) -> usize {

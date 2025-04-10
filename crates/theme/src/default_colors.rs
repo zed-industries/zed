@@ -1,7 +1,7 @@
 use gpui::{Hsla, Rgba};
 
-use crate::scale::{ColorScaleSet, ColorScales};
 use crate::ColorScale;
+use crate::scale::{ColorScaleSet, ColorScales};
 use crate::{SystemColors, ThemeColors};
 
 pub(crate) fn neutral() -> ColorScaleSet {
@@ -68,6 +68,7 @@ impl ThemeColors {
             icon_disabled: neutral().light().step_9(),
             icon_placeholder: neutral().light().step_10(),
             icon_accent: blue().light().step_11(),
+            debugger_accent: red().light().step_10(),
             status_bar_background: neutral().light().step_2(),
             title_bar_background: neutral().light().step_2(),
             title_bar_inactive_background: neutral().light().step_3(),
@@ -94,6 +95,7 @@ impl ThemeColors {
             editor_subheader_background: neutral().light().step_2(),
             editor_active_line_background: neutral().light_alpha().step_3(),
             editor_highlighted_line_background: neutral().light_alpha().step_3(),
+            editor_debugger_active_line_background: yellow().dark_alpha().step_3(),
             editor_line_number: neutral().light().step_10(),
             editor_hover_line_number: neutral().light().step_12(),
             editor_active_line_number: neutral().light().step_11(),
@@ -136,14 +138,10 @@ impl ThemeColors {
             terminal_ansi_dim_white: neutral().light().step_11(),
             link_text_hover: orange().light().step_10(),
             version_control_added: ADDED_COLOR,
-            version_control_added_background: ADDED_COLOR.opacity(0.1),
             version_control_deleted: REMOVED_COLOR,
-            version_control_deleted_background: REMOVED_COLOR.opacity(0.1),
             version_control_modified: MODIFIED_COLOR,
-            version_control_modified_background: MODIFIED_COLOR.opacity(0.1),
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().light().step_12(),
-            version_control_conflict_background: orange().light().step_12().opacity(0.1),
             version_control_ignored: gray().light().step_12(),
         }
     }
@@ -185,6 +183,7 @@ impl ThemeColors {
             icon_disabled: neutral().dark().step_9(),
             icon_placeholder: neutral().dark().step_10(),
             icon_accent: blue().dark().step_11(),
+            debugger_accent: red().light().step_10(),
             status_bar_background: neutral().dark().step_2(),
             title_bar_background: neutral().dark().step_2(),
             title_bar_inactive_background: neutral().dark().step_3(),
@@ -210,7 +209,8 @@ impl ThemeColors {
             editor_gutter_background: neutral().dark().step_1(),
             editor_subheader_background: neutral().dark().step_3(),
             editor_active_line_background: neutral().dark_alpha().step_3(),
-            editor_highlighted_line_background: neutral().dark_alpha().step_4(),
+            editor_highlighted_line_background: yellow().dark_alpha().step_4(),
+            editor_debugger_active_line_background: yellow().dark_alpha().step_3(),
             editor_line_number: neutral().dark_alpha().step_10(),
             editor_hover_line_number: neutral().dark_alpha().step_12(),
             editor_active_line_number: neutral().dark_alpha().step_11(),
@@ -253,14 +253,10 @@ impl ThemeColors {
             terminal_ansi_dim_white: neutral().dark().step_10(),
             link_text_hover: orange().dark().step_10(),
             version_control_added: ADDED_COLOR,
-            version_control_added_background: ADDED_COLOR.opacity(0.1),
             version_control_deleted: REMOVED_COLOR,
-            version_control_deleted_background: REMOVED_COLOR.opacity(0.1),
             version_control_modified: MODIFIED_COLOR,
-            version_control_modified_background: MODIFIED_COLOR.opacity(0.1),
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().dark().step_12(),
-            version_control_conflict_background: orange().dark().step_12().opacity(0.1),
             version_control_ignored: gray().dark().step_12(),
         }
     }

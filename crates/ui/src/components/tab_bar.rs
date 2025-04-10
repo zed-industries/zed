@@ -1,10 +1,10 @@
 use gpui::{AnyElement, ScrollHandle};
 use smallvec::SmallVec;
 
-use crate::prelude::*;
 use crate::Tab;
+use crate::prelude::*;
 
-#[derive(IntoElement)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct TabBar {
     id: ElementId,
     start_children: SmallVec<[AnyElement; 2]>,
@@ -149,5 +149,59 @@ impl RenderOnce for TabBar {
                         .children(self.end_children),
                 )
             })
+    }
+}
+
+impl Component for TabBar {
+    fn scope() -> ComponentScope {
+        ComponentScope::Navigation
+    }
+
+    fn name() -> &'static str {
+        "TabBar"
+    }
+
+    fn description() -> Option<&'static str> {
+        Some("A horizontal bar containing tabs for navigation between different views or sections.")
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Basic Usage",
+                        vec![
+                            single_example(
+                                "Empty TabBar",
+                                TabBar::new("empty_tab_bar").into_any_element(),
+                            ),
+                            single_example(
+                                "With Tabs",
+                                TabBar::new("tab_bar_with_tabs")
+                                    .child(Tab::new("tab1"))
+                                    .child(Tab::new("tab2"))
+                                    .child(Tab::new("tab3"))
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "With Start and End Children",
+                        vec![single_example(
+                            "Full TabBar",
+                            TabBar::new("full_tab_bar")
+                                .start_child(Button::new("start_button", "Start"))
+                                .child(Tab::new("tab1"))
+                                .child(Tab::new("tab2"))
+                                .child(Tab::new("tab3"))
+                                .end_child(Button::new("end_button", "End"))
+                                .into_any_element(),
+                        )],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }

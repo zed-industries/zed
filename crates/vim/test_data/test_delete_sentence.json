@@ -1,17 +1,3 @@
-{"Put":{"state":"Fiˇrst. Second. Third.\nFourth.\n"}}
-{"Key":"d"}
-{"Key":")"}
-{"Get":{"state":"FiˇSecond. Third.\nFourth.\n","mode":"Normal"}}
-{"Put":{"state":"First. Secˇond. Third.\nFourth.\n"}}
-{"Key":"d"}
-{"Key":")"}
-{"Get":{"state":"First. SecˇThird.\nFourth.\n","mode":"Normal"}}
-{"Put":{"state":"First. Second. Thirˇd.\nFourth.\n"}}
-{"Key":"d"}
-{"Key":")"}
-{"Key":"d"}
-{"Key":")"}
-{"Get":{"state":"First. Second. Thˇi\n","mode":"Normal"}}
 {"Put":{"state":"ˇFirst.\nFourth.\n"}}
 {"Key":"d"}
 {"Key":")"}
