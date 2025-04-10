@@ -1,10 +1,10 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask,
-    DevicePixels, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
-    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
+    AtlasTextureId, AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels,
+    MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch,
+    Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline, point, size,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
@@ -13,8 +13,11 @@ use cocoa::{
 };
 use collections::HashMap;
 use core_foundation::base::TCFType;
-use foreign_types::ForeignType;
-use media::core_video::CVMetalTextureCache;
+use core_video::{
+    metal_texture::CVMetalTextureGetTexture, metal_texture_cache::CVMetalTextureCache,
+    pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+};
+use foreign_types::{ForeignType, ForeignTypeRef};
 use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
@@ -107,7 +110,7 @@ pub(crate) struct MetalRenderer {
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
-    core_video_texture_cache: CVMetalTextureCache,
+    core_video_texture_cache: core_video::metal_texture_cache::CVMetalTextureCache,
 }
 
 impl MetalRenderer {
@@ -235,7 +238,7 @@ impl MetalRenderer {
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), PATH_SAMPLE_COUNT));
         let core_video_texture_cache =
-            unsafe { CVMetalTextureCache::new(device.as_ptr()).unwrap() };
+            CVMetalTextureCache::new(None, device.clone(), None).unwrap();
 
         Self {
             device,
@@ -468,7 +471,8 @@ impl MetalRenderer {
 
             if !ok {
                 command_encoder.end_encoding();
-                return Err(anyhow!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                return Err(anyhow!(
+                    "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
                     scene.paths.len(),
                     scene.shadows.len(),
                     scene.quads.len(),
@@ -1054,39 +1058,37 @@ impl MetalRenderer {
 
         for surface in surfaces {
             let texture_size = size(
-                DevicePixels::from(surface.image_buffer.width() as i32),
-                DevicePixels::from(surface.image_buffer.height() as i32),
+                DevicePixels::from(surface.image_buffer.get_width() as i32),
+                DevicePixels::from(surface.image_buffer.get_height() as i32),
             );
 
             assert_eq!(
-                surface.image_buffer.pixel_format_type(),
-                media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                surface.image_buffer.get_pixel_format(),
+                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             );
 
-            let y_texture = unsafe {
-                self.core_video_texture_cache
-                    .create_texture_from_image(
-                        surface.image_buffer.as_concrete_TypeRef(),
-                        ptr::null(),
-                        MTLPixelFormat::R8Unorm,
-                        surface.image_buffer.plane_width(0),
-                        surface.image_buffer.plane_height(0),
-                        0,
-                    )
-                    .unwrap()
-            };
-            let cb_cr_texture = unsafe {
-                self.core_video_texture_cache
-                    .create_texture_from_image(
-                        surface.image_buffer.as_concrete_TypeRef(),
-                        ptr::null(),
-                        MTLPixelFormat::RG8Unorm,
-                        surface.image_buffer.plane_width(1),
-                        surface.image_buffer.plane_height(1),
-                        1,
-                    )
-                    .unwrap()
-            };
+            let y_texture = self
+                .core_video_texture_cache
+                .create_texture_from_image(
+                    surface.image_buffer.as_concrete_TypeRef(),
+                    None,
+                    MTLPixelFormat::R8Unorm,
+                    surface.image_buffer.get_width_of_plane(0),
+                    surface.image_buffer.get_height_of_plane(0),
+                    0,
+                )
+                .unwrap();
+            let cb_cr_texture = self
+                .core_video_texture_cache
+                .create_texture_from_image(
+                    surface.image_buffer.as_concrete_TypeRef(),
+                    None,
+                    MTLPixelFormat::RG8Unorm,
+                    surface.image_buffer.get_width_of_plane(1),
+                    surface.image_buffer.get_height_of_plane(1),
+                    1,
+                )
+                .unwrap();
 
             align_offset(instance_offset);
             let next_offset = *instance_offset + mem::size_of::<Surface>();
@@ -1104,14 +1106,15 @@ impl MetalRenderer {
                 mem::size_of_val(&texture_size) as u64,
                 &texture_size as *const Size<DevicePixels> as *const _,
             );
-            command_encoder.set_fragment_texture(
-                SurfaceInputIndex::YTexture as u64,
-                Some(y_texture.as_texture_ref()),
-            );
-            command_encoder.set_fragment_texture(
-                SurfaceInputIndex::CbCrTexture as u64,
-                Some(cb_cr_texture.as_texture_ref()),
-            );
+            // let y_texture = y_texture.get_texture().unwrap().
+            command_encoder.set_fragment_texture(SurfaceInputIndex::YTexture as u64, unsafe {
+                let texture = CVMetalTextureGetTexture(y_texture.as_concrete_TypeRef());
+                Some(metal::TextureRef::from_ptr(texture as *mut _))
+            });
+            command_encoder.set_fragment_texture(SurfaceInputIndex::CbCrTexture as u64, unsafe {
+                let texture = CVMetalTextureGetTexture(cb_cr_texture.as_concrete_TypeRef());
+                Some(metal::TextureRef::from_ptr(texture as *mut _))
+            });
 
             unsafe {
                 let buffer_contents = (instance_buffer.metal_buffer.contents() as *mut u8)
@@ -1208,7 +1211,7 @@ fn build_path_rasterization_pipeline_state(
 
 // Align to multiples of 256 make Metal happy.
 fn align_offset(offset: &mut usize) {
-    *offset = ((*offset + 255) / 256) * 256;
+    *offset = (*offset).div_ceil(256) * 256;
 }
 
 #[repr(C)]

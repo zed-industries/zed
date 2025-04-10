@@ -11,5 +11,5 @@ brackets = [
     { start = "<", end = ">", close = false, newline = true, not_in = ["comment", "string"] },
     { start = "!--", end = " --", close = true, newline = false, not_in = ["comment", "string"] },
 ]
-word_characters = ["-"]
+completion_query_characters = ["-"]
 prettier_parser_name = "html"

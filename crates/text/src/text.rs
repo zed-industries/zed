@@ -11,9 +11,9 @@ mod tests;
 mod undo_map;
 
 pub use anchor::*;
-use anyhow::{anyhow, Context as _, Result};
-pub use clock::ReplicaId;
+use anyhow::{Context as _, Result, anyhow};
 use clock::LOCAL_BRANCH_REPLICA_ID;
+pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use locator::Locator;
 use operation_queue::OperationQueue;
@@ -94,6 +94,7 @@ impl BufferId {
         self.into()
     }
 }
+
 impl From<BufferId> for u64 {
     fn from(id: BufferId) -> Self {
         id.0.get()
@@ -127,6 +128,12 @@ pub struct Transaction {
     pub id: TransactionId,
     pub edit_ids: Vec<clock::Lamport>,
     pub start: clock::Global,
+}
+
+impl Transaction {
+    pub fn merge_in(&mut self, other: Transaction) {
+        self.edit_ids.extend(other.edit_ids);
+    }
 }
 
 impl HistoryEntry {
@@ -1422,8 +1429,12 @@ impl Buffer {
             .collect()
     }
 
-    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
-        self.history.forget(transaction_id);
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        self.history.forget(transaction_id)
+    }
+
+    pub fn get_transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.history.transaction(transaction_id)
     }
 
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
@@ -1481,7 +1492,6 @@ impl Buffer {
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         self.history.push_transaction(transaction, now);
-        self.history.finalize_last_transaction();
     }
 
     pub fn edited_ranges_for_transaction_id<D>(
@@ -1497,9 +1507,9 @@ impl Buffer {
             .flat_map(|transaction| self.edited_ranges_for_transaction(transaction))
     }
 
-    pub fn edited_ranges_for_transaction<'a, D>(
+    pub fn edited_ranges_for_edit_ids<'a, D>(
         &'a self,
-        transaction: &'a Transaction,
+        edit_ids: impl IntoIterator<Item = &'a clock::Lamport>,
     ) -> impl 'a + Iterator<Item = Range<D>>
     where
         D: TextDimension,
@@ -1507,7 +1517,7 @@ impl Buffer {
         // get fragment ranges
         let mut cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
         let offset_ranges = self
-            .fragment_ids_for_edits(transaction.edit_ids.iter())
+            .fragment_ids_for_edits(edit_ids.into_iter())
             .into_iter()
             .filter_map(move |fragment_id| {
                 cursor.seek_forward(&Some(fragment_id), Bias::Left, &None);
@@ -1546,14 +1556,24 @@ impl Buffer {
         })
     }
 
+    pub fn edited_ranges_for_transaction<'a, D>(
+        &'a self,
+        transaction: &'a Transaction,
+    ) -> impl 'a + Iterator<Item = Range<D>>
+    where
+        D: TextDimension,
+    {
+        self.edited_ranges_for_edit_ids(&transaction.edit_ids)
+    }
+
     pub fn subscribe(&mut self) -> Subscription {
         self.subscriptions.subscribe()
     }
 
-    pub fn wait_for_edits(
+    pub fn wait_for_edits<It: IntoIterator<Item = clock::Lamport>>(
         &mut self,
-        edit_ids: impl IntoIterator<Item = clock::Lamport>,
-    ) -> impl 'static + Future<Output = Result<()>> {
+        edit_ids: It,
+    ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         let mut futures = Vec::new();
         for edit_id in edit_ids {
             if !self.version.observed(edit_id) {
@@ -1573,10 +1593,10 @@ impl Buffer {
         }
     }
 
-    pub fn wait_for_anchors(
+    pub fn wait_for_anchors<It: IntoIterator<Item = Anchor>>(
         &mut self,
-        anchors: impl IntoIterator<Item = Anchor>,
-    ) -> impl 'static + Future<Output = Result<()>> {
+        anchors: It,
+    ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         let mut futures = Vec::new();
         for anchor in anchors {
             if !self.version.observed(anchor.timestamp)
@@ -1602,7 +1622,10 @@ impl Buffer {
         }
     }
 
-    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_version(
+        &mut self,
+        version: clock::Global,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let mut rx = None;
         if !self.snapshot.version.observed_all(&version) {
             let channel = oneshot::channel();
@@ -2204,7 +2227,7 @@ impl BufferSnapshot {
         })
     }
 
-    fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
+    pub fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
     where
         D: TextDimension,
     {
@@ -2217,6 +2240,7 @@ impl BufferSnapshot {
         } else if *anchor == Anchor::MAX {
             self.visible_text.len()
         } else {
+            debug_assert!(anchor.buffer_id == Some(self.remote_id));
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,

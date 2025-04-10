@@ -1,7 +1,7 @@
 name = "Markdown"
 grammar = "markdown"
 path_suffixes = ["md", "mdx", "mdwn", "markdown", "MD"]
-word_characters = ["-"]
+completion_query_characters = ["-"]
 block_comment = ["<!-- ", " -->"]
 autoclose_before = "}])>"
 brackets = [

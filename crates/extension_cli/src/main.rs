@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-use ::fs::{copy_recursive, CopyOptions, Fs, RealFs};
-use anyhow::{anyhow, bail, Context, Result};
+use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
-use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::ExtensionManifest;
+use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
 use rpc::ExtensionProvides;
@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let fs = Arc::new(RealFs::default());
+    let fs = Arc::new(RealFs::new(None, gpui::background_executor()));
     let engine = wasmtime::Engine::default();
     let mut wasm_store = WasmStore::new(&engine)?;
 

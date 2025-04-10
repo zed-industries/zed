@@ -9,8 +9,8 @@ use std::{rc::Rc, sync::Arc};
 
 pub use collab_panel::CollabPanel;
 use gpui::{
-    point, App, Pixels, PlatformDisplay, Size, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowKind, WindowOptions,
+    App, Pixels, PlatformDisplay, Size, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowKind, WindowOptions, point,
 };
 use panel_settings::MessageEditorSettings;
 pub use panel_settings::{

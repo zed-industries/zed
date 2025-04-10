@@ -1,9 +1,8 @@
 use std::{
-    thread::{current, ThreadId},
+    thread::{ThreadId, current},
     time::Duration,
 };
 
-use anyhow::Context as _;
 use async_task::Runnable;
 use flume::Sender;
 use parking::Parker;
@@ -95,14 +94,8 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        if self
-            .main_sender
-            .send(runnable)
-            .context("Dispatch on main thread failed")
-            .log_err()
-            .is_some()
-        {
-            unsafe {
+        match self.main_sender.send(runnable) {
+            Ok(_) => unsafe {
                 PostThreadMessageW(
                     self.main_thread_id_win32,
                     WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
@@ -110,6 +103,17 @@ impl PlatformDispatcher for WindowsDispatcher {
                     LPARAM(0),
                 )
                 .log_err();
+            },
+            Err(runnable) => {
+                // NOTE: Runnable may wrap a Future that is !Send.
+                //
+                // This is usually safe because we only poll it on the main thread.
+                // However if the send fails, we know that:
+                // 1. main_receiver has been dropped (which implies the app is shutting down)
+                // 2. we are on a background thread.
+                // It is not safe to drop something !Send on the wrong thread, and
+                // the app will exit soon anyway, so we must forget the runnable.
+                std::mem::forget(runnable);
             }
         }
     }

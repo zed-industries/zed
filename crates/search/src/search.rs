@@ -1,17 +1,18 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use editor::SearchSettings;
-use gpui::{actions, Action, App, FocusHandle, IntoElement};
+use gpui::{Action, App, FocusHandle, IntoElement, actions};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
-use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton, IconButtonShape};
+use ui::{Tooltip, prelude::*};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
 
 pub mod buffer_search;
 pub mod project_search;
 pub(crate) mod search_bar;
+pub mod search_status_button;
 
 pub fn init(cx: &mut App) {
     menu::init();
@@ -47,6 +48,7 @@ bitflags! {
         const CASE_SENSITIVE = 0b010;
         const INCLUDE_IGNORED = 0b100;
         const REGEX = 0b1000;
+        const ONE_MATCH_PER_LINE = 0b100000;
         /// If set, reverse direction when finding the active match
         const BACKWARDS = 0b10000;
     }
@@ -105,12 +107,12 @@ impl SearchOptions {
         options
     }
 
-    pub fn as_button(
+    pub fn as_button<Action: Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static>(
         &self,
         active: bool,
         focus_handle: FocusHandle,
-        action: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
+        action: Action,
+    ) -> impl IntoElement + use<Action> {
         IconButton::new(self.label(), self.icon())
             .on_click(action)
             .style(ButtonStyle::Subtle)

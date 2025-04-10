@@ -1,13 +1,13 @@
 use crate::{Toast, Workspace};
 use gpui::{
-    svg, AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
-    Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task,
+    AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
+    Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task, svg,
 };
 use parking_lot::Mutex;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
-use ui::{prelude::*, Tooltip};
+use ui::{Tooltip, prelude::*};
 use util::ResultExt;
 
 #[derive(Default)]
@@ -151,14 +151,12 @@ impl Workspace {
             })
         });
         if toast.autohide {
-            cx.spawn(|workspace, mut cx| async move {
+            cx.spawn(async move |workspace, cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(5000))
                     .await;
                 workspace
-                    .update(&mut cx, |workspace, cx| {
-                        workspace.dismiss_toast(&toast.id, cx)
-                    })
+                    .update(cx, |workspace, cx| workspace.dismiss_toast(&toast.id, cx))
                     .ok();
             })
             .detach();
@@ -213,9 +211,9 @@ impl LanguageServerPrompt {
         }
     }
 
-    async fn select_option(this: Entity<Self>, ix: usize, mut cx: AsyncWindowContext) {
+    async fn select_option(this: Entity<Self>, ix: usize, cx: &mut AsyncWindowContext) {
         util::maybe!(async move {
-            let potential_future = this.update(&mut cx, |this, _| {
+            let potential_future = this.update(cx, |this, _| {
                 this.request.take().map(|request| request.respond(ix))
             });
 
@@ -224,7 +222,7 @@ impl LanguageServerPrompt {
                 .await
                 .ok_or_else(|| anyhow::anyhow!("Stream already closed"))?;
 
-            this.update(&mut cx, |_, cx| cx.emit(DismissEvent))?;
+            this.update(cx, |_, cx| cx.emit(DismissEvent))?;
 
             anyhow::Ok(())
         })
@@ -295,7 +293,7 @@ impl Render for LanguageServerPrompt {
                             .on_click(move |_, window, cx| {
                                 let this_handle = this_handle.clone();
                                 window
-                                    .spawn(cx, |cx| async move {
+                                    .spawn(cx, async move |cx| {
                                         LanguageServerPrompt::select_option(this_handle, ix, cx)
                                             .await
                                     })
@@ -410,8 +408,8 @@ pub mod simple_message_notification {
     use std::sync::Arc;
 
     use gpui::{
-        div, AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
-        SharedString, Styled,
+        AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
+        SharedString, Styled, div,
     };
     use ui::prelude::*;
 
@@ -772,7 +770,7 @@ pub trait NotifyResultExt {
     type Ok;
 
     fn notify_err(self, workspace: &mut Workspace, cx: &mut Context<Workspace>)
-        -> Option<Self::Ok>;
+    -> Option<Self::Ok>;
 
     fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
 
@@ -846,10 +844,7 @@ where
 {
     fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {
         window
-            .spawn(
-                cx,
-                |mut cx| async move { self.await.notify_async_err(&mut cx) },
-            )
+            .spawn(cx, async move |mut cx| self.await.notify_async_err(&mut cx))
             .detach();
     }
 }
@@ -884,7 +879,7 @@ where
         f: impl FnOnce(&anyhow::Error, &mut Window, &mut App) -> Option<String> + 'static,
     ) -> Task<Option<R>> {
         let msg = msg.to_owned();
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let result = self.await;
             if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");

@@ -6,15 +6,18 @@ use std::{
     sync::Arc,
 };
 
-use ::util::{paths::SanitizedPath, ResultExt};
-use anyhow::{anyhow, Context as _, Result};
+use ::util::{ResultExt, paths::SanitizedPath};
+use anyhow::{Context as _, Result, anyhow};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use windows::{
-    core::*,
+    UI::{
+        StartScreen::{JumpList, JumpListItem},
+        ViewManagement::UISettings,
+    },
     Win32::{
         Foundation::*,
         Graphics::{
@@ -25,10 +28,7 @@ use windows::{
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    UI::{
-        StartScreen::{JumpList, JumpListItem},
-        ViewManagement::UISettings,
-    },
+    core::*,
 };
 
 use crate::{platform::blade::BladeContext, *};
@@ -54,7 +54,7 @@ pub(crate) struct WindowsPlatformState {
     menus: Vec<OwnedMenu>,
     dock_menu_actions: Vec<Box<dyn Action>>,
     // NOTE: standard cursor handles don't need to close.
-    pub(crate) current_cursor: HCURSOR,
+    pub(crate) current_cursor: Option<HCURSOR>,
 }
 
 #[derive(Default)]
@@ -396,6 +396,10 @@ impl Platform for WindowsPlatform {
         WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
@@ -558,11 +562,11 @@ impl Platform for WindowsPlatform {
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
         let mut lock = self.state.borrow_mut();
-        if lock.current_cursor.0 != hcursor.0 {
+        if lock.current_cursor.map(|c| c.0) != hcursor.map(|c| c.0) {
             self.post_message(
                 WM_GPUI_CURSOR_STYLE_CHANGED,
                 WPARAM(0),
-                LPARAM(hcursor.0 as isize),
+                LPARAM(hcursor.map_or(0, |c| c.0 as isize)),
             );
             lock.current_cursor = hcursor;
         }
@@ -683,7 +687,7 @@ impl Drop for WindowsPlatform {
 pub(crate) struct WindowCreationInfo {
     pub(crate) icon: HICON,
     pub(crate) executor: ForegroundExecutor,
-    pub(crate) current_cursor: HCURSOR,
+    pub(crate) current_cursor: Option<HCURSOR>,
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
@@ -826,7 +830,7 @@ fn should_auto_hide_scrollbars() -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{read_from_clipboard, write_to_clipboard, ClipboardItem};
+    use crate::{ClipboardItem, read_from_clipboard, write_to_clipboard};
 
     #[test]
     fn test_clipboard() {

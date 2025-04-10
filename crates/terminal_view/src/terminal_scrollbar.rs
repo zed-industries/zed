@@ -1,12 +1,11 @@
 use std::{
-    any::Any,
     cell::{Cell, RefCell},
     rc::Rc,
 };
 
-use gpui::{size, Bounds, Point};
+use gpui::{Bounds, Point, size};
 use terminal::Terminal;
-use ui::{px, ContentSize, Pixels, ScrollableHandle};
+use ui::{ContentSize, Pixels, ScrollableHandle, px};
 
 #[derive(Debug)]
 struct ScrollHandleState {
@@ -84,9 +83,5 @@ impl ScrollableHandle for TerminalScrollHandle {
                 px(state.viewport_lines as f32 * state.line_height.0),
             ),
         )
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }

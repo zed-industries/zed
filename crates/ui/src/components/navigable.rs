@@ -2,6 +2,7 @@ use crate::prelude::*;
 use gpui::{AnyElement, FocusHandle, ScrollAnchor, ScrollHandle};
 
 /// An element that can be navigated through via keyboard. Intended for use with scrollable views that want to use
+#[derive(IntoElement)]
 pub struct Navigable {
     child: AnyElement,
     selectable_children: Vec<NavigableEntry>,

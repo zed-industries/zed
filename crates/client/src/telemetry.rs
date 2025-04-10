@@ -17,7 +17,7 @@ use std::io::Write;
 use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use telemetry_events::{AssistantEvent, AssistantPhase, Event, EventRequestBody, EventWrapper};
+use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
@@ -273,14 +273,14 @@ impl Telemetry {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
+    fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> + use<> {
         Task::ready(())
     }
 
     // Skip calling this function in tests.
     // TestAppContext ends up calling this function on shutdown and it panics when trying to find the TelemetrySettings
     #[cfg(not(any(test, feature = "test-support")))]
-    fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
+    fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> + use<> {
         telemetry::event!("App Closed");
         // TODO: close final edit period and make sure it's sent
         Task::ready(())
@@ -329,7 +329,7 @@ impl Telemetry {
         drop(state);
     }
 
-    pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
+    pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEventData) {
         let event_type = match event.phase {
             AssistantPhase::Response => "Assistant Responded",
             AssistantPhase::Invoked => "Assistant Invoked",

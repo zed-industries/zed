@@ -3,6 +3,7 @@ use super::*;
 use gpui::{action_as, action_with_deprecated_aliases, actions};
 use schemars::JsonSchema;
 use util::serde::default_true;
+
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SelectNext {
@@ -111,20 +112,6 @@ pub struct ToggleComments {
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct FoldAt {
-    #[serde(skip)]
-    pub buffer_row: MultiBufferRow,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct UnfoldAt {
-    #[serde(skip)]
-    pub buffer_row: MultiBufferRow,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct MoveUpByLines {
     #[serde(default)]
     pub(super) lines: u32,
@@ -225,7 +212,6 @@ impl_actions!(
         ExpandExcerpts,
         ExpandExcerptsDown,
         ExpandExcerptsUp,
-        FoldAt,
         HandleInput,
         MoveDownByLines,
         MovePageDown,
@@ -243,7 +229,6 @@ impl_actions!(
         ShowCompletions,
         ToggleCodeActions,
         ToggleComments,
-        UnfoldAt,
         FoldAtLevel,
     ]
 );
@@ -262,6 +247,8 @@ actions!(
         Cancel,
         CancelLanguageServerWork,
         ConfirmRename,
+        ConfirmCompletionInsert,
+        ConfirmCompletionReplace,
         ContextMenuFirst,
         ContextMenuLast,
         ContextMenuNext,
@@ -274,7 +261,10 @@ actions!(
         ConvertToTitleCase,
         ConvertToUpperCamelCase,
         ConvertToUpperCase,
+        ConvertToRot13,
+        ConvertToRot47,
         Copy,
+        CopyAndTrim,
         CopyFileLocation,
         CopyHighlightJson,
         CopyFileName,
@@ -409,11 +399,20 @@ actions!(
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
+        StopLanguageServer,
         SwitchSourceHeader,
         Tab,
         Backtab,
+        ToggleBreakpoint,
+        ToggleCase,
+        DisableBreakpoint,
+        EnableBreakpoint,
+        EditLogBreakpoint,
+        DebuggerRunToCursor,
+        DebuggerEvaluateSelectedText,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
+        OpenGitBlameCommit,
         ToggleIndentGuides,
         ToggleInlayHints,
         ToggleInlineDiagnostics,

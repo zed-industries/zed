@@ -1,16 +1,16 @@
 use super::*;
 use collections::HashMap;
 use editor::{
-    display_map::{Block, BlockContext, DisplayRow},
     DisplayPoint, GutterDimensions,
+    display_map::{Block, BlockContext, DisplayRow},
 };
-use gpui::{px, AvailableSpace, Stateful, TestAppContext, VisualTestContext};
+use gpui::{AvailableSpace, Stateful, TestAppContext, VisualTestContext, px};
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, PointUtf16, Rope, Unclipped,
 };
 use pretty_assertions::assert_eq;
 use project::FakeFs;
-use rand::{rngs::StdRng, seq::IteratorRandom as _, Rng};
+use rand::{Rng, rngs::StdRng, seq::IteratorRandom as _};
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use unindent::Unindent as _;
-use util::{path, post_inc, RandomCharIter};
+use util::{RandomCharIter, path, post_inc};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -913,7 +913,7 @@ fn get_diagnostics_excerpts(
                     path: buffer.file().unwrap().path().to_path_buf(),
                     range: ExcerptRange {
                         context: range.context.to_point(buffer),
-                        primary: range.primary.map(|range| range.to_point(buffer)),
+                        primary: range.primary.to_point(buffer),
                     },
                     group_id: usize::MAX,
                     primary: false,

@@ -1,17 +1,15 @@
-// #![allow(unused, dead_code)]
-
 use crate::branch_picker::{self, BranchList};
-use crate::git_panel::{commit_message_editor, GitPanel};
+use crate::git_panel::{GitPanel, commit_message_editor};
 use git::{Commit, GenerateCommitMessage};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
-use ui::{prelude::*, KeybindingHint, PopoverMenu, PopoverMenuHandle, Tooltip};
+use ui::{KeybindingHint, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 
 use editor::{Editor, EditorElement};
 use gpui::*;
 use util::ResultExt;
 use workspace::{
-    dock::{Dock, PanelHandle},
     ModalView, Workspace,
+    dock::{Dock, PanelHandle},
 };
 
 // nate: It is a pain to get editors to size correctly and not overflow.
@@ -52,16 +50,6 @@ impl ModalContainerProperties {
     pub fn editor_border_radius(&self) -> Pixels {
         px(self.modal_border_radius - self.container_padding / 2.0)
     }
-}
-
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        CommitModal::register(workspace, window, cx)
-    })
-    .detach();
 }
 
 pub struct CommitModal {
@@ -108,13 +96,13 @@ struct RestoreDock {
 }
 
 impl CommitModal {
-    pub fn register(workspace: &mut Workspace, _: &mut Window, _cx: &mut Context<Workspace>) {
+    pub fn register(workspace: &mut Workspace) {
         workspace.register_action(|workspace, _: &Commit, window, cx| {
             CommitModal::toggle(workspace, window, cx);
         });
     }
 
-    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<'_, Workspace>) {
+    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
             return;
         };
@@ -146,7 +134,7 @@ impl CommitModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let panel = git_panel.read(cx);
-        let suggested_commit_message = panel.suggest_commit_message();
+        let suggested_commit_message = panel.suggest_commit_message(cx);
 
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);
@@ -246,7 +234,7 @@ impl CommitModal {
 
         let branch = active_repo
             .as_ref()
-            .and_then(|repo| repo.read(cx).repository_entry.branch())
+            .and_then(|repo| repo.read(cx).branch.as_ref())
             .map(|b| b.name.clone())
             .unwrap_or_else(|| "<no branch>".into());
 
@@ -361,7 +349,7 @@ impl CommitModal {
 }
 
 impl Render for CommitModal {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let properties = self.properties;
         let width = px(properties.modal_width);
         let container_padding = px(properties.container_padding);
