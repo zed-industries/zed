@@ -997,7 +997,8 @@ impl Thread {
 
         self.attached_tracked_files_state(&mut request.messages, cx);
 
-        // Add reminder to the last user message about code blocks
+        // Add reminder to the last user message about
+        // easily-forgotten aspects of the system prompt.
         if let Some(last_user_message) = request
             .messages
             .iter_mut()

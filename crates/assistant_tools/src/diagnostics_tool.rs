@@ -2,6 +2,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
+use itertools::Itertools;
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -28,6 +29,23 @@ pub struct DiagnosticsToolInput {
     /// </example>
     #[serde(deserialize_with = "deserialize_path")]
     pub path: Option<String>,
+
+    /// Which severity levels to show. Default is all.
+    #[serde(default = "default_severity")]
+    pub severity: Vec<Severity>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Copy, Clone, strum::Display)]
+#[serde(rename_all = "camelCase")]
+pub enum Severity {
+    Error,
+    Warning,
+    Information,
+    Hint,
+}
+
+fn default_severity() -> Vec<Severity> {
+    vec![Severity::Error, Severity::Warning]
 }
 
 fn deserialize_path<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -84,82 +102,112 @@ impl Tool for DiagnosticsTool {
         action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        match serde_json::from_value::<DiagnosticsToolInput>(input)
-            .ok()
-            .and_then(|input| input.path)
-        {
-            Some(path) if !path.is_empty() => {
-                let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
-                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
-                };
-
-                let buffer =
-                    project.update(cx, |project, cx| project.open_buffer(project_path, cx));
-
-                cx.spawn(async move |cx| {
-                    let mut output = String::new();
-                    let buffer = buffer.await?;
-                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-
-                    for (_, group) in snapshot.diagnostic_groups(None) {
-                        let entry = &group.entries[group.primary_ix];
-                        let range = entry.range.to_point(&snapshot);
-                        let severity = match entry.diagnostic.severity {
-                            DiagnosticSeverity::ERROR => "error",
-                            DiagnosticSeverity::WARNING => "warning",
-                            _ => continue,
-                        };
-
-                        writeln!(
-                            output,
-                            "{} at line {}: {}",
-                            severity,
-                            range.start.row + 1,
-                            entry.diagnostic.message
-                        )?;
-                    }
-
-                    if output.is_empty() {
-                        Ok("File doesn't have errors or warnings!".to_string())
-                    } else {
-                        Ok(output)
-                    }
-                })
+        let input = serde_json::from_value::<DiagnosticsToolInput>(input).unwrap_or_else(|_| {
+            DiagnosticsToolInput {
+                path: None,
+                severity: default_severity(),
             }
-            _ => {
-                let project = project.read(cx);
+        });
+
+        let severity_to_show = if input.severity.is_empty() {
+            default_severity()
+        } else {
+            input.severity
+        };
+
+        if let Some(path) = input.path {
+            let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
+                return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
+            };
+
+            let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
+
+            cx.spawn(async move |cx| {
                 let mut output = String::new();
-                let mut has_diagnostics = false;
+                let buffer = buffer.await?;
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
-                for (project_path, _, summary) in project.diagnostic_summaries(true, cx) {
-                    if summary.error_count > 0 || summary.warning_count > 0 {
-                        let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx)
-                        else {
-                            continue;
-                        };
+                for (_, group) in snapshot.diagnostic_groups(None) {
+                    let entry = &group.entries[group.primary_ix];
+                    let range = entry.range.to_point(&snapshot);
 
-                        has_diagnostics = true;
-                        output.push_str(&format!(
-                            "{}: {} error(s), {} warning(s)\n",
-                            Path::new(worktree.read(cx).root_name())
-                                .join(project_path.path)
-                                .display(),
-                            summary.error_count,
-                            summary.warning_count
-                        ));
+                    if let Ok(severity) = Severity::try_from(&entry.diagnostic.severity) {
+                        if severity_to_show.contains(&severity) {
+                            writeln!(
+                                output,
+                                "{severity} at line {}: {}",
+                                range.start.row + 1,
+                                entry.diagnostic.message
+                            )?;
+                        }
                     }
                 }
 
-                action_log.update(cx, |action_log, _cx| {
-                    action_log.checked_project_diagnostics();
-                });
-
-                if has_diagnostics {
-                    Task::ready(Ok(output))
+                if output.is_empty() {
+                    Ok(format!(
+                        "File doesn't have any {}!",
+                        severity_to_show
+                            .iter()
+                            .map(|severity| format!("{severity}s"))
+                            .join(" or ")
+                    ))
                 } else {
-                    Task::ready(Ok("No errors or warnings found in the project.".to_string()))
+                    Ok(output)
+                }
+            })
+        } else {
+            let project = project.read(cx);
+            let mut output = String::new();
+            let mut has_diagnostics = false;
+
+            for (project_path, _, summary) in project.diagnostic_summaries(true, cx) {
+                if summary.error_count > 0 || summary.warning_count > 0 {
+                    let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx)
+                    else {
+                        continue;
+                    };
+
+                    has_diagnostics = true;
+                    output.push_str(&format!(
+                        "{}: {} error(s), {} warning(s)\n",
+                        Path::new(worktree.read(cx).root_name())
+                            .join(project_path.path)
+                            .display(),
+                        summary.error_count,
+                        summary.warning_count
+                    ));
                 }
             }
+
+            action_log.update(cx, |action_log, _cx| {
+                action_log.checked_project_diagnostics();
+            });
+
+            if has_diagnostics {
+                Task::ready(Ok(output))
+            } else {
+                Task::ready(Ok("No errors or warnings found in the project.".to_string()))
+            }
+        }
+    }
+}
+
+impl TryFrom<&DiagnosticSeverity> for Severity {
+    type Error = ();
+
+    fn try_from(
+        value: &DiagnosticSeverity,
+    ) -> Result<Self, <Severity as TryFrom<&DiagnosticSeverity>>::Error> {
+        if *value == DiagnosticSeverity::ERROR {
+            Ok(Self::Error)
+        } else if *value == DiagnosticSeverity::WARNING {
+            Ok(Self::Warning)
+        } else if *value == DiagnosticSeverity::INFORMATION {
+            Ok(Self::Information)
+        } else if *value == DiagnosticSeverity::HINT {
+            Ok(Self::Hint)
+        } else {
+            Err(())
         }
     }
 }
