@@ -415,7 +415,9 @@ impl TextLayout {
 
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
+
         let text_style = window.text_style();
+
         for line in &element_state.lines {
             line.paint_background(
                 line_origin,
@@ -429,7 +431,7 @@ impl TextLayout {
             line.paint(
                 line_origin,
                 line_height,
-                text_style.text_align,
+                Some(&text_style),
                 Some(bounds),
                 window,
                 cx,

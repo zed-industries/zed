@@ -1,7 +1,7 @@
 use crate::{
     App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result, SharedString, StrikethroughStyle,
-    TextAlign, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill, point, px,
-    size,
+    TextAlign, TextStyle, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill,
+    point, px, size,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -71,7 +71,7 @@ impl ShapedLine {
             origin,
             &self.layout,
             line_height,
-            TextAlign::default(),
+            None,
             None,
             &self.decoration_runs,
             &[],
@@ -125,11 +125,12 @@ impl WrappedLine {
     }
 
     /// Paint this line of text to the window.
+    #[allow(clippy::too_many_arguments)]
     pub fn paint(
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
-        align: TextAlign,
+        text_style: Option<&TextStyle>,
         bounds: Option<Bounds<Pixels>>,
         window: &mut Window,
         cx: &mut App,
@@ -143,7 +144,7 @@ impl WrappedLine {
             origin,
             &self.layout.unwrapped_layout,
             line_height,
-            align,
+            text_style,
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
@@ -189,7 +190,7 @@ fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
     line_height: Pixels,
-    align: TextAlign,
+    text_style: Option<&TextStyle>,
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
@@ -203,6 +204,10 @@ fn paint_line(
             line_height * (wrap_boundaries.len() as f32 + 1.),
         ),
     );
+
+    // TODO: text_align and line_height need to inherit from normal style when is hovered or activated.
+    let mut text_align = text_style.map(|s| s.text_align).unwrap_or(TextAlign::Left);
+
     window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
@@ -218,7 +223,7 @@ fn paint_line(
                 origin,
                 align_width.unwrap_or(layout.width),
                 px(0.0),
-                &align,
+                &text_align,
                 layout,
                 wraps.peek(),
             ),
@@ -269,7 +274,7 @@ fn paint_line(
                         origin,
                         align_width.unwrap_or(layout.width),
                         glyph.position.x,
-                        &align,
+                        &text_align,
                         layout,
                         wraps.peek(),
                     );
@@ -292,30 +297,44 @@ fn paint_line(
                     }
 
                     if let Some(style_run) = style_run {
+                        let mut run_color = style_run.color;
+                        let mut run_underline = style_run.underline.as_ref();
+                        let mut run_strikethrough = style_run.strikethrough;
+                        // Override by text run by current style when hovered or activated.
+                        if let Some(val) = text_style.map(|s| s.color) {
+                            run_color = val;
+                        }
+                        if let Some(val) = text_style.and_then(|s| s.underline.as_ref()) {
+                            run_underline = Some(val);
+                        }
+                        if let Some(val) = text_style.and_then(|s| s.strikethrough) {
+                            run_strikethrough = Some(val);
+                        }
+
                         if let Some((_, underline_style)) = &mut current_underline {
                             if style_run.underline.as_ref() != Some(underline_style) {
                                 finished_underline = current_underline.take();
                             }
                         }
-                        if let Some(run_underline) = style_run.underline.as_ref() {
+                        if let Some(run_underline) = run_underline.as_ref() {
                             current_underline.get_or_insert((
                                 point(
                                     glyph_origin.x,
                                     glyph_origin.y + baseline_offset.y + (layout.descent * 0.618),
                                 ),
                                 UnderlineStyle {
-                                    color: Some(run_underline.color.unwrap_or(style_run.color)),
+                                    color: Some(run_underline.color.unwrap_or(run_color)),
                                     thickness: run_underline.thickness,
                                     wavy: run_underline.wavy,
                                 },
                             ));
                         }
                         if let Some((_, strikethrough_style)) = &mut current_strikethrough {
-                            if style_run.strikethrough.as_ref() != Some(strikethrough_style) {
+                            if run_strikethrough.as_ref() != Some(strikethrough_style) {
                                 finished_strikethrough = current_strikethrough.take();
                             }
                         }
-                        if let Some(run_strikethrough) = style_run.strikethrough.as_ref() {
+                        if let Some(mut run_strikethrough) = run_strikethrough.as_ref() {
                             current_strikethrough.get_or_insert((
                                 point(
                                     glyph_origin.x,
@@ -323,14 +342,14 @@ fn paint_line(
                                         + (((layout.ascent * 0.5) + baseline_offset.y) * 0.5),
                                 ),
                                 StrikethroughStyle {
-                                    color: Some(run_strikethrough.color.unwrap_or(style_run.color)),
+                                    color: Some(run_strikethrough.color.unwrap_or(run_color)),
                                     thickness: run_strikethrough.thickness,
                                 },
                             ));
                         }
 
                         run_end += style_run.len as usize;
-                        color = style_run.color;
+                        color = run_color;
                     } else {
                         run_end = layout.len;
                         finished_underline = current_underline.take();
