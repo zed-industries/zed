@@ -13,10 +13,10 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    App, Button, Clickable, Color, Context, Div, Icon, IconButton, IconName, Indicator,
-    InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement,
-    Render, RenderOnce, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
-    Styled, div, h_flex, px, v_flex,
+    App, Clickable, Color, Context, Div, Icon, IconButton, IconName, Indicator, InteractiveElement,
+    IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
+    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, div, h_flex, px,
+    v_flex,
 };
 use util::maybe;
 use workspace::Workspace;
