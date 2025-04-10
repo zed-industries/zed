@@ -14242,7 +14242,6 @@ dependencies = [
  "anyhow",
  "collections",
  "editor",
- "feature_flags",
  "file_icons",
  "fuzzy",
  "gpui",
