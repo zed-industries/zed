@@ -389,23 +389,61 @@ impl KeyCode {
         ))
     }
 
-    // /// TODO
-    // pub fn parse_us_layout(input: &str, keyboard_mapper: &dyn KeyboardMapper) -> anyhow::Result<(Self, Option<String>)> {
-    //     let code = match input {
-    //         "0" => Self::Digital0,
-    //         "1" => Self::Digital1,
-    //         "2" => Self::Digital2,
-    //         "3" => Self::Digital3,
-    //         "4" => Self::Digital4,
-    //         "5" => Self::Digital5,
-    //         "6" => Self::Digital6,
-    //         "7" => Self::Digital7,
-    //         "8" => Self::Digital8,
-    //         "9" => Self::Digital9,
-    //         "`" => Self::Tilde,
-    //         "a" => Self::A,
-    //     };
-    // }
+    /// TODO
+    pub fn parse_us_layout(
+        input: &str,
+        keyboard_mapper: &dyn KeyboardMapper,
+    ) -> (Self, Modifiers, Option<String>) {
+        let (code, modifiers) = match input {
+            "0" => (Self::Digital0, Modifiers::none()),
+            "1" => (Self::Digital1, Modifiers::none()),
+            "2" => (Self::Digital2, Modifiers::none()),
+            "3" => (Self::Digital3, Modifiers::none()),
+            "4" => (Self::Digital4, Modifiers::none()),
+            "5" => (Self::Digital5, Modifiers::none()),
+            "6" => (Self::Digital6, Modifiers::none()),
+            "7" => (Self::Digital7, Modifiers::none()),
+            "8" => (Self::Digital8, Modifiers::none()),
+            "9" => (Self::Digital9, Modifiers::none()),
+            "!" => (Self::Digital1, Modifiers::shift()),
+            "@" => (Self::Digital2, Modifiers::shift()),
+            "#" => (Self::Digital3, Modifiers::shift()),
+            "$" => (Self::Digital4, Modifiers::shift()),
+            "%" => (Self::Digital5, Modifiers::shift()),
+            "^" => (Self::Digital6, Modifiers::shift()),
+            "&" => (Self::Digital7, Modifiers::shift()),
+            "*" => (Self::Digital8, Modifiers::shift()),
+            "(" => (Self::Digital9, Modifiers::shift()),
+            ")" => (Self::Digital0, Modifiers::shift()),
+            "`" => (Self::Tilde, Modifiers::none()),
+            "~" => (Self::Tilde, Modifiers::shift()),
+            "-" => (Self::Minus, Modifiers::none()),
+            "_" => (Self::Minus, Modifiers::shift()),
+            "=" => (Self::Plus, Modifiers::none()),
+            "+" => (Self::Plus, Modifiers::shift()),
+            "[" => (Self::LeftBracket, Modifiers::none()),
+            "{" => (Self::LeftBracket, Modifiers::shift()),
+            "]" => (Self::RightBracket, Modifiers::none()),
+            "}" => (Self::RightBracket, Modifiers::shift()),
+            "\\" => (Self::Backslash, Modifiers::none()),
+            "|" => (Self::Backslash, Modifiers::shift()),
+            ";" => (Self::Semicolon, Modifiers::none()),
+            ":" => (Self::Semicolon, Modifiers::shift()),
+            "'" => (Self::Quote, Modifiers::none()),
+            "\"" => (Self::Quote, Modifiers::shift()),
+            "," => (Self::Comma, Modifiers::none()),
+            "<" => (Self::Comma, Modifiers::shift()),
+            "." => (Self::Period, Modifiers::none()),
+            ">" => (Self::Period, Modifiers::shift()),
+            "/" => (Self::Slash, Modifiers::none()),
+            "?" => (Self::Slash, Modifiers::shift()),
+            _ => {
+                log::error!("Failed to parse us-layout keystroke: {input}");
+                (Self::Unknown, Modifiers::none())
+            }
+        };
+        (code, modifiers, keyboard_mapper.keycode_to_face(code))
+    }
 
     /// TODO:
     pub fn is_printable(&self) -> bool {

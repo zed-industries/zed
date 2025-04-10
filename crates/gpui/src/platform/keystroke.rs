@@ -6,6 +6,7 @@ use std::{
     fmt::{Display, Write},
     ops::BitOr,
 };
+use util::ResultExt;
 
 use crate::{KeyCode, KeyboardMapper};
 
@@ -183,8 +184,9 @@ impl Keystroke {
             keystroke: source.to_owned(),
         })?;
 
-        let (code, modifiers, key_face) =
-            KeyCode::parse(&key, char_matching, keyboard_mapper).unwrap_or_default();
+        let (code, modifiers, key_face) = KeyCode::parse(&key, char_matching, keyboard_mapper)
+            .log_err()
+            .unwrap_or_else(|| KeyCode::parse_us_layout(&key, keyboard_mapper));
         if modifiers.shift {
             if shift {
                 log::error!(
@@ -207,7 +209,7 @@ impl Keystroke {
             key = key_face;
         }
 
-        let ret = Ok(Keystroke {
+        Ok(Keystroke {
             modifiers: Modifiers {
                 control,
                 alt,
@@ -218,11 +220,7 @@ impl Keystroke {
             code,
             face: key,
             key_char,
-        });
-        if code == KeyCode::Unknown {
-            log::error!("Parse key stroke char-based: {}, {:#?}", source, ret);
-        }
-        ret
+        })
     }
 
     /// Produces a representation of this key that Parse can understand.
