@@ -3,7 +3,7 @@ use std::path::Path;
 use collections::HashMap;
 use editor::Editor;
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
-use modal::{TaskOverrides, TasksModal};
+use modal::TaskOverrides;
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
 use task::{
     RevealTarget, TaskContext, TaskId, TaskModal, TaskTemplate, TaskVariables, VariableName,
@@ -13,7 +13,7 @@ use workspace::{Workspace, tasks::schedule_resolved_task};
 
 mod modal;
 
-pub use modal::{Rerun, Spawn};
+pub use modal::{Rerun, ShowAttachModal, Spawn, TasksModal};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
