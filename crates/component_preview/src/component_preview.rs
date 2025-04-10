@@ -14,6 +14,7 @@ use gpui::{
 };
 
 use collections::HashMap;
+use util::{ResultExt, log_err};
 
 use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use languages::LanguageRegistry;
@@ -126,8 +127,6 @@ impl ComponentPreview {
         let filter_editor =
             cx.new(|cx| SingleLineInput::new(window, cx, "Find components or usages…"));
 
-        // We'll check for filter changes during rendering
-
         let component_list = ListState::new(
             sorted_components.len(),
             gpui::ListAlignment::Top,
@@ -173,7 +172,7 @@ impl ComponentPreview {
 
     pub fn active_page_id(&self, _cx: &App) -> ActivePageId {
         match &self.active_page {
-            PreviewPage::AllComponents => ActivePageId("AllComponents".to_string()),
+            PreviewPage::AllComponents => ActivePageId::default(),
             PreviewPage::Component(component_id) => ActivePageId(component_id.0.to_string()),
         }
     }
@@ -743,6 +742,12 @@ impl Focusable for ComponentPreview {
 
 pub struct ActivePageId(pub String);
 
+impl Default for ActivePageId {
+    fn default() -> Self {
+        ActivePageId("AllComponents".to_string())
+    }
+}
+
 impl From<ComponentId> for ActivePageId {
     fn from(id: ComponentId) -> Self {
         ActivePageId(id.0.to_string())
@@ -814,13 +819,32 @@ impl SerializableItem for ComponentPreview {
     fn deserialize(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        _workspace_id: WorkspaceId,
-        _item_id: ItemId,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
+        let deserialized_active_page =
+            match COMPONENT_PREVIEW_DB.get_active_page(item_id, workspace_id) {
+                Ok(page) => {
+                    if let Some(page) = page {
+                        ActivePageId(page)
+                    } else {
+                        ActivePageId::default()
+                    }
+                }
+                Err(_) => ActivePageId::default(),
+            };
+
         let user_store = project.read(cx).user_store().clone();
         let language_registry = project.read(cx).languages().clone();
+        let preview_page = if deserialized_active_page == ActivePageId::default() {
+            Some(PreviewPage::default())
+        } else {
+            // Convert the active page ID to a component ID and create a Component preview page
+            let component_id = ComponentId(deserialized_active_page.0.into());
+            Some(PreviewPage::Component(component_id))
+        };
 
         window.spawn(cx, async move |cx| {
             let user_store = user_store.clone();
@@ -833,7 +857,7 @@ impl SerializableItem for ComponentPreview {
                         language_registry,
                         user_store,
                         None,
-                        None,
+                        deserialized_active_page,
                         window,
                         cx,
                     )
