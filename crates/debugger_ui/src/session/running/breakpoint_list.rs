@@ -13,9 +13,10 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    App, Color, Context, Div, Icon, IconName, Indicator, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce, Scrollbar, ScrollbarState,
-    SharedString, StatefulInteractiveElement, Styled, div, h_flex, px, v_flex,
+    App, Button, Clickable, Color, Context, Div, Icon, IconButton, IconName, Indicator,
+    InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement,
+    Render, RenderOnce, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
+    Styled, div, h_flex, px, v_flex,
 };
 use util::maybe;
 use workspace::Workspace;
@@ -223,6 +224,8 @@ impl LineBreakpoint {
                                     BreakpointEditAction::InvertState,
                                     cx,
                                 );
+                            } else {
+                                log::error!("Couldn't find breakpoint at row event though it exists: row {row}")
                             }
                         })
                     })
@@ -237,6 +240,39 @@ impl LineBreakpoint {
         )))
         .start_slot(indicator)
         .rounded()
+        .end_hover_slot(
+            IconButton::new(
+                SharedString::from(format!(
+                    "breakpoint-ui-on-click-go-to-line-{:?}/{}:{}",
+                    dir, name, line
+                )),
+                IconName::Close,
+            )
+            .on_click({
+                let weak = weak.clone();
+                let path = path.clone();
+                move |_, _, cx| {
+                    weak.update(cx, |this, cx| {
+                        this.breakpoint_store.update(cx, |this, cx| {
+                            if let Some((buffer, breakpoint)) =
+                                this.breakpoint_at_row(&path, row, cx)
+                            {
+                                this.toggle_breakpoint(
+                                    buffer,
+                                    breakpoint,
+                                    BreakpointEditAction::Toggle,
+                                    cx,
+                                );
+                            } else {
+                                log::error!("Couldn't find breakpoint at row event though it exists: row {row}")
+                            }
+                        })
+                    })
+                    .ok();
+                }
+            })
+            .icon_size(ui::IconSize::XSmall),
+        )
         .child(
             v_flex()
                 .id(SharedString::from(format!(
