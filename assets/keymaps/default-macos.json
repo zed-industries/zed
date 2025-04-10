@@ -242,7 +242,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-y": "agent::Keep",
-      "cmd-alt-z": "agent::Reject"
+      "cmd-n": "agent::Reject"
     }
   },
   {

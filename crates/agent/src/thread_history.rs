@@ -432,17 +432,6 @@ impl RenderOnce for PastThread {
                 h_flex()
                     .gap_1p5()
                     .child(
-                        Label::new("Thread")
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    )
-                    .child(
-                        div()
-                            .size(px(3.))
-                            .rounded_full()
-                            .bg(cx.theme().colors().text_disabled),
-                    )
-                    .child(
                         Label::new(thread_timestamp)
                             .color(Color::Muted)
                             .size(LabelSize::XSmall),
@@ -533,17 +522,6 @@ impl RenderOnce for PastContext {
         .end_slot(
             h_flex()
                 .gap_1p5()
-                .child(
-                    Label::new("Prompt Editor")
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall),
-                )
-                .child(
-                    div()
-                        .size(px(3.))
-                        .rounded_full()
-                        .bg(cx.theme().colors().text_disabled),
-                )
                 .child(
                     Label::new(context_timestamp)
                         .color(Color::Muted)

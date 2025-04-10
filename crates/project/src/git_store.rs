@@ -2494,9 +2494,7 @@ impl RepositorySnapshot {
     }
 
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
-        self.statuses_by_path
-            .get(&PathKey(repo_path.0.clone()), &())
-            .map_or(false, |entry| entry.status.is_conflicted())
+        self.merge_conflicts.contains(repo_path)
     }
 
     /// This is the name that will be displayed in the repository selector for this repository.
@@ -3287,7 +3285,7 @@ impl Repository {
         remote: SharedString,
         options: Option<PushOptions>,
         askpass: AskPassDelegate,
-        _cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
@@ -3300,25 +3298,52 @@ impl Repository {
             })
             .unwrap_or("");
 
+        let updates_tx = self
+            .git_store()
+            .and_then(|git_store| match &git_store.read(cx).state {
+                GitStoreState::Local { downstream, .. } => downstream
+                    .as_ref()
+                    .map(|downstream| downstream.updates_tx.clone()),
+                _ => None,
+            });
+
+        let this = cx.weak_entity();
         self.send_job(
-            Some(format!("git push{} {} {}", args, branch, remote).into()),
-            move |git_repo, cx| async move {
+            Some(format!("git push {} {} {}", args, branch, remote).into()),
+            move |git_repo, mut cx| async move {
                 match git_repo {
                     RepositoryState::Local {
                         backend,
                         environment,
                         ..
                     } => {
-                        backend
+                        let result = backend
                             .push(
                                 branch.to_string(),
                                 remote.to_string(),
                                 options,
                                 askpass,
                                 environment.clone(),
-                                cx,
+                                cx.clone(),
                             )
-                            .await
+                            .await;
+                        if result.is_ok() {
+                            let branches = backend.branches().await?;
+                            let branch = branches.into_iter().find(|branch| branch.is_head);
+                            log::info!("head branch after scan is {branch:?}");
+                            let snapshot = this.update(&mut cx, |this, cx| {
+                                this.snapshot.branch = branch;
+                                let snapshot = this.snapshot.clone();
+                                cx.emit(RepositoryEvent::Updated { full_scan: false });
+                                snapshot
+                            })?;
+                            if let Some(updates_tx) = updates_tx {
+                                updates_tx
+                                    .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                                    .ok();
+                            }
+                        }
+                        result
                     }
                     RepositoryState::Remote { project_id, client } => {
                         askpass_delegates.lock().insert(askpass_id, askpass);
@@ -3773,7 +3798,7 @@ impl Repository {
                 .upgrade()
                 .ok_or_else(|| anyhow!("missing project environment"))?
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_environment(Some(work_directory_abs_path.clone()), cx)
+                    project_environment.get_directory_environment(work_directory_abs_path.clone(), cx)
                 })?
                 .await
                 .unwrap_or_else(|| {

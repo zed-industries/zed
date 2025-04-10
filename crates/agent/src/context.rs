@@ -1,9 +1,9 @@
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
 
 use gpui::{App, Entity, SharedString};
 use language::{Buffer, File};
 use language_model::LanguageModelRequestMessage;
-use project::ProjectPath;
+use project::{ProjectPath, Worktree};
 use serde::{Deserialize, Serialize};
 use text::{Anchor, BufferId};
 use ui::IconName;
@@ -69,8 +69,19 @@ pub struct FileContext {
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
     pub id: ContextId,
-    pub project_path: ProjectPath,
+    pub worktree: Entity<Worktree>,
+    pub path: Arc<Path>,
+    /// Buffers of the files within the directory.
     pub context_buffers: Vec<ContextBuffer>,
+}
+
+impl DirectoryContext {
+    pub fn project_path(&self, cx: &App) -> ProjectPath {
+        ProjectPath {
+            worktree_id: self.worktree.read(cx).id(),
+            path: self.path.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -86,12 +97,11 @@ pub struct FetchedUrlContext {
     pub text: SharedString,
 }
 
-// TODO: Model<Thread> holds onto the thread even if the thread is deleted. Can either handle this
-// explicitly or have a WeakModel<Thread> and remove during snapshot.
-
 #[derive(Debug, Clone)]
 pub struct ThreadContext {
     pub id: ContextId,
+    // TODO: Entity<Thread> holds onto the thread even if the thread is deleted. Should probably be
+    // a WeakEntity and handle removal from the UI when it has dropped.
     pub thread: Entity<Thread>,
     pub text: SharedString,
 }
@@ -105,12 +115,11 @@ impl ThreadContext {
     }
 }
 
-// TODO: Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
-// the context from the message editor in this case.
-
 #[derive(Clone)]
 pub struct ContextBuffer {
     pub id: BufferId,
+    // TODO: Entity<Buffer> holds onto the thread even if the thread is deleted. Should probably be
+    // a WeakEntity and handle removal from the UI when it has dropped.
     pub buffer: Entity<Buffer>,
     pub file: Arc<dyn File>,
     pub version: clock::Global,

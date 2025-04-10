@@ -1118,9 +1118,16 @@ impl MultiBuffer {
         self.history.start_transaction(now)
     }
 
-    pub fn last_transaction_id(&self) -> Option<TransactionId> {
-        let last_transaction = self.history.undo_stack.last()?;
-        return Some(last_transaction.id);
+    pub fn last_transaction_id(&self, cx: &App) -> Option<TransactionId> {
+        if let Some(buffer) = self.as_singleton() {
+            return buffer.read_with(cx, |b, _| {
+                b.peek_undo_stack()
+                    .map(|history_entry| history_entry.transaction_id())
+            });
+        } else {
+            let last_transaction = self.history.undo_stack.last()?;
+            return Some(last_transaction.id);
+        }
     }
 
     pub fn end_transaction(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
