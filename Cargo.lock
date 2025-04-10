@@ -4902,6 +4902,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "eval"
+version = "0.1.0"
+dependencies = [
+ "agent",
+ "anyhow",
+ "assistant_tool",
+ "assistant_tools",
+ "client",
+ "collections",
+ "context_server",
+ "dap",
+ "env_logger 0.11.8",
+ "fs",
+ "gpui",
+ "gpui_tokio",
+ "language",
+ "language_model",
+ "language_models",
+ "node_runtime",
+ "project",
+ "prompt_store",
+ "release_channel",
+ "reqwest_client",
+ "serde",
+ "settings",
+ "smol",
+ "toml 0.8.20",
+ "workspace-hack",
+]
+
+[[package]]
 name = "evals"
 version = "0.1.0"
 dependencies = [

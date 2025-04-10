@@ -47,6 +47,7 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
+    "crates/eval",
     "crates/evals",
     "crates/extension",
     "crates/extension_api",
