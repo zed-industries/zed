@@ -12,9 +12,10 @@ use dap::{
 };
 use futures::{SinkExt as _, channel::mpsc};
 use gpui::{
-    Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity, actions,
+    Action, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Subscription, Task, WeakEntity, actions,
 };
+
 use project::{
     Project,
     debugger::{
@@ -25,14 +26,15 @@ use project::{
 };
 use rpc::proto::{self};
 use settings::Settings;
-use std::{any::TypeId, path::PathBuf};
+use std::any::TypeId;
+use std::path::Path;
+use std::sync::Arc;
 use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
-    Pane, Workspace,
+    Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    pane,
 };
 
 pub enum DebugPanelEvent {
@@ -55,11 +57,13 @@ pub enum DebugPanelEvent {
 actions!(debug_panel, [ToggleFocus]);
 pub struct DebugPanel {
     size: Pixels,
-    pane: Entity<Pane>,
+    sessions: Vec<Entity<DebugSession>>,
+    active_session: Option<Entity<DebugSession>>,
     /// This represents the last debug definition that was created in the new session modal
     pub(crate) past_debug_definition: Option<DebugTaskDefinition>,
     project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
+    focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -72,42 +76,104 @@ impl DebugPanel {
         cx.new(|cx| {
             let project = workspace.project().clone();
             let dap_store = project.read(cx).dap_store();
-            let pane = cx.new(|cx| {
-                let mut pane = Pane::new(
-                    workspace.weak_handle(),
-                    project.clone(),
-                    Default::default(),
-                    None,
-                    gpui::NoAction.boxed_clone(),
-                    window,
-                    cx,
-                );
-                pane.set_can_split(None);
-                pane.set_can_navigate(true, cx);
-                pane.display_nav_history_buttons(None);
-                pane.set_should_display_tab_bar(|_window, _cx| false);
-                pane.set_close_pane_if_empty(true, cx);
 
-                pane
-            });
-
-            let _subscriptions = vec![
-                cx.observe(&pane, |_, _, cx| cx.notify()),
-                cx.subscribe_in(&pane, window, Self::handle_pane_event),
-                cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event),
-            ];
+            let _subscriptions =
+                vec![cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event)];
 
             let debug_panel = Self {
-                pane,
                 size: px(300.),
+                sessions: vec![],
+                active_session: None,
                 _subscriptions,
                 past_debug_definition: None,
+                focus_handle: cx.focus_handle(),
                 project: project.downgrade(),
                 workspace: workspace.weak_handle(),
             };
 
             debug_panel
         })
+    }
+
+    fn filter_action_types(&self, cx: &mut App) {
+        let (has_active_session, supports_restart, support_step_back, status) = self
+            .active_session()
+            .map(|item| {
+                let running = item.read(cx).mode().as_running().cloned();
+
+                match running {
+                    Some(running) => {
+                        let caps = running.read(cx).capabilities(cx);
+                        (
+                            !running.read(cx).session().read(cx).is_terminated(),
+                            caps.supports_restart_request.unwrap_or_default(),
+                            caps.supports_step_back.unwrap_or_default(),
+                            running.read(cx).thread_status(cx),
+                        )
+                    }
+                    None => (false, false, false, None),
+                }
+            })
+            .unwrap_or((false, false, false, None));
+
+        let filter = CommandPaletteFilter::global_mut(cx);
+        let debugger_action_types = [
+            TypeId::of::<Disconnect>(),
+            TypeId::of::<Stop>(),
+            TypeId::of::<ToggleIgnoreBreakpoints>(),
+        ];
+
+        let running_action_types = [TypeId::of::<Pause>()];
+
+        let stopped_action_type = [
+            TypeId::of::<Continue>(),
+            TypeId::of::<StepOver>(),
+            TypeId::of::<StepInto>(),
+            TypeId::of::<StepOut>(),
+            TypeId::of::<editor::actions::DebuggerRunToCursor>(),
+            TypeId::of::<editor::actions::DebuggerEvaluateSelectedText>(),
+        ];
+
+        let step_back_action_type = [TypeId::of::<StepBack>()];
+        let restart_action_type = [TypeId::of::<Restart>()];
+
+        if has_active_session {
+            filter.show_action_types(debugger_action_types.iter());
+
+            if supports_restart {
+                filter.show_action_types(restart_action_type.iter());
+            } else {
+                filter.hide_action_types(&restart_action_type);
+            }
+
+            if support_step_back {
+                filter.show_action_types(step_back_action_type.iter());
+            } else {
+                filter.hide_action_types(&step_back_action_type);
+            }
+
+            match status {
+                Some(ThreadStatus::Running) => {
+                    filter.show_action_types(running_action_types.iter());
+                    filter.hide_action_types(&stopped_action_type);
+                }
+                Some(ThreadStatus::Stopped) => {
+                    filter.show_action_types(stopped_action_type.iter());
+                    filter.hide_action_types(&running_action_types);
+                }
+                _ => {
+                    filter.hide_action_types(&running_action_types);
+                    filter.hide_action_types(&stopped_action_type);
+                }
+            }
+        } else {
+            // show only the `debug: start`
+            filter.hide_action_types(&debugger_action_types);
+            filter.hide_action_types(&step_back_action_type);
+            filter.hide_action_types(&restart_action_type);
+            filter.hide_action_types(&running_action_types);
+            filter.hide_action_types(&stopped_action_type);
+        }
     }
 
     pub fn load(
@@ -127,63 +193,15 @@ impl DebugPanel {
                     )
                 });
 
+                cx.observe_new::<DebugPanel>(|debug_panel, _, cx| {
+                    Self::filter_action_types(debug_panel, cx);
+                })
+                .detach();
+
                 cx.observe(&debug_panel, |_, debug_panel, cx| {
-                    let (has_active_session, supports_restart, support_step_back) = debug_panel
-                        .update(cx, |this, cx| {
-                            this.active_session(cx)
-                                .map(|item| {
-                                    let running = item.read(cx).mode().as_running().cloned();
-
-                                    match running {
-                                        Some(running) => {
-                                            let caps = running.read(cx).capabilities(cx);
-                                            (
-                                                true,
-                                                caps.supports_restart_request.unwrap_or_default(),
-                                                caps.supports_step_back.unwrap_or_default(),
-                                            )
-                                        }
-                                        None => (false, false, false),
-                                    }
-                                })
-                                .unwrap_or((false, false, false))
-                        });
-
-                    let filter = CommandPaletteFilter::global_mut(cx);
-                    let debugger_action_types = [
-                        TypeId::of::<Continue>(),
-                        TypeId::of::<StepOver>(),
-                        TypeId::of::<StepInto>(),
-                        TypeId::of::<StepOut>(),
-                        TypeId::of::<Stop>(),
-                        TypeId::of::<Disconnect>(),
-                        TypeId::of::<Pause>(),
-                        TypeId::of::<ToggleIgnoreBreakpoints>(),
-                    ];
-
-                    let step_back_action_type = [TypeId::of::<StepBack>()];
-                    let restart_action_type = [TypeId::of::<Restart>()];
-
-                    if has_active_session {
-                        filter.show_action_types(debugger_action_types.iter());
-
-                        if supports_restart {
-                            filter.show_action_types(restart_action_type.iter());
-                        } else {
-                            filter.hide_action_types(&restart_action_type);
-                        }
-
-                        if support_step_back {
-                            filter.show_action_types(step_back_action_type.iter());
-                        } else {
-                            filter.hide_action_types(&step_back_action_type);
-                        }
-                    } else {
-                        // show only the `debug: start`
-                        filter.hide_action_types(&debugger_action_types);
-                        filter.hide_action_types(&step_back_action_type);
-                        filter.hide_action_types(&restart_action_type);
-                    }
+                    debug_panel.update(cx, |debug_panel, cx| {
+                        Self::filter_action_types(debug_panel, cx);
+                    });
                 })
                 .detach();
 
@@ -192,11 +210,8 @@ impl DebugPanel {
         })
     }
 
-    pub fn active_session(&self, cx: &App) -> Option<Entity<DebugSession>> {
-        self.pane
-            .read(cx)
-            .active_item()
-            .and_then(|panel| panel.downcast::<DebugSession>())
+    pub fn active_session(&self) -> Option<Entity<DebugSession>> {
+        self.active_session.clone()
     }
 
     pub fn debug_panel_items_by_client(
@@ -204,11 +219,9 @@ impl DebugPanel {
         client_id: &SessionId,
         cx: &Context<Self>,
     ) -> Vec<Entity<DebugSession>> {
-        self.pane
-            .read(cx)
-            .items()
-            .filter_map(|item| item.downcast::<DebugSession>())
-            .filter(|item| item.read(cx).session_id(cx) == Some(*client_id))
+        self.sessions
+            .iter()
+            .filter(|item| item.read(cx).session_id(cx) == *client_id)
             .map(|item| item.clone())
             .collect()
     }
@@ -218,15 +231,14 @@ impl DebugPanel {
         client_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Option<Entity<DebugSession>> {
-        self.pane
-            .read(cx)
-            .items()
-            .filter_map(|item| item.downcast::<DebugSession>())
+        self.sessions
+            .iter()
             .find(|item| {
                 let item = item.read(cx);
 
-                item.session_id(cx) == Some(client_id)
+                item.session_id(cx) == client_id
             })
+            .cloned()
     }
 
     fn handle_dap_store_event(
@@ -248,10 +260,11 @@ impl DebugPanel {
                     return log::error!("Debug Panel out lived it's weak reference to Project");
                 };
 
-                if self.pane.read_with(cx, |pane, cx| {
-                    pane.items_of_type::<DebugSession>()
-                        .any(|item| item.read(cx).session_id(cx) == Some(*session_id))
-                }) {
+                if self
+                    .sessions
+                    .iter()
+                    .any(|item| item.read(cx).session_id(cx) == *session_id)
+                {
                     // We already have an item for this session.
                     return;
                 }
@@ -264,11 +277,14 @@ impl DebugPanel {
                     cx,
                 );
 
-                self.pane.update(cx, |pane, cx| {
-                    pane.add_item(Box::new(session_item), true, true, None, window, cx);
-                    window.focus(&pane.focus_handle(cx));
-                    cx.notify();
-                });
+                if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
+                    // We might want to make this an event subscription and only notify when a new thread is selected
+                    // This is used to filter the command menu correctly
+                    cx.observe(&running, |_, _, cx| cx.notify()).detach();
+                }
+
+                self.sessions.push(session_item.clone());
+                self.activate_session(session_item, window, cx);
             }
             dap_store::DapStoreEvent::RunInTerminal {
                 title,
@@ -298,7 +314,7 @@ impl DebugPanel {
     fn handle_run_in_terminal_request(
         &self,
         title: Option<String>,
-        cwd: PathBuf,
+        cwd: Option<Arc<Path>>,
         command: Option<String>,
         args: Vec<String>,
         envs: HashMap<String, String>,
@@ -362,63 +378,101 @@ impl DebugPanel {
         })
     }
 
-    fn handle_pane_event(
-        &mut self,
-        _: &Entity<Pane>,
-        event: &pane::Event,
+    fn close_session(&mut self, entity_id: EntityId, cx: &mut Context<Self>) {
+        let Some(session) = self
+            .sessions
+            .iter()
+            .find(|other| entity_id == other.entity_id())
+        else {
+            return;
+        };
+
+        session.update(cx, |session, cx| session.shutdown(cx));
+
+        self.sessions.retain(|other| entity_id != other.entity_id());
+
+        if let Some(active_session_id) = self
+            .active_session
+            .as_ref()
+            .map(|session| session.entity_id())
+        {
+            if active_session_id == entity_id {
+                self.active_session = self.sessions.first().cloned();
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn sessions_drop_down_menu(
+        &self,
+        active_session: &Entity<DebugSession>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        match event {
-            pane::Event::Remove { .. } => cx.emit(PanelEvent::Close),
-            pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
-            pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
-            pane::Event::AddItem { item } => {
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        item.added_to_pane(workspace, self.pane.clone(), window, cx)
-                    })
-                    .ok();
-            }
-            pane::Event::RemovedItem { item } => {
-                if let Some(debug_session) = item.downcast::<DebugSession>() {
-                    debug_session.update(cx, |session, cx| {
-                        session.shutdown(cx);
-                    })
-                }
-            }
-            pane::Event::ActivateItem {
-                local: _,
-                focus_changed,
-            } => {
-                if *focus_changed {
-                    if let Some(debug_session) = self
-                        .pane
-                        .read(cx)
-                        .active_item()
-                        .and_then(|item| item.downcast::<DebugSession>())
-                    {
-                        if let Some(running) = debug_session
-                            .read_with(cx, |session, _| session.mode().as_running().cloned())
-                        {
-                            running.update(cx, |running, cx| {
-                                running.go_to_selected_stack_frame(window, cx);
-                            });
-                        }
-                    }
-                }
-            }
+    ) -> DropdownMenu {
+        let sessions = self.sessions.clone();
+        let weak = cx.weak_entity();
+        let label = active_session.read(cx).label_element(cx);
 
-            _ => {}
-        }
+        DropdownMenu::new_with_element(
+            "debugger-session-list",
+            label,
+            ContextMenu::build(window, cx, move |mut this, _, _| {
+                for session in sessions.into_iter() {
+                    let weak_session = session.downgrade();
+                    let weak_session_id = weak_session.entity_id();
+
+                    this = this.custom_entry(
+                        {
+                            let weak = weak.clone();
+                            move |_, cx| {
+                                weak_session
+                                    .read_with(cx, |session, cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(session.label_element(cx))
+                                            .child(
+                                                IconButton::new(
+                                                    "close-debug-session",
+                                                    IconName::Close,
+                                                )
+                                                .icon_size(IconSize::Small)
+                                                .on_click({
+                                                    let weak = weak.clone();
+                                                    move |_, _, cx| {
+                                                        weak.update(cx, |panel, cx| {
+                                                            panel
+                                                                .close_session(weak_session_id, cx);
+                                                        })
+                                                        .ok();
+                                                    }
+                                                }),
+                                            )
+                                            .into_any_element()
+                                    })
+                                    .unwrap_or_else(|_| div().into_any_element())
+                            }
+                        },
+                        {
+                            let weak = weak.clone();
+                            move |window, cx| {
+                                weak.update(cx, |panel, cx| {
+                                    panel.activate_session(session.clone(), window, cx);
+                                })
+                                .ok();
+                            }
+                        },
+                    );
+                }
+                this
+            }),
+        )
     }
 
     fn top_controls_strip(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
-        let active_session = self
-            .pane
-            .read(cx)
-            .active_item()
-            .and_then(|item| item.downcast::<DebugSession>());
+        let active_session = self.active_session.clone();
+
         Some(
             h_flex()
                 .border_b_1()
@@ -609,39 +663,8 @@ impl DebugPanel {
                             },
                         )
                         .when_some(active_session.as_ref(), |this, session| {
-                            let pane = self.pane.downgrade();
-                            let label = session.read(cx).label(cx);
-                            this.child(DropdownMenu::new(
-                                "debugger-session-list",
-                                label,
-                                ContextMenu::build(window, cx, move |mut this, _, cx| {
-                                    let sessions = pane
-                                        .read_with(cx, |pane, _| {
-                                            pane.items().map(|item| item.boxed_clone()).collect()
-                                        })
-                                        .ok()
-                                        .unwrap_or_else(Vec::new);
-                                    for (index, item) in sessions.into_iter().enumerate() {
-                                        if let Some(session) = item.downcast::<DebugSession>() {
-                                            let pane = pane.clone();
-                                            this = this.entry(
-                                                session.read(cx).label(cx),
-                                                None,
-                                                move |window, cx| {
-                                                    pane.update(cx, |pane, cx| {
-                                                        pane.activate_item(
-                                                            index, true, true, window, cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                                },
-                                            );
-                                        }
-                                    }
-                                    this
-                                }),
-                            ))
-                            .child(Divider::vertical())
+                            let context_menu = self.sessions_drop_down_menu(session, window, cx);
+                            this.child(context_menu).child(Divider::vertical())
                         })
                         .child(
                             IconButton::new("debug-new-session", IconName::Plus)
@@ -680,6 +703,25 @@ impl DebugPanel {
                 ),
         )
     }
+
+    fn activate_session(
+        &mut self,
+        session_item: Entity<DebugSession>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        debug_assert!(self.sessions.contains(&session_item));
+        session_item.focus_handle(cx).focus(window);
+        session_item.update(cx, |this, cx| {
+            if let Some(running) = this.mode().as_running() {
+                running.update(cx, |this, cx| {
+                    this.go_to_selected_stack_frame(window, cx);
+                });
+            }
+        });
+        self.active_session = Some(session_item);
+        cx.notify();
+    }
 }
 
 impl EventEmitter<PanelEvent> for DebugPanel {}
@@ -687,16 +729,12 @@ impl EventEmitter<DebugPanelEvent> for DebugPanel {}
 impl EventEmitter<project::Event> for DebugPanel {}
 
 impl Focusable for DebugPanel {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.pane.focus_handle(cx)
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
 impl Panel for DebugPanel {
-    fn pane(&self) -> Option<Entity<Pane>> {
-        Some(self.pane.clone())
-    }
-
     fn persistent_name() -> &'static str {
         "DebugPanel"
     }
@@ -753,7 +791,9 @@ impl Panel for DebugPanel {
 
 impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_sessions = self.pane.read(cx).items_len() > 0;
+        let has_sessions = self.sessions.len() > 0;
+        debug_assert_eq!(has_sessions, self.active_session.is_some());
+
         v_flex()
             .size_full()
             .key_context("DebugPanel")
@@ -761,7 +801,7 @@ impl Render for DebugPanel {
             .track_focus(&self.focus_handle(cx))
             .map(|this| {
                 if has_sessions {
-                    this.child(self.pane.clone())
+                    this.children(self.active_session.clone())
                 } else {
                     this.child(
                         v_flex()

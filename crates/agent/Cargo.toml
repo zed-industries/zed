@@ -19,6 +19,7 @@ test-support = [
 ]
 
 [dependencies]
+agent_rules.workspace = true
 anyhow.workspace = true
 assistant_context_editor.workspace = true
 assistant_settings.workspace = true
@@ -84,7 +85,6 @@ ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
 uuid.workspace = true
-vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 workspace-hack.workspace = true

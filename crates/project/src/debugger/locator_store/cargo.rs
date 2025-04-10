@@ -11,6 +11,31 @@ use util::maybe;
 
 pub(super) struct CargoLocator;
 
+async fn find_best_executable(executables: &[String], test_name: &str) -> Option<String> {
+    if executables.len() == 1 {
+        return executables.first().cloned();
+    }
+    for executable in executables {
+        let Some(mut child) = Command::new(&executable)
+            .arg("--list")
+            .stdout(Stdio::piped())
+            .spawn()
+            .ok()
+        else {
+            continue;
+        };
+        let mut test_lines = String::default();
+        if let Some(mut stdout) = child.stdout.take() {
+            stdout.read_to_string(&mut test_lines).await.ok();
+            for line in test_lines.lines() {
+                if line.contains(&test_name) {
+                    return Some(executable.clone());
+                }
+            }
+        }
+    }
+    None
+}
 #[async_trait]
 impl DapLocator for CargoLocator {
     async fn run_locator(&self, debug_config: &mut DebugAdapterConfig) -> Result<()> {
@@ -46,27 +71,27 @@ impl DapLocator for CargoLocator {
             return Err(anyhow::anyhow!("Cargo command failed"));
         }
 
-        let Some(executable) = output
+        let executables = output
             .lines()
             .filter(|line| !line.trim().is_empty())
             .filter_map(|line| serde_json::from_str(line).ok())
-            .find_map(|json: Value| {
+            .filter_map(|json: Value| {
                 json.get("executable")
                     .and_then(Value::as_str)
                     .map(String::from)
             })
-        else {
+            .collect::<Vec<_>>();
+        if executables.is_empty() {
             return Err(anyhow!("Couldn't get executable in cargo locator"));
         };
 
-        launch_config.program = executable;
-        let mut test_name = None;
-
-        if launch_config
+        let is_test = launch_config
             .args
             .first()
-            .map_or(false, |arg| arg == "test")
-        {
+            .map_or(false, |arg| arg == "test");
+
+        let mut test_name = None;
+        if is_test {
             if let Some(package_index) = launch_config
                 .args
                 .iter()
@@ -79,6 +104,18 @@ impl DapLocator for CargoLocator {
                     .cloned();
             }
         }
+        let executable = {
+            if let Some(ref name) = test_name {
+                find_best_executable(&executables, &name).await
+            } else {
+                None
+            }
+        };
+        let Some(executable) = executable.or_else(|| executables.first().cloned()) else {
+            return Err(anyhow!("Couldn't get executable in cargo locator"));
+        };
+
+        launch_config.program = executable;
 
         if debug_config.adapter == "LLDB" && debug_config.initialize_args.is_none() {
             // Find Rust pretty-printers in current toolchain's sysroot

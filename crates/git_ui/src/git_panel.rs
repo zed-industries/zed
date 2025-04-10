@@ -105,21 +105,56 @@ enum TrashCancel {
     Cancel,
 }
 
+struct GitMenuState {
+    has_tracked_changes: bool,
+    has_staged_changes: bool,
+    has_unstaged_changes: bool,
+    has_new_changes: bool,
+}
+
 fn git_panel_context_menu(
     focus_handle: FocusHandle,
+    state: GitMenuState,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
-    ContextMenu::build(window, cx, |context_menu, _, _| {
+    ContextMenu::build(window, cx, move |context_menu, _, _| {
         context_menu
             .context(focus_handle)
-            .action("Stage All", StageAll.boxed_clone())
-            .action("Unstage All", UnstageAll.boxed_clone())
+            .map(|menu| {
+                if state.has_unstaged_changes {
+                    menu.action("Stage All", StageAll.boxed_clone())
+                } else {
+                    menu.disabled_action("Stage All", StageAll.boxed_clone())
+                }
+            })
+            .map(|menu| {
+                if state.has_staged_changes {
+                    menu.action("Unstage All", UnstageAll.boxed_clone())
+                } else {
+                    menu.disabled_action("Unstage All", UnstageAll.boxed_clone())
+                }
+            })
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
             .separator()
-            .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
-            .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
+            .map(|menu| {
+                if state.has_tracked_changes {
+                    menu.action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
+                } else {
+                    menu.disabled_action(
+                        "Discard Tracked Changes",
+                        RestoreTrackedFiles.boxed_clone(),
+                    )
+                }
+            })
+            .map(|menu| {
+                if state.has_new_changes {
+                    menu.action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
+                } else {
+                    menu.disabled_action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
+                }
+            })
     })
 }
 
@@ -2571,13 +2606,30 @@ impl GitPanel {
 
     fn render_overflow_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
+        let has_tracked_changes = self.has_tracked_changes();
+        let has_staged_changes = self.has_staged_changes();
+        let has_unstaged_changes = self.has_unstaged_changes();
+        let has_new_changes = self.new_count > 0;
+
         PopoverMenu::new(id.into())
             .trigger(
                 IconButton::new("overflow-menu-trigger", IconName::EllipsisVertical)
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted),
             )
-            .menu(move |window, cx| Some(git_panel_context_menu(focus_handle.clone(), window, cx)))
+            .menu(move |window, cx| {
+                Some(git_panel_context_menu(
+                    focus_handle.clone(),
+                    GitMenuState {
+                        has_tracked_changes,
+                        has_staged_changes,
+                        has_unstaged_changes,
+                        has_new_changes,
+                    },
+                    window,
+                    cx,
+                ))
+            })
             .anchor(Corner::TopRight)
     }
 
@@ -3449,7 +3501,17 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context_menu = git_panel_context_menu(self.focus_handle.clone(), window, cx);
+        let context_menu = git_panel_context_menu(
+            self.focus_handle.clone(),
+            GitMenuState {
+                has_tracked_changes: self.has_tracked_changes(),
+                has_staged_changes: self.has_staged_changes(),
+                has_unstaged_changes: self.has_unstaged_changes(),
+                has_new_changes: self.new_count > 0,
+            },
+            window,
+            cx,
+        );
         self.set_context_menu(context_menu, position, window, cx);
     }
 
@@ -3953,8 +4015,7 @@ impl Render for GitPanelMessageTooltip {
     }
 }
 
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "Version Control")]
+#[derive(IntoElement, RegisterComponent)]
 pub struct PanelRepoFooter {
     active_repository: SharedString,
     branch: Option<Branch>,
@@ -4134,8 +4195,12 @@ impl RenderOnce for PanelRepoFooter {
     }
 }
 
-impl ComponentPreview for PanelRepoFooter {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+impl Component for PanelRepoFooter {
+    fn scope() -> ComponentScope {
+        ComponentScope::VersionControl
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         let unknown_upstream = None;
         let no_remote_upstream = Some(UpstreamTracking::Gone);
         let ahead_of_upstream = Some(
@@ -4207,192 +4272,180 @@ impl ComponentPreview for PanelRepoFooter {
         }
 
         let example_width = px(340.);
-
-        v_flex()
-            .gap_6()
-            .w_full()
-            .flex_none()
-            .children(vec![
-                example_group_with_title(
-                    "Action Button States",
-                    vec![
-                        single_example(
-                            "No Branch",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    active_repository(1).clone(),
-                                    None,
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "Remote status unknown",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    active_repository(2).clone(),
-                                    Some(branch(unknown_upstream)),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "No Remote Upstream",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    active_repository(3).clone(),
-                                    Some(branch(no_remote_upstream)),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "Not Ahead or Behind",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    active_repository(4).clone(),
-                                    Some(branch(not_ahead_or_behind_upstream)),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "Behind remote",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    active_repository(5).clone(),
-                                    Some(branch(behind_upstream)),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "Ahead of remote",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    active_repository(6).clone(),
-                                    Some(branch(ahead_of_upstream)),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "Ahead and behind remote",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    active_repository(7).clone(),
-                                    Some(branch(ahead_and_behind_upstream)),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                    ],
-                )
-                .grow()
-                .vertical(),
-            ])
-            .children(vec![
-                example_group_with_title(
-                    "Labels",
-                    vec![
-                        single_example(
-                            "Short Branch & Repo",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("zed"),
-                                    Some(custom("main", behind_upstream)),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "Long Branch",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("zed"),
-                                    Some(custom(
-                                        "redesign-and-update-git-ui-list-entry-style",
-                                        behind_upstream,
-                                    )),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "Long Repo",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("zed-industries-community-examples"),
-                                    Some(custom("gpui", ahead_of_upstream)),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "Long Repo & Branch",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("zed-industries-community-examples"),
-                                    Some(custom(
-                                        "redesign-and-update-git-ui-list-entry-style",
-                                        behind_upstream,
-                                    )),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "Uppercase Repo",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("LICENSES"),
-                                    Some(custom("main", ahead_of_upstream)),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                        single_example(
-                            "Uppercase Branch",
-                            div()
-                                .w(example_width)
-                                .overflow_hidden()
-                                .child(PanelRepoFooter::new_preview(
-                                    SharedString::from("zed"),
-                                    Some(custom("update-README", behind_upstream)),
-                                ))
-                                .into_any_element(),
-                        )
-                        .grow(),
-                    ],
-                )
-                .grow()
-                .vertical(),
-            ])
-            .into_any_element()
+        Some(
+            v_flex()
+                .gap_6()
+                .w_full()
+                .flex_none()
+                .children(vec![
+                    example_group_with_title(
+                        "Action Button States",
+                        vec![
+                            single_example(
+                                "No Branch",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        active_repository(1).clone(),
+                                        None,
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Remote status unknown",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        active_repository(2).clone(),
+                                        Some(branch(unknown_upstream)),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "No Remote Upstream",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        active_repository(3).clone(),
+                                        Some(branch(no_remote_upstream)),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Not Ahead or Behind",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        active_repository(4).clone(),
+                                        Some(branch(not_ahead_or_behind_upstream)),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Behind remote",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        active_repository(5).clone(),
+                                        Some(branch(behind_upstream)),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Ahead of remote",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        active_repository(6).clone(),
+                                        Some(branch(ahead_of_upstream)),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Ahead and behind remote",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        active_repository(7).clone(),
+                                        Some(branch(ahead_and_behind_upstream)),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                        ],
+                    )
+                    .grow()
+                    .vertical(),
+                ])
+                .children(vec![
+                    example_group_with_title(
+                        "Labels",
+                        vec![
+                            single_example(
+                                "Short Branch & Repo",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        SharedString::from("zed"),
+                                        Some(custom("main", behind_upstream)),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Long Branch",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        SharedString::from("zed"),
+                                        Some(custom(
+                                            "redesign-and-update-git-ui-list-entry-style",
+                                            behind_upstream,
+                                        )),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Long Repo",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        SharedString::from("zed-industries-community-examples"),
+                                        Some(custom("gpui", ahead_of_upstream)),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Long Repo & Branch",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        SharedString::from("zed-industries-community-examples"),
+                                        Some(custom(
+                                            "redesign-and-update-git-ui-list-entry-style",
+                                            behind_upstream,
+                                        )),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Uppercase Repo",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        SharedString::from("LICENSES"),
+                                        Some(custom("main", ahead_of_upstream)),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Uppercase Branch",
+                                div()
+                                    .w(example_width)
+                                    .overflow_hidden()
+                                    .child(PanelRepoFooter::new_preview(
+                                        SharedString::from("zed"),
+                                        Some(custom("update-README", behind_upstream)),
+                                    ))
+                                    .into_any_element(),
+                            ),
+                        ],
+                    )
+                    .grow()
+                    .vertical(),
+                ])
+                .into_any_element(),
+        )
     }
 }
 

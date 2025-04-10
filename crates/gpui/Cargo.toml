@@ -89,7 +89,7 @@ etagere = "0.2"
 futures.workspace = true
 gpui_macros.workspace = true
 http_client = { optional = true, workspace = true }
-image = "0.25.1"
+image.workspace = true
 inventory.workspace = true
 itertools.workspace = true
 log.workspace = true

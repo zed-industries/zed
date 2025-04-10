@@ -14,12 +14,15 @@ use std::{
     time::Duration,
 };
 use text::LineEnding;
-use util::ResultExt;
+use util::{ResultExt, get_system_shell};
 
 #[derive(Serialize)]
 pub struct AssistantSystemPromptContext {
     pub worktrees: Vec<WorktreeInfoForSystemPrompt>,
     pub has_rules: bool,
+    pub os: String,
+    pub arch: String,
+    pub shell: String,
 }
 
 impl AssistantSystemPromptContext {
@@ -30,6 +33,9 @@ impl AssistantSystemPromptContext {
         Self {
             worktrees,
             has_rules,
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            shell: get_system_shell(),
         }
     }
 }
@@ -38,12 +44,12 @@ impl AssistantSystemPromptContext {
 pub struct WorktreeInfoForSystemPrompt {
     pub root_name: String,
     pub abs_path: Arc<Path>,
-    pub rules_file: Option<RulesFile>,
+    pub rules_file: Option<SystemPromptRulesFile>,
 }
 
 #[derive(Serialize)]
-pub struct RulesFile {
-    pub rel_path: Arc<Path>,
+pub struct SystemPromptRulesFile {
+    pub path_in_worktree: Arc<Path>,
     pub abs_path: Arc<Path>,
     pub text: String,
 }
