@@ -115,27 +115,23 @@ impl Example {
                     move |thread, event: &ThreadEvent, cx| match event {
                         ThreadEvent::Stopped(reason) => match reason {
                             Ok(StopReason::EndTurn) => {
-                                dbg!("!!!!!!!!!!!!!!!");
                                 if let Some(tx) = tx.take() {
                                     tx.send(Ok(())).ok();
                                 }
                             }
                             Ok(StopReason::MaxTokens) => {
-                                dbg!("!!!!!!!!!!!!!!!");
                                 if let Some(tx) = tx.take() {
                                     tx.send(Err(anyhow!("Exceeded maximum tokens"))).ok();
                                 }
                             }
                             Ok(StopReason::ToolUse) => {}
                             Err(error) => {
-                                dbg!("!!!!!!!!!!!!!!!");
                                 if let Some(tx) = tx.take() {
                                     tx.send(Err(anyhow!(error.clone()))).ok();
                                 }
                             }
                         },
                         ThreadEvent::ShowError(thread_error) => {
-                            dbg!("!!!!!!!!!!!!!!!");
                             if let Some(tx) = tx.take() {
                                 tx.send(Err(anyhow!(thread_error.clone()))).ok();
                             }
