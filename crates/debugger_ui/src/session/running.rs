@@ -352,6 +352,7 @@ impl RunningState {
                     breakpoints.focus_handle(cx),
                     breakpoints.into(),
                     SharedString::new_static("Breakpoints"),
+                    None,
                     cx,
                 )),
                 true,
