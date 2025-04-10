@@ -17,7 +17,7 @@ use project::{
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc, usize};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{Divider, prelude::*};
 
 pub struct Console {
     console: Entity<Editor>,
@@ -229,7 +229,8 @@ impl Render for Console {
             .size_full()
             .child(self.render_console(cx))
             .when(self.is_local(cx), |this| {
-                this.child(self.render_query_bar(cx))
+                this.child(Divider::horizontal())
+                    .child(self.render_query_bar(cx))
                     .pt(DynamicSpacing::Base04.rems(cx))
             })
             .border_2()

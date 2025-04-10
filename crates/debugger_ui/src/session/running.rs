@@ -1,3 +1,4 @@
+mod breakpoint_list;
 mod console;
 mod loaded_source_list;
 mod module_list;
@@ -7,6 +8,7 @@ pub mod variable_list;
 use std::{any::Any, ops::ControlFlow, sync::Arc};
 
 use super::DebugPanelItemEvent;
+use breakpoint_list::BreakpointList;
 use collections::HashMap;
 use console::Console;
 use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
@@ -321,6 +323,21 @@ impl RunningState {
                 window,
                 cx,
             );
+            let breakpoints = BreakpointList::new(session.clone(), workspace.clone(), &project, cx);
+            this.add_item(
+                Box::new(SubView::new(
+                    breakpoints.focus_handle(cx),
+                    breakpoints.into(),
+                    SharedString::new_static("Breakpoints"),
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+            this.activate_item(0, false, false, window, cx);
         });
         let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         center_pane.update(cx, |this, cx| {
