@@ -7916,7 +7916,7 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -14097,7 +14097,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -14556,7 +14556,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
     });
 
     let editor =
-        cx.add_window(|window, cx| Editor::new(EditorMode::Full, multi_buffer, None, window, cx));
+        cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
             for (buffer, diff_base) in [
@@ -14667,7 +14667,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
     });
 
     let editor =
-        cx.add_window(|window, cx| Editor::new(EditorMode::Full, multi_buffer, None, window, cx));
+        cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
             let diff = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
@@ -16223,7 +16223,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     });
 
     let editor = cx.add_window(|window, cx| {
-        Editor::new(EditorMode::Full, multibuffer, Some(project), window, cx)
+        Editor::new(EditorMode::full(), multibuffer, Some(project), window, cx)
     });
     cx.run_until_parked();
 
@@ -16740,7 +16740,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 
     let editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -16867,7 +16867,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer.clone(),
             Some(project.clone()),
             window,
@@ -17024,7 +17024,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
 
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -17142,7 +17142,7 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -17192,7 +17192,7 @@ async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContex
             ],
             cx,
         );
-        let mut editor = Editor::new(EditorMode::Full, multi_buffer.clone(), None, window, cx);
+        let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
 
         let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
         // fold all but the second buffer, so that we test navigating between two
@@ -17504,7 +17504,7 @@ async fn assert_highlighted_edits(
 ) {
     let window = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(text, cx);
-        Editor::new(EditorMode::Full, buffer, None, window, cx)
+        Editor::new(EditorMode::full(), buffer, None, window, cx)
     });
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
@@ -17662,7 +17662,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -17779,7 +17779,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -17954,7 +17954,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,

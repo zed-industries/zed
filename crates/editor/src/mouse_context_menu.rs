@@ -1,10 +1,9 @@
-use crate::CopyAndTrim;
-use crate::actions::FormatSelections;
 use crate::{
-    Copy, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor, EditorMode,
+    Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor,
     FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation, GoToTypeDefinition,
     Paste, Rename, RevealInFileManager, SelectMode, ToDisplayPoint, ToggleCodeActions,
-    actions::Format, selections_collection::SelectionsCollection,
+    actions::{Format, FormatSelections},
+    selections_collection::SelectionsCollection,
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscription, Window};
@@ -123,7 +122,7 @@ pub fn deploy_context_menu(
     }
 
     // Don't show context menu for inline editors
-    if editor.mode() != EditorMode::Full {
+    if !editor.mode().is_full() {
         return;
     }
 
