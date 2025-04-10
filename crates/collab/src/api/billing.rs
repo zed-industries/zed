@@ -274,7 +274,7 @@ async fn create_billing_subscription(
         customer.id
     };
 
-    let default_model = llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-5-sonnet")?;
+    let default_model = llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-7-sonnet")?;
     let stripe_model = stripe_billing.register_model(default_model).await?;
     let success_url = format!(
         "{}/account?checkout_complete=1",
