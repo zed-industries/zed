@@ -13,14 +13,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Substitute, window, cx| {
         vim.start_recording(cx);
         let count = Vim::take_count(cx);
-        let forced_motion = Vim::take_forced_motion(cx);
-        vim.substitute(
-            count,
-            vim.mode == Mode::VisualLine,
-            forced_motion,
-            window,
-            cx,
-        );
+        Vim::take_forced_motion(cx);
+        vim.substitute(count, vim.mode == Mode::VisualLine, window, cx);
     });
 
     Vim::action(editor, cx, |vim, _: &SubstituteLine, window, cx| {
@@ -29,8 +23,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             vim.switch_mode(Mode::VisualLine, false, window, cx)
         }
         let count = Vim::take_count(cx);
-        let forced_motion = Vim::take_forced_motion(cx);
-        vim.substitute(count, true, forced_motion, window, cx)
+        Vim::take_forced_motion(cx);
+        vim.substitute(count, true, window, cx)
     });
 }
 
@@ -39,7 +33,6 @@ impl Vim {
         &mut self,
         count: Option<usize>,
         line_mode: bool,
-        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -56,7 +49,7 @@ impl Vim {
                                 selection,
                                 count,
                                 &text_layout_details,
-                                forced_motion,
+                                false,
                             );
                         }
                         if line_mode {
@@ -70,7 +63,7 @@ impl Vim {
                                 selection,
                                 None,
                                 &text_layout_details,
-                                forced_motion,
+                                false,
                             );
                             if let Some((point, _)) = (Motion::FirstNonWhitespace {
                                 display_lines: false,

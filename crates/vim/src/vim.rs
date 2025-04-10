@@ -914,9 +914,9 @@ impl Vim {
             self.current_tx.take();
             self.current_anchor.take();
         }
+        Vim::take_forced_motion(cx);
         if mode != Mode::Insert && mode != Mode::Replace {
             Vim::take_count(cx);
-            Vim::take_forced_motion(cx);
         }
 
         // Sync editor settings like clip mode

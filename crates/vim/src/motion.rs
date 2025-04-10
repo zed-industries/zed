@@ -1278,6 +1278,12 @@ impl Motion {
         } else if kind == MotionKind::Exclusive && !self.skip_exclusive_special_case() {
             let start_point = selection.start.to_point(map);
             let mut end_point = selection.end.to_point(map);
+            let mut next_point = selection.end;
+            *next_point.column_mut() += 1;
+            next_point = map.clip_point(next_point, Bias::Right);
+            if next_point.to_point(map) == end_point && forced_motion {
+                selection.end = movement::saturating_left(map, selection.end);
+            }
 
             if end_point.row > start_point.row {
                 let first_non_blank_of_start_row = map
@@ -3883,6 +3889,31 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ
             jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+    }
+
+    #[gpui::test]
+    async fn test_forced_motion_delete_to_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+             the quick brown foˇx
+             jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v $").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+             the quick brown foˇx
+             jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+             ˇthe quick brown fox
+             jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v $").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+             ˇx
+             jumped over the lazy dog"});
         assert_eq!(cx.cx.forced_motion(), false);
     }
 
