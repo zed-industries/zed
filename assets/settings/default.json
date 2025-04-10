@@ -658,6 +658,7 @@
         "tools": {
           "bash": true,
           "batch_tool": true,
+          "code_actions": true,
           "code_symbols": true,
           "copy_path": false,
           "create_file": true,
@@ -671,6 +672,7 @@
           "path_search": true,
           "read_file": true,
           "regex_search": true,
+          "rename": true,
           "symbol_info": true,
           "thinking": true
         }
