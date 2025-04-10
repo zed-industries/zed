@@ -268,11 +268,11 @@ impl RenderOnce for ComponentExample {
                     .justify_center()
                     .p_8()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(cx.theme().colors().border.opacity(0.5))
                     .bg(pattern_slash(
                         cx.theme().colors().surface_background.opacity(0.5),
-                        24.0,
-                        24.0,
+                        12.0,
+                        12.0,
                     ))
                     .shadow_sm()
                     .child(self.element),
