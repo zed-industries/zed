@@ -340,27 +340,27 @@ impl ComponentPreview {
                 let name = component_metadata.scopeless_name();
 
                 ListItem::new(ix)
-                    .child(
-                        if let Some(positions) = highlight_positions {
-                            let name_lower = name.to_lowercase();
-                            let filter_lower = self.filter_text.to_lowercase();
-                            let valid_positions = if let Some(start) = name_lower.find(&filter_lower) {
-                                let end = start + filter_lower.len();
-                                (start..end).collect()
-                            } else {
-                                Vec::new()
-                            };
-                            if valid_positions.is_empty() {
-                                Label::new(name.clone()).color(Color::Default).into_any_element()
-                            } else {
-                                HighlightedLabel::new(name.clone(), valid_positions).into_any_element()
-                            }
+                    .child(if let Some(positions) = highlight_positions {
+                        let name_lower = name.to_lowercase();
+                        let filter_lower = self.filter_text.to_lowercase();
+                        let valid_positions = if let Some(start) = name_lower.find(&filter_lower) {
+                            let end = start + filter_lower.len();
+                            (start..end).collect()
                         } else {
+                            Vec::new()
+                        };
+                        if valid_positions.is_empty() {
                             Label::new(name.clone())
                                 .color(Color::Default)
                                 .into_any_element()
+                        } else {
+                            HighlightedLabel::new(name.clone(), valid_positions).into_any_element()
                         }
-                    )
+                    } else {
+                        Label::new(name.clone())
+                            .color(Color::Default)
+                            .into_any_element()
+                    })
                     .selectable(true)
                     .toggle_state(selected)
                     .inset(true)
@@ -411,7 +411,8 @@ impl ComponentPreview {
 
         if !self.filter_text.is_empty() && !matches!(self.active_page, PreviewPage::AllComponents) {
             if let PreviewPage::Component(ref component_id) = self.active_page {
-                let component_still_visible = filtered_components.iter()
+                let component_still_visible = filtered_components
+                    .iter()
                     .any(|component| component.id() == *component_id);
 
                 if !component_still_visible {
