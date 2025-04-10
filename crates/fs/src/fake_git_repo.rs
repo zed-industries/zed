@@ -26,6 +26,7 @@ pub struct FakeGitRepository {
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
     pub path: PathBuf,
+    pub common_dir_path: PathBuf,
     pub event_emitter: smol::channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
@@ -37,9 +38,14 @@ pub struct FakeGitRepositoryState {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(path: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+    pub fn new(
+        path: PathBuf,
+        common_dir_path: PathBuf,
+        event_emitter: smol::channel::Sender<PathBuf>,
+    ) -> Self {
         FakeGitRepositoryState {
             path,
+            common_dir_path,
             event_emitter,
             head_contents: Default::default(),
             index_contents: Default::default(),
@@ -175,6 +181,10 @@ impl GitRepository for FakeGitRepository {
         self.with_state(|state| state.path.clone())
     }
 
+    fn main_repository_path(&self) -> PathBuf {
+        self.with_state(|state| state.common_dir_path.clone())
+    }
+
     fn merge_message(&self) -> BoxFuture<Option<String>> {
         async move { None }.boxed()
     }
@@ -203,8 +213,9 @@ impl GitRepository for FakeGitRepository {
             .files()
             .iter()
             .filter_map(|path| {
+                // FIXME figure out what to do about nested repos
                 let repo_path = path.strip_prefix(workdir_path).ok()?;
-                let mut is_ignored = false;
+                let mut is_ignored = repo_path.starts_with(".git");
                 for ignore in &ignores {
                     match ignore.matched_path_or_any_parents(path, false) {
                         ignore::Match::None => {}

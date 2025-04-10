@@ -229,6 +229,8 @@ pub trait GitRepository: Send + Sync {
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
     fn path(&self) -> PathBuf;
 
+    fn main_repository_path(&self) -> PathBuf;
+
     /// Updates the index to match the worktree at the given paths.
     ///
     /// If any of the paths have been deleted from the worktree, they will be removed from the index if found there.
@@ -380,6 +382,11 @@ impl GitRepository for RealGitRepository {
     fn path(&self) -> PathBuf {
         let repo = self.repository.lock();
         repo.path().into()
+    }
+
+    fn main_repository_path(&self) -> PathBuf {
+        let repo = self.repository.lock();
+        repo.commondir().into()
     }
 
     fn show(&self, commit: String) -> BoxFuture<Result<CommitDetails>> {

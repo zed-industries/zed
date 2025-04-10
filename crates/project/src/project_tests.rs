@@ -8210,20 +8210,22 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
-    // make a fake fs w/ a big git repo that has a worktree and a submodule
-    // fake up some events (may need to extend the fakefs)
-    // test that things make sense.
+    init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/project"),
         json!({
-            ".git": {},
+            ".git": {
+                "worktrees": {
+                    "some-worktree": {}
+                },
+            },
             "src": {
                 "a.txt": "A",
             },
-            "worktree": {
-                ".git": "",
+            "some-worktree": {
+                ".git": "gitdir: ../.git/worktrees/some-worktree",
                 "src": {
                     "b.txt": "B",
                 }
@@ -8231,6 +8233,77 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let scan_complete = project.update(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .as_local()
+            .unwrap()
+            .scan_complete()
+    });
+    scan_complete.await;
+
+    let mut repositories = project.update(cx, |project, cx| {
+        project
+            .repositories(cx)
+            .values()
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    repositories.sort();
+    pretty_assertions::assert_eq!(
+        repositories,
+        [
+            Path::new(path!("/project")).into(),
+            Path::new(path!("/project/some-worktree")).into(),
+        ]
+    );
+
+    fs.with_git_state(
+        path!("/project/some-worktree/.git").as_ref(),
+        true,
+        |state| {
+            state
+                .head_contents
+                .insert("src/b.txt".into(), "b".to_owned());
+            state
+                .index_contents
+                .insert("src/b.txt".into(), "b".to_owned());
+        },
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/some-worktree/src/b.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let (worktree_repo, barrier) = project.update(cx, |project, cx| {
+        let (repo, _) = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+            .unwrap();
+        pretty_assertions::assert_eq!(
+            repo.read(cx).work_directory_abs_path,
+            Path::new(path!("/project/some-worktree")).into(),
+        );
+        let barrier = repo.update(cx, |repo, _| repo.barrier());
+        (repo.clone(), barrier)
+    });
+    barrier.await.unwrap();
+    worktree_repo.update(cx, |repo, _| {
+        pretty_assertions::assert_eq!(
+            repo.status_for_path(&"src/b.txt".into()).unwrap().status,
+            StatusCode::Modified.worktree(),
+        );
+    });
 }
 
 #[gpui::test]

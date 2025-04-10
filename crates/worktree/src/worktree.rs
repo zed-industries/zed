@@ -1338,6 +1338,10 @@ impl LocalWorktree {
                                     new_repo.work_directory_abs_path.clone(),
                                 ),
                                 dot_git_abs_path: Some(new_repo.dot_git_abs_path.clone()),
+                                repository_dir_abs_path: Some(
+                                    new_repo.repository_dir_abs_path.clone(),
+                                ),
+                                common_dir_abs_path: Some(new_repo.common_dir_abs_path.clone()),
                             });
                             new_repos.next();
                         }
@@ -1355,6 +1359,10 @@ impl LocalWorktree {
                                         new_repo.work_directory_abs_path.clone(),
                                     ),
                                     dot_git_abs_path: Some(new_repo.dot_git_abs_path.clone()),
+                                    repository_dir_abs_path: Some(
+                                        new_repo.repository_dir_abs_path.clone(),
+                                    ),
+                                    common_dir_abs_path: Some(new_repo.common_dir_abs_path.clone()),
                                 });
                             }
                             new_repos.next();
@@ -1368,6 +1376,8 @@ impl LocalWorktree {
                                 ),
                                 new_work_directory_abs_path: None,
                                 dot_git_abs_path: None,
+                                repository_dir_abs_path: None,
+                                common_dir_abs_path: None,
                             });
                             old_repos.next();
                         }
@@ -1379,6 +1389,8 @@ impl LocalWorktree {
                         old_work_directory_abs_path: None,
                         new_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
                         dot_git_abs_path: Some(repo.dot_git_abs_path.clone()),
+                        repository_dir_abs_path: Some(repo.repository_dir_abs_path.clone()),
+                        common_dir_abs_path: Some(repo.common_dir_abs_path.clone()),
                     });
                     new_repos.next();
                 }
@@ -1388,6 +1400,8 @@ impl LocalWorktree {
                         old_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
                         new_work_directory_abs_path: None,
                         dot_git_abs_path: Some(repo.dot_git_abs_path.clone()),
+                        repository_dir_abs_path: Some(repo.repository_dir_abs_path.clone()),
+                        common_dir_abs_path: Some(repo.common_dir_abs_path.clone()),
                     });
                     old_repos.next();
                 }
@@ -3091,14 +3105,17 @@ impl BackgroundScannerState {
         // Parse .git if it's a "gitfile" pointing to a repository directory elsewhere.
         if let Some(dot_git_contents) = smol::block_on(fs.load(&dot_git_abs_path)).ok() {
             if let Some(path) = dot_git_contents.strip_prefix("gitdir:") {
-                let relative_path = path.trim();
-                log::debug!("following .git indirection to {relative_path:?}");
-                let path = dot_git_abs_path.join(path);
+                let path = path.trim();
+                let path = dot_git_abs_path
+                    .parent()
+                    .unwrap_or(Path::new(""))
+                    .join(path);
                 if let Some(path) = smol::block_on(fs.canonicalize(&path)).log_err() {
                     repository_dir_abs_path = Path::new(&path).into();
                     common_dir_abs_path = repository_dir_abs_path.clone();
                     if let Some(ancestor_dot_git) = path
                         .ancestors()
+                        .skip(1)
                         .find(|ancestor| smol::block_on(is_git_dir(ancestor, fs)))
                     {
                         common_dir_abs_path = ancestor_dot_git.into();
@@ -3462,6 +3479,8 @@ pub struct UpdatedGitRepository {
     /// For a normal git repository checkout, the absolute path to the .git directory.
     /// For a worktree, the absolute path to the worktree's subdirectory inside the .git directory.
     pub dot_git_abs_path: Option<Arc<Path>>,
+    pub repository_dir_abs_path: Option<Arc<Path>>,
+    pub common_dir_abs_path: Option<Arc<Path>>,
 }
 
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
@@ -4078,7 +4097,6 @@ impl BackgroundScanner {
             }
         }
         self.send_status_update(false, SmallVec::new());
-        // send_status_update_inner(phase, state, status_update_tx, false, SmallVec::new());
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<Path>]) -> bool {
