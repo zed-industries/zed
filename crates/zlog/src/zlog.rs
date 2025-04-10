@@ -1,6 +1,7 @@
 //! # logger
 pub use log as log_impl;
 
+mod env_config;
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
 /// because we are currently just wrapping the `log` crate in `zlog`,
