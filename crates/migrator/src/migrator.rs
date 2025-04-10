@@ -573,7 +573,7 @@ mod tests {
             ),
         )
     }
-    
+
     #[test]
     fn test_replace_bash_false_with_terminal_in_profiles() {
         assert_migrate_settings(
