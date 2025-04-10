@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use dap::DapRegistry;
 use futures::channel::oneshot;
-use gpui::{App, Entity, Task};
+use gpui::{App, AppContext, Entity, Task};
 use project::Project;
 use serde::Deserialize;
 use std::process::Command;
@@ -75,7 +75,7 @@ impl Example {
         &self,
         app_state: Arc<AgentAppState>,
         cx: &mut App,
-    ) -> impl 'static + Future<Output = Result<()>> {
+    ) -> impl 'static + Future<Output = Result<()>> + use<> {
         let project = Project::local(
             app_state.client.clone(),
             app_state.node_runtime.clone(),
@@ -88,21 +88,27 @@ impl Example {
         );
 
         let tools = Arc::new(ToolWorkingSet::default());
-        let thread_store =
-            ThreadStore::new(project.clone(), tools, app_state.prompt_builder.clone(), cx)?;
+        let thread_store = cx.new(|cx| {
+            ThreadStore::new(project.clone(), tools, app_state.prompt_builder.clone(), cx)
+        });
 
         let thread = thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx));
 
         let (tx, rx) = oneshot::channel();
+        let mut tx = Some(tx);
 
         let subscription = cx.subscribe(
             &thread,
             move |thread, event: &ThreadEvent, cx| match event {
                 ThreadEvent::DoneStreaming => {
-                    tx.send(Ok(()));
+                    if let Some(tx) = tx.take() {
+                        _ = tx.send(Ok(()));
+                    }
                 }
                 ThreadEvent::ShowError(thread_error) => {
-                    tx.send(Err(anyhow!(thread_error.clone())));
+                    if let Some(tx) = tx.take() {
+                        _ = tx.send(Err(anyhow!(thread_error.clone())));
+                    }
                 }
                 ThreadEvent::ToolFinished {
                     tool_use_id,
@@ -112,17 +118,17 @@ impl Example {
             },
         );
 
-        let (system_prompt_context, load_error) = thread.read(cx).load_system_prompt_context(cx)?;
+        // let (system_prompt_context, load_error) = thread.read(cx).load_system_prompt_context(cx)?;
 
-        thread.update(cx, |thread, cx| {
-            let context = vec![];
-            thread.insert_user_message(self.prompt.clone(), context, None, cx);
-            thread.set_system_prompt_context(system_prompt_context);
-            thread.send_to_model(model, RequestKind::Chat, cx);
-        });
+        // thread.update(cx, |thread, cx| {
+        //     let context = vec![];
+        //     thread.insert_user_message(self.prompt.clone(), context, None, cx);
+        //     thread.set_system_prompt_context(system_prompt_context);
+        //     thread.send_to_model(model, RequestKind::Chat, cx);
+        // });
 
         async move {
-            rx.await?;
+            rx.await??;
             drop(subscription);
             Ok(())
         }

@@ -42,7 +42,7 @@ fn main() {
             let example =
                 Example::load_from_directory("./crates/eval/examples/find_and_replace_diff_card")?;
             example.setup()?;
-            cx.update(|cx| example.run(app_state, cx)).await?;
+            cx.update(|cx| example.run(app_state, cx))?.await?;
 
             anyhow::Ok(())
         })

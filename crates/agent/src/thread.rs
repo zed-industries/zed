@@ -2313,13 +2313,14 @@ fn main() {{
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = cx.update(|_, cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
+            cx.new(|cx| {
+                ThreadStore::new(
+                    project.clone(),
+                    Arc::default(),
+                    Arc::new(PromptBuilder::new(None).unwrap()),
+                    cx,
+                )
+            })
         });
 
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));

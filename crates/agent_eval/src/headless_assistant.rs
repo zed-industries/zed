@@ -56,8 +56,9 @@ impl HeadlessAssistant {
         );
 
         let tools = Arc::new(ToolWorkingSet::default());
-        let thread_store =
-            ThreadStore::new(project.clone(), tools, app_state.prompt_builder.clone(), cx)?;
+        let thread_store = cx.new(|cx| {
+            ThreadStore::new(project.clone(), tools, app_state.prompt_builder.clone(), cx)
+        });
 
         let thread = thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx));
 

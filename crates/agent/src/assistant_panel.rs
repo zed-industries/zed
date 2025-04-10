@@ -196,8 +196,8 @@ impl AssistantPanel {
             let tools = Arc::new(ToolWorkingSet::default());
             let thread_store = workspace.update(cx, |workspace, cx| {
                 let project = workspace.project().clone();
-                ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
-            })??;
+                cx.new(|cx| ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx))
+            })?;
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             let context_store = workspace

@@ -47,35 +47,30 @@ impl ThreadStore {
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
-        cx: &mut App,
-    ) -> Result<Entity<Self>> {
-        let this = cx.new(|cx| {
-            let context_server_factory_registry = ContextServerFactoryRegistry::default_global(cx);
-            let context_server_manager = cx.new(|cx| {
-                ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
-            });
-            let settings_subscription =
-                cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
-                    this.load_default_profile(cx);
-                });
-
-            let this = Self {
-                project,
-                tools,
-                prompt_builder,
-                context_server_manager,
-                context_server_tool_ids: HashMap::default(),
-                threads: Vec::new(),
-                _subscriptions: vec![settings_subscription],
-            };
-            this.load_default_profile(cx);
-            this.register_context_server_handlers(cx);
-            this.reload(cx).detach_and_log_err(cx);
-
-            this
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let context_server_factory_registry = ContextServerFactoryRegistry::default_global(cx);
+        let context_server_manager = cx.new(|cx| {
+            ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
         });
+        let settings_subscription =
+            cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
+                this.load_default_profile(cx);
+            });
 
-        Ok(this)
+        let this = Self {
+            project,
+            tools,
+            prompt_builder,
+            context_server_manager,
+            context_server_tool_ids: HashMap::default(),
+            threads: Vec::new(),
+            _subscriptions: vec![settings_subscription],
+        };
+        this.load_default_profile(cx);
+        this.register_context_server_handlers(cx);
+        this.reload(cx).detach_and_log_err(cx);
+        this
     }
 
     pub fn context_server_manager(&self) -> Entity<ContextServerManager> {
