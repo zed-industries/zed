@@ -6996,7 +6996,7 @@ async fn test_staging_random_hunks(
 
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/dir",
+        path!("/dir"),
         json!({
             ".git": {},
             "file.txt": buffer_text.clone()
@@ -7004,18 +7004,19 @@ async fn test_staging_random_hunks(
     )
     .await;
     fs.set_head_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[("file.txt".into(), committed_text.clone())],
     );
     fs.set_index_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[("file.txt".into(), index_text.clone())],
     );
+    let repo = fs.open_repo(path!("/dir/.git").as_ref()).unwrap();
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/file.txt", cx)
+            project.open_local_buffer(path!("/dir/file.txt"), cx)
         })
         .await
         .unwrap();
@@ -7066,7 +7067,6 @@ async fn test_staging_random_hunks(
         }
     }
 
-    let repo = fs.open_repo("/dir/.git".as_ref()).unwrap();
     log::info!(
         "index text:\n{}",
         repo.load_index_text("file.txt".into()).await.unwrap()
