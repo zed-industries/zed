@@ -902,25 +902,32 @@ impl Terminal {
                 )
                 .grid_clamp(term, Boundary::Grid);
 
-                if let Some((hyperlink_word, is_url, hyperlink_match)) =
-                    self.hyperlink_finder.find_from_grid_point(term, point)
-                {
-                    let target = if is_url {
-                        MaybeNavigationTarget::Url(hyperlink_word)
-                    } else {
-                        MaybeNavigationTarget::PathLike(PathLikeTarget {
-                            maybe_path: hyperlink_word,
-                            terminal_dir: self.working_directory(),
-                        })
-                    };
+                match self.hyperlink_finder.find_from_grid_point(term, point) {
+                    Some((maybe_url_or_path, is_url, url_match)) => {
+                        let target = if is_url {
+                            MaybeNavigationTarget::Url(maybe_url_or_path.clone())
+                        } else {
+                            MaybeNavigationTarget::PathLike(PathLikeTarget {
+                                maybe_path: maybe_url_or_path.clone(),
+                                terminal_dir: self.working_directory(),
+                            })
+                        };
 
-                    if *open {
-                        cx.emit(Event::Open(target));
-                    } else {
-                        self.update_selected_word(prev_hovered_word, hyperlink_match, target, cx);
+                        if *open {
+                            cx.emit(Event::Open(target));
+                        } else {
+                            self.update_selected_word(
+                                prev_hovered_word,
+                                url_match,
+                                maybe_url_or_path,
+                                target,
+                                cx,
+                            );
+                        }
                     }
-                } else {
-                    cx.emit(Event::NewNavigationTarget(None));
+                    None => {
+                        cx.emit(Event::NewNavigationTarget(None));
+                    }
                 }
             }
         }
@@ -930,18 +937,14 @@ impl Terminal {
         &mut self,
         prev_word: Option<HoveredWord>,
         word_match: RangeInclusive<AlacPoint>,
+        word: String,
         navigation_target: MaybeNavigationTarget,
         cx: &mut Context<Self>,
     ) {
-        let word = match &navigation_target {
-            MaybeNavigationTarget::Url(word) => word,
-            MaybeNavigationTarget::PathLike(PathLikeTarget { maybe_path, .. }) => maybe_path,
-        };
-
         if let Some(prev_word) = prev_word {
             if prev_word.word == *word && prev_word.word_match == word_match {
                 self.last_content.last_hovered_word = Some(HoveredWord {
-                    word: word.clone(),
+                    word,
                     word_match,
                     id: prev_word.id,
                 });
