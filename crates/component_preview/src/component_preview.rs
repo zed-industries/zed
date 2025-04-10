@@ -805,9 +805,7 @@ impl SerializableItem for ComponentPreview {
                         ActivePageId::default()
                     }
                 }
-                Err(e) => {
-                    ActivePageId::default()
-                }
+                Err(e) => ActivePageId::default(),
             };
 
         let user_store = project.read(cx).user_store().clone();
@@ -878,7 +876,7 @@ impl SerializableItem for ComponentPreview {
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
-       matches!(event, ItemEvent::UpdateTab)
+        matches!(event, ItemEvent::UpdateTab)
     }
 }
 
