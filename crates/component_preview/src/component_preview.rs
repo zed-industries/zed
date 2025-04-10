@@ -17,8 +17,9 @@ use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
 // Editor will be accessed through ui_input
+// We'll implement our own simple matching
 use project::Project;
-use ui::{Divider, ListItem, ListSubHeader, prelude::*};
+use ui::{Divider, HighlightedLabel, ListItem, ListSubHeader, prelude::*};
 
 use ui_input::SingleLineInput;
 use workspace::{AppState, ItemId, SerializableItem};
@@ -66,13 +67,13 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 enum PreviewEntry {
     AllComponents,
     Separator,
-    Component(ComponentMetadata),
+    Component(ComponentMetadata, Option<Vec<usize>>),
     SectionHeader(SharedString),
 }
 
 impl From<ComponentMetadata> for PreviewEntry {
     fn from(component: ComponentMetadata) -> Self {
-        PreviewEntry::Component(component)
+        PreviewEntry::Component(component, None)
     }
 }
 
@@ -180,6 +181,9 @@ impl ComponentPreview {
         self.components[ix].clone()
     }
     
+    
+
+    
     fn filtered_components(&self) -> Vec<ComponentMetadata> {
         if self.filter_text.is_empty() {
             return self.components.clone();
@@ -204,31 +208,80 @@ impl ComponentPreview {
     fn scope_ordered_entries(&self) -> Vec<PreviewEntry> {
         use std::collections::HashMap;
 
-        let mut scope_groups: HashMap<ComponentScope, Vec<ComponentMetadata>> = HashMap::default();
-        let filter = self.filter_text.to_lowercase();
+        let mut scope_groups: HashMap<ComponentScope, Vec<(ComponentMetadata, Option<Vec<usize>>)>> = HashMap::default();
+        let lowercase_filter = self.filter_text.to_lowercase();
 
-        // Filter components based on filter_text
         for component in &self.components {
-            let component_name = component.name().to_lowercase();
-            let scope_name = component.scope().to_string().to_lowercase();
-            let description = component.description().map(|d| d.to_lowercase()).unwrap_or_default();
-            
-            // Skip components that don't match the filter text
-            if !filter.is_empty() && 
-               !component_name.contains(&filter) && 
-               !scope_name.contains(&filter) && 
-               !description.contains(&filter) {
+            // If filter is empty, add all components without highlighting
+            if self.filter_text.is_empty() {
+                scope_groups
+                    .entry(component.scope())
+                    .or_insert_with(|| Vec::new())
+                    .push((component.clone(), None));
                 continue;
             }
             
-            scope_groups
-                .entry(component.scope())
-                .or_insert_with(Vec::new)
-                .push(component.clone());
+            // For filtering, check various component parts
+            let full_component_name = component.name();
+            let scopeless_name = component.scopeless_name();
+            let scope_name = component.scope().to_string();
+            let description = component.description().unwrap_or_default();
+            
+            // Debug print component info
+            println!("[Filter Debug] Filter: '{}' | Component: '{}' (scopeless: '{}')", 
+                self.filter_text, full_component_name, scopeless_name);
+            
+            let lowercase_scopeless = scopeless_name.to_lowercase();
+            let lowercase_scope = scope_name.to_lowercase();
+            let lowercase_desc = description.to_lowercase();
+            
+            // Try to match in the scopeless component name first
+            if lowercase_scopeless.contains(&lowercase_filter) {
+                println!("[Filter Debug] '{}' contains '{}'", scopeless_name, self.filter_text);
+                // Find positions for highlighting in the name
+                if let Some(index) = lowercase_scopeless.find(&lowercase_filter) {
+                    println!("[Filter Debug] Match at index {} in '{}'", index, scopeless_name);
+                    let end = index + lowercase_filter.len();
+                    
+                    // Validate and ensure the range is valid
+                    if end <= scopeless_name.len() {
+                        // Create positions for each byte in the matched range
+                        let mut positions = Vec::new();
+                        for i in index..end {
+                            // Ensure we're on a character boundary
+                            if scopeless_name.is_char_boundary(i) {
+                                positions.push(i);
+                            }
+                        }
+                        
+                        println!("[Filter Debug] Positions for '{}': {:?}", scopeless_name, positions);
+                        
+                        if !positions.is_empty() {
+                            scope_groups
+                                .entry(component.scope())
+                                .or_insert_with(|| Vec::new())
+                                .push((component.clone(), Some(positions)));
+                            continue;
+                        }
+                    }
+                }
+            }
+            
+            // If no name match or couldn't highlight, check other fields
+            if lowercase_scopeless.contains(&lowercase_filter) || 
+               lowercase_scope.contains(&lowercase_filter) || 
+               lowercase_desc.contains(&lowercase_filter) {
+                // We have a match but couldn't highlight properly
+                scope_groups
+                    .entry(component.scope())
+                    .or_insert_with(|| Vec::new())
+                    .push((component.clone(), None));
+            }
         }
-
+        
+        // Sort the components in each group
         for components in scope_groups.values_mut() {
-            components.sort_by_key(|c| c.name().to_lowercase());
+            components.sort_by_key(|(c, _)| c.sort_name());
         }
 
         let mut entries = Vec::new();
@@ -250,10 +303,10 @@ impl ComponentPreview {
                 if !components.is_empty() {
                     entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
                     let mut sorted_components = components;
-                    sorted_components.sort_by_key(|component| component.sort_name());
+                    sorted_components.sort_by_key(|(component, _)| component.sort_name());
 
-                    for component in sorted_components {
-                        entries.push(PreviewEntry::Component(component));
+                    for (component, positions) in sorted_components {
+                        entries.push(PreviewEntry::Component(component, positions));
                     }
                 }
             }
@@ -265,10 +318,10 @@ impl ComponentPreview {
                 entries.push(PreviewEntry::Separator);
                 entries.push(PreviewEntry::SectionHeader("Uncategorized".into()));
                 let mut sorted_components = components.clone();
-                sorted_components.sort_by_key(|c| c.sort_name());
+                sorted_components.sort_by_key(|(c, _)| c.sort_name());
 
-                for component in sorted_components {
-                    entries.push(PreviewEntry::Component(component.clone()));
+                for (component, positions) in sorted_components {
+                    entries.push(PreviewEntry::Component(component, positions));
                 }
             }
         }
@@ -283,13 +336,43 @@ impl ComponentPreview {
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         match entry {
-            PreviewEntry::Component(component_metadata) => {
+            PreviewEntry::Component(component_metadata, highlight_positions) => {
                 let id = component_metadata.id();
                 let selected = self.active_page == PreviewPage::Component(id.clone());
+                let name = component_metadata.scopeless_name();
+                
                 ListItem::new(ix)
                     .child(
-                        Label::new(component_metadata.scopeless_name().clone())
-                            .color(Color::Default),
+                        if let Some(positions) = highlight_positions {
+                            // Ensure highlight positions are within bounds
+                            // When filtering, we were using the full component name with module path
+                            // but we only display the scopeless name in the sidebar
+                            // Need to discard the previous positions and calculate them based on the scopeless name
+                            println!("[Filter Debug] Full positions {:?} are not valid for scopeless name '{}'", positions, name);
+                            
+                            // Get positions for the scopeless name directly
+                            let name_lower = name.to_lowercase();
+                            let filter_lower = self.filter_text.to_lowercase();
+                            let valid_positions = if let Some(start) = name_lower.find(&filter_lower) {
+                                let end = start + filter_lower.len();
+                                (start..end).collect()
+                            } else {
+                                Vec::new()
+                            };
+                                
+                            println!("[Filter Debug] RENDER: '{}' positions: {:?}, valid: {:?}", name, positions, valid_positions);
+                                
+                            if valid_positions.is_empty() {
+                                // Fall back to regular label if no valid positions
+                                Label::new(name.clone()).color(Color::Default).into_any_element()
+                            } else {
+                                HighlightedLabel::new(name.clone(), valid_positions).into_any_element()
+                            }
+                        } else {
+                            Label::new(name.clone())
+                                .color(Color::Default)
+                                .into_any_element()
+                        }
                     )
                     .selectable(true)
                     .toggle_state(selected)
@@ -377,7 +460,7 @@ impl ComponentPreview {
 
                 weak_entity
                     .update(cx, |this, cx| match entry {
-                        PreviewEntry::Component(component) => this
+                        PreviewEntry::Component(component, _) => this
                             .render_preview(component, window, cx)
                             .into_any_element(),
                         PreviewEntry::SectionHeader(shared_string) => this

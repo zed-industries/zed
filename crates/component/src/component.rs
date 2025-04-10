@@ -191,6 +191,14 @@ pub fn components() -> AllComponents {
     all_components
 }
 
+// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// pub enum ComponentStatus {
+//     WorkInProgress,
+//     EngineeringReady,
+//     Live,
+//     Deprecated,
+// }
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ComponentScope {
     Collaboration,
