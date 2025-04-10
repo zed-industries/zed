@@ -175,6 +175,7 @@ impl Render for BreakpointList {
         }
         v_flex()
             .size_full()
+            .m_0p5()
             .child(list(self.list_state.clone()).flex_grow())
             .child(self.render_vertical_scrollbar(cx))
     }
@@ -258,7 +259,7 @@ impl LineBreakpoint {
         })
         .child(
             v_flex()
-                .py_0p5()
+                .py_1()
                 .items_center()
                 .child(
                     h_flex()
@@ -305,9 +306,11 @@ impl ExceptionBreakpoint {
         .rounded()
         .start_slot(Indicator::icon(Icon::new(IconName::Flame)).color(color))
         .child(
-            Label::new(self.data.label)
-                .size(LabelSize::Small)
-                .line_height_style(ui::LineHeightStyle::UiLabel),
+            div().py_1().child(
+                Label::new(self.data.label)
+                    .size(LabelSize::Small)
+                    .line_height_style(ui::LineHeightStyle::UiLabel),
+            ),
         )
     }
 }
