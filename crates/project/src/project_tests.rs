@@ -30,10 +30,11 @@ use parking_lot::Mutex;
 use paths::{config_dir, tasks_file};
 use postage::stream::Stream as _;
 use pretty_assertions::{assert_eq, assert_matches};
+use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::{mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
+use std::{env, mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
@@ -6962,6 +6963,115 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
                 ),
             ],
         );
+    });
+}
+
+#[gpui::test]
+async fn test_staging_random_hunks(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
+    let operations = env::var("OPERATIONS")
+        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        .unwrap_or(20);
+
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_text = (0..30).map(|i| format!("line {i}\n")).collect::<String>();
+    let index_text = committed_text.clone();
+    let buffer_text = (0..30)
+        .map(|i| match i % 5 {
+            0 => format!("line {i} (modified)\n"),
+            _ => format!("line {i}\n"),
+        })
+        .collect::<String>();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": buffer_text.clone()
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        "/dir/.git".as_ref(),
+        &[("file.txt".into(), committed_text.clone())],
+    );
+    fs.set_index_for_repo(
+        "/dir/.git".as_ref(),
+        &[("file.txt".into(), index_text.clone())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut hunks =
+        uncommitted_diff.update(cx, |diff, cx| diff.hunks(&snapshot, cx).collect::<Vec<_>>());
+    assert_eq!(hunks.len(), 6);
+
+    for _i in 0..operations {
+        let hunk_ix = rng.gen_range(0..hunks.len());
+        let hunk = &mut hunks[hunk_ix];
+        let row = hunk.range.start.row;
+
+        if hunk.status().has_secondary_hunk() {
+            log::info!("staging hunk at {row}");
+            uncommitted_diff.update(cx, |diff, cx| {
+                diff.stage_or_unstage_hunks(true, &[hunk.clone()], &snapshot, true, cx);
+            });
+            hunk.secondary_status = SecondaryHunkRemovalPending;
+        } else {
+            log::info!("unstaging hunk at {row}");
+            uncommitted_diff.update(cx, |diff, cx| {
+                diff.stage_or_unstage_hunks(false, &[hunk.clone()], &snapshot, true, cx);
+            });
+            hunk.secondary_status = SecondaryHunkAdditionPending;
+        }
+
+        for _ in 0..rng.gen_range(0..10) {
+            log::info!("yielding");
+            cx.executor().simulate_random_delay().await;
+        }
+    }
+
+    cx.executor().run_until_parked();
+
+    for hunk in &mut hunks {
+        if hunk.secondary_status == SecondaryHunkRemovalPending {
+            hunk.secondary_status = NoSecondaryHunk;
+        } else if hunk.secondary_status == SecondaryHunkAdditionPending {
+            hunk.secondary_status = HasSecondaryHunk;
+        }
+    }
+
+    let repo = fs.open_repo("/dir/.git".as_ref()).unwrap();
+    log::info!(
+        "index text:\n{}",
+        repo.load_index_text("file.txt".into()).await.unwrap()
+    );
+
+    uncommitted_diff.update(cx, |diff, cx| {
+        let expected_hunks = hunks
+            .iter()
+            .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
+            .collect::<Vec<_>>();
+        let actual_hunks = diff
+            .hunks(&snapshot, cx)
+            .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
+            .collect::<Vec<_>>();
+        assert_eq!(actual_hunks, expected_hunks);
     });
 }
 

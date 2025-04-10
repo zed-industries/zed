@@ -381,6 +381,7 @@ impl BufferDiffInner {
         while let Some(PendingHunk {
             buffer_range,
             diff_base_byte_range,
+            new_status,
             ..
         }) = pending_hunks_iter.next()
         {
@@ -439,16 +440,23 @@ impl BufferDiffInner {
             let index_end = prev_unstaged_hunk_base_text_end + end_overshoot;
             let index_byte_range = index_start..index_end;
 
-            let replacement_text = if stage {
-                log::debug!("stage hunk {:?}", buffer_offset_range);
-                buffer
-                    .text_for_range(buffer_offset_range)
-                    .collect::<String>()
-            } else {
-                log::debug!("unstage hunk {:?}", buffer_offset_range);
-                head_text
-                    .chunks_in_range(diff_base_byte_range.clone())
-                    .collect::<String>()
+            let replacement_text = match new_status {
+                DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
+                    log::debug!("staging hunk {:?}", buffer_offset_range);
+                    buffer
+                        .text_for_range(buffer_offset_range)
+                        .collect::<String>()
+                }
+                DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
+                    log::debug!("unstaging hunk {:?}", buffer_offset_range);
+                    head_text
+                        .chunks_in_range(diff_base_byte_range.clone())
+                        .collect::<String>()
+                }
+                _ => {
+                    debug_assert!(false);
+                    continue;
+                }
             };
 
             edits.push((index_byte_range, replacement_text));

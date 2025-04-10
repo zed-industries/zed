@@ -91,8 +91,21 @@ struct BufferDiffState {
     language: Option<Arc<Language>>,
     language_registry: Option<Arc<LanguageRegistry>>,
     recalculating_tx: postage::watch::Sender<bool>,
+
+    /// These operation counts are used to ensure that head and index text
+    /// values read from the git repository are up-to-date with any hunk staging
+    /// operations that have been performed on the BufferDiff.
+    ///
+    /// The operation_count is incremented immediately when the user initiates a
+    /// hunk stage/unstage operation. Then, upon writing the new index text do
+    /// disk, the `operation_count_as_of_write` is updated to reflect the
+    /// operation_count that prompted the write. Finally, when reloading
+    /// index/head text from disk in response to a filesystem event, the
+    /// `operation_count_as_of_read` is updated to reflect the latest previous
+    /// write.
     hunk_staging_operation_count: usize,
-    hunk_staging_operation_count_as_of_last_reload: usize,
+    hunk_staging_operation_count_as_of_write: usize,
+    hunk_staging_operation_count_as_of_read: usize,
 
     head_text: Option<Arc<String>>,
     index_text: Option<Arc<String>>,
@@ -1247,31 +1260,33 @@ impl GitStore {
         if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
             let buffer_id = diff.read(cx).buffer_id;
             if let Some(diff_state) = self.diffs.get(&buffer_id) {
-                diff_state.update(cx, |diff_state, _| {
+                let hunk_staging_operation_count = diff_state.update(cx, |diff_state, _| {
                     diff_state.hunk_staging_operation_count += 1;
+                    diff_state.hunk_staging_operation_count
                 });
-            }
-            if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
-                let recv = repo.update(cx, |repo, cx| {
-                    log::debug!("hunks changed for {}", path.display());
-                    repo.spawn_set_index_text_job(
-                        path,
-                        new_index_text.as_ref().map(|rope| rope.to_string()),
-                        cx,
-                    )
-                });
-                let diff = diff.downgrade();
-                cx.spawn(async move |this, cx| {
-                    if let Ok(Err(error)) = cx.background_spawn(recv).await {
-                        diff.update(cx, |diff, cx| {
-                            diff.clear_pending_hunks(cx);
-                        })
-                        .ok();
-                        this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
+                if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
+                    let recv = repo.update(cx, |repo, cx| {
+                        log::debug!("hunks changed for {}", path.display());
+                        repo.spawn_set_index_text_job(
+                            path,
+                            new_index_text.as_ref().map(|rope| rope.to_string()),
+                            hunk_staging_operation_count,
+                            cx,
+                        )
+                    });
+                    let diff = diff.downgrade();
+                    cx.spawn(async move |this, cx| {
+                        if let Ok(Err(error)) = cx.background_spawn(recv).await {
+                            diff.update(cx, |diff, cx| {
+                                diff.clear_pending_hunks(cx);
+                            })
                             .ok();
-                    }
-                })
-                .detach();
+                            this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
+                                .ok();
+                        }
+                    })
+                    .detach();
+                }
             }
         }
     }
@@ -1613,12 +1628,28 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let repo_path = RepoPath::from_str(&envelope.payload.path);
+
+        let hunk_staging_operation_count = this
+            .read_with(&cx, |this, cx| {
+                let project_path = repository_handle
+                    .read(cx)
+                    .repo_path_to_project_path(&repo_path, cx)?;
+                let buffer_id = this
+                    .buffer_store
+                    .read(cx)
+                    .buffer_id_for_project_path(&project_path)?;
+                let diff_state = this.diffs.get(buffer_id)?;
+                Some(diff_state.read(cx).hunk_staging_operation_count)
+            })?
+            .ok_or_else(|| anyhow!("unknown buffer"))?;
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.spawn_set_index_text_job(
-                    RepoPath::from_str(&envelope.payload.path),
+                    repo_path,
                     envelope.payload.text,
+                    hunk_staging_operation_count,
                     cx,
                 )
             })?
@@ -2014,8 +2045,8 @@ impl GitStore {
                 if let Some(buffer) = this.buffer_store.read(cx).get(buffer_id) {
                     let buffer = buffer.read(cx).text_snapshot();
                     diff_state.update(cx, |diff_state, cx| {
-                        diff_state.hunk_staging_operation_count_as_of_last_reload =
-                            diff_state.hunk_staging_operation_count;
+                        diff_state.hunk_staging_operation_count_as_of_read =
+                            diff_state.hunk_staging_operation_count_as_of_write;
                         diff_state.handle_base_texts_updated(buffer, request.payload, cx);
                     })
                 }
@@ -2211,7 +2242,7 @@ impl BufferDiffState {
         let index_changed = self.index_changed;
         let head_changed = self.head_changed;
         let language_changed = self.language_changed;
-        let prev_hunk_staging_operation_count = self.hunk_staging_operation_count_as_of_last_reload;
+        let prev_hunk_staging_operation_count = self.hunk_staging_operation_count_as_of_read;
         let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
             (Some(index), Some(head)) => Arc::ptr_eq(index, head),
             (None, None) => true,
@@ -2262,6 +2293,12 @@ impl BufferDiffState {
             }
 
             let cancel = this.update(cx, |this, _| {
+                // This checks whether all pending stage/unstage operations
+                // have quiesced (i.e. both the corresponding write and the
+                // read of that write have completed). If not, then we cancel
+                // this recalculation attempt to avoid invalidating pending
+                // state too quickly; another recalculation will come along
+                // later and clear the pending state once the state of the index has settled.
                 if this.hunk_staging_operation_count > prev_hunk_staging_operation_count {
                     *this.recalculating_tx.borrow_mut() = false;
                     true
@@ -2320,7 +2357,6 @@ impl BufferDiffState {
                     this.index_changed = false;
                     this.head_changed = false;
                     this.language_changed = false;
-                    log::debug!("completed recalculation");
                     *this.recalculating_tx.borrow_mut() = false;
                 })?;
             }
@@ -2340,7 +2376,8 @@ impl Default for BufferDiffState {
             language_registry: Default::default(),
             recalculating_tx: postage::watch::channel_with(false).0,
             hunk_staging_operation_count: 0,
-            hunk_staging_operation_count_as_of_last_reload: 0,
+            hunk_staging_operation_count_as_of_read: 0,
+            hunk_staging_operation_count_as_of_write: 0,
             head_text: Default::default(),
             index_text: Default::default(),
             head_changed: Default::default(),
@@ -2608,12 +2645,12 @@ impl Repository {
                                     file.worktree.read(cx).absolutize(&file.path).ok()?;
                                 let repo_path = this.abs_path_to_repo_path(&abs_path)?;
                                 log::debug!(
-                                    "reload diff bases for repo path {}",
+                                    "start reload diff bases for repo path {}",
                                     repo_path.0.display()
                                 );
                                 diff_state.update(cx, |diff_state, _| {
-                                    diff_state.hunk_staging_operation_count_as_of_last_reload =
-                                        diff_state.hunk_staging_operation_count;
+                                    diff_state.hunk_staging_operation_count_as_of_read =
+                                        diff_state.hunk_staging_operation_count_as_of_write;
 
                                     let has_unstaged_diff = diff_state
                                         .unstaged_diff
@@ -3457,6 +3494,7 @@ impl Repository {
         &mut self,
         path: RepoPath,
         content: Option<String>,
+        hunk_staging_operation_count: usize,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
         let id = self.id;
@@ -3466,7 +3504,7 @@ impl Repository {
             Some(GitJobKey::WriteIndex(path.clone())),
             None,
             move |git_repo, mut cx| async move {
-                log::debug!("updating index text for buffer {}", path.display());
+                log::debug!("start updating index text for buffer {}", path.display());
                 match git_repo {
                     RepositoryState::Local {
                         backend,
@@ -3488,6 +3526,7 @@ impl Repository {
                             .await?;
                     }
                 }
+                log::debug!("finish updating index text for buffer {}", path.display());
 
                 let project_path = this
                     .read_with(&cx, |this, cx| this.repo_path_to_project_path(&path, cx))
@@ -3500,7 +3539,8 @@ impl Repository {
                         .buffer_id_for_project_path(&project_path?)?;
                     let diff_state = git_store.diffs.get(buffer_id)?;
                     diff_state.update(cx, |diff_state, _| {
-                        diff_state.hunk_staging_operation_count += 1;
+                        diff_state.hunk_staging_operation_count_as_of_write =
+                            hunk_staging_operation_count;
                     });
                     Some(())
                 })?;
