@@ -536,7 +536,7 @@ strum = { version = "0.26.0", features = ["derive"] }
 subtle = "2.5.0"
 syn = { version = "1.0.72", features = ["full", "extra-traits"] }
 sys-locale = "0.3.1"
-sysinfo = "0.31.0"
+sysinfo = "0.34.0"
 take-until = "0.2.0"
 tempfile = "3.9.0"
 thiserror = "2.0.12"
