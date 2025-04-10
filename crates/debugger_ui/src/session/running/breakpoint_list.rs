@@ -2,11 +2,13 @@ use std::path::{Path, PathBuf};
 
 use gpui::{AppContext, Entity, ListState, MouseButton, Stateful, list};
 use project::{
-    Project, debugger::breakpoint_store::BreakpointStore, worktree_store::WorktreeStore,
+    Project,
+    debugger::breakpoint_store::{BreakpointStore, SourceBreakpoint},
+    worktree_store::WorktreeStore,
 };
 use ui::{
-    App, Color, Context, Div, Indicator, InteractiveElement, IntoElement, Label, LabelCommon,
-    LabelSize, ListItem, ParentElement, Render, RenderOnce, Scrollbar, ScrollbarState,
+    App, Color, Context, Div, Icon, IconName, Indicator, InteractiveElement, IntoElement, Label,
+    LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce, Scrollbar, ScrollbarState,
     SharedString, StatefulInteractiveElement, Styled, div, h_flex, px, v_flex,
 };
 
@@ -89,45 +91,52 @@ impl Render for BreakpointList {
         _window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
+        let old_len = self.breakpoints.len();
         let breakpoints = self.breakpoint_store.read(cx).all_breakpoints(cx);
-        let breakpoints = breakpoints
-            .into_iter()
-            .flat_map(|(path, mut breakpoints)| {
-                let relative_worktree_path =
-                    self.worktree_store
-                        .read(cx)
-                        .find_worktree(&path, cx)
-                        .and_then(|(worktree, relative_path)| {
-                            worktree.read(cx).is_visible().then(|| {
-                                Path::new(worktree.read(cx).root_name()).join(relative_path)
-                            })
-                        });
-                breakpoints.sort_by_key(|breakpoint| breakpoint.row);
-                breakpoints.into_iter().filter_map(move |breakpoint| {
-                    debug_assert_eq!(&path, &breakpoint.path);
-                    let file_name = breakpoint.path.file_name()?;
+        self.breakpoints.clear();
 
-                    let dir = relative_worktree_path
-                        .clone()
-                        .unwrap_or_else(|| PathBuf::from(&*breakpoint.path))
-                        .parent()
-                        .and_then(|parent| {
-                            parent
-                                .to_str()
-                                .map(ToOwned::to_owned)
-                                .map(SharedString::from)
-                        });
-                    let name = file_name
-                        .to_str()
-                        .map(ToOwned::to_owned)
-                        .map(SharedString::from)?;
-                    let line = format!("Line {}", breakpoint.row + 1).into();
-                    Some(BreakpointEntry::LineBreakpoint { name, dir, line })
+        let breakpoints = breakpoints.into_iter().flat_map(|(path, mut breakpoints)| {
+            let relative_worktree_path = self
+                .worktree_store
+                .read(cx)
+                .find_worktree(&path, cx)
+                .and_then(|(worktree, relative_path)| {
+                    worktree
+                        .read(cx)
+                        .is_visible()
+                        .then(|| Path::new(worktree.read(cx).root_name()).join(relative_path))
+                });
+            breakpoints.sort_by_key(|breakpoint| breakpoint.row);
+            breakpoints.into_iter().filter_map(move |breakpoint| {
+                debug_assert_eq!(&path, &breakpoint.path);
+                let file_name = breakpoint.path.file_name()?;
+
+                let dir = relative_worktree_path
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from(&*breakpoint.path))
+                    .parent()
+                    .and_then(|parent| {
+                        parent
+                            .to_str()
+                            .map(ToOwned::to_owned)
+                            .map(SharedString::from)
+                    });
+                let name = file_name
+                    .to_str()
+                    .map(ToOwned::to_owned)
+                    .map(SharedString::from)?;
+                let line = format!("Line {}", breakpoint.row + 1).into();
+                Some(BreakpointEntry::LineBreakpoint {
+                    name,
+                    dir,
+                    line,
+                    breakpoint,
                 })
             })
-            .collect::<Vec<_>>();
-        if self.breakpoints.len() != breakpoints.len() {
-            self.breakpoints = breakpoints;
+        });
+
+        self.breakpoints.extend(breakpoints);
+        if self.breakpoints.len() != old_len {
             self.list_state.reset(self.breakpoints.len());
         }
         v_flex()
@@ -143,17 +152,30 @@ enum BreakpointEntry {
         name: SharedString,
         dir: Option<SharedString>,
         line: SharedString,
+        breakpoint: SourceBreakpoint,
     },
 }
 
 impl RenderOnce for BreakpointEntry {
     fn render(self, _: &mut ui::Window, _: &mut App) -> impl ui::IntoElement {
-        let Self::LineBreakpoint { name, dir, line } = self;
+        let Self::LineBreakpoint {
+            name,
+            dir,
+            line,
+            breakpoint,
+        } = self;
+
+        let icon_name = if breakpoint.state.is_enabled() {
+            IconName::DebugBreakpoint
+        } else {
+            IconName::DebugDisabledBreakpoint
+        };
+        let indicator = Indicator::icon(Icon::new(icon_name)).color(Color::Debugger);
         ListItem::new(SharedString::from(format!(
             "breakpoint-ui-item-{:?}/{}:{}",
             dir, name, line
         )))
-        .start_slot(Indicator::dot().color(Color::Debugger))
+        .start_slot(indicator)
         .rounded()
         .child(
             v_flex()
@@ -162,12 +184,17 @@ impl RenderOnce for BreakpointEntry {
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(Label::new(name).size(LabelSize::Small))
-                        .children(
-                            dir.map(|dir| {
-                                Label::new(dir).color(Color::Muted).size(LabelSize::Small)
-                            }),
-                        ),
+                        .child(
+                            Label::new(name)
+                                .size(LabelSize::Small)
+                                .line_height_style(ui::LineHeightStyle::UiLabel),
+                        )
+                        .children(dir.map(|dir| {
+                            Label::new(dir)
+                                .color(Color::Muted)
+                                .size(LabelSize::Small)
+                                .line_height_style(ui::LineHeightStyle::UiLabel)
+                        })),
                 )
                 .child(
                     Label::new(line)
