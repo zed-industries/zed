@@ -25,6 +25,7 @@ use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
 use http_client::HttpClient;
+use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::ResultExt;
@@ -1430,7 +1431,7 @@ impl App {
 
     /// Sets the right click menu for the app icon in the dock
     pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
-        self.platform.set_dock_menu(menus, &self.keymap.borrow());
+        self.platform.set_dock_menu(menus, &self.keymap.borrow())
     }
 
     /// Performs the action associated with the given dock menu item, only used on Windows for now.
@@ -1444,6 +1445,16 @@ impl App {
     /// If the path is already in the list, it will be moved to the bottom of the list.
     pub fn add_recent_document(&self, path: &Path) {
         self.platform.add_recent_document(path);
+    }
+
+    /// Updates the jump list with the updated list of recent paths for the application, only used on Windows for now.
+    /// Note that this also sets the dock menu on Windows.
+    pub fn update_jump_list(
+        &self,
+        menus: Vec<MenuItem>,
+        entries: Vec<SmallVec<[PathBuf; 2]>>,
+    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+        self.platform.update_jump_list(menus, entries)
     }
 
     /// Dispatch an action to the currently active window or global action handler
