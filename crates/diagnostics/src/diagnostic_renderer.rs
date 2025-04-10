@@ -173,15 +173,11 @@ impl DiagnosticBlock {
         div()
             .border_l_2()
             .px_2()
-            // .my(px(1.)) // NOTE: we can only borrow space from the line-height...
-            .max_h(10 * editor_line_height) // - px(2.))
             .line_height(line_height)
             .bg(background_color)
             .border_color(border_color)
             .id(self.id)
             .max_w(max_width)
-            .overflow_y_hidden()
-            .overflow_scroll()
             .child(
                 MarkdownElement::new(self.markdown.clone(), hover_markdown_style(bcx.window, cx))
                     .on_url_click({
