@@ -52,7 +52,6 @@ dependencies = [
 name = "agent"
 version = "0.1.0"
 dependencies = [
- "agent_rules",
  "anyhow",
  "assistant_context_editor",
  "assistant_settings",

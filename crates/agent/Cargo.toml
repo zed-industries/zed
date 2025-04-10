@@ -19,7 +19,6 @@ test-support = [
 ]
 
 [dependencies]
-agent_rules.workspace = true
 anyhow.workspace = true
 assistant_context_editor.workspace = true
 assistant_settings.workspace = true
