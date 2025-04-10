@@ -656,7 +656,7 @@
         "name": "Write",
         "enable_all_context_servers": true,
         "tools": {
-          "bash": true,
+          "terminal": true,
           "batch_tool": true,
           "code_actions": true,
           "code_symbols": true,
