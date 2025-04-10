@@ -7756,77 +7756,81 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
     cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    fake_server
-        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-            );
-            assert_eq!(params.options.tab_size, 4);
-            Ok(Some(vec![lsp::TextEdit::new(
-                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
-                ", ".to_string(),
-            )]))
-        })
-        .next()
-        .await;
-    cx.executor().start_waiting();
-    save.await;
+    {
+        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+            move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                );
+                assert_eq!(params.options.tab_size, 4);
+                Ok(Some(vec![lsp::TextEdit::new(
+                    lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                    ", ".to_string(),
+                )]))
+            },
+        );
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
 
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.text(cx)),
-        "one, two\nthree\n"
-    );
-    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.text(cx)),
+            "one, two\nthree\n"
+        );
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    }
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("one\ntwo\nthree\n", window, cx)
-    });
-    assert!(cx.read(|cx| editor.is_dirty(cx)));
+    {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("one\ntwo\nthree\n", window, cx)
+        });
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
 
-    // Ensure we can still save even if formatting hangs.
-    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
-        move |params, _| async move {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-            );
-            futures::future::pending::<()>().await;
-            unreachable!()
-        },
-    );
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    cx.executor().advance_clock(super::FORMAT_TIMEOUT);
-    cx.executor().start_waiting();
-    save.await;
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.text(cx)),
-        "one\ntwo\nthree\n"
-    );
-    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+        // Ensure we can still save even if formatting hangs.
+        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+            move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                );
+                futures::future::pending::<()>().await;
+                unreachable!()
+            },
+        );
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().advance_clock(super::FORMAT_TIMEOUT);
+        cx.executor().start_waiting();
+        save.await;
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.text(cx)),
+            "one\ntwo\nthree\n"
+        );
+    }
 
     // For non-dirty buffer, no formatting request should be sent
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    let _pending_format_request = fake_server
-        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+    {
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
             panic!("Should not be invoked on non-dirty buffer");
-        })
-        .next();
-    cx.executor().start_waiting();
-    save.await;
+        });
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
+    }
 
     // Set rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
@@ -7839,28 +7843,28 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         );
     });
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("somehting_new\n", window, cx)
-    });
-    assert!(cx.read(|cx| editor.is_dirty(cx)));
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    fake_server
-        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-            );
-            assert_eq!(params.options.tab_size, 8);
-            Ok(Some(vec![]))
-        })
-        .next()
-        .await;
-    cx.executor().start_waiting();
-    save.await;
+    {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("somehting_new\n", window, cx)
+        });
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
+        let _formatting_request_signal = fake_server
+            .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                );
+                assert_eq!(params.options.tab_size, 8);
+                Ok(Some(vec![]))
+            });
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
+    }
 }
 
 #[gpui::test]
