@@ -327,9 +327,10 @@ impl LocalMode {
 
             session
                 .client
-                .on_request::<dap::requests::SetExceptionBreakpoints, _>(move |_, args| {
+                .on_request::<dap::requests::SetExceptionBreakpoints, _>(move |_, _| {
                     Ok(dap::SetExceptionBreakpointsResponse { breakpoints: None })
-                });
+                })
+                .await;
 
             session
                 .client
