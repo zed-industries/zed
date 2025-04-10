@@ -522,7 +522,7 @@ mod tests {
         #[should_panic(
             expected = "Path = «/test/cool.rs», line = 1, at grid cells (0, 0)..=(9, 0)"
         )]
-        fn large_colum_should_not_be_hyperlinked() {
+        fn invalid_row_column_should_be_part_of_path() {
             test_hyperlink!("‹«/👉test/cool.rs:1:618033988749»›");
             test_hyperlink!("‹«/👉test/cool.rs(1,618033988749)»›");
         }
