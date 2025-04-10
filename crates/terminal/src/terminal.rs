@@ -912,7 +912,6 @@ impl Terminal {
                                 terminal_dir: self.working_directory(),
                             })
                         };
-
                         if *open {
                             cx.emit(Event::Open(target));
                         } else {
@@ -942,7 +941,7 @@ impl Terminal {
         cx: &mut Context<Self>,
     ) {
         if let Some(prev_word) = prev_word {
-            if prev_word.word == *word && prev_word.word_match == word_match {
+            if prev_word.word == word && prev_word.word_match == word_match {
                 self.last_content.last_hovered_word = Some(HoveredWord {
                     word,
                     word_match,
