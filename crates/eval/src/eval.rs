@@ -42,7 +42,7 @@ fn main() {
             let example =
                 Example::load_from_directory("./crates/eval/examples/find_and_replace_diff_card")?;
             example.setup()?;
-            cx.update(|cx| example.run(app_state, cx))?.await?;
+            cx.update(|cx| example.run(model, app_state, cx))?.await?;
 
             anyhow::Ok(())
         })
@@ -99,7 +99,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     AssistantSettings::override_global(
         AssistantSettings {
             always_allow_tool_actions: true,
-            ..AssistantSettings::default()
+            ..AssistantSettings::get_global(cx).clone()
         },
         cx,
     );

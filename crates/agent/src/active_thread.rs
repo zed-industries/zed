@@ -21,7 +21,7 @@ use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
-use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
+use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role, StopReason};
 use markdown::parser::CodeBlockKind;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown, without_fences};
 use project::ProjectItem as _;
@@ -838,10 +838,9 @@ impl ActiveThread {
             | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
-            ThreadEvent::DoneStreaming => {
-                let thread = self.thread.read(cx);
-
-                if !thread.is_generating() {
+            ThreadEvent::Stopped(reason) => match reason {
+                Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
+                    let thread = self.thread.read(cx);
                     self.show_notification(
                         if thread.used_tools_since_last_user_message() {
                             "Finished running tools"
@@ -853,7 +852,8 @@ impl ActiveThread {
                         cx,
                     );
                 }
-            }
+                _ => {}
+            },
             ThreadEvent::ToolConfirmationNeeded => {
                 self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
             }

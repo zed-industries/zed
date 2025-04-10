@@ -1134,7 +1134,7 @@ impl Thread {
                             thread.cancel_last_completion(cx);
                         }
                     }
-                    cx.emit(ThreadEvent::DoneStreaming);
+                    cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
 
                     if let Ok(initial_usage) = initial_token_usage {
                         let usage = thread.cumulative_token_usage.clone() - initial_usage;
@@ -1839,7 +1839,7 @@ pub enum ThreadEvent {
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
-    DoneStreaming,
+    Stopped(Result<StopReason, Arc<anyhow::Error>>),
     MessageAdded(MessageId),
     MessageEdited(MessageId),
     MessageDeleted(MessageId),
