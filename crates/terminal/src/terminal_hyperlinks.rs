@@ -209,7 +209,6 @@ mod tests {
     use super::*;
     use alacritty_terminal::{
         event::VoidListener,
-        grid::Cursor,
         index::{Boundary, Point as AlacPoint},
         term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
@@ -365,7 +364,7 @@ mod tests {
         test_hyperlink!("‹«/👉test/cool.rs»:«4»:«2»›");
         test_hyperlink!("‹«/test/cool.rs»:«4»:«👉2»›");
         test_hyperlink!(3, 8, 17; "‹«/👉test/cool.rs»(«4»,«2»)›");
-        test_hyperlink!(3, 8, 17; "‹«/👉test/cool.rs»(«4»👉,«2»)›");
+        test_hyperlink!(3, 8, 17; "‹«/test/cool.rs»(«4»👉,«2»)›");
 
         // path, line, column, and ':' suffix
         test_hyperlink!("‹«/👉test/cool.rs»:«4»:«2»›:");
@@ -513,6 +512,7 @@ mod tests {
 
     struct ExpectedHyperlink {
         hovered_grid_point: AlacPoint,
+        hovered_char: char,
         path_with_position: PathWithPosition,
         hyperlink_match: RangeInclusive<AlacPoint>,
     }
@@ -521,14 +521,25 @@ mod tests {
         term_size: TermSize,
         test_lines: &(impl IntoIterator<Item = &'a str> + Clone),
     ) -> (Term<VoidListener>, ExpectedHyperlink) {
+        #[derive(Eq, PartialEq)]
+        enum HoveredState {
+            HoveredScan,
+            HoveredNextChar,
+            Done,
+        }
+
+        #[derive(Eq, PartialEq)]
         enum MatchState {
             MatchScan,
+            MatchNextChar,
             Match(AlacPoint),
             Done,
         }
 
+        #[derive(Eq, PartialEq)]
         enum CapturesState {
             PathScan,
+            PathNextChar,
             Path(AlacPoint),
             RowScan,
             Row(String),
@@ -537,53 +548,54 @@ mod tests {
             Done,
         }
 
-        fn input_point_from_cursor<T>(cursor: &Cursor<T>) -> AlacPoint {
-            cursor
-                .input_needs_wrap
-                .then_some(AlacPoint::new(Line(cursor.point.line.0 + 1), Column(0)))
-                .unwrap_or(cursor.point)
+        fn prev_input_point_from_term(term: &Term<VoidListener>) -> AlacPoint {
+            let grid = term.grid();
+            let cursor = &grid.cursor;
+            let mut point = cursor.point;
+
+            if !cursor.input_needs_wrap {
+                point.column -= 1;
+            }
+
+            if grid.index(point).flags.contains(Flags::WIDE_CHAR_SPACER) {
+                point.column -= 1;
+            }
+
+            point
         }
 
         let mut hovered_grid_point = AlacPoint::default();
         let mut hyperlink_match = AlacPoint::default()..=AlacPoint::default();
         let mut path_with_position = PathWithPosition::from_path(PathBuf::new());
+        let mut prev_input_point = AlacPoint::default();
+        let mut hovered_state = HoveredState::HoveredScan;
         let mut match_state = MatchState::MatchScan;
         let mut captures_state = CapturesState::PathScan;
-        let mut last_input_point = AlacPoint::default();
 
         let mut term = Term::new(Config::default(), &term_size, VoidListener);
 
         for text in test_lines.clone().into_iter() {
             let text = text.chars().collect_vec();
             for index in 0..text.len() {
-                let cursor = &term.grid().cursor;
                 match text[index] {
                     '👉' => {
-                        hovered_grid_point = input_point_from_cursor(cursor);
+                        hovered_state = HoveredState::HoveredNextChar;
                     }
                     '👈' => {
                         // TODO(davewa): This needs LEADING_WIDE_CHAR_SPACER handling...
-                        hovered_grid_point = last_input_point.add(&term, Boundary::Grid, 1);
+                        hovered_grid_point = prev_input_point.add(&term, Boundary::Grid, 1);
                     }
                     '«' | '»' => {
                         captures_state = match captures_state {
-                            CapturesState::PathScan => {
-                                CapturesState::Path(input_point_from_cursor(cursor))
+                            CapturesState::PathScan => CapturesState::PathNextChar,
+                            CapturesState::PathNextChar => {
+                                panic!("Should have been handled by char input")
                             }
                             CapturesState::Path(start_point) => {
-                                if term
-                                    .grid()
-                                    .index(last_input_point)
-                                    .flags
-                                    .contains(Flags::LEADING_WIDE_CHAR_SPACER)
-                                {
-                                    last_input_point.line += 1;
-                                    last_input_point.column = Column(0);
-                                }
                                 path_with_position = PathWithPosition::from_path(PathBuf::from(
                                     &term.bounds_to_string(
                                         start_point.clone(),
-                                        last_input_point.clone(),
+                                        prev_input_point.clone(),
                                     ),
                                 ));
                                 CapturesState::RowScan
@@ -605,11 +617,12 @@ mod tests {
                     }
                     '‹' | '›' => {
                         match_state = match match_state {
-                            MatchState::MatchScan => {
-                                MatchState::Match(input_point_from_cursor(cursor))
+                            MatchState::MatchScan => MatchState::MatchNextChar,
+                            MatchState::MatchNextChar => {
+                                panic!("Should have been handled by char input")
                             }
                             MatchState::Match(start_point) => {
-                                hyperlink_match = start_point..=last_input_point;
+                                hyperlink_match = start_point..=prev_input_point;
                                 MatchState::Done
                             }
                             MatchState::Done => {
@@ -623,18 +636,32 @@ mod tests {
                         {
                             number.push(c)
                         }
-                        last_input_point = input_point_from_cursor(cursor);
+
                         term.input(c);
+                        prev_input_point = prev_input_point_from_term(&term);
+
+                        if hovered_state == HoveredState::HoveredNextChar {
+                            hovered_grid_point = prev_input_point;
+                            hovered_state = HoveredState::Done;
+                        }
+                        if captures_state == CapturesState::PathNextChar {
+                            captures_state = CapturesState::Path(prev_input_point);
+                        }
+                        if match_state == MatchState::MatchNextChar {
+                            match_state = MatchState::Match(prev_input_point);
+                        }
                     }
                 }
             }
             term.input('\n');
         }
 
+        let hovered_char = term.grid().index(hovered_grid_point.clone()).c;
         (
             term,
             ExpectedHyperlink {
                 hovered_grid_point,
+                hovered_char,
                 path_with_position,
                 hyperlink_match,
             },
@@ -645,6 +672,8 @@ mod tests {
         term: &Term<VoidListener>,
         expected_hyperlink: &ExpectedHyperlink,
     ) -> String {
+        let mut result = format!("\nHovered on '{}'\n", expected_hyperlink.hovered_char);
+
         let mut first_header_row = String::new();
         let mut second_header_row = String::new();
         let mut marker_header_row = String::new();
@@ -662,7 +691,8 @@ mod tests {
                     .unwrap_or(' '),
             );
         }
-        let mut result = format!("\n      [{}]\n", first_header_row);
+
+        result += &format!("\n      [{}]\n", first_header_row);
         result += &format!("      [{}]\n", second_header_row);
         result += &format!("       {}", marker_header_row);
 
