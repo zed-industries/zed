@@ -12,7 +12,7 @@ use rpc::{
     proto::{self},
 };
 use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
-use text::PointUtf16;
+use text::{Point, PointUtf16};
 
 use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
 
@@ -462,6 +462,23 @@ impl BreakpointStore {
         self.active_stack_frame = Some(position);
         cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
         cx.notify();
+    }
+
+    pub fn breakpoint_at_row(
+        &self,
+        path: &Path,
+        row: u32,
+        cx: &App,
+    ) -> Option<(Entity<Buffer>, (text::Anchor, Breakpoint))> {
+        self.breakpoints.get(path).and_then(|breakpoints| {
+            let snapshot = breakpoints.buffer.read(cx).text_snapshot();
+
+            breakpoints
+                .breakpoints
+                .iter()
+                .find(|(anchor, _)| anchor.summary::<Point>(&snapshot).row == row)
+                .map(|breakpoint| (breakpoints.buffer.clone(), breakpoint.clone()))
+        })
     }
 
     pub fn breakpoints_from_path(&self, path: &Arc<Path>, cx: &App) -> Vec<SourceBreakpoint> {

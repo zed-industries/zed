@@ -7,7 +7,7 @@ use language::Point;
 use project::{
     Project,
     debugger::{
-        breakpoint_store::{BreakpointStore, SourceBreakpoint},
+        breakpoint_store::{BreakpointEditAction, BreakpointStore, SourceBreakpoint},
         session::Session,
     },
     worktree_store::WorktreeStore,
@@ -202,12 +202,33 @@ impl LineBreakpoint {
             IconName::DebugDisabledBreakpoint
         };
         let path = breakpoint.path;
+        let row = breakpoint.row;
         let indicator = div()
             .id(SharedString::from(format!(
                 "breakpoint-ui-toggle-{:?}/{}:{}",
                 dir, name, line
             )))
-            .on_click(|_, _, _| {})
+            .on_click({
+                let weak = weak.clone();
+                let path = path.clone();
+                move |_, _, cx| {
+                    weak.update(cx, |this, cx| {
+                        this.breakpoint_store.update(cx, |this, cx| {
+                            if let Some((buffer, breakpoint)) =
+                                this.breakpoint_at_row(&path, row, cx)
+                            {
+                                this.toggle_breakpoint(
+                                    buffer,
+                                    breakpoint,
+                                    BreakpointEditAction::InvertState,
+                                    cx,
+                                );
+                            }
+                        })
+                    })
+                    .ok();
+                }
+            })
             .child(Indicator::icon(Icon::new(icon_name)).color(Color::Debugger))
             .on_mouse_down(MouseButton::Left, move |_, _, _| {});
         ListItem::new(SharedString::from(format!(
