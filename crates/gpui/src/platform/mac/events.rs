@@ -287,6 +287,7 @@ fn parse_keystroke(native_event: id) -> Keystroke {
     use cocoa::appkit::{NSModeSwitchFunctionKey, NSUpArrowFunctionKey};
 
     let scan_code = unsafe { native_event.keyCode() };
+    println!("scan_code: {scan_code}");
     let characters = unsafe {
         native_event
             .charactersIgnoringModifiers()
@@ -324,7 +325,7 @@ fn parse_keystroke(native_event: id) -> Keystroke {
     }
 
     let key = chars_for_modified_key(scan_code, NO_MOD);
-    let code = parse_letter_and_other_keys(scan_code, &key);
+    let code = parse_other_keys(scan_code);
     let key_char = if may_have_char {
         let mods =
             (if shift { SHIFT_MOD } else { NO_MOD }) | (if alt { OPTION_MOD } else { NO_MOD });
@@ -492,77 +493,34 @@ fn parse_immutable_keys(
     Some((code, key, if has_key_char { key_char } else { None }))
 }
 
-fn parse_letter_and_other_keys(scan_code: u16, key: &str) -> KeyCode {
-    if always_use_command_layout() {
-        match scan_code {
-            0x0000 => KeyCode::A,
-            0x000b => KeyCode::B,
-            0x0008 => KeyCode::C,
-            0x0002 => KeyCode::D,
-            0x000e => KeyCode::E,
-            0x0003 => KeyCode::F,
-            0x0005 => KeyCode::G,
-            0x0004 => KeyCode::H,
-            0x0022 => KeyCode::I,
-            0x0026 => KeyCode::J,
-            0x0028 => KeyCode::K,
-            0x0025 => KeyCode::L,
-            0x002e => KeyCode::M,
-            0x002d => KeyCode::N,
-            0x001f => KeyCode::O,
-            0x0023 => KeyCode::P,
-            0x000c => KeyCode::Q,
-            0x000f => KeyCode::R,
-            0x0001 => KeyCode::S,
-            0x0011 => KeyCode::T,
-            0x0020 => KeyCode::U,
-            0x0009 => KeyCode::V,
-            0x000d => KeyCode::W,
-            0x0007 => KeyCode::X,
-            0x0010 => KeyCode::Y,
-            0x0006 => KeyCode::Z,
-            _ => parse_other_keys(scan_code),
-        }
-    } else {
-        match scan_code {
-            0x0000 | 0x000b | 0x0008 | 0x0002 | 0x000e | 0x0003 | 0x0005 | 0x0004 | 0x0022
-            | 0x0026 | 0x0028 | 0x0025 | 0x002e | 0x002d | 0x001f | 0x0023 | 0x000c | 0x000f
-            | 0x0001 | 0x0011 | 0x0020 | 0x0009 | 0x000d | 0x0007 | 0x0010 | 0x0006 => match key {
-                "a" => KeyCode::A,
-                "b" => KeyCode::B,
-                "c" => KeyCode::C,
-                "d" => KeyCode::D,
-                "e" => KeyCode::E,
-                "f" => KeyCode::F,
-                "g" => KeyCode::G,
-                "h" => KeyCode::H,
-                "i" => KeyCode::I,
-                "j" => KeyCode::J,
-                "k" => KeyCode::K,
-                "l" => KeyCode::L,
-                "m" => KeyCode::M,
-                "n" => KeyCode::N,
-                "o" => KeyCode::O,
-                "p" => KeyCode::P,
-                "q" => KeyCode::Q,
-                "r" => KeyCode::R,
-                "s" => KeyCode::S,
-                "t" => KeyCode::T,
-                "u" => KeyCode::U,
-                "v" => KeyCode::V,
-                "w" => KeyCode::W,
-                "x" => KeyCode::X,
-                "y" => KeyCode::Y,
-                "z" => KeyCode::Z,
-                _ => unreachable!(),
-            },
-            _ => parse_other_keys(scan_code),
-        }
-    }
-}
-
 fn parse_other_keys(scan_code: u16) -> KeyCode {
     match scan_code {
+        0x0000 => KeyCode::A,
+        0x000b => KeyCode::B,
+        0x0008 => KeyCode::C,
+        0x0002 => KeyCode::D,
+        0x000e => KeyCode::E,
+        0x0003 => KeyCode::F,
+        0x0005 => KeyCode::G,
+        0x0004 => KeyCode::H,
+        0x0022 => KeyCode::I,
+        0x0026 => KeyCode::J,
+        0x0028 => KeyCode::K,
+        0x0025 => KeyCode::L,
+        0x002e => KeyCode::M,
+        0x002d => KeyCode::N,
+        0x001f => KeyCode::O,
+        0x0023 => KeyCode::P,
+        0x000c => KeyCode::Q,
+        0x000f => KeyCode::R,
+        0x0001 => KeyCode::S,
+        0x0011 => KeyCode::T,
+        0x0020 => KeyCode::U,
+        0x0009 => KeyCode::V,
+        0x000d => KeyCode::W,
+        0x0007 => KeyCode::X,
+        0x0010 => KeyCode::Y,
+        0x0006 => KeyCode::Z,
         0x001d => KeyCode::Digital0,
         0x0012 => KeyCode::Digital1,
         0x0013 => KeyCode::Digital2,
