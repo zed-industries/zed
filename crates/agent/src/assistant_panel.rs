@@ -863,7 +863,10 @@ impl AssistantPanel {
                         .truncate()
                         .into_any_element()
                 } else {
-                    change_title_editor.clone().into_any_element()
+                    div()
+                        .ml_2()
+                        .child(change_title_editor.clone())
+                        .into_any_element()
                 }
             }
             ActiveView::PromptEditor => {
