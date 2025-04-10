@@ -229,7 +229,7 @@ impl ComponentPreview {
             if self.filter_text.is_empty() {
                 scope_groups
                     .entry(component.scope())
-                    .or_insert_with(|| Vec::new())
+                    .or_insert_with(Vec::new)
                     .push((component.clone(), None));
                 continue;
             }
@@ -258,7 +258,7 @@ impl ComponentPreview {
                         if !positions.is_empty() {
                             scope_groups
                                 .entry(component.scope())
-                                .or_insert_with(|| Vec::new())
+                                .or_insert_with(Vec::new)
                                 .push((component.clone(), Some(positions)));
                             continue;
                         }
@@ -272,7 +272,7 @@ impl ComponentPreview {
             {
                 scope_groups
                     .entry(component.scope())
-                    .or_insert_with(|| Vec::new())
+                    .or_insert_with(Vec::new)
                     .push((component.clone(), None));
             }
         }
@@ -340,7 +340,7 @@ impl ComponentPreview {
                 let name = component_metadata.scopeless_name();
 
                 ListItem::new(ix)
-                    .child(if let Some(positions) = highlight_positions {
+                    .child(if let Some(_positions) = highlight_positions {
                         let name_lower = name.to_lowercase();
                         let filter_lower = self.filter_text.to_lowercase();
                         let valid_positions = if let Some(start) = name_lower.find(&filter_lower) {
@@ -808,7 +808,7 @@ impl SerializableItem for ComponentPreview {
                         ActivePageId::default()
                     }
                 }
-                Err(e) => ActivePageId::default(),
+                Err(_) => ActivePageId::default(),
             };
 
         let user_store = project.read(cx).user_store().clone();
