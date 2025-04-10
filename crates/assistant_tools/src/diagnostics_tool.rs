@@ -2,7 +2,6 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
-use itertools::Itertools;
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -12,9 +11,9 @@ use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
 use util::markdown::MarkdownString;
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, Default, JsonSchema)]
 pub struct DiagnosticsToolInput {
-    /// The path to get diagnostics for. If not provided, returns a project-wide summary.
+    /// The path to get diagnostics for. If not no paths are provided, returns a project-wide summary.
     ///
     /// This path should never be absolute, and the first component
     /// of the path should always be a root directory in a project.
@@ -24,14 +23,21 @@ pub struct DiagnosticsToolInput {
     ///
     /// - lorem
     /// - ipsum
+    /// - amet
     ///
-    /// If you wanna access diagnostics for `dolor.txt` in `ipsum`, you should use the path `ipsum/dolor.txt`.
+    /// If you want access diagnostics for `dolor.txt` in `ipsum` and `consectetur.txt` in `amet`, you should use:
+    ///
+    ///     "paths": ["ipsum/dolor.txt", "amet/consectetur.txt"]
     /// </example>
     #[serde(deserialize_with = "deserialize_path")]
-    pub path: Option<String>,
+    #[serde(default)]
+    pub paths: Vec<String>,
 
     /// Which severity levels to show. Default is all.
-    #[serde(default = "default_severity")]
+    /// To show only errors and warnings, you should use:
+    ///
+    ///     "severity": ["error", "warning"]
+    #[serde(default)]
     pub severity: Vec<Severity>,
 }
 
@@ -44,17 +50,13 @@ pub enum Severity {
     Hint,
 }
 
-fn default_severity() -> Vec<Severity> {
-    vec![Severity::Error, Severity::Warning]
-}
-
-fn deserialize_path<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+fn deserialize_path<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let opt = Option::<String>::deserialize(deserializer)?;
-    // The model passes an empty string sometimes
-    Ok(opt.filter(|s| !s.is_empty()))
+    let paths = Vec::<String>::deserialize(deserializer)?;
+    // The model passes an empty string for some paths
+    Ok(paths.into_iter().filter(|s| !s.is_empty()).collect())
 }
 
 pub struct DiagnosticsTool;
@@ -81,17 +83,21 @@ impl Tool for DiagnosticsTool {
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
+        serde_json::from_value::<DiagnosticsToolInput>(input.clone())
             .ok()
-            .and_then(|input| match input.path {
-                Some(path) if !path.is_empty() => Some(MarkdownString::inline_code(&path)),
-                _ => None,
+            .and_then(|input| {
+                input.paths.first().map(|first_path| {
+                    if input.paths.len() > 1 {
+                        format!("Check diagnostics for {} paths", input.paths.len())
+                    } else {
+                        format!(
+                            "Check diagnostics for {}",
+                            MarkdownString::inline_code(first_path)
+                        )
+                    }
+                })
             })
-        {
-            format!("Check diagnostics for {path}")
-        } else {
-            "Check project diagnostics".to_string()
-        }
+            .unwrap_or_else(|| "Check project diagnostics".to_string())
     }
 
     fn run(
@@ -102,60 +108,10 @@ impl Tool for DiagnosticsTool {
         action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let input = serde_json::from_value::<DiagnosticsToolInput>(input).unwrap_or_else(|_| {
-            DiagnosticsToolInput {
-                path: None,
-                severity: default_severity(),
-            }
-        });
+        let input = serde_json::from_value::<DiagnosticsToolInput>(input).unwrap_or_default();
+        let severity_filter = input.severity;
 
-        let severity_to_show = if input.severity.is_empty() {
-            default_severity()
-        } else {
-            input.severity
-        };
-
-        if let Some(path) = input.path {
-            let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
-                return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
-            };
-
-            let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
-
-            cx.spawn(async move |cx| {
-                let mut output = String::new();
-                let buffer = buffer.await?;
-                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-
-                for (_, group) in snapshot.diagnostic_groups(None) {
-                    let entry = &group.entries[group.primary_ix];
-                    let range = entry.range.to_point(&snapshot);
-
-                    if let Ok(severity) = Severity::try_from(&entry.diagnostic.severity) {
-                        if severity_to_show.contains(&severity) {
-                            writeln!(
-                                output,
-                                "{severity} at line {}: {}",
-                                range.start.row + 1,
-                                entry.diagnostic.message
-                            )?;
-                        }
-                    }
-                }
-
-                if output.is_empty() {
-                    Ok(format!(
-                        "File doesn't have any {}!",
-                        severity_to_show
-                            .iter()
-                            .map(|severity| format!("{severity}s"))
-                            .join(" or ")
-                    ))
-                } else {
-                    Ok(output)
-                }
-            })
-        } else {
+        if input.paths.is_empty() {
             let project = project.read(cx);
             let mut output = String::new();
             let mut has_diagnostics = false;
@@ -188,6 +144,55 @@ impl Tool for DiagnosticsTool {
             } else {
                 Task::ready(Ok("No errors or warnings found in the project.".to_string()))
             }
+        } else {
+            let mut output = String::new();
+            let mut buffer_tasks = Vec::with_capacity(input.paths.len());
+
+            for path in input.paths {
+                let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
+                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
+                };
+
+                buffer_tasks.push((
+                    path,
+                    project.update(cx, |project, cx| project.open_buffer(project_path, cx)),
+                ));
+            }
+
+            cx.spawn(async move |cx| {
+                for (path, buffer_task) in buffer_tasks {
+                    let mut path_printed = false;
+                    let buffer = buffer_task.await?;
+                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+                    for (_, group) in snapshot.diagnostic_groups(None) {
+                        let entry = &group.entries[group.primary_ix];
+                        let range = entry.range.to_point(&snapshot);
+
+                        if let Ok(severity) = Severity::try_from(&entry.diagnostic.severity) {
+                            if severity_filter.is_empty() || severity_filter.contains(&severity) {
+                                if !path_printed {
+                                    writeln!(output, "## {path}",)?;
+                                    path_printed = true;
+                                }
+
+                                writeln!(
+                                    output,
+                                    "\n### {severity} at line {}\n{}",
+                                    range.start.row + 1,
+                                    entry.diagnostic.message
+                                )?;
+                            }
+                        }
+                    }
+                }
+
+                Ok(if output.is_empty() {
+                    "No diagnostics found!".to_string()
+                } else {
+                    output
+                })
+            })
         }
     }
 }
