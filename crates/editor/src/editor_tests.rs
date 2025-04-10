@@ -5874,6 +5874,83 @@ async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_undo_format_scrolls_to_last_edit_pos(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        line 1
+        line 2
+        linˇe 3
+        line 4
+        line 5
+    "});
+
+    // Make an edit
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("X", window, cx);
+    });
+
+    // Move cursor to a different position
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([Point::new(4, 2)..Point::new(4, 2)]);
+        });
+    });
+
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        linXe 3
+        line 4
+        liˇne 5
+    "});
+
+    cx.lsp
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                "PREFIX ".to_string(),
+            )]))
+        });
+
+    cx.update_editor(|editor, window, cx| editor.format(&Default::default(), window, cx))
+        .unwrap()
+        .await
+        .unwrap();
+
+    cx.assert_editor_state(indoc! {"
+        PREFIX line 1
+        line 2
+        linXe 3
+        line 4
+        liˇne 5
+    "});
+
+    // Undo formatting
+    cx.update_editor(|editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+    });
+
+    // Verify cursor moved back to position after edit
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        linXˇe 3
+        line 4
+        line 5
+    "});
+}
+
+#[gpui::test]
 async fn test_select_next_with_multiple_carets(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
