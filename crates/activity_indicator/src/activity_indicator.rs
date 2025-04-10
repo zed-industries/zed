@@ -11,12 +11,21 @@ use language::{BinaryStatus, LanguageRegistry, LanguageServerId};
 use project::{
     EnvironmentErrorMessage, LanguageServerProgress, LspStoreEvent, Project,
     ProjectEnvironmentEvent,
+    git_store::{GitStoreEvent, Repository},
 };
 use smallvec::SmallVec;
-use std::{cmp::Reverse, fmt::Write, path::Path, sync::Arc, time::Duration};
+use std::{
+    cmp::Reverse,
+    fmt::Write,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
+
+const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
 
 actions!(activity_indicator, [ShowErrorMessage]);
 
@@ -101,6 +110,15 @@ impl ActivityIndicator {
                 &project.read(cx).environment().clone(),
                 |_, _, event, cx| match event {
                     ProjectEnvironmentEvent::ErrorsUpdated => cx.notify(),
+                },
+            )
+            .detach();
+
+            cx.subscribe(
+                &project.read(cx).git_store().clone(),
+                |_, _, event: &GitStoreEvent, cx| match event {
+                    project::git_store::GitStoreEvent::JobsUpdated => cx.notify(),
+                    _ => {}
                 },
             )
             .detach();
@@ -283,6 +301,34 @@ impl ActivityIndicator {
                 message,
                 on_click: Some(Arc::new(Self::toggle_language_server_work_context_menu)),
             });
+        }
+
+        let current_job = self
+            .project
+            .read(cx)
+            .active_repository(cx)
+            .map(|r| r.read(cx))
+            .and_then(Repository::current_job);
+        // Show any long-running git command
+        if let Some(job_info) = current_job {
+            if Instant::now() - job_info.start >= GIT_OPERATION_DELAY {
+                return Some(Content {
+                    icon: Some(
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::Small)
+                            .with_animation(
+                                "arrow-circle",
+                                Animation::new(Duration::from_secs(2)).repeat(),
+                                |icon, delta| {
+                                    icon.transform(Transformation::rotate(percentage(delta)))
+                                },
+                            )
+                            .into_any_element(),
+                    ),
+                    message: job_info.message.into(),
+                    on_click: None,
+                });
+            }
         }
 
         // Show any language server installation info.

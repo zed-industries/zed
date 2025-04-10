@@ -792,15 +792,11 @@ impl editor::Addon for AgentDiffAddon {
 
 pub struct AgentDiffToolbar {
     agent_diff: Option<WeakEntity<AgentDiff>>,
-    _workspace: WeakEntity<Workspace>,
 }
 
 impl AgentDiffToolbar {
-    pub fn new(workspace: &Workspace, _: &mut Context<Self>) -> Self {
-        Self {
-            agent_diff: None,
-            _workspace: workspace.weak_handle(),
-        }
+    pub fn new() -> Self {
+        Self { agent_diff: None }
     }
 
     fn agent_diff(&self, _: &App) -> Option<Entity<AgentDiff>> {

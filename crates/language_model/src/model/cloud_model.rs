@@ -107,6 +107,7 @@ impl CloudModel {
                 | google_ai::Model::Gemini20FlashThinking
                 | google_ai::Model::Gemini20FlashLite
                 | google_ai::Model::Gemini25ProExp0325
+                | google_ai::Model::Gemini25ProPreview0325
                 | google_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }

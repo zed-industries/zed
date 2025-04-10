@@ -380,7 +380,7 @@ impl TerminalBuilder {
                     #[cfg(target_os = "windows")]
                     {
                         Some(alacritty_terminal::tty::Shell::new(
-                            util::retrieve_system_shell(),
+                            util::get_windows_system_shell(),
                             Vec::new(),
                         ))
                     }
@@ -1590,7 +1590,7 @@ impl Terminal {
             return None;
         };
 
-        Some(scroll_lines)
+        Some(scroll_lines.clamp(-3, 3))
     }
 
     pub fn mouse_down(&mut self, e: &MouseDownEvent, _cx: &mut Context<Self>) {

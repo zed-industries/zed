@@ -274,6 +274,12 @@ pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct DisplayId(pub(crate) u32);
 
+impl From<DisplayId> for u32 {
+    fn from(id: DisplayId) -> Self {
+        id.0
+    }
+}
+
 impl Debug for DisplayId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "DisplayId({})", self.0)

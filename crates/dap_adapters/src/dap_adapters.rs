@@ -1,3 +1,4 @@
+mod codelldb;
 mod gdb;
 mod go;
 mod javascript;
@@ -9,6 +10,7 @@ use std::{net::Ipv4Addr, sync::Arc};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use codelldb::CodeLldbDebugAdapter;
 use dap::{
     DapRegistry,
     adapters::{
@@ -26,6 +28,7 @@ use serde_json::{Value, json};
 use task::{DebugAdapterConfig, TCPHost};
 
 pub fn init(registry: Arc<DapRegistry>) {
+    registry.add_adapter(Arc::from(CodeLldbDebugAdapter::default()));
     registry.add_adapter(Arc::from(PythonDebugAdapter));
     registry.add_adapter(Arc::from(PhpDebugAdapter));
     registry.add_adapter(Arc::from(JsDebugAdapter::default()));

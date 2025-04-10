@@ -1,13 +1,31 @@
-use crate::{Avatar, prelude::*};
+use crate::component_prelude::*;
+use crate::prelude::*;
 use gpui::{AnyElement, StyleRefinement};
 use smallvec::SmallVec;
 
-/// A facepile is a collection of faces stacked horizontally–
-/// always with the leftmost face on top and descending in z-index
+use super::Avatar;
+
+/// An element that displays a collection of (usually) faces stacked
+/// horizontally, with the left-most face on top, visually descending
+/// from left to right.
 ///
 /// Facepiles are used to display a group of people or things,
 /// such as a list of participants in a collaboration session.
-#[derive(IntoElement, IntoComponent)]
+///
+/// # Examples
+///
+/// ## Default
+///
+/// A default, horizontal facepile.
+///
+/// ```
+/// use ui::{Avatar, Facepile, EXAMPLE_FACES};
+///
+/// Facepile::new(
+/// EXAMPLE_FACES.iter().take(3).iter().map(|&url|
+///    Avatar::new(url).into_any_element()).collect())
+/// ```
+#[derive(IntoElement, Documented, RegisterComponent)]
 pub struct Facepile {
     base: Div,
     faces: SmallVec<[AnyElement; 2]>,
@@ -60,27 +78,37 @@ impl RenderOnce for Facepile {
     }
 }
 
-impl ComponentPreview for Facepile {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        let faces: [&'static str; 6] = [
-            "https://avatars.githubusercontent.com/u/326587?s=60&v=4",
-            "https://avatars.githubusercontent.com/u/2280405?s=60&v=4",
-            "https://avatars.githubusercontent.com/u/1789?s=60&v=4",
-            "https://avatars.githubusercontent.com/u/67129314?s=60&v=4",
-            "https://avatars.githubusercontent.com/u/482957?s=60&v=4",
-            "https://avatars.githubusercontent.com/u/1714999?s=60&v=4",
-        ];
+pub const EXAMPLE_FACES: [&'static str; 6] = [
+    "https://avatars.githubusercontent.com/u/326587?s=60&v=4",
+    "https://avatars.githubusercontent.com/u/2280405?s=60&v=4",
+    "https://avatars.githubusercontent.com/u/1789?s=60&v=4",
+    "https://avatars.githubusercontent.com/u/67129314?s=60&v=4",
+    "https://avatars.githubusercontent.com/u/482957?s=60&v=4",
+    "https://avatars.githubusercontent.com/u/1714999?s=60&v=4",
+];
 
-        v_flex()
-            .gap_6()
-            .children(vec![
-                example_group_with_title(
+impl Component for Facepile {
+    fn scope() -> ComponentScope {
+        ComponentScope::Collaboration
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "Displays a collection of avatars or initials in a compact format. Often used to represent active collaborators or a subset of contributors.",
+        )
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group_with_title(
                     "Facepile Examples",
                     vec![
                         single_example(
                             "Default",
                             Facepile::new(
-                                faces
+                                EXAMPLE_FACES
                                     .iter()
                                     .map(|&url| Avatar::new(url).into_any_element())
                                     .collect(),
@@ -90,7 +118,7 @@ impl ComponentPreview for Facepile {
                         single_example(
                             "Custom Size",
                             Facepile::new(
-                                faces
+                                EXAMPLE_FACES
                                     .iter()
                                     .map(|&url| Avatar::new(url).size(px(24.)).into_any_element())
                                     .collect(),
@@ -98,19 +126,8 @@ impl ComponentPreview for Facepile {
                             .into_any_element(),
                         ),
                     ],
-                ),
-                example_group_with_title(
-                    "Special Cases",
-                    vec![
-                        single_example("Empty Facepile", Facepile::empty().into_any_element()),
-                        single_example(
-                            "Single Face",
-                            Facepile::new(vec![Avatar::new(faces[0]).into_any_element()].into())
-                                .into_any_element(),
-                        ),
-                    ],
-                ),
-            ])
-            .into_any_element()
+                )])
+                .into_any_element(),
+        )
     }
 }

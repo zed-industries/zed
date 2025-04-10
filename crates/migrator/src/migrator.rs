@@ -120,6 +120,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_03_29::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_03_29,
         ),
+        (
+            migrations::m_2025_04_15::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_04_15,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -189,6 +193,10 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_03_29,
     migrations::m_2025_03_29::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_04_15,
+    migrations::m_2025_04_15::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -525,6 +533,105 @@ mod tests {
                 }
             "#,
             ),
+        )
+    }
+
+    #[test]
+    fn test_replace_bash_with_terminal_in_profiles() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "assistant": {
+                        "profiles": {
+                            "custom": {
+                                "name": "Custom",
+                                "tools": {
+                                    "bash": true,
+                                    "diagnostics": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "assistant": {
+                        "profiles": {
+                            "custom": {
+                                "name": "Custom",
+                                "tools": {
+                                    "terminal": true,
+                                    "diagnostics": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_replace_bash_false_with_terminal_in_profiles() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "assistant": {
+                        "profiles": {
+                            "custom": {
+                                "name": "Custom",
+                                "tools": {
+                                    "bash": false,
+                                    "diagnostics": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "assistant": {
+                        "profiles": {
+                            "custom": {
+                                "name": "Custom",
+                                "tools": {
+                                    "terminal": false,
+                                    "diagnostics": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_no_bash_in_profiles() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "assistant": {
+                        "profiles": {
+                            "custom": {
+                                "name": "Custom",
+                                "tools": {
+                                    "diagnostics": true,
+                                    "path_search": true,
+                                    "read_file": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            None,
         )
     }
 }

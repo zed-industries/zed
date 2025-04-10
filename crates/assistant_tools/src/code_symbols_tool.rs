@@ -1,23 +1,20 @@
-use std::fmt::{self, Write};
+use std::fmt::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use collections::IndexMap;
 use gpui::{App, AsyncApp, Entity, Task};
-use language::{CodeLabel, Language, LanguageRegistry};
+use language::{OutlineItem, ParseStatus, Point};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
-use lsp::SymbolKind;
-use project::{DocumentSymbol, Project, Symbol};
+use project::{Project, Symbol};
 use regex::{Regex, RegexBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
 use util::markdown::MarkdownString;
-
-use crate::code_symbol_iter::{CodeSymbolIterator, Entry};
-use crate::schema::json_schema_for;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CodeSymbolsInput {
@@ -82,7 +79,7 @@ impl Tool for CodeSymbolsTool {
         "code_symbols".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 
@@ -180,24 +177,28 @@ pub async fn file_outline(
         action_log.buffer_read(buffer.clone(), cx);
     })?;
 
-    let symbols = project
-        .update(cx, |project, cx| project.document_symbols(&buffer, cx))?
-        .await?;
+    // Wait until the buffer has been fully parsed, so that we can read its outline.
+    let mut parse_status = buffer.read_with(cx, |buffer, _| buffer.parse_status())?;
+    while parse_status
+        .recv()
+        .await
+        .map_or(false, |status| status != ParseStatus::Idle)
+    {}
 
-    if symbols.is_empty() {
-        return Err(
-            if buffer.read_with(cx, |buffer, _| buffer.snapshot().is_empty())? {
-                anyhow!("This file is empty.")
-            } else {
-                anyhow!("No outline information available for this file.")
-            },
-        );
-    }
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    let Some(outline) = snapshot.outline(None) else {
+        return Err(anyhow!("No outline information available for this file."));
+    };
 
-    let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned())?;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone())?;
-
-    render_outline(&symbols, language, language_registry, regex, offset).await
+    render_outline(
+        outline
+            .items
+            .into_iter()
+            .map(|item| item.to_point(&snapshot)),
+        regex,
+        offset,
+    )
+    .await
 }
 
 async fn project_symbols(
@@ -292,61 +293,27 @@ async fn project_symbols(
 }
 
 async fn render_outline(
-    symbols: &[DocumentSymbol],
-    language: Option<Arc<Language>>,
-    registry: Arc<LanguageRegistry>,
+    items: impl IntoIterator<Item = OutlineItem<Point>>,
     regex: Option<Regex>,
     offset: u32,
 ) -> Result<String> {
     const RESULTS_PER_PAGE_USIZE: usize = RESULTS_PER_PAGE as usize;
-    let entries = CodeSymbolIterator::new(symbols, regex.clone())
-        .skip(offset as usize)
-        // Take 1 more than RESULTS_PER_PAGE so we can tell if there are more results.
-        .take(RESULTS_PER_PAGE_USIZE.saturating_add(1))
-        .collect::<Vec<Entry>>();
-    let has_more = entries.len() > RESULTS_PER_PAGE_USIZE;
 
-    // Get language-specific labels, if available
-    let labels = match &language {
-        Some(lang) => {
-            let entries_for_labels: Vec<(String, SymbolKind)> = entries
-                .iter()
-                .take(RESULTS_PER_PAGE_USIZE)
-                .map(|entry| (entry.name.clone(), entry.kind))
-                .collect();
+    let mut items = items.into_iter().skip(offset as usize);
 
-            let lang_name = lang.name();
-            if let Some(lsp_adapter) = registry.lsp_adapters(&lang_name).first().cloned() {
-                lsp_adapter
-                    .labels_for_symbols(&entries_for_labels, lang)
-                    .await
-                    .ok()
-            } else {
-                None
-            }
-        }
-        None => None,
-    };
+    let entries = items
+        .by_ref()
+        .filter(|item| {
+            regex
+                .as_ref()
+                .is_none_or(|regex| regex.is_match(&item.text))
+        })
+        .take(RESULTS_PER_PAGE_USIZE)
+        .collect::<Vec<_>>();
+    let has_more = items.next().is_some();
 
     let mut output = String::new();
-
-    let entries_rendered = match &labels {
-        Some(label_list) => render_entries(
-            &mut output,
-            entries
-                .into_iter()
-                .take(RESULTS_PER_PAGE_USIZE)
-                .zip(label_list.iter())
-                .map(|(entry, label)| (entry, label.as_ref())),
-        ),
-        None => render_entries(
-            &mut output,
-            entries
-                .into_iter()
-                .take(RESULTS_PER_PAGE_USIZE)
-                .map(|entry| (entry, None)),
-        ),
-    };
+    let entries_rendered = render_entries(&mut output, entries);
 
     // Calculate pagination information
     let page_start = offset + 1;
@@ -372,31 +339,19 @@ async fn render_outline(
     Ok(output)
 }
 
-fn render_entries<'a>(
-    output: &mut String,
-    entries: impl IntoIterator<Item = (Entry, Option<&'a CodeLabel>)>,
-) -> u32 {
+fn render_entries(output: &mut String, items: impl IntoIterator<Item = OutlineItem<Point>>) -> u32 {
     let mut entries_rendered = 0;
 
-    for (entry, label) in entries {
+    for item in items {
         // Indent based on depth ("" for level 0, "  " for level 1, etc.)
-        for _ in 0..entry.depth {
-            output.push_str("  ");
+        for _ in 0..item.depth {
+            output.push(' ');
         }
-
-        match label {
-            Some(label) => {
-                output.push_str(label.text());
-            }
-            None => {
-                write_symbol_kind(output, entry.kind).ok();
-                output.push_str(&entry.name);
-            }
-        }
+        output.push_str(&item.text);
 
         // Add position information - convert to 1-based line numbers for display
-        let start_line = entry.start_line + 1;
-        let end_line = entry.end_line + 1;
+        let start_line = item.range.start.row + 1;
+        let end_line = item.range.end.row + 1;
 
         if start_line == end_line {
             writeln!(output, " [L{}]", start_line).ok();
@@ -407,39 +362,4 @@ fn render_entries<'a>(
     }
 
     entries_rendered
-}
-
-// We may not have a language server adapter to have language-specific
-// ways to translate SymbolKnd into a string. In that situation,
-// fall back on some reasonable default strings to render.
-fn write_symbol_kind(buf: &mut String, kind: SymbolKind) -> Result<(), fmt::Error> {
-    match kind {
-        SymbolKind::FILE => write!(buf, "file "),
-        SymbolKind::MODULE => write!(buf, "module "),
-        SymbolKind::NAMESPACE => write!(buf, "namespace "),
-        SymbolKind::PACKAGE => write!(buf, "package "),
-        SymbolKind::CLASS => write!(buf, "class "),
-        SymbolKind::METHOD => write!(buf, "method "),
-        SymbolKind::PROPERTY => write!(buf, "property "),
-        SymbolKind::FIELD => write!(buf, "field "),
-        SymbolKind::CONSTRUCTOR => write!(buf, "constructor "),
-        SymbolKind::ENUM => write!(buf, "enum "),
-        SymbolKind::INTERFACE => write!(buf, "interface "),
-        SymbolKind::FUNCTION => write!(buf, "function "),
-        SymbolKind::VARIABLE => write!(buf, "variable "),
-        SymbolKind::CONSTANT => write!(buf, "constant "),
-        SymbolKind::STRING => write!(buf, "string "),
-        SymbolKind::NUMBER => write!(buf, "number "),
-        SymbolKind::BOOLEAN => write!(buf, "boolean "),
-        SymbolKind::ARRAY => write!(buf, "array "),
-        SymbolKind::OBJECT => write!(buf, "object "),
-        SymbolKind::KEY => write!(buf, "key "),
-        SymbolKind::NULL => write!(buf, "null "),
-        SymbolKind::ENUM_MEMBER => write!(buf, "enum member "),
-        SymbolKind::STRUCT => write!(buf, "struct "),
-        SymbolKind::EVENT => write!(buf, "event "),
-        SymbolKind::OPERATOR => write!(buf, "operator "),
-        SymbolKind::TYPE_PARAMETER => write!(buf, "type parameter "),
-        _ => Ok(()),
-    }
 }

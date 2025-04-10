@@ -244,10 +244,6 @@ impl language::File for GitBlob {
         self.worktree_id
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn to_proto(&self, _cx: &App) -> language::proto::File {
         unimplemented!()
     }
@@ -280,10 +276,6 @@ impl language::File for CommitMetadataFile {
 
     fn worktree_id(&self, _: &App) -> WorktreeId {
         self.worktree_id
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn to_proto(&self, _: &App) -> language::proto::File {

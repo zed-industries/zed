@@ -370,7 +370,7 @@ fn default_words_completion_mode() -> WordsCompletionMode {
 }
 
 fn default_lsp_insert_mode() -> LspInsertMode {
-    LspInsertMode::Insert
+    LspInsertMode::ReplaceSuffix
 }
 
 fn default_lsp_fetch_timeout_ms() -> u64 {
@@ -1029,7 +1029,10 @@ fn scroll_debounce_ms() -> u64 {
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
 pub struct LanguageTaskConfig {
     /// Extra task variables to set for a particular language.
+    #[serde(default)]
     pub variables: HashMap<String, String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 impl InlayHintSettings {

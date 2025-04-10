@@ -7,10 +7,11 @@ use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, SharedString, Task};
 use language_model::{
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, Role,
+    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolResult,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
 };
 use ui::IconName;
+use util::truncate_lines_to_byte_limit;
 
 use crate::thread::MessageId;
 use crate::thread_store::SerializedMessage;
@@ -200,7 +201,7 @@ impl ToolUseState {
 
             let (icon, needs_confirmation) = if let Some(tool) = self.tools.tool(&tool_use.name, cx)
             {
-                (tool.icon(), tool.needs_confirmation())
+                (tool.icon(), tool.needs_confirmation(&tool_use.input, cx))
             } else {
                 (IconName::Cog, false)
             };
@@ -331,9 +332,34 @@ impl ToolUseState {
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
         output: Result<String>,
+        cx: &App,
     ) -> Option<PendingToolUse> {
+        telemetry::event!("Agent Tool Finished", tool_name, success = output.is_ok());
+
         match output {
             Ok(tool_result) => {
+                let model_registry = LanguageModelRegistry::read_global(cx);
+
+                const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
+
+                // Protect from clearly large output
+                let tool_output_limit = model_registry
+                    .default_model()
+                    .map(|model| model.model.max_token_count() * BYTES_PER_TOKEN_ESTIMATE)
+                    .unwrap_or(usize::MAX);
+
+                let tool_result = if tool_result.len() <= tool_output_limit {
+                    tool_result
+                } else {
+                    let truncated = truncate_lines_to_byte_limit(&tool_result, tool_output_limit);
+
+                    format!(
+                        "Tool result too long. The first {} bytes:\n\n{}",
+                        truncated.len(),
+                        truncated
+                    )
+                };
+
                 self.tool_results.insert(
                     tool_use_id.clone(),
                     LanguageModelToolResult {

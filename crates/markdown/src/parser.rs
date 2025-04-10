@@ -7,7 +7,11 @@ use pulldown_cmark::{
 use std::{
     collections::HashSet,
     ops::{Deref, Range},
+    path::Path,
+    sync::Arc,
 };
+
+use crate::path_range::PathWithRange;
 
 const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
@@ -19,9 +23,16 @@ const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_OLD_FOOTNOTES)
     .union(Options::ENABLE_GFM);
 
-pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSet<SharedString>) {
+pub fn parse_markdown(
+    text: &str,
+) -> (
+    Vec<(Range<usize>, MarkdownEvent)>,
+    HashSet<SharedString>,
+    HashSet<Arc<Path>>,
+) {
     let mut events = Vec::new();
-    let mut languages = HashSet::new();
+    let mut language_names = HashSet::new();
+    let mut language_paths = HashSet::new();
     let mut within_link = false;
     let mut within_metadata = false;
     for (pulldown_event, mut range) in Parser::new_ext(text, PARSE_OPTIONS).into_offset_iter() {
@@ -35,17 +46,46 @@ pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSe
         }
         match pulldown_event {
             pulldown_cmark::Event::Start(tag) => {
-                match tag {
-                    pulldown_cmark::Tag::Link { .. } => within_link = true,
-                    pulldown_cmark::Tag::MetadataBlock { .. } => within_metadata = true,
-                    pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(
-                        ref language,
-                    )) => {
-                        languages.insert(SharedString::from(language.to_string()));
+                let tag = match tag {
+                    pulldown_cmark::Tag::Link {
+                        link_type,
+                        dest_url,
+                        title,
+                        id,
+                    } => {
+                        within_link = true;
+                        MarkdownTag::Link {
+                            link_type,
+                            dest_url: SharedString::from(dest_url.into_string()),
+                            title: SharedString::from(title.into_string()),
+                            id: SharedString::from(id.into_string()),
+                        }
                     }
-                    _ => {}
-                }
-                events.push((range, MarkdownEvent::Start(tag.into())))
+                    pulldown_cmark::Tag::MetadataBlock(kind) => {
+                        within_metadata = true;
+                        MarkdownTag::MetadataBlock(kind)
+                    }
+                    pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(
+                        ref info,
+                    )) => {
+                        let info = info.trim();
+                        MarkdownTag::CodeBlock(if info.is_empty() {
+                            CodeBlockKind::Fenced
+                            // Languages should never contain a slash, and PathRanges always should.
+                            // (Models are told to specify them relative to a workspace root.)
+                        } else if info.contains('/') {
+                            let path_range = PathWithRange::new(info);
+                            language_paths.insert(path_range.path.clone());
+                            CodeBlockKind::FencedSrc(path_range)
+                        } else {
+                            let language = SharedString::from(info.to_string());
+                            language_names.insert(language.clone());
+                            CodeBlockKind::FencedLang(language)
+                        })
+                    }
+                    tag => tag.into(),
+                };
+                events.push((range, MarkdownEvent::Start(tag)))
             }
             pulldown_cmark::Event::End(tag) => {
                 if let pulldown_cmark::TagEnd::Link = tag {
@@ -58,19 +98,6 @@ pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSe
                 // HTML entities or smart punctuation has occurred. When these substitutions occur,
                 // `parsed` only consists of the result of a single substitution.
                 if !cow_str_points_inside(&parsed, text) {
-                    // Attempt to detect cases where the assumptions here are not valid or the
-                    // behavior has changed.
-                    if parsed.len() > 4 {
-                        log::error!(
-                            "Bug in markdown parser. \
-                            pulldown_cmark::Event::Text expected to a substituted HTML entity, \
-                            but it was longer than expected.\n\
-                            Source: {}\n\
-                            Parsed: {}",
-                            &text[range.clone()],
-                            parsed
-                        );
-                    }
                     events.push((range, MarkdownEvent::SubstitutedText(parsed.into())));
                 } else {
                     // Automatically detect links in text if not already within a markdown link.
@@ -129,7 +156,7 @@ pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSe
             pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
         }
     }
-    (events, languages)
+    (events, language_names, language_paths)
 }
 
 pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
@@ -179,7 +206,7 @@ pub enum MarkdownEvent {
     Start(MarkdownTag),
     /// End of a tagged element.
     End(MarkdownTagEnd),
-    /// Text that uses the associated range from the mardown source.
+    /// Text that uses the associated range from the markdown source.
     Text,
     /// Text that differs from the markdown source - typically due to substitution of HTML entities
     /// and smart punctuation.
@@ -287,8 +314,13 @@ pub enum MarkdownTag {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CodeBlockKind {
     Indented,
-    /// The value contained in the tag describes the language of the code, which may be empty.
-    Fenced(SharedString),
+    /// "Fenced" means "surrounded by triple backticks."
+    /// There can optionally be either a language after the backticks (like in traditional Markdown)
+    /// or, if an agent is specifying a path for a source location in the project, it can be a PathRange,
+    /// e.g. ```path/to/foo.rs#L123-456 instead of ```rust
+    Fenced,
+    FencedLang(SharedString),
+    FencedSrc(PathWithRange),
 }
 
 impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
@@ -327,9 +359,18 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
                 pulldown_cmark::CodeBlockKind::Indented => {
                     MarkdownTag::CodeBlock(CodeBlockKind::Indented)
                 }
-                pulldown_cmark::CodeBlockKind::Fenced(info) => MarkdownTag::CodeBlock(
-                    CodeBlockKind::Fenced(SharedString::from(info.into_string())),
-                ),
+                pulldown_cmark::CodeBlockKind::Fenced(info) => {
+                    let info = info.trim();
+                    MarkdownTag::CodeBlock(if info.is_empty() {
+                        CodeBlockKind::Fenced
+                    } else if info.contains('/') {
+                        // Languages should never contain a slash, and PathRanges always should.
+                        // (Models are told to specify them relative to a workspace root.)
+                        CodeBlockKind::FencedSrc(PathWithRange::new(info))
+                    } else {
+                        CodeBlockKind::FencedLang(SharedString::from(info.to_string()))
+                    })
+                }
             },
             pulldown_cmark::Tag::List(start_number) => MarkdownTag::List(start_number),
             pulldown_cmark::Tag::Item => MarkdownTag::Item,
@@ -378,10 +419,16 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
 /// more efficient - it fits within a `pulldown_cmark::InlineStr` in all known cases.
 ///
 /// Same as `pulldown_cmark::CowStr` but without the `Borrow` case.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum CompactStr {
     Boxed(Box<str>),
     Inlined(InlineStr),
+}
+
+impl std::fmt::Debug for CompactStr {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        self.deref().fmt(formatter)
+    }
 }
 
 impl Deref for CompactStr {
@@ -488,6 +535,7 @@ mod tests {
                     (46..51, Text),
                     (0..51, End(MarkdownTagEnd::Paragraph))
                 ],
+                HashSet::new(),
                 HashSet::new()
             )
         );
@@ -496,10 +544,10 @@ mod tests {
     #[test]
     fn test_smart_punctuation() {
         assert_eq!(
-            parse_markdown("-- --- ... \"double quoted\" 'single quoted'"),
+            parse_markdown("-- --- ... \"double quoted\" 'single quoted' ----------"),
             (
                 vec![
-                    (0..42, Start(Paragraph)),
+                    (0..53, Start(Paragraph)),
                     (0..2, SubstitutedText("–".into())),
                     (2..3, Text),
                     (3..6, SubstitutedText("—".into())),
@@ -513,8 +561,11 @@ mod tests {
                     (27..28, SubstitutedText("‘".into())),
                     (28..41, Text),
                     (41..42, SubstitutedText("’".into())),
-                    (0..42, End(MarkdownTagEnd::Paragraph))
+                    (42..43, Text),
+                    (43..53, SubstitutedText("–––––".into())),
+                    (0..53, End(MarkdownTagEnd::Paragraph))
                 ],
+                HashSet::new(),
                 HashSet::new()
             )
         )

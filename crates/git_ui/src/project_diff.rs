@@ -1005,8 +1005,7 @@ impl Render for ProjectDiffToolbar {
     }
 }
 
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "Version Control")]
+#[derive(IntoElement, RegisterComponent)]
 pub struct ProjectDiffEmptyState {
     pub no_repo: bool,
     pub can_push_and_pull: bool,
@@ -1178,8 +1177,12 @@ mod preview {
     use super::ProjectDiffEmptyState;
 
     // View this component preview using `workspace: open component-preview`
-    impl ComponentPreview for ProjectDiffEmptyState {
-        fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+    impl Component for ProjectDiffEmptyState {
+        fn scope() -> ComponentScope {
+            ComponentScope::VersionControl
+        }
+
+        fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
             let unknown_upstream: Option<UpstreamTracking> = None;
             let ahead_of_upstream: Option<UpstreamTracking> = Some(
                 UpstreamTrackingStatus {
@@ -1244,46 +1247,48 @@ mod preview {
 
             let (width, height) = (px(480.), px(320.));
 
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group(vec![
-                        single_example(
-                            "No Repo",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(no_repo_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "No Changes",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(no_changes_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Unknown Upstream",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(unknown_upstream_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Ahead of Remote",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(ahead_of_upstream_state)
-                                .into_any_element(),
-                        ),
+            Some(
+                v_flex()
+                    .gap_6()
+                    .children(vec![
+                        example_group(vec![
+                            single_example(
+                                "No Repo",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(no_repo_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "No Changes",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(no_changes_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Unknown Upstream",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(unknown_upstream_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Ahead of Remote",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(ahead_of_upstream_state)
+                                    .into_any_element(),
+                            ),
+                        ])
+                        .vertical(),
                     ])
-                    .vertical(),
-                ])
-                .into_any_element()
+                    .into_any_element(),
+            )
         }
     }
 }

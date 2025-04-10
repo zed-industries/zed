@@ -3,14 +3,16 @@ use std::sync::Arc;
 use crate::assistant_model_selector::ModelType;
 use collections::HashSet;
 use editor::actions::MoveUp;
-use editor::{ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorStyle};
+use editor::{
+    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorStyle, MultiBuffer,
+};
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point,
+    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
-use language::Buffer;
+use language::{Buffer, Language};
 use language_model::{ConfiguredModel, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
@@ -18,12 +20,8 @@ use project::Project;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{
-    ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
-    prelude::*,
-};
+use ui::{Disclosure, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
-use vim_mode_setting::VimModeSetting;
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
@@ -70,8 +68,24 @@ impl MessageEditor {
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
+        let language = Language::new(
+            language::LanguageConfig {
+                completion_query_characters: HashSet::from_iter(['.', '-', '_', '@']),
+                ..Default::default()
+            },
+            None,
+        );
+
         let editor = cx.new(|cx| {
-            let mut editor = Editor::auto_height(10, window, cx);
+            let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let mut editor = Editor::new(
+                editor::EditorMode::AutoHeight { max_lines: 10 },
+                buffer,
+                None,
+                window,
+                cx,
+            );
             editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_context_menu_options(ContextMenuOptions {
@@ -79,7 +93,6 @@ impl MessageEditor {
                 max_entries_visible: 12,
                 placement: Some(ContextMenuPlacement::Above),
             });
-
             editor
         });
 
@@ -188,7 +201,7 @@ impl MessageEditor {
     }
 
     fn is_editor_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).text(cx).is_empty()
+        self.editor.read(cx).text(cx).trim().is_empty()
     }
 
     fn is_model_selected(&self, cx: &App) -> bool {
@@ -226,7 +239,8 @@ impl MessageEditor {
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
-        let checkpoint = self.project.read(cx).git_store().read(cx).checkpoint(cx);
+        let git_store = self.project.read(cx).git_store().clone();
+        let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
 
         cx.spawn(async move |this, cx| {
             let checkpoint = checkpoint.await.ok();
@@ -354,24 +368,7 @@ impl Render for MessageEditor {
         let total_token_usage = thread.total_token_usage(cx);
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
-        let needs_confirmation =
-            thread.has_pending_tool_uses() && thread.tools_needing_confirmation().next().is_some();
-
-        let submit_label_color = if is_editor_empty {
-            Color::Muted
-        } else {
-            Color::Default
-        };
-
-        let vim_mode_enabled = VimModeSetting::get_global(cx).0;
-        let platform = PlatformStyle::platform();
-        let linux = platform == PlatformStyle::Linux;
-        let windows = platform == PlatformStyle::Windows;
-        let button_width = if linux || windows || vim_mode_enabled {
-            px(82.)
-        } else {
-            px(64.)
-        };
+        let is_edit_changes_expanded = self.edits_expanded;
 
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
@@ -419,70 +416,6 @@ impl Render for MessageEditor {
                     ),
                 )
             })
-            .when(is_generating, |parent| {
-                let focus_handle = self.editor.focus_handle(cx).clone();
-                parent.child(
-                    h_flex().py_3().w_full().justify_center().child(
-                        h_flex()
-                            .flex_none()
-                            .pl_2()
-                            .pr_1()
-                            .py_1()
-                            .bg(editor_bg_color)
-                            .border_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .rounded_lg()
-                            .shadow_md()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::ArrowCircle)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted)
-                                    .with_animation(
-                                        "arrow-circle",
-                                        Animation::new(Duration::from_secs(2)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(gpui::Transformation::rotate(
-                                                gpui::percentage(delta),
-                                            ))
-                                        },
-                                    ),
-                            )
-                            .child({
-
-
-                                Label::new(if needs_confirmation {
-                                    "Waiting for confirmation…"
-                                } else {
-                                    "Generating…"
-                                })
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                            })
-                            .child(ui::Divider::vertical())
-                            .child(
-                                Button::new("cancel-generation", "Cancel")
-                                    .label_size(LabelSize::XSmall)
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &editor::actions::Cancel,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                    )
-                                    .on_click(move |_event, window, cx| {
-                                        focus_handle.dispatch_action(
-                                            &editor::actions::Cancel,
-                                            window,
-                                            cx,
-                                        );
-                                    }),
-                            ),
-                    ),
-                )
-            })
             .when(changed_buffers_count > 0, |parent| {
                 parent.child(
                     v_flex()
@@ -501,12 +434,12 @@ impl Render for MessageEditor {
                         .child(
                             h_flex()
                                 .id("edits-container")
+                                .cursor_pointer()
                                 .p_1p5()
                                 .justify_between()
-                                .when(self.edits_expanded, |this| {
+                                .when(is_edit_changes_expanded, |this| {
                                     this.border_b_1().border_color(border_color)
                                 })
-                                .cursor_pointer()
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.handle_review_click(window, cx)
                                 }))
@@ -516,7 +449,7 @@ impl Render for MessageEditor {
                                         .child(
                                             Disclosure::new(
                                                 "edits-disclosure",
-                                                self.edits_expanded,
+                                                is_edit_changes_expanded,
                                             )
                                             .on_click(
                                                 cx.listener(|this, _ev, _window, cx| {
@@ -566,9 +499,9 @@ impl Render for MessageEditor {
                                         })),
                                 ),
                         )
-                        .when(self.edits_expanded, |parent| {
+                        .when(is_edit_changes_expanded, |parent| {
                             parent.child(
-                                v_flex().bg(cx.theme().colors().editor_background).children(
+                                v_flex().children(
                                     changed_buffers.into_iter().enumerate().flat_map(
                                         |(index, (buffer, _diff))| {
                                             let file = buffer.read(cx).file()?;
@@ -582,7 +515,7 @@ impl Render for MessageEditor {
                                                 } else {
                                                     Some(
                                                         Label::new(format!(
-                                                            "{}{}",
+                                                            "/{}{}",
                                                             parent_str,
                                                             std::path::MAIN_SEPARATOR_STR
                                                         ))
@@ -610,70 +543,105 @@ impl Render for MessageEditor {
                                                         .size(IconSize::Small)
                                                 });
 
-                                            let element = div()
+                                            let hover_color = cx.theme()
+                                                .colors()
+                                                .element_background
+                                                .blend(cx.theme().colors().editor_foreground.opacity(0.025));
+
+                                            let overlay_gradient = linear_gradient(
+                                                90.,
+                                                linear_color_stop(
+                                                    editor_bg_color,
+                                                    1.,
+                                                ),
+                                                linear_color_stop(
+                                                    editor_bg_color
+                                                        .opacity(0.2),
+                                                    0.,
+                                                ),
+                                            );
+
+                                            let overlay_gradient_hover = linear_gradient(
+                                                90.,
+                                                linear_color_stop(
+                                                    hover_color,
+                                                    1.,
+                                                ),
+                                                linear_color_stop(
+                                                    hover_color
+                                                        .opacity(0.2),
+                                                    0.,
+                                                ),
+                                            );
+
+                                            let element = h_flex()
+                                                .group("edited-code")
+                                                .id(("file-container", index))
+                                                .cursor_pointer()
                                                 .relative()
                                                 .py_1()
-                                                .px_2()
+                                                .pl_2()
+                                                .pr_1()
+                                                .gap_2()
+                                                .justify_between()
+                                                .bg(cx.theme().colors().editor_background)
+                                                .hover(|style| style.bg(hover_color))
                                                 .when(index + 1 < changed_buffers_count, |parent| {
                                                     parent.border_color(border_color).border_b_1()
                                                 })
                                                 .child(
                                                     h_flex()
-                                                        .gap_2()
-                                                        .justify_between()
+                                                        .id("file-name")
+                                                        .pr_8()
+                                                        .gap_1p5()
+                                                        .max_w_full()
+                                                        .overflow_x_scroll()
+                                                        .child(file_icon)
                                                         .child(
                                                             h_flex()
-                                                                .id(("file-container", index))
-                                                                .pr_8()
-                                                                .gap_1p5()
-                                                                .max_w_full()
-                                                                .overflow_x_scroll()
-                                                                .cursor_pointer()
-                                                                .on_click({
-                                                                    let buffer = buffer.clone();
-                                                                    cx.listener(move |this, _, window, cx| {
-                                                                        this.handle_file_click(buffer.clone(), window, cx);
-                                                                    })
-                                                                })
-                                                                .tooltip(
-                                                                    Tooltip::text(format!("Review {}", path.display()))
-                                                                )
-                                                                .child(file_icon)
-                                                                .child(
-                                                                    h_flex()
-                                                                        .children(parent_label)
-                                                                        .children(name_label),
-                                                                ) // TODO: show lines changed
-                                                                .child(
-                                                                    Label::new("+")
-                                                                        .color(Color::Created),
-                                                                )
-                                                                .child(
-                                                                    Label::new("-")
-                                                                        .color(Color::Deleted),
-                                                                ),
+                                                                .gap_0p5()
+                                                                .children(name_label)
+                                                                .children(parent_label)
+                                                        ) // TODO: show lines changed
+                                                        .child(
+                                                            Label::new("+")
+                                                                .color(Color::Created),
                                                         )
                                                         .child(
-                                                            div()
-                                                                .h_full()
-                                                                .absolute()
-                                                                .w_8()
-                                                                .bottom_0()
-                                                                .right_0()
-                                                                .bg(linear_gradient(
-                                                                    90.,
-                                                                    linear_color_stop(
-                                                                        editor_bg_color,
-                                                                        1.,
-                                                                    ),
-                                                                    linear_color_stop(
-                                                                        editor_bg_color
-                                                                            .opacity(0.2),
-                                                                        0.,
-                                                                    ),
-                                                                )),
+                                                            Label::new("-")
+                                                                .color(Color::Deleted),
                                                         ),
-                                                );
+                                                )
+                                                .child(
+                                                    div().visible_on_hover("edited-code").child(
+                                                        Button::new("review", "Review")
+                                                            .label_size(LabelSize::Small)
+                                                            .on_click({
+                                                                let buffer = buffer.clone();
+                                                                cx.listener(move |this, _, window, cx| {
+                                                                    this.handle_file_click(buffer.clone(), window, cx);
+                                                                })
+                                                            })
+                                                    )
+                                                )
+                                                .child(
+                                                    div()
+                                                        .id("gradient-overlay")
+                                                        .absolute()
+                                                        .h_5_6()
+                                                        .w_12()
+                                                        .bottom_0()
+                                                        .right(px(52.))
+                                                        .bg(overlay_gradient)
+                                                        .group_hover("edited-code", |style| style.bg(overlay_gradient_hover))
+                                                    ,
+                                                )
+                                                .on_click({
+                                                    let buffer = buffer.clone();
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.handle_file_click(buffer.clone(), window, cx);
+                                                    })
+                                                });
 
                                             Some(element)
                                         },
@@ -733,7 +701,6 @@ impl Render for MessageEditor {
                                             ..Default::default()
                                         },
                                     ).into_any()
-
                             })
                             .child(
                                 PopoverMenu::new("inline-context-picker")
@@ -741,7 +708,6 @@ impl Render for MessageEditor {
                                         inline_context_picker.update(cx, |this, cx| {
                                             this.init(window, cx);
                                         });
-
                                         Some(inline_context_picker.clone())
                                     })
                                     .attach(gpui::Corner::TopLeft)
@@ -758,60 +724,72 @@ impl Render for MessageEditor {
                                     .justify_between()
                                     .child(h_flex().gap_2().child(self.profile_selector.clone()))
                                     .child(
-                                        h_flex().gap_1().child(self.model_selector.clone()).child(
-                                            ButtonLike::new("submit-message")
-                                                .width(button_width.into())
-                                                .style(ButtonStyle::Filled)
-                                                .disabled(
-                                                    is_editor_empty
-                                                        || !is_model_selected
-                                                        || is_generating
-                                                        || self.waiting_for_summaries_to_send
-                                                )
-                                                .child(
-                                                    h_flex()
-                                                        .w_full()
-                                                        .justify_between()
-                                                        .child(
-                                                            Label::new("Submit")
-                                                                .size(LabelSize::Small)
-                                                                .color(submit_label_color),
-                                                        )
-                                                        .children(
-                                                            KeyBinding::for_action_in(
-                                                                &Chat,
-                                                                &focus_handle,
-                                                                window,
-                                                                cx,
+                                        h_flex().gap_1().child(self.model_selector.clone())
+                                            .map(|parent| {
+                                                if is_generating {
+                                                    parent.child(
+                                                        IconButton::new("stop-generation", IconName::StopFilled)
+                                                            .icon_color(Color::Error)
+                                                            .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                                                            .tooltip(move |window, cx| {
+                                                                Tooltip::for_action(
+                                                                    "Stop Generation",
+                                                                    &editor::actions::Cancel,
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                            })
+                                                            .on_click(move |_event, window, cx| {
+                                                                focus_handle.dispatch_action(
+                                                                    &editor::actions::Cancel,
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            })
+                                                            .with_animation(
+                                                                "pulsating-label",
+                                                                Animation::new(Duration::from_secs(2))
+                                                                    .repeat()
+                                                                    .with_easing(pulsating_between(0.4, 1.0)),
+                                                                |icon_button, delta| icon_button.alpha(delta),
+                                                            ),
+                                                    )
+                                                } else {
+                                                    parent.child(
+                                                        IconButton::new("send-message", IconName::Send)
+                                                            .icon_color(Color::Accent)
+                                                            .style(ButtonStyle::Filled)
+                                                            .disabled(
+                                                                is_editor_empty
+                                                                    || !is_model_selected
+                                                                    || self.waiting_for_summaries_to_send
                                                             )
-                                                            .map(|binding| {
-                                                                binding
-                                                                    .when(vim_mode_enabled, |kb| {
-                                                                        kb.size(rems_from_px(12.))
-                                                                    })
-                                                                    .into_any_element()
-                                                            }),
-                                                        ),
-                                                )
-                                                .on_click(move |_event, window, cx| {
-                                                    focus_handle.dispatch_action(&Chat, window, cx);
-                                                })
-                                                .when(is_editor_empty, |button| {
-                                                    button.tooltip(Tooltip::text(
-                                                        "Type a message to submit",
-                                                    ))
-                                                })
-                                                .when(is_generating, |button| {
-                                                    button.tooltip(Tooltip::text(
-                                                        "Cancel to submit a new message",
-                                                    ))
-                                                })
-                                                .when(!is_model_selected, |button| {
-                                                    button.tooltip(Tooltip::text(
-                                                        "Select a model to continue",
-                                                    ))
-                                                }),
-                                        ),
+                                                            .on_click(move |_event, window, cx| {
+                                                                focus_handle.dispatch_action(&Chat, window, cx);
+                                                            })
+                                                            .when(!is_editor_empty && is_model_selected, |button| {
+                                                                button.tooltip(move |window, cx| {
+                                                                    Tooltip::for_action(
+                                                                        "Send",
+                                                                        &Chat,
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                })
+                                                            })
+                                                            .when(is_editor_empty, |button| {
+                                                                button.tooltip(Tooltip::text(
+                                                                    "Type a message to submit",
+                                                                ))
+                                                            })
+                                                            .when(!is_model_selected, |button| {
+                                                                button.tooltip(Tooltip::text(
+                                                                    "Select a model to continue",
+                                                                ))
+                                                            })
+                                                    )
+                                                }
+                                            })
                                     ),
                             ),
                     )

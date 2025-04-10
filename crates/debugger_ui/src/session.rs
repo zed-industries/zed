@@ -1,5 +1,7 @@
 pub mod running;
 
+use std::sync::OnceLock;
+
 use dap::client::SessionId;
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use project::Project;
@@ -7,7 +9,7 @@ use project::debugger::{dap_store::DapStore, session::Session};
 use project::worktree_store::WorktreeStore;
 use rpc::proto::{self, PeerId};
 use running::RunningState;
-use ui::prelude::*;
+use ui::{Indicator, prelude::*};
 use workspace::{
     FollowableItem, ViewId, Workspace,
     item::{self, Item},
@@ -30,6 +32,7 @@ impl DebugSessionState {
 pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     mode: DebugSessionState,
+    label: OnceLock<String>,
     dap_store: WeakEntity<DapStore>,
     _debug_panel: WeakEntity<DebugPanel>,
     _worktree_store: WeakEntity<WorktreeStore>,
@@ -43,14 +46,6 @@ pub enum DebugPanelItemEvent {
     Stopped { go_to_stack_frame: bool },
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ThreadItem {
-    Console,
-    LoadedSource,
-    Modules,
-    Variables,
-}
-
 impl DebugSession {
     pub(crate) fn running(
         project: Entity<Project>,
@@ -60,7 +55,15 @@ impl DebugSession {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let mode = cx.new(|cx| RunningState::new(session.clone(), workspace.clone(), window, cx));
+        let mode = cx.new(|cx| {
+            RunningState::new(
+                session.clone(),
+                project.clone(),
+                workspace.clone(),
+                window,
+                cx,
+            )
+        });
 
         cx.new(|cx| Self {
             _subscriptions: [cx.subscribe(&mode, |_, _, _, cx| {
@@ -68,6 +71,7 @@ impl DebugSession {
             })],
             remote_id: None,
             mode: DebugSessionState::Running(mode),
+            label: OnceLock::new(),
             dap_store: project.read(cx).dap_store().downgrade(),
             _debug_panel,
             _worktree_store: project.read(cx).worktree_store().downgrade(),
@@ -75,9 +79,9 @@ impl DebugSession {
         })
     }
 
-    pub(crate) fn session_id(&self, cx: &App) -> Option<SessionId> {
+    pub(crate) fn session_id(&self, cx: &App) -> SessionId {
         match &self.mode {
-            DebugSessionState::Running(entity) => Some(entity.read(cx).session_id()),
+            DebugSessionState::Running(entity) => entity.read(cx).session_id(),
         }
     }
 
@@ -92,20 +96,56 @@ impl DebugSession {
     }
 
     pub(crate) fn label(&self, cx: &App) -> String {
+        if let Some(label) = self.label.get() {
+            return label.to_owned();
+        }
+
         let session_id = match &self.mode {
             DebugSessionState::Running(running_state) => running_state.read(cx).session_id(),
         };
+
         let Ok(Some(session)) = self
             .dap_store
             .read_with(cx, |store, _| store.session_by_id(session_id))
         else {
             return "".to_owned();
         };
-        session
-            .read(cx)
-            .as_local()
-            .expect("Remote Debug Sessions are not implemented yet")
-            .label()
+
+        self.label
+            .get_or_init(|| {
+                session
+                    .read(cx)
+                    .as_local()
+                    .expect("Remote Debug Sessions are not implemented yet")
+                    .label()
+            })
+            .to_owned()
+    }
+
+    pub(crate) fn label_element(&self, cx: &App) -> AnyElement {
+        let label = self.label(cx);
+
+        let icon = match &self.mode {
+            DebugSessionState::Running(state) => {
+                if state.read(cx).session().read(cx).is_terminated() {
+                    Some(Indicator::dot().color(Color::Error))
+                } else {
+                    match state.read(cx).thread_status(cx).unwrap_or_default() {
+                        project::debugger::session::ThreadStatus::Stopped => {
+                            Some(Indicator::dot().color(Color::Conflict))
+                        }
+                        _ => Some(Indicator::dot().color(Color::Success)),
+                    }
+                }
+            }
+        };
+
+        h_flex()
+            .gap_2()
+            .when_some(icon, |this, indicator| this.child(indicator))
+            .justify_between()
+            .child(Label::new(label))
+            .into_any_element()
     }
 }
 

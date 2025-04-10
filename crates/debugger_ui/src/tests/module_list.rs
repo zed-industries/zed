@@ -1,6 +1,5 @@
 use crate::{
     debugger_panel::DebugPanel,
-    session::ThreadItem,
     tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
@@ -139,13 +138,8 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
                 .clone()
         });
 
-    assert!(
-        !called_modules.load(std::sync::atomic::Ordering::SeqCst),
-        "Request Modules shouldn't be called before it's needed"
-    );
-
-    running_state.update(cx, |state, cx| {
-        state.set_thread_item(ThreadItem::Modules, cx);
+    running_state.update_in(cx, |this, window, cx| {
+        this.activate_modules_list(window, cx);
         cx.refresh_windows();
     });
 
@@ -157,9 +151,6 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     );
 
     active_debug_session_panel(workspace, cx).update(cx, |_, cx| {
-        running_state.update(cx, |state, cx| {
-            state.set_thread_item(ThreadItem::Modules, cx)
-        });
         let actual_modules = running_state.update(cx, |state, cx| {
             state.module_list().update(cx, |list, cx| list.modules(cx))
         });

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use fuzzy::StringMatchCandidate;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
@@ -114,11 +115,11 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             return Task::ready(());
         };
 
-        let search_task = search_threads(query, threads, cx);
+        let search_task = search_threads(query, Arc::new(AtomicBool::default()), threads, cx);
         cx.spawn_in(window, async move |this, cx| {
             let matches = search_task.await;
             this.update(cx, |this, cx| {
-                this.delegate.matches = matches;
+                this.delegate.matches = matches.into_iter().map(|mat| mat.thread).collect();
                 this.delegate.selected_index = 0;
                 cx.notify();
             })
@@ -217,11 +218,18 @@ pub fn render_thread_context_entry(
         })
 }
 
+#[derive(Clone)]
+pub struct ThreadMatch {
+    pub thread: ThreadContextEntry,
+    pub is_recent: bool,
+}
+
 pub(crate) fn search_threads(
     query: String,
+    cancellation_flag: Arc<AtomicBool>,
     thread_store: Entity<ThreadStore>,
     cx: &mut App,
-) -> Task<Vec<ThreadContextEntry>> {
+) -> Task<Vec<ThreadMatch>> {
     let threads = thread_store.update(cx, |this, _cx| {
         this.threads()
             .into_iter()
@@ -236,6 +244,12 @@ pub(crate) fn search_threads(
     cx.background_spawn(async move {
         if query.is_empty() {
             threads
+                .into_iter()
+                .map(|thread| ThreadMatch {
+                    thread,
+                    is_recent: false,
+                })
+                .collect()
         } else {
             let candidates = threads
                 .iter()
@@ -247,14 +261,17 @@ pub(crate) fn search_threads(
                 &query,
                 false,
                 100,
-                &Default::default(),
+                &cancellation_flag,
                 executor,
             )
             .await;
 
             matches
                 .into_iter()
-                .map(|mat| threads[mat.candidate_id].clone())
+                .map(|mat| ThreadMatch {
+                    thread: threads[mat.candidate_id].clone(),
+                    is_recent: false,
+                })
                 .collect()
         }
     })

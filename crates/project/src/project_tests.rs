@@ -459,6 +459,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
                 active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
                 active_worktree_context: None,
                 other_worktree_contexts: Vec::new(),
+                lsp_task_sources: HashMap::default(),
+                latest_selection: None,
             },
             cx,
         )
@@ -481,6 +483,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
                     worktree_context
                 })),
                 other_worktree_contexts: Vec::new(),
+                lsp_task_sources: HashMap::default(),
+                latest_selection: None,
             },
             cx,
         )
@@ -797,7 +801,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path!("/dir/test3.rs")).unwrap(),),
+        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path!("/dir/test3.rs")).unwrap()),
     );
     assert_eq!(
         fake_json_server
@@ -2664,6 +2668,62 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
 }
 
 #[gpui::test]
+async fn test_edits_from_lsp_with_replacement_followed_by_adjacent_insertion(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let text = "Path()";
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.rs": text
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Simulate the language server sending us a pair of edits at the same location,
+    // with an insertion following a replacement (which violates the LSP spec).
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                &buffer,
+                [
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+                        new_text: "Path".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                        new_text: "from path import Path\n\n\n".into(),
+                    },
+                ],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(edits, None, cx);
+        assert_eq!(buffer.text(), "from path import Path\n\n\nPath()")
+    });
+}
+
+#[gpui::test]
 async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -2958,7 +3018,7 @@ async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "textEditText");
     assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
+        completions[0].replace_range.to_offset(&snapshot),
         text.len() - 3..text.len()
     );
 }
@@ -3041,7 +3101,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].new_text, "insertText");
         assert_eq!(
-            completions[0].old_range.to_offset(&snapshot),
+            completions[0].replace_range.to_offset(&snapshot),
             text.len() - 3..text.len()
         );
     }
@@ -3083,7 +3143,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].new_text, "labelText");
         assert_eq!(
-            completions[0].old_range.to_offset(&snapshot),
+            completions[0].replace_range.to_offset(&snapshot),
             text.len() - 3..text.len()
         );
     }
@@ -3153,7 +3213,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fullyQualifiedName");
     assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
+        completions[0].replace_range.to_offset(&snapshot),
         text.len() - 3..text.len()
     );
 
@@ -3180,7 +3240,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "component");
     assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
+        completions[0].replace_range.to_offset(&snapshot),
         text.len() - 4..text.len() - 1
     );
 }

@@ -766,6 +766,50 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "      .dockerignore",
         ]
     );
+
+    // Test empty filename and filename with only whitespace
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    > .git",
+            "    > a",
+            "    v b",
+            "        > 3",
+            "        > 4",
+            "        > new-dir",
+            "          [EDITOR: '']  <== selected",
+            "          a-different-filename.tar.gz",
+            "    > C",
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
+        assert!(panel.confirm_edit(window, cx).is_none());
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("   ", window, cx);
+        });
+        assert!(panel.confirm_edit(window, cx).is_none());
+        panel.cancel(&menu::Cancel, window, cx)
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    > .git",
+            "    > a",
+            "    v b",
+            "        > 3",
+            "        > 4",
+            "        > new-dir",
+            "          a-different-filename.tar.gz  <== selected",
+            "    > C",
+            "      .dockerignore",
+        ]
+    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -2692,6 +2736,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
         shift: true,
         ..Default::default()
     };
+    cx.run_until_parked();
     cx.simulate_modifiers_change(modifiers_with_shift);
     cx.update(|window, cx| {
         panel.update(cx, |this, cx| {

@@ -23,7 +23,6 @@ http_client.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
-lsp.workspace = true
 project.workspace = true
 regex.workspace = true
 schemars.workspace = true

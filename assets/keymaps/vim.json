@@ -44,6 +44,12 @@
       "[ /": "vim::PreviousComment",
       "] *": "vim::NextComment",
       "] /": "vim::NextComment",
+      "[ -": "vim::PreviousLesserIndent",
+      "[ +": "vim::PreviousGreaterIndent",
+      "[ =": "vim::PreviousSameIndent",
+      "] -": "vim::NextLesserIndent",
+      "] +": "vim::NextGreaterIndent",
+      "] =": "vim::NextSameIndent",
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",

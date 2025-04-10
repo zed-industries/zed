@@ -4,14 +4,14 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use dap::StackFrameId;
 use gpui::{
-    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
-    WeakEntity, list,
+    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, MouseButton, Stateful,
+    Subscription, Task, WeakEntity, list,
 };
 
 use language::PointUtf16;
 use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::{ProjectItem, ProjectPath};
-use ui::{Tooltip, prelude::*};
+use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -31,7 +31,8 @@ pub struct StackFrameList {
     invalidate: bool,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
-    current_stack_frame_id: Option<StackFrameId>,
+    selected_stack_frame_id: Option<StackFrameId>,
+    scrollbar_state: ScrollbarState,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -75,6 +76,7 @@ impl StackFrameList {
             });
 
         Self {
+            scrollbar_state: ScrollbarState::new(list.clone()),
             list,
             session,
             workspace,
@@ -83,7 +85,7 @@ impl StackFrameList {
             _subscription,
             invalidate: true,
             entries: Default::default(),
-            current_stack_frame_id: None,
+            selected_stack_frame_id: None,
         }
     }
 
@@ -130,8 +132,8 @@ impl StackFrameList {
             .unwrap_or(0)
     }
 
-    pub fn current_stack_frame_id(&self) -> Option<StackFrameId> {
-        self.current_stack_frame_id
+    pub fn selected_stack_frame_id(&self) -> Option<StackFrameId> {
+        self.selected_stack_frame_id
     }
 
     pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -186,20 +188,20 @@ impl StackFrameList {
     }
 
     pub fn go_to_selected_stack_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if let Some(current_stack_frame_id) = self.current_stack_frame_id {
+        if let Some(selected_stack_frame_id) = self.selected_stack_frame_id {
             let frame = self
                 .entries
                 .iter()
                 .find_map(|entry| match entry {
                     StackFrameEntry::Normal(dap) => {
-                        if dap.id == current_stack_frame_id {
+                        if dap.id == selected_stack_frame_id {
                             Some(dap)
                         } else {
                             None
                         }
                     }
                     StackFrameEntry::Collapsed(daps) => {
-                        daps.iter().find(|dap| dap.id == current_stack_frame_id)
+                        daps.iter().find(|dap| dap.id == selected_stack_frame_id)
                     }
                 })
                 .cloned();
@@ -218,7 +220,7 @@ impl StackFrameList {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.current_stack_frame_id = Some(stack_frame.id);
+        self.selected_stack_frame_id = Some(stack_frame.id);
 
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
             stack_frame.id,
@@ -317,7 +319,7 @@ impl StackFrameList {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let source = stack_frame.source.clone();
-        let is_selected_frame = Some(stack_frame.id) == self.current_stack_frame_id;
+        let is_selected_frame = Some(stack_frame.id) == self.selected_stack_frame_id;
 
         let formatted_path = format!(
             "{}:{}",
@@ -493,6 +495,39 @@ impl StackFrameList {
             }
         }
     }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("stack-frame-list-vertical-scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
+    }
 }
 
 impl Render for StackFrameList {
@@ -507,6 +542,7 @@ impl Render for StackFrameList {
             .size_full()
             .p_1()
             .child(list(self.list.clone()).size_full())
+            .child(self.render_vertical_scrollbar(cx))
     }
 }
 

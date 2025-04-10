@@ -130,6 +130,12 @@ pub struct Transaction {
     pub start: clock::Global,
 }
 
+impl Transaction {
+    pub fn merge_in(&mut self, other: Transaction) {
+        self.edit_ids.extend(other.edit_ids);
+    }
+}
+
 impl HistoryEntry {
     pub fn transaction_id(&self) -> TransactionId {
         self.transaction.id
@@ -1423,8 +1429,12 @@ impl Buffer {
             .collect()
     }
 
-    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
-        self.history.forget(transaction_id);
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        self.history.forget(transaction_id)
+    }
+
+    pub fn get_transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.history.transaction(transaction_id)
     }
 
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
@@ -1482,7 +1492,6 @@ impl Buffer {
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         self.history.push_transaction(transaction, now);
-        self.history.finalize_last_transaction();
     }
 
     pub fn edited_ranges_for_transaction_id<D>(
@@ -2231,6 +2240,7 @@ impl BufferSnapshot {
         } else if *anchor == Anchor::MAX {
             self.visible_text.len()
         } else {
+            debug_assert!(anchor.buffer_id == Some(self.remote_id));
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,

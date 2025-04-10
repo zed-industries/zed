@@ -203,7 +203,8 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx);
+
+        self.switch_mode(self.default_mode(cx), true, window, cx);
     }
 
     pub fn replace_with_register_object(

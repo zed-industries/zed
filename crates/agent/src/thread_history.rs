@@ -432,17 +432,6 @@ impl RenderOnce for PastThread {
                 h_flex()
                     .gap_1p5()
                     .child(
-                        Label::new("Thread")
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    )
-                    .child(
-                        div()
-                            .size(px(3.))
-                            .rounded_full()
-                            .bg(cx.theme().colors().text_disabled),
-                    )
-                    .child(
                         Label::new(thread_timestamp)
                             .color(Color::Muted)
                             .size(LabelSize::XSmall),
@@ -452,12 +441,7 @@ impl RenderOnce for PastThread {
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
                             .tooltip(move |window, cx| {
-                                Tooltip::for_action(
-                                    "Delete Thread",
-                                    &RemoveSelectedThread,
-                                    window,
-                                    cx,
-                                )
+                                Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
                             })
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
@@ -539,17 +523,6 @@ impl RenderOnce for PastContext {
             h_flex()
                 .gap_1p5()
                 .child(
-                    Label::new("Prompt Editor")
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall),
-                )
-                .child(
-                    div()
-                        .size(px(3.))
-                        .rounded_full()
-                        .bg(cx.theme().colors().text_disabled),
-                )
-                .child(
                     Label::new(context_timestamp)
                         .color(Color::Muted)
                         .size(LabelSize::XSmall),
@@ -558,7 +531,9 @@ impl RenderOnce for PastContext {
                     IconButton::new("delete", IconName::TrashAlt)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
-                        .tooltip(Tooltip::text("Delete Prompt Editor"))
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                        })
                         .on_click({
                             let assistant_panel = self.assistant_panel.clone();
                             let path = self.context.path.clone();

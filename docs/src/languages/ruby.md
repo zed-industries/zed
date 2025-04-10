@@ -292,7 +292,7 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 [
   {
     "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle exec rails",
+    "command": "bin/rails",
     "args": ["test", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
     "tags": ["ruby-test"]
   }

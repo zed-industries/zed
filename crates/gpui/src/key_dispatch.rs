@@ -597,10 +597,6 @@ mod tests {
             Box::new(TestAction)
         }
 
-        fn as_any(&self) -> &dyn ::std::any::Any {
-            self
-        }
-
         fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn Action>>
         where
             Self: Sized,

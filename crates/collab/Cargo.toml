@@ -33,7 +33,6 @@ clock.workspace = true
 collections.workspace = true
 dashmap.workspace = true
 derive_more.workspace = true
-buffer_diff.workspace = true
 envy = "0.4.2"
 futures.workspace = true
 google_ai.workspace = true
@@ -45,7 +44,7 @@ log.workspace = true
 nanoid.workspace = true
 open_ai.workspace = true
 parking_lot.workspace = true
-prometheus = "0.13"
+prometheus = "0.14"
 prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.11", features = ["json"] }
@@ -85,6 +84,7 @@ assistant_slash_command.workspace = true
 assistant_tool.workspace = true
 async-trait.workspace = true
 audio.workspace = true
+buffer_diff.workspace = true
 call = { workspace = true, features = ["test-support"] }
 channel.workspace = true
 client = { workspace = true, features = ["test-support"] }

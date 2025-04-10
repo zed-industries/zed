@@ -61,6 +61,12 @@
     }
   },
   {
+    "context": "Editor && !agent_diff",
+    "bindings": {
+      "cmd-k cmd-z": "git::Restore"
+    }
+  },
+  {
     "context": "Pane",
     "bindings": {
       "f4": "search::SelectNextMatch",

@@ -409,6 +409,7 @@ impl Render for AssistantConfiguration {
 
         v_flex()
             .id("assistant-configuration")
+            .key_context("AgentConfiguration")
             .track_focus(&self.focus_handle(cx))
             .bg(cx.theme().colors().panel_background)
             .size_full()

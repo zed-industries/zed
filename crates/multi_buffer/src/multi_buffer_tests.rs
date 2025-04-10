@@ -1799,6 +1799,88 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
+    let buf1 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "zero
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            ",
+            },
+            cx,
+        )
+    });
+    let path: PathKey = PathKey::namespaced(0, Path::new("/").into());
+    let buf2 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "000
+            111
+            222
+            333
+            "
+            },
+            cx,
+        )
+    });
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buf1.clone(),
+            vec![Point::row_range(1..1), Point::row_range(4..5)],
+            1,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {
+        "-----
+        zero
+        one
+        two
+        -----
+        three
+        four
+        five
+        six
+        "
+        },
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buf2.clone(),
+            vec![Point::row_range(0..1)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                000
+                111
+                222
+                333
+                "},
+    );
+}
+
+#[gpui::test]
 fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     let base_text_1 = indoc!(
         "

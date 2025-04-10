@@ -136,7 +136,7 @@ impl IconSource {
     }
 }
 
-#[derive(IntoElement, IntoComponent)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct Icon {
     source: IconSource,
     color: Color,
@@ -265,43 +265,54 @@ impl RenderOnce for IconWithIndicator {
     }
 }
 
-// View this component preview using `workspace: open component-preview`
-impl ComponentPreview for Icon {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        v_flex()
-            .gap_6()
-            .children(vec![
-                example_group_with_title(
-                    "Sizes",
-                    vec![
-                        single_example("Default", Icon::new(IconName::Star).into_any_element()),
-                        single_example(
-                            "Small",
-                            Icon::new(IconName::Star)
-                                .size(IconSize::Small)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Large",
-                            Icon::new(IconName::Star)
-                                .size(IconSize::XLarge)
-                                .into_any_element(),
-                        ),
-                    ],
-                ),
-                example_group_with_title(
-                    "Colors",
-                    vec![
-                        single_example("Default", Icon::new(IconName::Bell).into_any_element()),
-                        single_example(
-                            "Custom Color",
-                            Icon::new(IconName::Bell)
-                                .color(Color::Error)
-                                .into_any_element(),
-                        ),
-                    ],
-                ),
-            ])
-            .into_any_element()
+impl Component for Icon {
+    fn scope() -> ComponentScope {
+        ComponentScope::Images
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "A versatile icon component that supports SVG and image-based icons with customizable size, color, and transformations.",
+        )
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Sizes",
+                        vec![
+                            single_example("Default", Icon::new(IconName::Star).into_any_element()),
+                            single_example(
+                                "Small",
+                                Icon::new(IconName::Star)
+                                    .size(IconSize::Small)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Large",
+                                Icon::new(IconName::Star)
+                                    .size(IconSize::XLarge)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Colors",
+                        vec![
+                            single_example("Default", Icon::new(IconName::Bell).into_any_element()),
+                            single_example(
+                                "Custom Color",
+                                Icon::new(IconName::Bell)
+                                    .color(Color::Error)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }

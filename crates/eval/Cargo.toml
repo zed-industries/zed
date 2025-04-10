@@ -1,0 +1,39 @@
+[package]
+name = "eval"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[dependencies]
+agent.workspace = true
+anyhow.workspace = true
+assistant_tool.workspace = true
+assistant_tools.workspace = true
+client.workspace = true
+collections.workspace = true
+context_server.workspace = true
+dap.workspace = true
+env_logger.workspace = true
+fs.workspace = true
+gpui.workspace = true
+gpui_tokio.workspace = true
+language.workspace = true
+language_model.workspace = true
+language_models.workspace = true
+node_runtime.workspace = true
+project.workspace = true
+prompt_store.workspace = true
+release_channel.workspace = true
+reqwest_client.workspace = true
+serde.workspace = true
+settings.workspace = true
+smol.workspace = true
+toml.workspace = true
+workspace-hack.workspace = true
+
+[[bin]]
+name = "eval"
+path = "src/eval.rs"
+
+[lints]
+workspace = true

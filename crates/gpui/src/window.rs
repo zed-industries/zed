@@ -845,6 +845,7 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
+                        window.modifiers = window.platform_window.modifiers();
                         window
                             .activation_observers
                             .clone()
