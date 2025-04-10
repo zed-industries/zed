@@ -176,7 +176,7 @@ fn main() {
     if let Some(dir) = &args.user_data_dir {
         paths::set_custom_data_dir(dir);
     }
-    
+
     #[cfg(all(not(debug_assertions), target_os = "windows"))]
     unsafe {
         use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
