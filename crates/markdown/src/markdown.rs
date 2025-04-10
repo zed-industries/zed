@@ -111,7 +111,8 @@ pub type CodeBlockRenderFn = Arc<
     ) -> Div,
 >;
 
-pub type CodeBlockTransformFn = Arc<dyn Fn(AnyDiv, Range<usize>, &mut Window, &App) -> AnyDiv>;
+pub type CodeBlockTransformFn =
+    Arc<dyn Fn(AnyDiv, Range<usize>, CodeBlockMetadata, &mut Window, &App) -> AnyDiv>;
 
 actions!(markdown, [Copy, CopyAsMarkdown]);
 
@@ -612,6 +613,8 @@ impl Element for MarkdownElement {
             0
         };
 
+        let mut current_code_block_metadata = None;
+
         for (range, event) in parsed_markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => {
@@ -662,6 +665,8 @@ impl Element for MarkdownElement {
                                     .cloned(),
                                 _ => None,
                             };
+
+                            current_code_block_metadata = Some(metadata.clone());
 
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
 
@@ -867,13 +872,22 @@ impl Element for MarkdownElement {
                             builder.pop_text_style();
                         }
 
+                        let metadata = current_code_block_metadata.take();
+
                         if let CodeBlockRenderer::Custom {
                             transform: Some(transform),
                             ..
                         } = &self.code_block_renderer
                         {
-                            builder
-                                .modify_current_div(|el| transform(el, range.clone(), window, cx));
+                            builder.modify_current_div(|el| {
+                                transform(
+                                    el,
+                                    range.clone(),
+                                    metadata.clone().unwrap_or_default(),
+                                    window,
+                                    cx,
+                                )
+                            });
                         }
 
                         if matches!(

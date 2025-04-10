@@ -407,7 +407,7 @@ pub enum CodeBlockKind {
     FencedSrc(PathWithRange),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct CodeBlockMetadata {
     pub content_range: Range<usize>,
     pub line_count: usize,
