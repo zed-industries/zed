@@ -903,7 +903,7 @@ impl Terminal {
                 .grid_clamp(term, Boundary::Grid);
 
                 if let Some((hyperlink_word, is_url, hyperlink_match)) =
-                    self.hyperlink_finder.find_from_grid_point(point, term)
+                    self.hyperlink_finder.find_from_grid_point(term, point)
                 {
                     let target = if is_url {
                         MaybeNavigationTarget::Url(hyperlink_word)
