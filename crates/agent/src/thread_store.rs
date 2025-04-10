@@ -491,7 +491,7 @@ impl ThreadsDatabase {
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
-                let database_path = paths::support_dir().join("threads/threads-db.1.mdb");
+                let database_path = paths::data_dir().join("threads/threads-db.1.mdb");
                 async move { ThreadsDatabase::new(database_path, executor) }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
