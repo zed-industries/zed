@@ -1095,7 +1095,30 @@ impl Thread {
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
-                                // Check for active create_file tools and update them with the new chunk
+                                // First handle adding the text to the assistant's message as normal
+                                // This ensures the text is still displayed in the UI
+                                if let Some(last_message) = thread.messages.last_mut() {
+                                    if last_message.role == Role::Assistant {
+                                        last_message.push_text(&chunk);
+                                        cx.emit(ThreadEvent::StreamedAssistantText(
+                                            last_message.id,
+                                            chunk.clone(), // Clone here since we'll use chunk again below
+                                        ));
+                                    } else {
+                                        // If we won't have an Assistant message yet, assume this chunk marks the beginning
+                                        // of a new Assistant response.
+                                        //
+                                        // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
+                                        // will result in duplicating the text of the chunk in the rendered Markdown.
+                                        thread.insert_message(
+                                            Role::Assistant,
+                                            vec![MessageSegment::Text(chunk.to_string())],
+                                            cx,
+                                        );
+                                    };
+                                }
+                                
+                                // Now handle active create_file tools - update their buffers with this chunk
                                 // Create a copy of the active tools to avoid borrowing issues
                                 let active_tools: Vec<_> = thread.active_create_file_tools.iter()
                                     .map(|(id, (path, _))| (id.clone(), path.clone()))
@@ -1105,8 +1128,11 @@ impl Thread {
                                     let project_clone = thread.project.clone();
                                     let chunk_clone = chunk.clone();
                                     
-                                    // Create a new task for handling this chunk
-                                    let task = cx.spawn(async move |_thread, cx| {
+                                    // Log that we're appending this chunk
+                                    log::info!("Appending chunk to file: {} (length {})", path_clone, chunk_clone.len());
+                                    
+                                    // Create a task for handling this chunk
+                                    let task = cx.spawn(async move |_, cx| {
                                         // Find the project path
                                         let project_path = project_clone.update(cx, |project, cx| {
                                             project.find_project_path(&path_clone, cx)
@@ -1126,6 +1152,8 @@ impl Thread {
                                                         })
                                                     }) {
                                                         log::warn!("Failed to edit buffer: {}", e);
+                                                    } else {
+                                                        log::info!("Successfully appended chunk to file: {}", path_clone);
                                                     }
                                                 }
                                             }
@@ -1136,27 +1164,6 @@ impl Thread {
                                     if let Some((_, task_slot)) = thread.active_create_file_tools.get_mut(&tool_id) {
                                         *task_slot = Some(task);
                                     }
-                                }
-                                
-                                if let Some(last_message) = thread.messages.last_mut() {
-                                    if last_message.role == Role::Assistant {
-                                        last_message.push_text(&chunk);
-                                        cx.emit(ThreadEvent::StreamedAssistantText(
-                                            last_message.id,
-                                            chunk,
-                                        ));
-                                    } else {
-                                        // If we won't have an Assistant message yet, assume this chunk marks the beginning
-                                        // of a new Assistant response.
-                                        //
-                                        // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
-                                        // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(
-                                            Role::Assistant,
-                                            vec![MessageSegment::Text(chunk.to_string())],
-                                            cx,
-                                        );
-                                    };
                                 }
                             }
                             LanguageModelCompletionEvent::Thinking(chunk) => {
@@ -1244,39 +1251,59 @@ impl Thread {
                             }
         
                             // Save any active create_file buffers after streaming is completely done
+                            log::info!("Saving completed files...");
                             let active_files: Vec<_> = thread.active_create_file_tools.iter()
                                 .map(|(id, (path, _))| (id.clone(), path.clone()))
                                 .collect();
         
                             for (tool_id, path) in active_files {
                                 let project_clone = thread.project.clone();
-                                let path_clone = path.clone();
-            
-                                let _ = cx.spawn(async move |_thread, cx| {
+                                let path_for_log = path.clone();
+                                let path_clone = path.clone();  // This will be moved into the closure
+                                let action_log_clone = thread.action_log.clone();
+                                
+                                log::info!("Creating and saving file at path: {}", path_for_log);
+                                
+                                // Create a spawn task to handle file creation
+                                let file_task = cx.spawn(async move |_, cx| {
                                     // Find the project path
                                     let project_path = project_clone.update(cx, |project, cx| {
                                         project.find_project_path(&path_clone, cx)
                                     }).ok().flatten();
-                
+                                    
                                     if let Some(project_path) = project_path {
                                         // Get the buffer
                                         if let Ok(buffer_task) = project_clone.update(cx, |project, cx| {
                                             project.open_buffer(project_path.clone(), cx)
                                         }) {
                                             if let Ok(buffer) = buffer_task.await {
+                                                // Register buffer creation
+                                                if let Err(e) = action_log_clone.update(cx, |action_log, cx| {
+                                                    action_log.will_create_buffer(buffer.clone(), cx);
+                                                }) {
+                                                    log::warn!("Failed to register buffer creation: {}", e);
+                                                }
+                                                
                                                 // Save the buffer
                                                 if let Ok(save_task) = project_clone.update(cx, |project, cx| {
                                                     project.save_buffer(buffer, cx)
                                                 }) {
-                                                    let _ = cx.spawn(async move |_| {
-                                                        let _ = save_task.await;
-                                                    });
+                                                    if save_task.await.is_ok() {
+                                                        log::info!("File successfully created and saved: {}", path_clone);
+                                                        return true;
+                                                    }
                                                 }
                                             }
                                         }
                                     }
+                                    log::error!("Failed to create file: {}", path_clone);
+                                    false
                                 });
-            
+                                
+                                // Just spawn file task and let it complete on its own
+                                file_task.detach();
+                                log::info!("File creation task started for path: {}", path_for_log);
+                                
                                 // Remove this tool from active tools
                                 thread.active_create_file_tools.remove(&tool_id);
                             }
