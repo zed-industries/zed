@@ -467,11 +467,14 @@ fn render_markdown_code_block(
         .element_background
         .blend(cx.theme().colors().editor_foreground.opacity(0.01));
 
-    let line_count = without_fences(&parsed_markdown.source()[codeblock_range.clone()])
-        .lines()
-        .count();
-
+    const CODE_FENCES_LINE_COUNT: usize = 2;
     const MAX_COLLAPSED_LINES: usize = 5;
+
+    let line_count = parsed_markdown.source()[codeblock_range.clone()]
+        .bytes()
+        .filter(|c| *c == b'\n')
+        .count()
+        .saturating_sub(CODE_FENCES_LINE_COUNT - 1);
 
     let codeblock_header = h_flex()
         .group("codeblock_header")
