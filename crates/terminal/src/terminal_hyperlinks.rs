@@ -88,7 +88,7 @@ impl HyperlinkFinder {
                 (format!("{file_path}:{line_number}"), false, python_match)
             })
         } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
-            // TODO(davewa): This code does 4 full char() scans of the path, when one
+            // TODO(davewa): This code does several full char() scans of the path, when one
             // partial reverse bytes() scan would suffice. Replace with Regex.
 
             let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
