@@ -26,6 +26,7 @@ use prompt_store::{AssistantSystemPromptContext, PromptBuilder, WorktreeInfoForS
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
 
@@ -1895,10 +1896,13 @@ impl Thread {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum ThreadError {
+    #[error("Payment required")]
     PaymentRequired,
+    #[error("Max monthly spend reached")]
     MaxMonthlySpendReached,
+    #[error("Message {header}: {message}")]
     Message {
         header: SharedString,
         message: SharedString,

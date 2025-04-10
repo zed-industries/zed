@@ -114,6 +114,7 @@ dependencies = [
  "terminal_view",
  "text",
  "theme",
+ "thiserror 2.0.12",
  "time",
  "time_format",
  "ui",
@@ -4907,6 +4908,7 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "anyhow",
+ "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "client",
@@ -4915,6 +4917,7 @@ dependencies = [
  "dap",
  "env_logger 0.11.8",
  "fs",
+ "futures 0.3.31",
  "gpui",
  "gpui_tokio",
  "language",
