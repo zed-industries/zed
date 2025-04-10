@@ -375,7 +375,8 @@ impl DebugPanel {
         DropdownMenu::new_with_element(
             "debugger-session-list",
             label,
-            ContextMenu::build(window, cx, move |mut this, _, _| {
+            ContextMenu::build(window, cx, move |mut this, _, cx| {
+                let context_menu = cx.weak_entity();
                 for session in sessions.into_iter() {
                     let weak_session = session.downgrade();
                     let weak_id = weak_session.entity_id();
@@ -383,9 +384,11 @@ impl DebugPanel {
                     this = this.custom_entry(
                         {
                             let weak = weak.clone();
+                            let context_menu = context_menu.clone();
                             move |_, cx| {
                                 weak_session
                                     .read_with(cx, |session, cx| {
+                                        let context_menu = context_menu.clone();
                                         h_flex()
                                             .w_full()
                                             .justify_between()
@@ -398,11 +401,20 @@ impl DebugPanel {
                                                 .icon_size(IconSize::Small)
                                                 .on_click({
                                                     let weak = weak.clone();
-                                                    move |_, _, cx| {
+                                                    move |_, window, cx| {
                                                         weak.update(cx, |panel, cx| {
                                                             panel.close_session(weak_id, cx);
                                                         })
                                                         .ok();
+                                                        context_menu
+                                                            .update(cx, |this, cx| {
+                                                                this.cancel(
+                                                                    &Default::default(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            })
+                                                            .ok();
                                                     }
                                                 }),
                                             )
