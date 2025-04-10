@@ -1402,7 +1402,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
-        if snapshot.mode != EditorMode::Full {
+        if !snapshot.mode.is_full() {
             return None;
         }
 
@@ -2371,7 +2371,7 @@ impl EditorElement {
         cx: &mut App,
     ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
-            EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
+            EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode.is_full()
         });
         if !include_line_numbers {
             return Arc::default();
@@ -2477,7 +2477,7 @@ impl EditorElement {
         cx: &mut App,
     ) -> Vec<Option<AnyElement>> {
         let include_fold_statuses = EditorSettings::get_global(cx).gutter.folds
-            && snapshot.mode == EditorMode::Full
+            && snapshot.mode.is_full()
             && self.editor.read(cx).is_singleton(cx);
         if include_fold_statuses {
             row_infos
@@ -4176,7 +4176,7 @@ impl EditorElement {
                 self.style.background,
             ));
 
-            if let EditorMode::Full = layout.mode {
+            if let EditorMode::Full { .. } = layout.mode {
                 let mut active_rows = layout.active_rows.iter().peekable();
                 while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
                     let mut end_row = start_row.0;
@@ -6059,7 +6059,7 @@ impl LineWithInvisibles {
                             strikethrough: text_style.strikethrough,
                         });
 
-                        if editor_mode == EditorMode::Full {
+                        if editor_mode.is_full() {
                             // Line wrap pads its contents with fake whitespaces,
                             // avoid printing them
                             let is_soft_wrapped = is_row_soft_wrapped(row);
@@ -6414,7 +6414,7 @@ impl EditorElement {
     /// This allows UI elements to scale based on the `buffer_font_size`.
     fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
         match self.editor.read(cx).mode {
-            EditorMode::Full => {
+            EditorMode::Full { .. } => {
                 let buffer_font_size = self.style.text.font_size;
                 match buffer_font_size {
                     AbsoluteLength::Pixels(pixels) => {
@@ -6531,7 +6531,7 @@ impl Element for EditorElement {
                             },
                         )
                     }
-                    EditorMode::Full => {
+                    EditorMode::Full { .. } => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
                         style.size.height = relative(1.).into();
@@ -8507,7 +8507,7 @@ mod tests {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-            Editor::new(EditorMode::Full, buffer, None, window, cx)
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
         });
 
         let editor = window.root(cx).unwrap();
@@ -8608,7 +8608,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-            Editor::new(EditorMode::Full, buffer, None, window, cx)
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -8679,7 +8679,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple("", cx);
-            Editor::new(EditorMode::Full, buffer, None, window, cx)
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -8765,7 +8765,7 @@ mod tests {
 
             let actual_invisibles = collect_invisibles_from_new_editor(
                 cx,
-                EditorMode::Full,
+                EditorMode::full(),
                 input_text,
                 px(500.0),
                 show_line_numbers,
@@ -8859,7 +8859,7 @@ mod tests {
 
                 let actual_invisibles = collect_invisibles_from_new_editor(
                     cx,
-                    EditorMode::Full,
+                    EditorMode::full(),
                     &input_text,
                     px(editor_width),
                     show_line_numbers,

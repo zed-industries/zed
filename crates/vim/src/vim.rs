@@ -22,7 +22,7 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, HideMouseCursorOrigin, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, ToPoint,
     movement::{self, FindRange},
 };
 use gpui::{
@@ -1127,7 +1127,7 @@ impl Vim {
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
 
-        if editor_mode == EditorMode::Full
+        if editor_mode.is_full()
                 && !newest_selection_empty
                 && self.mode == Mode::Normal
                 // When following someone, don't switch vim mode.

@@ -18,7 +18,7 @@ use anyhow::Context as _;
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, ExcerptId,
+    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorSettings, ExcerptId,
     ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
@@ -4725,7 +4725,7 @@ fn workspace_active_editor(
     let active_item = workspace.active_item(cx)?;
     let active_editor = active_item
         .act_as::<Editor>(cx)
-        .filter(|editor| editor.read(cx).mode() == EditorMode::Full)?;
+        .filter(|editor| editor.read(cx).mode().is_full())?;
     Some((active_item, active_editor))
 }
 

@@ -1,7 +1,7 @@
 use client::{Client, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
-use editor::{Editor, EditorMode};
+use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use settings::SettingsStore;
@@ -18,7 +18,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let client = client.clone();
         let user_store = user_store.clone();
         move |editor: &mut Editor, window, cx: &mut Context<Editor>| {
-            if editor.mode() != EditorMode::Full {
+            if !editor.mode().is_full() {
                 return;
             }
 
