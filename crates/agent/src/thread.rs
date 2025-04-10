@@ -8,6 +8,7 @@ use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
+use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
@@ -1816,26 +1817,10 @@ impl Thread {
             return;
         }
 
-        if cfg!(debug_assertions) {
-            // In development, check env var for auto capture
-            if std::env::var("ZED_ENABLE_THREAD_AUTO_CAPTURE").is_ok() {
-                // Continue with auto capture
-            } else {
-                return;
-            }
-        } else {
-            let should_capture = self
-                .project
-                .read(cx)
-                .user_store()
-                .read(cx)
-                .current_user()
-                .map_or(false, |user| {
-                    static TRACKED_HANDLES: &[&str] = &["tmickleydoyle"];
-                    TRACKED_HANDLES.contains(&user.github_login.as_str())
-                });
+        let feature_flag_enabled = cx.has_flag::<feature_flags::ThreadAutoCapture>();
 
-            if !should_capture {
+        if cfg!(debug_assertions) {
+            if !feature_flag_enabled {
                 return;
             }
         }
