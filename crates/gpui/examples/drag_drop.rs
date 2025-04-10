@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, Half, Hsla, Pixels, Point,
-    Window, WindowBounds, WindowOptions,
+    App, Application, Bounds, Context, Half, Hsla, Pixels, Point, Window, WindowBounds,
+    WindowOptions, div, prelude::*, px, rgb, size,
 };
 
 #[derive(Clone, Copy)]
