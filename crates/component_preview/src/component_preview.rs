@@ -245,10 +245,6 @@ impl ComponentPreview {
 
             if lowercase_scopeless.contains(&lowercase_filter) {
                 if let Some(index) = lowercase_scopeless.find(&lowercase_filter) {
-                    println!(
-                        "[Filter Debug] Match at index {} in '{}'",
-                        index, scopeless_name
-                    );
                     let end = index + lowercase_filter.len();
 
                     if end <= scopeless_name.len() {
@@ -258,11 +254,6 @@ impl ComponentPreview {
                                 positions.push(i);
                             }
                         }
-
-                        println!(
-                            "[Filter Debug] Positions for '{}': {:?}",
-                            scopeless_name, positions
-                        );
 
                         if !positions.is_empty() {
                             scope_groups
@@ -351,8 +342,6 @@ impl ComponentPreview {
                 ListItem::new(ix)
                     .child(
                         if let Some(positions) = highlight_positions {
-                            println!("[Filter Debug] Full positions {:?} are not valid for scopeless name '{}'", positions, name);
-
                             let name_lower = name.to_lowercase();
                             let filter_lower = self.filter_text.to_lowercase();
                             let valid_positions = if let Some(start) = name_lower.find(&filter_lower) {
@@ -361,9 +350,6 @@ impl ComponentPreview {
                             } else {
                                 Vec::new()
                             };
-
-                            println!("[Filter Debug] RENDER: '{}' positions: {:?}, valid: {:?}", name, positions, valid_positions);
-
                             if valid_positions.is_empty() {
                                 Label::new(name.clone()).color(Color::Default).into_any_element()
                             } else {
@@ -422,6 +408,22 @@ impl ComponentPreview {
         }
 
         let filtered_components = self.filtered_components();
+
+        if !self.filter_text.is_empty() && !matches!(self.active_page, PreviewPage::AllComponents) {
+            if let PreviewPage::Component(ref component_id) = self.active_page {
+                let component_still_visible = filtered_components.iter()
+                    .any(|component| component.id() == *component_id);
+
+                if !component_still_visible {
+                    if !filtered_components.is_empty() {
+                        let first_component = &filtered_components[0];
+                        self.set_active_page(PreviewPage::Component(first_component.id()), cx);
+                    } else {
+                        self.set_active_page(PreviewPage::AllComponents, cx);
+                    }
+                }
+            }
+        }
 
         self.component_list = ListState::new(
             filtered_components.len(),
