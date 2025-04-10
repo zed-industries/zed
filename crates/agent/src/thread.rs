@@ -1378,10 +1378,7 @@ impl Thread {
         )
     }
 
-    pub fn use_pending_tools(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Vec<PendingToolUse> {
+    pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
         let request = self.to_completion_request(RequestKind::Chat, cx);
         let messages = Arc::new(request.messages);
