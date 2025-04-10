@@ -1543,9 +1543,6 @@ impl Thread {
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
-        let profile_id = AssistantSettings::get_global(cx)
-            .default_profile
-            .to_string();
 
         let enabled_tool_names: Vec<String> = self
             .tools()
@@ -1577,7 +1574,6 @@ impl Thread {
                 "Assistant Thread Rated",
                 rating,
                 thread_id,
-                profile_id,
                 enabled_tool_names,
                 message_id = message_id.0,
                 message_content,
