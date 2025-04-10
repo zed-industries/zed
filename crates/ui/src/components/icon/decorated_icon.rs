@@ -26,7 +26,7 @@ impl RenderOnce for DecoratedIcon {
 
 impl Component for DecoratedIcon {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::Images
     }
 
     fn description() -> Option<&'static str> {
