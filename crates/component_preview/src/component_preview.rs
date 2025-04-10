@@ -27,6 +27,8 @@ use workspace::{AppState, ItemId, SerializableItem};
 use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
+    workspace::register_serializable_item::<ComponentPreview>(cx);
+
     let app_state = app_state.clone();
 
     cx.observe_new(move |workspace: &mut Workspace, _window, cx| {
@@ -798,15 +800,12 @@ impl SerializableItem for ComponentPreview {
             match COMPONENT_PREVIEW_DB.get_active_page(item_id, workspace_id) {
                 Ok(page) => {
                     if let Some(page) = page {
-                        println!("Deserialized active page: {:?}", page);
                         ActivePageId(page)
                     } else {
-                        println!("No active page found");
                         ActivePageId::default()
                     }
                 }
                 Err(e) => {
-                    println!("Error deserializing active page: {}", e);
                     ActivePageId::default()
                 }
             };
@@ -814,7 +813,6 @@ impl SerializableItem for ComponentPreview {
         let user_store = project.read(cx).user_store().clone();
         let language_registry = project.read(cx).languages().clone();
         let preview_page = if deserialized_active_page.0 == ActivePageId::default().0 {
-            println!("No active page found");
             Some(PreviewPage::default())
         } else {
             let component_str = deserialized_active_page.0;
@@ -823,10 +821,8 @@ impl SerializableItem for ComponentPreview {
             let found_component = all_components.iter().find(|c| c.id().0 == component_str);
 
             if let Some(component) = found_component {
-                println!("Found component: {:?}", component.id());
                 Some(PreviewPage::Component(component.id().clone()))
             } else {
-                println!("Component not found");
                 Some(PreviewPage::default())
             }
         };
@@ -858,7 +854,6 @@ impl SerializableItem for ComponentPreview {
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
         cx.background_spawn(async move {
-            println!("Cleaning up component preview");
             COMPONENT_PREVIEW_DB
                 .delete_unloaded_items(workspace_id, alive_items)
                 .await
@@ -873,11 +868,9 @@ impl SerializableItem for ComponentPreview {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
-        println!("serializing component preview page");
         let active_page = self.active_page_id(cx);
         let workspace_id = self.workspace_id?;
         Some(cx.background_spawn(async move {
-            println!("Serializing active page: {:?}", active_page);
             COMPONENT_PREVIEW_DB
                 .save_active_page(item_id, workspace_id, active_page.0)
                 .await
@@ -885,13 +878,7 @@ impl SerializableItem for ComponentPreview {
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
-        let should_serialize = matches!(event, ItemEvent::UpdateTab);
-
-        if should_serialize {
-            println!("Should serialize component preview page");
-        }
-
-        should_serialize
+       matches!(event, ItemEvent::UpdateTab);
     }
 }
 
