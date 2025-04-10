@@ -13,10 +13,14 @@ use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, Default, JsonSchema)]
 pub struct DiagnosticsToolInput {
-    /// The path to get diagnostics for. If not no paths are provided, returns a project-wide summary.
+    /// The specific paths to get detailed diagnostics for (including individual line numbers).
     ///
-    /// This path should never be absolute, and the first component
-    /// of the path should always be a root directory in a project.
+    /// Regardless of whether any paths are specified here, a count of the total number of warnings
+    /// and errors in the project will be reported, so providing paths here gets you strictly
+    /// more information.
+    ///
+    /// These paths should never be absolute, and the first component
+    /// of each path should always be a root directory in a project.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -25,7 +29,7 @@ pub struct DiagnosticsToolInput {
     /// - ipsum
     /// - amet
     ///
-    /// If you want access diagnostics for `dolor.txt` in `ipsum` and `consectetur.txt` in `amet`, you should use:
+    /// If you want detailed diagnostics with line numbers for `dolor.txt` in `ipsum` and `consectetur.txt` in `amet`, you should use:
     ///
     ///     "paths": ["ipsum/dolor.txt", "amet/consectetur.txt"]
     /// </example>
@@ -41,7 +45,18 @@ pub struct DiagnosticsToolInput {
     pub severity: Vec<Severity>,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Copy, Clone, strum::Display)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    PartialEq,
+    Eq,
+    Copy,
+    Clone,
+    strum::Display,
+    Hash,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum Severity {
     Error,
