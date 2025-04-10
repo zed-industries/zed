@@ -1,11 +1,12 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, SharedString, Size, TextOverflow, TextRun, TextStyle, TextStyleRefinement,
-    TooltipId, WhiteSpace, Window, WrappedLine, WrappedLineLayout, register_tooltip_mouse_handlers,
-    set_tooltip_on_window,
+    Pixels, Point, SharedString, Size, TextAlign, TextOverflow, TextRun, TextStyle,
+    TextStyleRefinement, TooltipId, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
+    register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::anyhow;
+use refineable::Refineable as _;
 use smallvec::SmallVec;
 use std::{
     cell::{Cell, RefCell},
@@ -427,7 +428,7 @@ impl TextLayout {
             line.paint_background(
                 line_origin,
                 line_height,
-                text_style.text_align,
+                text_style.text_align.unwrap_or(TextAlign::Left),
                 Some(bounds),
                 window,
                 cx,
