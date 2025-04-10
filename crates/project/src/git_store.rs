@@ -300,7 +300,7 @@ pub struct GitJob {
 #[derive(PartialEq, Eq)]
 enum GitJobKey {
     WriteIndex(RepoPath),
-    BatchReadIndex,
+    ReloadBufferDiffBases,
     RefreshStatuses,
     ReloadGitState,
 }
@@ -1285,37 +1285,16 @@ impl GitStore {
         log::debug!("local worktree repos changed");
         debug_assert!(worktree.read(cx).is_local());
 
-        let mut buffers_by_repo = HashMap::<Entity<Repository>, Vec<_>>::default();
-        for buffer_id in self.diffs.keys() {
-            let Some(buffer) = self.buffer_store.read(cx).get(*buffer_id) else {
-                continue;
-            };
-            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
-                continue;
-            };
-            if file.worktree != worktree {
-                continue;
-            }
-            let Some((repo, repo_path)) =
-                self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-            else {
-                continue;
-            };
-            let buffer_repo_abs_path = repo.read(cx).work_directory_abs_path.clone();
-            if !changed_repos.iter().any(|update| {
-                update.old_work_directory_abs_path.as_ref() == Some(&buffer_repo_abs_path)
-                    || update.new_work_directory_abs_path.as_ref() == Some(&buffer_repo_abs_path)
-            }) {
-                continue;
-            }
-            buffers_by_repo
-                .entry(repo)
-                .or_default()
-                .push((buffer, repo_path));
-        }
-
-        for (repo, repo_buffers) in buffers_by_repo.into_iter() {
-            repo.update(cx, |repo, _| repo.reload_diffs_for_buffers(repo_buffers));
+        for repository in self.repositories.values() {
+            repository.update(cx, |repository, cx| {
+                let repo_abs_path = &repository.work_directory_abs_path;
+                if changed_repos.iter().any(|update| {
+                    update.old_work_directory_abs_path.as_ref() == Some(&repo_abs_path)
+                        || update.new_work_directory_abs_path.as_ref() == Some(&repo_abs_path)
+                }) {
+                    repository.reload_buffer_diff_bases(cx);
+                }
+            });
         }
     }
 
@@ -2585,15 +2564,11 @@ impl Repository {
         }
     }
 
-    pub fn git_store(&self) -> Option<Entity<GitStore>> {
-        self.git_store.upgrade()
-    }
-
-    fn reload_diffs_for_buffers(&mut self, repo_buffers: Vec<(Entity<Buffer>, RepoPath)>) {
+    fn reload_buffer_diff_bases(&mut self, cx: &mut Context<Self>) {
+        let this = cx.weak_entity();
         let git_store = self.git_store.clone();
         let _ = self.send_keyed_job(
-            // FIXME should all these jobs really use the same key?
-            Some(GitJobKey::BatchReadIndex),
+            Some(GitJobKey::ReloadBufferDiffBases),
             None,
             |state, mut cx| async move {
                 let RepositoryState::Local { backend, .. } = state else {
@@ -2601,35 +2576,50 @@ impl Repository {
                     return Ok(());
                 };
 
-                let repo_diff_state_updates = git_store.update(&mut cx, |git_store, cx| {
-                    repo_buffers
-                        .into_iter()
-                        .filter_map(|(buffer, repo_path)| {
-                            let diff_state = git_store.diffs.get(&buffer.read(cx).remote_id())?;
-                            diff_state.update(cx, |diff_state, _| {
-                                diff_state.hunk_staging_operation_count_as_of_last_reload =
-                                    diff_state.hunk_staging_operation_count;
+                let Some(this) = this.upgrade() else {
+                    return Ok(());
+                };
 
-                                let has_unstaged_diff = diff_state
-                                    .unstaged_diff
-                                    .as_ref()
-                                    .is_some_and(|diff| diff.is_upgradable());
-                                let has_uncommitted_diff = diff_state
-                                    .uncommitted_diff
-                                    .as_ref()
-                                    .is_some_and(|set| set.is_upgradable());
+                let repo_diff_state_updates = this.update(&mut cx, |this, cx| {
+                    git_store.update(cx, |git_store, cx| {
+                        git_store
+                            .diffs
+                            .iter()
+                            .filter_map(|(buffer_id, diff_state)| {
+                                let buffer_store = git_store.buffer_store.read(cx);
+                                let buffer = buffer_store.get(*buffer_id)?;
+                                let file = File::from_dyn(buffer.read(cx).file())?;
+                                let abs_path =
+                                    file.worktree.read(cx).absolutize(&file.path).ok()?;
+                                let repo_path = this.abs_path_to_repo_path(&abs_path)?;
+                                diff_state.update(cx, |diff_state, _| {
+                                    diff_state.hunk_staging_operation_count_as_of_last_reload =
+                                        diff_state.hunk_staging_operation_count;
 
-                                log::debug!("update diffs for repo path {}", repo_path.0.display());
-                                Some((
-                                    buffer,
-                                    repo_path,
-                                    has_unstaged_diff.then(|| diff_state.index_text.clone()),
-                                    has_uncommitted_diff.then(|| diff_state.head_text.clone()),
-                                ))
+                                    let has_unstaged_diff = diff_state
+                                        .unstaged_diff
+                                        .as_ref()
+                                        .is_some_and(|diff| diff.is_upgradable());
+                                    let has_uncommitted_diff = diff_state
+                                        .uncommitted_diff
+                                        .as_ref()
+                                        .is_some_and(|set| set.is_upgradable());
+
+                                    log::debug!(
+                                        "update diffs for repo path {}",
+                                        repo_path.0.display()
+                                    );
+                                    Some((
+                                        buffer,
+                                        repo_path,
+                                        has_unstaged_diff.then(|| diff_state.index_text.clone()),
+                                        has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+                                    ))
+                                })
                             })
-                        })
-                        .collect::<Vec<_>>()
-                })?;
+                            .collect::<Vec<_>>()
+                    })
+                })??;
 
                 let buffer_diff_base_changes = cx
                     .background_spawn(async move {
