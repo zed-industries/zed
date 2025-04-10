@@ -117,6 +117,8 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             },
         });
         let map = args.as_object_mut().unwrap();
+        // CodeLLDB uses `name` for a terminal label.
+        map.insert("name".into(), Value::String(config.label.clone()));
         match &config.request {
             DebugRequestType::Attach(attach) => {
                 map.insert("pid".into(), attach.process_id.into());
