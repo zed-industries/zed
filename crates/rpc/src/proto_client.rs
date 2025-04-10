@@ -10,7 +10,7 @@ use proto::{
     error::ErrorExt as _,
 };
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     sync::{Arc, Weak},
 };
 
@@ -250,8 +250,7 @@ impl AnyProtoClient {
         let message_type_id = TypeId::of::<M>();
         let entity_type_id = TypeId::of::<E>();
         let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
-            envelope
-                .as_any()
+            (envelope as &dyn Any)
                 .downcast_ref::<TypedEnvelope<M>>()
                 .unwrap()
                 .payload
@@ -296,8 +295,7 @@ impl AnyProtoClient {
         let message_type_id = TypeId::of::<M>();
         let entity_type_id = TypeId::of::<E>();
         let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
-            envelope
-                .as_any()
+            (envelope as &dyn Any)
                 .downcast_ref::<TypedEnvelope<M>>()
                 .unwrap()
                 .payload

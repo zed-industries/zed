@@ -191,7 +191,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
             .update(cx, |state, _| state.stack_frame_list().clone());
 
         stack_frame_list.update(cx, |stack_frame_list, cx| {
-            assert_eq!(Some(1), stack_frame_list.current_stack_frame_id());
+            assert_eq!(Some(1), stack_frame_list.selected_stack_frame_id());
             assert_eq!(stack_frames, stack_frame_list.dap_stack_frames(cx));
         });
     });
@@ -410,7 +410,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_panel_item = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, _| this.active_session())
                 .unwrap();
 
             active_debug_panel_item
@@ -425,7 +425,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         .unwrap();
 
     stack_frame_list.update(cx, |stack_frame_list, cx| {
-        assert_eq!(Some(1), stack_frame_list.current_stack_frame_id());
+        assert_eq!(Some(1), stack_frame_list.selected_stack_frame_id());
         assert_eq!(stack_frames, stack_frame_list.dap_stack_frames(cx));
     });
 
@@ -440,7 +440,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     cx.run_until_parked();
 
     stack_frame_list.update(cx, |stack_frame_list, cx| {
-        assert_eq!(Some(2), stack_frame_list.current_stack_frame_id());
+        assert_eq!(Some(2), stack_frame_list.selected_stack_frame_id());
         assert_eq!(stack_frames, stack_frame_list.dap_stack_frames(cx));
     });
 

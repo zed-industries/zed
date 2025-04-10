@@ -312,7 +312,7 @@ impl ManagedNodeRuntime {
 
         let version = Self::VERSION;
         let folder_name = format!("node-{version}-{os}-{arch}");
-        let node_containing_dir = paths::support_dir().join("node");
+        let node_containing_dir = paths::data_dir().join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join(Self::NODE_PATH);
         let npm_file = node_dir.join(Self::NPM_PATH);
@@ -473,7 +473,7 @@ pub struct SystemNodeRuntime {
 }
 
 impl SystemNodeRuntime {
-    const MIN_VERSION: semver::Version = Version::new(18, 0, 0);
+    const MIN_VERSION: semver::Version = Version::new(20, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Box<dyn NodeRuntimeTrait>> {
         let output = util::command::new_smol_command(&node)
             .arg("--version")
@@ -498,7 +498,7 @@ impl SystemNodeRuntime {
             )
         }
 
-        let scratch_dir = paths::support_dir().join("node");
+        let scratch_dir = paths::data_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
         fs::create_dir(scratch_dir.join("cache")).await.ok();
 

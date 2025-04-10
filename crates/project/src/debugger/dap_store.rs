@@ -1,7 +1,7 @@
 use super::{
     breakpoint_store::BreakpointStore,
     locator_store::LocatorStore,
-    session::{self, Session},
+    session::{self, Session, SessionStateEvent},
 };
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState, debugger,
@@ -27,8 +27,8 @@ use futures::{
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{
-    BinaryStatus, Buffer, LanguageRegistry, LanguageToolchainStore, Node,
-    language_settings::InlayHintKind,
+    BinaryStatus, Buffer, LanguageRegistry, LanguageToolchainStore,
+    language_settings::InlayHintKind, range_from_lsp,
 };
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -44,13 +44,11 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashSet},
     ffi::OsStr,
-    ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering::SeqCst},
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
 use task::{DebugAdapterConfig, DebugRequestDisposition};
-use text::Point;
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -65,7 +63,7 @@ pub enum DapStoreEvent {
     RunInTerminal {
         session_id: SessionId,
         title: Option<String>,
-        cwd: PathBuf,
+        cwd: Option<Arc<Path>>,
         command: Option<String>,
         args: Vec<String>,
         envs: HashMap<String, String>,
@@ -347,8 +345,7 @@ impl DapStore {
             local_store.language_registry.clone(),
             local_store.toolchain_store.clone(),
             local_store.environment.update(cx, |env, cx| {
-                let worktree = worktree.read(cx);
-                env.get_environment(worktree.abs_path().into(), cx)
+                env.get_worktree_environment(worktree.clone(), cx)
             }),
         );
         let session_id = local_store.next_session_id();
@@ -422,8 +419,7 @@ impl DapStore {
             local_store.language_registry.clone(),
             local_store.toolchain_store.clone(),
             local_store.environment.update(cx, |env, cx| {
-                let worktree = worktree.read(cx);
-                env.get_environment(Some(worktree.abs_path()), cx)
+                env.get_worktree_environment(worktree.clone(), cx)
             }),
         );
         let session_id = local_store.next_session_id();
@@ -559,10 +555,10 @@ impl DapStore {
 
         let seq = request.seq;
 
-        let cwd = PathBuf::from(request_args.cwd);
+        let cwd = Path::new(&request_args.cwd);
+
         match cwd.try_exists() {
-            Ok(true) => (),
-            Ok(false) | Err(_) => {
+            Ok(false) | Err(_) if !request_args.cwd.is_empty() => {
                 return session.update(cx, |session, cx| {
                     session.respond_to_client(
                         seq,
@@ -584,8 +580,8 @@ impl DapStore {
                     )
                 });
             }
+            _ => (),
         }
-
         let mut args = request_args.args.clone();
 
         // Handle special case for NodeJS debug adapter
@@ -612,7 +608,19 @@ impl DapStore {
         }
 
         let (tx, mut rx) = mpsc::channel::<Result<u32>>(1);
-
+        let cwd = Some(cwd)
+            .filter(|cwd| cwd.as_os_str().len() > 0)
+            .map(Arc::from)
+            .or_else(|| {
+                self.session_by_id(session_id)
+                    .and_then(|session| {
+                        session
+                            .read(cx)
+                            .configuration()
+                            .and_then(|config| config.request.cwd())
+                    })
+                    .map(Arc::from)
+            });
         cx.emit(DapStoreEvent::RunInTerminal {
             session_id,
             title: request_args.title,
@@ -740,113 +748,101 @@ impl DapStore {
         })
     }
 
-    fn tree_sitter_inlay_hints(
-        &mut self,
+    pub fn map_inlay_hints(
+        &self,
         session: Entity<Session>,
-        buffer: Entity<Buffer>,
-        range: Range<text::Anchor>,
+        stack_frame_id: u64,
+        buffer_handle: Entity<Buffer>,
+        inline_values: Vec<lsp::InlineValue>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<InlayHint>>> {
-        let snapshot = buffer.read(cx).snapshot();
+        let snapshot = buffer_handle.read(cx).snapshot();
+        let all_variables = session.read(cx).all_variables();
 
-        fn find_in_code_variables(node: Node, source_code: &str) -> HashMap<String, Point> {
-            let mut variables = HashMap::default();
-
-            // python variable assignment
-            if node.kind() == "assignment" {
-                if let Some(variable_node) = node.child_by_field_name("left") {
-                    let variable_name = source_code[variable_node.byte_range()].to_string();
-                    let end_byte = variable_node.end_position();
-                    variables.insert(
-                        variable_name,
-                        Point::new(end_byte.row as u32, end_byte.column as u32),
-                    );
-                }
-            }
-
-            // t = 10
-            // expression # debug line is here
-            // t = 12 // no hint here
-            // 1. Language specifc find in code variables
-            // 2. stop highlighting at active debug line
-            // 3. allow switching between different stack frames but still cache the results
-            // 4. updater inline hints when we get a set variable response
-            // 5. (post merge) RR has drop down menus for inlay hint variables to see their children
-
-            // python function args
-            if node.kind() == "function_definition" {
-                if let Some(parameters) = node.child_by_field_name("parameters") {
-                    for parameter in parameters.named_children(&mut node.walk()) {
-                        if parameter.kind() == "identifier" {
-                            let variable_name = source_code[parameter.byte_range()].to_string();
-                            let end_byte = parameter.end_position();
-                            variables.insert(
-                                variable_name,
-                                Point::new(end_byte.row as u32, end_byte.column as u32),
-                            );
-                        }
+        cx.spawn(async move |_, cx| {
+            let mut inlay_hints = Vec::with_capacity(inline_values.len());
+            for inline_value in inline_values.iter() {
+                match inline_value {
+                    lsp::InlineValue::Text(text) => {
+                        inlay_hints.push(InlayHint {
+                            position: snapshot.anchor_after(range_from_lsp(text.range).end),
+                            label: InlayHintLabel::String(format!(": {}", text.text)),
+                            kind: Some(InlayHintKind::Type),
+                            padding_left: false,
+                            padding_right: false,
+                            tooltip: None,
+                            resolve_state: ResolveState::Resolved,
+                        });
                     }
-                }
+                    lsp::InlineValue::VariableLookup(variable_lookup) => {
+                        let range = range_from_lsp(variable_lookup.range);
+
+                        let mut variable_name = variable_lookup
+                            .variable_name
+                            .clone()
+                            .unwrap_or_else(|| snapshot.text_for_range(range.clone()).collect());
+
+                        if !variable_lookup.case_sensitive_lookup {
+                            variable_name = variable_name.to_ascii_lowercase();
+                        }
+
+                        let Some(variable) = all_variables.iter().find(|variable| {
+                            if variable_lookup.case_sensitive_lookup {
+                                variable.name == variable_name
+                            } else {
+                                variable.name.to_ascii_lowercase() == variable_name
+                            }
+                        }) else {
+                            continue;
+                        };
+
+                        inlay_hints.push(InlayHint {
+                            position: snapshot.anchor_after(range.end),
+                            label: InlayHintLabel::String(format!(": {}", variable.value)),
+                            kind: Some(InlayHintKind::Type),
+                            padding_left: false,
+                            padding_right: false,
+                            tooltip: None,
+                            resolve_state: ResolveState::Resolved,
+                        });
+                    }
+                    lsp::InlineValue::EvaluatableExpression(expression) => {
+                        let range = range_from_lsp(expression.range);
+
+                        let expression = expression
+                            .expression
+                            .clone()
+                            .unwrap_or_else(|| snapshot.text_for_range(range.clone()).collect());
+
+                        let Ok(eval_task) = session.update(cx, |session, cx| {
+                            session.evaluate(
+                                expression,
+                                Some(EvaluateArgumentsContext::Variables),
+                                Some(stack_frame_id),
+                                None,
+                                cx,
+                            )
+                        }) else {
+                            continue;
+                        };
+
+                        if let Some(response) = eval_task.await {
+                            inlay_hints.push(InlayHint {
+                                position: snapshot.anchor_after(range.end),
+                                label: InlayHintLabel::String(format!(": {}", response.result)),
+                                kind: Some(InlayHintKind::Type),
+                                padding_left: false,
+                                padding_right: false,
+                                tooltip: None,
+                                resolve_state: ResolveState::Resolved,
+                            });
+                        };
+                    }
+                };
             }
 
-            // rust variable
-            if node.kind() == "let_declaration" {
-                if let Some(variable_node) = node.child_by_field_name("pattern") {
-                    let variable_name = source_code[variable_node.byte_range()].to_string();
-                    let end_byte = variable_node.end_position();
-                    variables.insert(
-                        variable_name,
-                        Point::new(end_byte.row as u32, end_byte.column as u32),
-                    );
-                }
-            }
-
-            for child in node.children(&mut node.walk()) {
-                variables.extend(find_in_code_variables(child, source_code));
-            }
-
-            variables
-        }
-
-        let in_code_variables = if let Some(ancestor) = snapshot.syntax_root_ancestor(range.clone())
-        {
-            find_in_code_variables(
-                ancestor,
-                snapshot.text_for_range(range).collect::<String>().as_str(),
-            )
-        } else {
-            HashMap::default()
-        };
-
-        let mut variable_positions = Vec::new();
-        for variable in session.read(cx).all_variables() {
-            if let Some(variable_range) = in_code_variables.get(&variable.name) {
-                variable_positions.push((variable, variable_range));
-            }
-        }
-
-        return Task::ready(Ok(variable_positions
-            .iter()
-            .map(|(variable, end_point)| InlayHint {
-                position: snapshot.anchor_after(*end_point),
-                label: InlayHintLabel::String(format!(": {}", variable.value.clone())),
-                kind: Some(InlayHintKind::Type),
-                padding_left: false,
-                padding_right: false,
-                tooltip: None,
-                resolve_state: ResolveState::Resolved,
-            })
-            .collect()));
-    }
-
-    pub fn inlay_hints(
-        &mut self,
-        session: Entity<Session>,
-        buffer: Entity<Buffer>,
-        range: Range<text::Anchor>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<InlayHint>>> {
-        self.tree_sitter_inlay_hints(session, buffer, range, cx)
+            Ok(inlay_hints)
+        })
     }
 
     pub fn shutdown_sessions(&mut self, cx: &mut Context<Self>) -> Task<()> {
@@ -959,13 +955,18 @@ fn create_new_session(
             cx.emit(DapStoreEvent::DebugClientStarted(session_id));
             cx.notify();
         })?;
+        let seq_result = {
+            session
+                .update(cx, |session, cx| session.request_initialize(cx))?
+                .await?;
 
-        match session
-            .update(cx, |session, cx| {
-                session.initialize_sequence(initialized_rx, cx)
-            })?
-            .await
-        {
+            session
+                .update(cx, |session, cx| {
+                    session.initialize_sequence(initialized_rx, cx)
+                })?
+                .await
+        };
+        match seq_result {
             Ok(_) => {}
             Err(error) => {
                 this.update(cx, |this, cx| {
@@ -981,6 +982,15 @@ fn create_new_session(
         }
 
         this.update(cx, |_, cx| {
+            cx.subscribe(
+                &session,
+                move |this: &mut DapStore, _, event: &SessionStateEvent, cx| match event {
+                    SessionStateEvent::Shutdown => {
+                        this.shutdown_session(session_id, cx).detach_and_log_err(cx);
+                    }
+                },
+            )
+            .detach();
             cx.emit(DapStoreEvent::DebugSessionInitialized(session_id));
         })?;
 

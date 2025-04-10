@@ -306,7 +306,7 @@ pub enum BufferEvent {
 }
 
 /// The file associated with a buffer.
-pub trait File: Send + Sync {
+pub trait File: Send + Sync + Any {
     /// Returns the [`LocalFile`] associated with this file, if the
     /// file is local.
     fn as_local(&self) -> Option<&dyn LocalFile>;
@@ -335,9 +335,6 @@ pub trait File: Send + Sync {
     ///
     /// This is needed for looking up project-specific settings.
     fn worktree_id(&self, cx: &App) -> WorktreeId;
-
-    /// Converts this file into an [`Any`] trait object.
-    fn as_any(&self) -> &dyn Any;
 
     /// Converts this file into a protobuf message.
     fn to_proto(&self, cx: &App) -> rpc::proto::File;
@@ -1376,6 +1373,16 @@ impl Buffer {
             .or_else(|| self.language.clone())
     }
 
+    /// Returns each [`Language`] for the active syntax layers at the given location.
+    pub fn languages_at<D: ToOffset>(&self, position: D) -> Vec<Arc<Language>> {
+        let offset = position.to_offset(self);
+        self.syntax_map
+            .lock()
+            .layers_for_range(offset..offset, &self.text, false)
+            .map(|info| info.language.clone())
+            .collect()
+    }
+
     /// An integer version number that accounts for all updates besides
     /// the buffer's text itself (which is versioned via a version vector).
     pub fn non_text_state_update_count(&self) -> usize {
@@ -2018,11 +2025,16 @@ impl Buffer {
     }
 
     /// Manually remove a transaction from the buffer's undo history
-    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
-        self.text.forget_transaction(transaction_id);
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        self.text.forget_transaction(transaction_id)
     }
 
-    /// Manually merge two adjacent transactions in the buffer's undo history.
+    /// Retrieve a transaction from the buffer's undo history
+    pub fn get_transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.text.get_transaction(transaction_id)
+    }
+
+    /// Manually merge two transactions in the buffer's undo history.
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         self.text.merge_transactions(transaction, destination);
     }
@@ -3292,43 +3304,6 @@ impl BufferSnapshot {
                 }
             }
             result = Some(layer_result);
-        }
-
-        result
-    }
-
-    /// Returns the root syntax node enclosing the given range start.
-    pub fn syntax_root_ancestor<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-    ) -> Option<tree_sitter::Node<'a>> {
-        let start_offset = range.start.to_offset(self);
-        let mut result: Option<tree_sitter::Node<'a>> = None;
-
-        for layer in self
-            .syntax
-            .layers_for_range(start_offset..start_offset, &self.text, true)
-        {
-            let mut cursor = layer.node().walk();
-
-            // Descend to the first leaf that touches the start of the range.
-            while cursor.goto_first_child_for_byte(start_offset).is_some() {
-                if cursor.node().end_byte() == start_offset {
-                    cursor.goto_next_sibling();
-                }
-            }
-
-            // Ascend to the root node.
-            while cursor.goto_parent() {}
-
-            let root_node = cursor.node();
-
-            if let Some(previous_result) = &result {
-                if previous_result.byte_range().len() < root_node.byte_range().len() {
-                    continue;
-                }
-            }
-            result = Some(root_node);
         }
 
         result
@@ -4645,10 +4620,6 @@ impl File for TestFile {
 
     fn worktree_id(&self, _: &App) -> WorktreeId {
         WorktreeId::from_usize(0)
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        unimplemented!()
     }
 
     fn to_proto(&self, _: &App) -> rpc::proto::File {
