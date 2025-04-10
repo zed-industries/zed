@@ -1441,7 +1441,7 @@ impl SshRemoteConnection {
         _delegate: Arc<dyn SshClientDelegate>,
         _cx: &mut AsyncApp,
     ) -> Result<Self> {
-        anyhow::bail!("ssh is not supported on this platform");
+        Err(anyhow!("ssh is not supported on this platform"))
     }
 
     #[cfg(unix)]
