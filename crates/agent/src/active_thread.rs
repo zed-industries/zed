@@ -21,7 +21,7 @@ use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
-use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role};
+use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::parser::CodeBlockKind;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown, without_fences};
 use project::ProjectItem as _;
@@ -897,11 +897,7 @@ impl ActiveThread {
                 self.save_thread(cx);
                 cx.notify();
             }
-            ThreadEvent::UsePendingTools => {
-                let tool_uses = self
-                    .thread
-                    .update(cx, |thread, cx| thread.use_pending_tools(cx));
-
+            ThreadEvent::UsePendingTools { tool_uses } => {
                 for tool_use in tool_uses {
                     self.render_tool_use_markdown(
                         tool_use.id.clone(),
@@ -913,11 +909,8 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::ToolFinished {
-                pending_tool_use,
-                canceled,
-                ..
+                pending_tool_use, ..
             } => {
-                let canceled = *canceled;
                 if let Some(tool_use) = pending_tool_use {
                     self.render_tool_use_markdown(
                         tool_use.id.clone(),
@@ -930,18 +923,6 @@ impl ActiveThread {
                             .unwrap_or("".into()),
                         cx,
                     );
-                }
-
-                if self.thread.read(cx).all_tools_finished() {
-                    let model_registry = LanguageModelRegistry::read_global(cx);
-                    if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
-                        self.thread.update(cx, |thread, cx| {
-                            thread.attach_tool_results(cx);
-                            if !canceled {
-                                thread.send_to_model(model, RequestKind::Chat, cx);
-                            }
-                        });
-                    }
                 }
             }
             ThreadEvent::CheckpointChanged => cx.notify(),

@@ -1,4 +1,4 @@
-use agent::{RequestKind, Thread, ThreadEvent, ThreadStore};
+use ::agent::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use anyhow::anyhow;
 use assistant_tool::ToolWorkingSet;
 use client::{Client, UserStore};
@@ -17,7 +17,7 @@ use smol::channel;
 use std::sync::Arc;
 
 /// Subset of `workspace::AppState` needed by `HeadlessAssistant`, with additional fields.
-pub struct HeadlessAppState {
+pub struct AgentAppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
@@ -28,9 +28,9 @@ pub struct HeadlessAppState {
     pub prompt_builder: Arc<PromptBuilder>,
 }
 
-pub struct HeadlessAssistant {
-    pub thread: Entity<Thread>,
-    pub project: Entity<Project>,
+pub struct Agent {
+    // pub thread: Entity<Thread>,
+    // pub project: Entity<Project>,
     #[allow(dead_code)]
     pub thread_store: Entity<ThreadStore>,
     pub tool_use_counts: HashMap<Arc<str>, u32>,
@@ -38,9 +38,9 @@ pub struct HeadlessAssistant {
     _subscription: Subscription,
 }
 
-impl HeadlessAssistant {
+impl Agent {
     pub fn new(
-        app_state: Arc<HeadlessAppState>,
+        app_state: Arc<AgentAppState>,
         cx: &mut App,
     ) -> anyhow::Result<(Entity<Self>, channel::Receiver<anyhow::Result<()>>)> {
         let env = None;
@@ -65,8 +65,8 @@ impl HeadlessAssistant {
 
         let headless_thread = cx.new(move |cx| Self {
             _subscription: cx.subscribe(&thread, Self::handle_thread_event),
-            thread,
-            project,
+            // thread,
+            // project,
             thread_store,
             tool_use_counts: HashMap::default(),
             done_tx,
@@ -154,7 +154,7 @@ impl HeadlessAssistant {
     }
 }
 
-pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
+pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     release_channel::init(SemanticVersion::default(), cx);
     gpui_tokio::init(cx);
 
@@ -188,7 +188,7 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
     agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
 
-    Arc::new(HeadlessAppState {
+    Arc::new(AgentAppState {
         languages,
         client,
         user_store,
