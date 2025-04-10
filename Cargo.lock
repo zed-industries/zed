@@ -761,6 +761,8 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "log",
+ "lsp-types",
  "open",
  "project",
  "rand 0.8.5",

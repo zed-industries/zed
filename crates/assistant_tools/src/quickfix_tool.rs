@@ -1,13 +1,16 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
+use gpui::AppContext;
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use lsp_types::CodeActionKind;
 use project::LspAction;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::f32::consts::E;
 use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
 use util::markdown::MarkdownString;
@@ -90,26 +93,15 @@ impl Tool for QuickfixTool {
                 cx.spawn(async move |cx| {
                     let mut output = String::new();
                     let mut fixes_applied = 0;
-                    let mut errors_unfixed = 0;
-                    let mut warnings_unfixed = 0;
-
                     let buffer = buffer.await?;
                     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                    let mut unfixed = Vec::new();
 
                     // Collect diagnostics to apply quickfixes for
-                    for entry in snapshot.diagnostic_groups(None).into_iter().flat_map(|(_, group)| {
-                        group.entries.into_iter()/*.filter(|entry| {
-                          let severity = entry.diagnostic.severity;
-
-                          // Skip informational and hint diagnostics
-                          severity == DiagnosticSeverity::ERROR ||
-                             severity == DiagnosticSeverity::WARNING
-                        })*/
-                    }) {
-                        let severity = entry.diagnostic.severity;
+                    for entry in snapshot.diagnostic_groups(None).into_iter().flat_map(
+                      |(_, group)| group.entries.into_iter()
+                    ) {
                         let range = entry.range.to_point(&snapshot);
-
-                        // Get code actions (quickfixes) for this diagnostic
                         let actions = project
                             .update(cx, |project, cx| {
                                 project.code_actions(
@@ -118,75 +110,40 @@ impl Tool for QuickfixTool {
                                     None,
                                     cx
                                 )
-                            })?.await;
+                            })?.await?;
 
-                        match actions {
-                            Ok(actions) => {
-                                // Find quickfix actions
-                                let quickfixes = actions.into_iter().filter(|action| {
+                        let quickfixes = actions.into_iter().filter(|action| {
+                            if let LspAction::Action(code_action) = &action.lsp_action {
+                                code_action.kind == Some(CodeActionKind::QUICKFIX)
+                            } else {
+                                false
+                            }
+                        }).collect::<Vec<_>>();
+
+                        match quickfixes.first() {
+                            Some(default_quickfix) => {
+                                // If there's a quickfix marked as preferred, use that.
+                                // Otherwise fall back on the first available quickfix in the list.
+                                let preferred_action = quickfixes.iter().find(|action| {
                                     if let LspAction::Action(code_action) = &action.lsp_action {
-                                        if let Some(kind) = &code_action.kind {
-                                            kind.as_str().starts_with("quickfix")
-                                        } else {
-                                            false
-                                        }
+                                        code_action.is_preferred.unwrap_or(false)
                                     } else {
                                         false
                                     }
-                                }).collect::<Vec<_>>();
+                                }).unwrap_or(default_quickfix);
 
-                                if !quickfixes.is_empty() {
-                                    // Find the preferred quickfix (marked as is_preferred or the first one)
-                                    let preferred_action = quickfixes.iter().find(|action| {
-                                        if let LspAction::Action(code_action) = &action.lsp_action {
-                                            code_action.is_preferred.unwrap_or(false)
-                                        } else {
-                                            false
-                                        }
-                                    }).unwrap_or(&quickfixes[0]);
+                                project
+                                    .update(cx, |project, cx| {
+                                        project.apply_code_action(buffer.clone(), preferred_action.clone(), true, cx)
+                                    })?
+                                    .await?;
 
-                                    // Apply the quickfix
-                                    let title = preferred_action.lsp_action.title().to_string();
-                                    project
-                                        .update(cx, |project, cx| {
-                                            project.apply_code_action(buffer.clone(), preferred_action.clone(), true, cx)
-                                        })?
-                                        .await?;
+                                log::info!("Applied quickfix: {}", preferred_action.lsp_action.title());
 
-                                    writeln!(output, "Applied quickfix: {title}")?;
-                                    fixes_applied += 1;
-                                } else {
-                                    // Track unfixed diagnostics
-                                    match severity {
-                                        DiagnosticSeverity::ERROR => errors_unfixed += 1,
-                                        DiagnosticSeverity::WARNING => warnings_unfixed += 1,
-                                        _ => {}
-                                    }
-
-                                    writeln!(
-                                        output,
-                                        "No quickfix available for {} at line {}: {}",
-                                        if severity == DiagnosticSeverity::ERROR { "error" } else { "warning" },
-                                        range.start.row + 1,
-                                        entry.diagnostic.message
-                                    )?;
-                                }
-                            },
-                            Err(err) => {
-                                // Track unfixed diagnostics
-                                match severity {
-                                    DiagnosticSeverity::ERROR => errors_unfixed += 1,
-                                    DiagnosticSeverity::WARNING => warnings_unfixed += 1,
-                                    _ => {}
-                                }
-
-                                writeln!(
-                                    output,
-                                    "Failed to get quickfixes for {} at line {}: {}",
-                                    if severity == DiagnosticSeverity::ERROR { "error" } else { "warning" },
-                                    range.start.row + 1,
-                                    err
-                                )?;
+                                fixes_applied += 1;
+                            }
+                            None => {
+                                unfixed.push(entry);
                             }
                         }
                     }
@@ -206,13 +163,14 @@ impl Tool for QuickfixTool {
                     if output.is_empty() {
                         Ok("No issues found in the file!".to_string())
                     } else {
-                        writeln!(output, "\nSummary: Applied {} quickfixes. Remaining issues: {} errors, {} warnings.",
-                            fixes_applied, errors_unfixed, warnings_unfixed)?;
+                        writeln!(output, "\nSummary: Applied {} quickfixes. Remaining issues: {} - use the diagnostics tool to see them.",
+                            fixes_applied, unfixed.len())?;
                         Ok(output)
                     }
                 })
             }
             _ => {
+                todo!("Share code with the other branch.");
                 let mut output = String::new();
                 let mut files_with_diagnostics = Vec::new();
 

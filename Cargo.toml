@@ -296,6 +296,7 @@ livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "1fff0dd12e2071c5667327394cfec163d2a466ab" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
