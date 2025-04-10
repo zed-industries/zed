@@ -3130,6 +3130,7 @@ impl Editor {
         let mut new_selections = Vec::with_capacity(selections.len());
         let mut new_autoclose_regions = Vec::new();
         let snapshot = self.buffer.read(cx).read(cx);
+        let mut clear_linked_edit_ranges = false;
 
         for (selection, autoclose_region) in
             self.selections_with_autoclose_regions(selections, &snapshot)
@@ -3357,6 +3358,8 @@ impl Editor {
                                 .extend(edits.into_iter().map(|range| (range, text.clone())));
                         }
                     }
+                } else {
+                    clear_linked_edit_ranges = true;
                 }
             }
 
@@ -3367,6 +3370,9 @@ impl Editor {
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
+            if clear_linked_edit_ranges {
+                this.linked_edit_ranges.clear();
+            }
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
