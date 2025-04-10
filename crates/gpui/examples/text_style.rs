@@ -85,7 +85,7 @@ impl Render for HelloWorld {
                             .text_decoration_wavy()
                     })
                     .hover(|this| {
-                        this.text_color(rgb(0x973717))
+                        this.text_color(gpui::rgb(0x973717))
                             .bg(gpui::yellow())
                             .text_decoration_1()
                     })
