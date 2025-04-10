@@ -213,7 +213,7 @@ impl GitRepository for FakeGitRepository {
             .files()
             .iter()
             .filter_map(|path| {
-                // FIXME figure out what to do about nested repos
+                // TODO better simulate git status output in the case of submodules and worktrees
                 let repo_path = path.strip_prefix(workdir_path).ok()?;
                 let mut is_ignored = repo_path.starts_with(".git");
                 for ignore in &ignores {

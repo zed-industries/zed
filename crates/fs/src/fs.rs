@@ -4,17 +4,14 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
-use anyhow::bail;
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
-use fake_git_repo::FakeGitRepository;
 use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use std::borrow::Cow;
-use util::ResultExt as _;
 use util::command::new_std_command;
 
 #[cfg(unix)]
@@ -1331,10 +1328,10 @@ impl FakeFs {
             .clone();
             drop(entry);
             let Some((git_dir_entry, canonical_path)) = state.try_read_path(&path, true) else {
-                bail!("pointed-to git dir {path:?} not found")
+                anyhow::bail!("pointed-to git dir {path:?} not found")
             };
             let FakeFsEntry::Dir { git_repo_state, .. } = &mut *git_dir_entry.lock() else {
-                bail!("gitfile points to a non-directory")
+                anyhow::bail!("gitfile points to a non-directory")
             };
             let common_dir = canonical_path
                 .ancestors()
@@ -2211,8 +2208,10 @@ impl Fs for FakeFs {
     }
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
+        use util::ResultExt as _;
+
         self.with_git_state(abs_dot_git, false, |_| {
-            Arc::new(FakeGitRepository {
+            Arc::new(fake_git_repo::FakeGitRepository {
                 fs: self.this.upgrade().unwrap(),
                 executor: self.executor.clone(),
                 dot_git_path: abs_dot_git.to_path_buf(),
