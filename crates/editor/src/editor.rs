@@ -14218,13 +14218,7 @@ impl Editor {
             }
         };
 
-        let transaction_id_prev = buffer.read_with(cx, |b, cx| {
-            if let Some(singleton) = b.as_singleton() {
-                singleton.read_with(cx, |b, _| b.peek_undo_stack().map(|h| h.transaction_id()))
-            } else {
-                b.last_transaction_id()
-            }
-        });
+        let transaction_id_prev = buffer.read_with(cx, |b, cx| b.last_transaction_id(cx));
         let selections_prev = transaction_id_prev
             .and_then(|transaction_id_prev| {
                 // default to selections as they were after the last edit, if we have them,
@@ -14265,13 +14259,9 @@ impl Editor {
                 })
                 .ok();
 
-            if let Some(transaction_id_now) = buffer.read_with(cx, |b, cx| {
-                if let Some(singleton) = b.as_singleton() {
-                    singleton.read_with(cx, |b, _| b.peek_undo_stack().map(|h| h.transaction_id()))
-                } else {
-                    b.last_transaction_id()
-                }
-            })? {
+            if let Some(transaction_id_now) =
+                buffer.read_with(cx, |b, cx| b.last_transaction_id(cx))?
+            {
                 let has_new_transaction = transaction_id_prev != Some(transaction_id_now);
                 if has_new_transaction {
                     _ = editor.update(cx, |editor, _| {
