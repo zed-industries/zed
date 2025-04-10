@@ -98,6 +98,10 @@ impl FeatureFlag for Debugger {
 pub struct ThreadAutoCapture {}
 impl FeatureFlag for ThreadAutoCapture {
     const NAME: &'static str = "thread-auto-capture";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {
