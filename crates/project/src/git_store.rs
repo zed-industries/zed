@@ -92,6 +92,7 @@ struct BufferDiffState {
     language_registry: Option<Arc<LanguageRegistry>>,
     recalculating_tx: postage::watch::Sender<bool>,
     hunk_staging_operation_count: usize,
+    hunk_staging_operation_count_as_of_last_reload: usize,
 
     head_text: Option<Arc<String>>,
     index_text: Option<Arc<String>>,
@@ -697,7 +698,7 @@ impl GitStore {
                     }
                 }
 
-                diff_state.diff_bases_changed(text_snapshot, Some(diff_bases_change), 0, cx);
+                diff_state.diff_bases_changed(text_snapshot, Some(diff_bases_change), cx);
                 let rx = diff_state.wait_for_recalculation();
 
                 anyhow::Ok(async move {
@@ -1227,11 +1228,7 @@ impl GitStore {
             if let Some(diff_state) = self.diffs.get_mut(&buffer.read(cx).remote_id()) {
                 let buffer = buffer.read(cx).text_snapshot();
                 diff_state.update(cx, |diff_state, cx| {
-                    diff_state.recalculate_diffs(
-                        buffer,
-                        diff_state.hunk_staging_operation_count,
-                        cx,
-                    );
+                    diff_state.recalculate_diffs(buffer, cx);
                     futures.extend(diff_state.wait_for_recalculation());
                 });
             }
@@ -1288,8 +1285,8 @@ impl GitStore {
         log::debug!("local worktree repos changed");
         debug_assert!(worktree.read(cx).is_local());
 
-        let mut diff_state_updates = HashMap::<Entity<Repository>, Vec<_>>::default();
-        for (buffer_id, diff_state) in &self.diffs {
+        let mut buffers_by_repo = HashMap::<Entity<Repository>, Vec<_>>::default();
+        for buffer_id in self.diffs.keys() {
             let Some(buffer) = self.buffer_store.read(cx).get(*buffer_id) else {
                 continue;
             };
@@ -1304,183 +1301,21 @@ impl GitStore {
             else {
                 continue;
             };
+            let buffer_repo_abs_path = repo.read(cx).work_directory_abs_path.clone();
             if !changed_repos.iter().any(|update| {
-                update.old_work_directory_abs_path.as_ref()
-                    == Some(&repo.read(cx).work_directory_abs_path)
-                    || update.new_work_directory_abs_path.as_ref()
-                        == Some(&repo.read(cx).work_directory_abs_path)
+                update.old_work_directory_abs_path.as_ref() == Some(&buffer_repo_abs_path)
+                    || update.new_work_directory_abs_path.as_ref() == Some(&buffer_repo_abs_path)
             }) {
                 continue;
             }
-
-            let diff_state = diff_state.read(cx);
-            let has_unstaged_diff = diff_state
-                .unstaged_diff
-                .as_ref()
-                .is_some_and(|diff| diff.is_upgradable());
-            let has_uncommitted_diff = diff_state
-                .uncommitted_diff
-                .as_ref()
-                .is_some_and(|set| set.is_upgradable());
-
-            log::debug!("update diffs for repo path {}", repo_path.0.display());
-            let update = (
-                buffer,
-                repo_path,
-                has_unstaged_diff.then(|| diff_state.index_text.clone()),
-                has_uncommitted_diff.then(|| diff_state.head_text.clone()),
-                diff_state.hunk_staging_operation_count,
-            );
-            diff_state_updates.entry(repo).or_default().push(update);
+            buffers_by_repo
+                .entry(repo)
+                .or_default()
+                .push((buffer, repo_path));
         }
 
-        if diff_state_updates.is_empty() {
-            return;
-        }
-
-        for (repo, repo_diff_state_updates) in diff_state_updates.into_iter() {
-            let git_store = cx.weak_entity();
-
-            let _ = repo.update(cx, |repo, _| {
-                repo.send_keyed_job(
-                    Some(GitJobKey::BatchReadIndex),
-                    None,
-                    |state, mut cx| async move {
-                        let RepositoryState::Local { backend, .. } = state else {
-                            log::error!("tried to recompute diffs for a non-local repository");
-                            return;
-                        };
-
-                        let buffer_diff_base_changes = cx
-                            .background_spawn(async move {
-                                let mut changes = Vec::new();
-                                for (
-                                    buffer,
-                                    repo_path,
-                                    current_index_text,
-                                    current_head_text,
-                                    hunk_staging_operation_count,
-                                ) in &repo_diff_state_updates
-                                {
-                                    let index_text = if current_index_text.is_some() {
-                                        backend.load_index_text(repo_path.clone()).await
-                                    } else {
-                                        None
-                                    };
-                                    let head_text = if current_head_text.is_some() {
-                                        backend.load_committed_text(repo_path.clone()).await
-                                    } else {
-                                        None
-                                    };
-
-                                    let change = match (
-                                        current_index_text.as_ref(),
-                                        current_head_text.as_ref(),
-                                    ) {
-                                        (Some(current_index), Some(current_head)) => {
-                                            let index_changed =
-                                                index_text.as_ref() != current_index.as_deref();
-                                            let head_changed =
-                                                head_text.as_ref() != current_head.as_deref();
-                                            if index_changed && head_changed {
-                                                if index_text == head_text {
-                                                    Some(DiffBasesChange::SetBoth(head_text))
-                                                } else {
-                                                    Some(DiffBasesChange::SetEach {
-                                                        index: index_text,
-                                                        head: head_text,
-                                                    })
-                                                }
-                                            } else if index_changed {
-                                                Some(DiffBasesChange::SetIndex(index_text))
-                                            } else if head_changed {
-                                                Some(DiffBasesChange::SetHead(head_text))
-                                            } else {
-                                                None
-                                            }
-                                        }
-                                        (Some(current_index), None) => {
-                                            let index_changed =
-                                                index_text.as_ref() != current_index.as_deref();
-                                            index_changed
-                                                .then_some(DiffBasesChange::SetIndex(index_text))
-                                        }
-                                        (None, Some(current_head)) => {
-                                            let head_changed =
-                                                head_text.as_ref() != current_head.as_deref();
-                                            head_changed
-                                                .then_some(DiffBasesChange::SetHead(head_text))
-                                        }
-                                        (None, None) => None,
-                                    };
-
-                                    changes.push((
-                                        buffer.clone(),
-                                        change,
-                                        *hunk_staging_operation_count,
-                                    ))
-                                }
-                                changes
-                            })
-                            .await;
-
-                        git_store
-                            .update(&mut cx, |git_store, cx| {
-                                for (buffer, diff_bases_change, hunk_staging_operation_count) in
-                                    buffer_diff_base_changes
-                                {
-                                    let buffer_snapshot = buffer.read(cx).text_snapshot();
-                                    let buffer_id = buffer_snapshot.remote_id();
-                                    let Some(diff_state) = git_store.diffs.get(&buffer_id) else {
-                                        continue;
-                                    };
-
-                                    let downstream_client = git_store.downstream_client();
-                                    diff_state.update(cx, |diff_state, cx| {
-                                        use proto::update_diff_bases::Mode;
-
-                                        if let Some((diff_bases_change, (client, project_id))) =
-                                            diff_bases_change.clone().zip(downstream_client)
-                                        {
-                                            let (staged_text, committed_text, mode) =
-                                                match diff_bases_change {
-                                                    DiffBasesChange::SetIndex(index) => {
-                                                        (index, None, Mode::IndexOnly)
-                                                    }
-                                                    DiffBasesChange::SetHead(head) => {
-                                                        (None, head, Mode::HeadOnly)
-                                                    }
-                                                    DiffBasesChange::SetEach { index, head } => {
-                                                        (index, head, Mode::IndexAndHead)
-                                                    }
-                                                    DiffBasesChange::SetBoth(text) => {
-                                                        (None, text, Mode::IndexMatchesHead)
-                                                    }
-                                                };
-                                            client
-                                                .send(proto::UpdateDiffBases {
-                                                    project_id: project_id.to_proto(),
-                                                    buffer_id: buffer_id.to_proto(),
-                                                    staged_text,
-                                                    committed_text,
-                                                    mode: mode as i32,
-                                                })
-                                                .log_err();
-                                        }
-
-                                        diff_state.diff_bases_changed(
-                                            buffer_snapshot,
-                                            diff_bases_change,
-                                            hunk_staging_operation_count,
-                                            cx,
-                                        );
-                                    });
-                                }
-                            })
-                            .ok();
-                    },
-                )
-            });
+        for (repo, repo_buffers) in buffers_by_repo.into_iter() {
+            repo.update(cx, |repo, _| repo.reload_diffs_for_buffers(repo_buffers));
         }
     }
 
@@ -2282,11 +2117,7 @@ impl BufferDiffState {
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.language = buffer.read(cx).language().cloned();
         self.language_changed = true;
-        let _ = self.recalculate_diffs(
-            buffer.read(cx).text_snapshot(),
-            self.hunk_staging_operation_count,
-            cx,
-        );
+        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
     }
 
     fn unstaged_diff(&self) -> Option<Entity<BufferDiff>> {
@@ -2319,12 +2150,7 @@ impl BufferDiffState {
             },
         };
 
-        self.diff_bases_changed(
-            buffer,
-            Some(diff_bases_change),
-            self.hunk_staging_operation_count,
-            cx,
-        );
+        self.diff_bases_changed(buffer, Some(diff_bases_change), cx);
     }
 
     pub fn wait_for_recalculation(&mut self) -> Option<impl Future<Output = ()> + use<>> {
@@ -2350,7 +2176,6 @@ impl BufferDiffState {
         &mut self,
         buffer: text::BufferSnapshot,
         diff_bases_change: Option<DiffBasesChange>,
-        prev_hunk_staging_operation_count: usize,
         cx: &mut Context<Self>,
     ) {
         match diff_bases_change {
@@ -2393,15 +2218,10 @@ impl BufferDiffState {
             None => {}
         }
 
-        self.recalculate_diffs(buffer, prev_hunk_staging_operation_count, cx)
+        self.recalculate_diffs(buffer, cx)
     }
 
-    fn recalculate_diffs(
-        &mut self,
-        buffer: text::BufferSnapshot,
-        prev_hunk_staging_operation_count: usize,
-        cx: &mut Context<Self>,
-    ) {
+    fn recalculate_diffs(&mut self, buffer: text::BufferSnapshot, cx: &mut Context<Self>) {
         log::debug!("recalculate diffs");
 
         *self.recalculating_tx.borrow_mut() = true;
@@ -2415,6 +2235,7 @@ impl BufferDiffState {
         let index_changed = self.index_changed;
         let head_changed = self.head_changed;
         let language_changed = self.language_changed;
+        let prev_hunk_staging_operation_count = self.hunk_staging_operation_count_as_of_last_reload;
         let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
             (Some(index), Some(head)) => Arc::ptr_eq(index, head),
             (None, None) => true,
@@ -2468,7 +2289,7 @@ impl BufferDiffState {
                 }
             })?;
             if cancel {
-                log::debug!("returning early because superseded by a staging operation");
+                log::debug!("returning early because superseded by another staging operation");
                 return Ok(());
             }
 
@@ -2495,7 +2316,8 @@ impl BufferDiffState {
                     diff.set_snapshot_with_secondary(
                         new_uncommitted_diff,
                         &buffer,
-                        unstaged_changed_range.map(|range| (range, index_changed)),
+                        unstaged_changed_range,
+                        true,
                         cx,
                     );
                 })?;
@@ -2525,7 +2347,8 @@ impl Default for BufferDiffState {
             language: Default::default(),
             language_registry: Default::default(),
             recalculating_tx: postage::watch::channel_with(false).0,
-            hunk_staging_operation_count: Default::default(),
+            hunk_staging_operation_count: 0,
+            hunk_staging_operation_count_as_of_last_reload: 0,
             head_text: Default::default(),
             index_text: Default::default(),
             head_changed: Default::default(),
@@ -2764,6 +2587,155 @@ impl Repository {
 
     pub fn git_store(&self) -> Option<Entity<GitStore>> {
         self.git_store.upgrade()
+    }
+
+    fn reload_diffs_for_buffers(&mut self, repo_buffers: Vec<(Entity<Buffer>, RepoPath)>) {
+        let git_store = self.git_store.clone();
+        let _ = self.send_keyed_job(
+            // FIXME should all these jobs really use the same key?
+            Some(GitJobKey::BatchReadIndex),
+            None,
+            |state, mut cx| async move {
+                let RepositoryState::Local { backend, .. } = state else {
+                    log::error!("tried to recompute diffs for a non-local repository");
+                    return Ok(());
+                };
+
+                let repo_diff_state_updates = git_store.update(&mut cx, |git_store, cx| {
+                    repo_buffers
+                        .into_iter()
+                        .filter_map(|(buffer, repo_path)| {
+                            let diff_state = git_store.diffs.get(&buffer.read(cx).remote_id())?;
+                            diff_state.update(cx, |diff_state, _| {
+                                diff_state.hunk_staging_operation_count_as_of_last_reload =
+                                    diff_state.hunk_staging_operation_count;
+
+                                let has_unstaged_diff = diff_state
+                                    .unstaged_diff
+                                    .as_ref()
+                                    .is_some_and(|diff| diff.is_upgradable());
+                                let has_uncommitted_diff = diff_state
+                                    .uncommitted_diff
+                                    .as_ref()
+                                    .is_some_and(|set| set.is_upgradable());
+
+                                log::debug!("update diffs for repo path {}", repo_path.0.display());
+                                Some((
+                                    buffer,
+                                    repo_path,
+                                    has_unstaged_diff.then(|| diff_state.index_text.clone()),
+                                    has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+                                ))
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })?;
+
+                let buffer_diff_base_changes = cx
+                    .background_spawn(async move {
+                        let mut changes = Vec::new();
+                        for (buffer, repo_path, current_index_text, current_head_text) in
+                            &repo_diff_state_updates
+                        {
+                            let index_text = if current_index_text.is_some() {
+                                backend.load_index_text(repo_path.clone()).await
+                            } else {
+                                None
+                            };
+                            let head_text = if current_head_text.is_some() {
+                                backend.load_committed_text(repo_path.clone()).await
+                            } else {
+                                None
+                            };
+
+                            let change =
+                                match (current_index_text.as_ref(), current_head_text.as_ref()) {
+                                    (Some(current_index), Some(current_head)) => {
+                                        let index_changed =
+                                            index_text.as_ref() != current_index.as_deref();
+                                        let head_changed =
+                                            head_text.as_ref() != current_head.as_deref();
+                                        if index_changed && head_changed {
+                                            if index_text == head_text {
+                                                Some(DiffBasesChange::SetBoth(head_text))
+                                            } else {
+                                                Some(DiffBasesChange::SetEach {
+                                                    index: index_text,
+                                                    head: head_text,
+                                                })
+                                            }
+                                        } else if index_changed {
+                                            Some(DiffBasesChange::SetIndex(index_text))
+                                        } else if head_changed {
+                                            Some(DiffBasesChange::SetHead(head_text))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    (Some(current_index), None) => {
+                                        let index_changed =
+                                            index_text.as_ref() != current_index.as_deref();
+                                        index_changed
+                                            .then_some(DiffBasesChange::SetIndex(index_text))
+                                    }
+                                    (None, Some(current_head)) => {
+                                        let head_changed =
+                                            head_text.as_ref() != current_head.as_deref();
+                                        head_changed.then_some(DiffBasesChange::SetHead(head_text))
+                                    }
+                                    (None, None) => None,
+                                };
+
+                            changes.push((buffer.clone(), change))
+                        }
+                        changes
+                    })
+                    .await;
+
+                git_store.update(&mut cx, |git_store, cx| {
+                    for (buffer, diff_bases_change) in buffer_diff_base_changes {
+                        let buffer_snapshot = buffer.read(cx).text_snapshot();
+                        let buffer_id = buffer_snapshot.remote_id();
+                        let Some(diff_state) = git_store.diffs.get(&buffer_id) else {
+                            continue;
+                        };
+
+                        let downstream_client = git_store.downstream_client();
+                        diff_state.update(cx, |diff_state, cx| {
+                            use proto::update_diff_bases::Mode;
+
+                            if let Some((diff_bases_change, (client, project_id))) =
+                                diff_bases_change.clone().zip(downstream_client)
+                            {
+                                let (staged_text, committed_text, mode) = match diff_bases_change {
+                                    DiffBasesChange::SetIndex(index) => {
+                                        (index, None, Mode::IndexOnly)
+                                    }
+                                    DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
+                                    DiffBasesChange::SetEach { index, head } => {
+                                        (index, head, Mode::IndexAndHead)
+                                    }
+                                    DiffBasesChange::SetBoth(text) => {
+                                        (None, text, Mode::IndexMatchesHead)
+                                    }
+                                };
+                                client
+                                    .send(proto::UpdateDiffBases {
+                                        project_id: project_id.to_proto(),
+                                        buffer_id: buffer_id.to_proto(),
+                                        staged_text,
+                                        committed_text,
+                                        mode: mode as i32,
+                                    })
+                                    .log_err();
+                            }
+
+                            diff_state.diff_bases_changed(buffer_snapshot, diff_bases_change, cx);
+                        });
+                    }
+                })
+            },
+        );
     }
 
     pub fn send_job<F, Fut, R>(

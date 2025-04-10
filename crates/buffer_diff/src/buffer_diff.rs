@@ -991,19 +991,22 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> Option<Range<Anchor>> {
-        self.set_snapshot_with_secondary(new_snapshot, buffer, None, cx)
+        self.set_snapshot_with_secondary(new_snapshot, buffer, None, false, cx)
     }
 
     pub fn set_snapshot_with_secondary(
         &mut self,
         new_snapshot: BufferDiffSnapshot,
         buffer: &text::BufferSnapshot,
-        secondary_diff_change: Option<(Range<Anchor>, bool)>,
+        secondary_diff_change: Option<Range<Anchor>>,
+        clear_pending_hunks: bool,
         cx: &mut Context<Self>,
     ) -> Option<Range<Anchor>> {
+        log::debug!("set snapshot with secondary {secondary_diff_change:?}");
+
         let state = &mut self.inner;
         let new_state = new_snapshot.inner;
-        let (mut base_text_changed, mut changed_range) =
+        let (base_text_changed, mut changed_range) =
             match (state.base_text_exists, new_state.base_text_exists) {
                 (false, false) => (true, None),
                 (true, true) if state.base_text.remote_id() == new_state.base_text.remote_id() => {
@@ -1012,9 +1015,7 @@ impl BufferDiff {
                 _ => (true, Some(text::Anchor::MIN..text::Anchor::MAX)),
             };
 
-        if let Some((secondary_changed_range, secondary_base_text_changed)) = secondary_diff_change
-        {
-            base_text_changed |= secondary_base_text_changed;
+        if let Some(secondary_changed_range) = secondary_diff_change {
             if let Some(secondary_hunk_range) =
                 self.range_to_hunk_range(secondary_changed_range, &buffer, cx)
             {
@@ -1031,7 +1032,16 @@ impl BufferDiff {
         state.base_text_exists = new_state.base_text_exists;
         state.base_text = new_state.base_text;
         state.hunks = new_state.hunks;
-        if base_text_changed {
+        if base_text_changed || clear_pending_hunks {
+            if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
+            {
+                if let Some(range) = &mut changed_range {
+                    range.start = range.start.min(&first.buffer_range.start, &buffer);
+                    range.end = range.end.max(&last.buffer_range.end, &buffer);
+                } else {
+                    changed_range = Some(first.buffer_range.start..last.buffer_range.end);
+                }
+            }
             state.pending_hunks = SumTree::new(buffer);
         }
 
