@@ -201,7 +201,7 @@ impl MessageEditor {
     }
 
     fn is_editor_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).text(cx).is_empty()
+        self.editor.read(cx).text(cx).trim().is_empty()
     }
 
     fn is_model_selected(&self, cx: &App) -> bool {
