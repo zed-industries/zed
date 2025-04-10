@@ -77,8 +77,45 @@ impl DebugPanel {
             let project = workspace.project().clone();
             let dap_store = project.read(cx).dap_store();
 
-            let _subscriptions =
-                vec![cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event)];
+            let weak = cx.weak_entity();
+
+            let modal_subscription =
+                cx.observe_new::<tasks_ui::TasksModal>(move |_, window, cx| {
+                    let modal_entity = cx.entity();
+
+                    weak.update(cx, |_: &mut DebugPanel, cx| {
+                        let Some(window) = window else {
+                            log::error!("Debug panel couldn't subscribe to tasks modal because there was no window");
+                            return;
+                        };
+
+                        cx.subscribe_in(
+                            &modal_entity,
+                            window,
+                            |panel, _, event: &tasks_ui::ShowAttachModal, window, cx| {
+                                panel.workspace.update(cx, |workspace, cx| {
+                                    let project = workspace.project().clone();
+                                    workspace.toggle_modal(window, cx, |window, cx| {
+                                        crate::attach_modal::AttachModal::new(
+                                            project,
+                                            event.debug_config.clone(),
+                                            true,
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                }).ok();
+                            },
+                        )
+                        .detach();
+                    })
+                    .ok();
+                });
+
+            let _subscriptions = vec![
+                cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event),
+                modal_subscription,
+            ];
 
             let debug_panel = Self {
                 size: px(300.),

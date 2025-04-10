@@ -1,11 +1,9 @@
 use std::path::Path;
 
 use collections::HashMap;
-use debugger_ui::Start;
 use editor::Editor;
-use feature_flags::{Debugger, FeatureFlagViewExt};
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
-use modal::{TaskOverrides, TasksModal};
+use modal::TaskOverrides;
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
 use task::{
     RevealTarget, TaskContext, TaskId, TaskModal, TaskTemplate, TaskVariables, VariableName,
@@ -15,11 +13,11 @@ use workspace::{Workspace, tasks::schedule_resolved_task};
 
 mod modal;
 
-pub use modal::{Rerun, Spawn};
+pub use modal::{Rerun, ShowAttachModal, Spawn, TasksModal};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
+        |workspace: &mut Workspace, _: Option<&mut Window>, _: &mut Context<Workspace>| {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, window, cx| {
@@ -89,17 +87,6 @@ pub fn init(cx: &mut App) {
                         toggle_modal(workspace, None, TaskModal::ScriptModal, window, cx).detach();
                     };
                 });
-
-            let Some(window) = window else {
-                return;
-            };
-
-            cx.when_flag_enabled::<Debugger>(window, |workspace, _, _| {
-                workspace.register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    crate::toggle_modal(workspace, None, task::TaskModal::DebugModal, window, cx)
-                        .detach();
-                });
-            });
         },
     )
     .detach();
@@ -277,7 +264,11 @@ where
     })
 }
 
-fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Task<TaskContexts> {
+pub fn task_contexts(
+    workspace: &Workspace,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<TaskContexts> {
     let active_item = workspace.active_item(cx);
     let active_worktree = active_item
         .as_ref()
