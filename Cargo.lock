@@ -4878,7 +4878,6 @@ dependencies = [
  "assistant_tool",
  "assistant_tools",
  "client",
- "collections",
  "context_server",
  "dap",
  "env_logger 0.11.8",
@@ -4896,7 +4895,6 @@ dependencies = [
  "reqwest_client",
  "serde",
  "settings",
- "smol",
  "toml 0.8.20",
  "workspace-hack",
 ]

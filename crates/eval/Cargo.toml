@@ -11,7 +11,6 @@ assistant_tool.workspace = true
 assistant_tools.workspace = true
 assistant_settings.workspace = true
 client.workspace = true
-collections.workspace = true
 context_server.workspace = true
 dap.workspace = true
 env_logger.workspace = true
@@ -29,7 +28,6 @@ release_channel.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true
 settings.workspace = true
-smol.workspace = true
 toml.workspace = true
 workspace-hack.workspace = true
 
