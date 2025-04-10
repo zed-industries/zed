@@ -923,57 +923,8 @@ struct SelectionHistory {
     selections_by_transaction:
         HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
     mode: SelectionHistoryMode,
-    undo_stack: SelectionHistoryRingBuffer,
-    redo_stack: SelectionHistoryRingBuffer,
-}
-
-struct SelectionHistoryRingBuffer {
-    index: usize,
-    entries: [Option<SelectionHistoryEntry>; MAX_SELECTION_HISTORY_LEN],
-}
-
-impl Default for SelectionHistoryRingBuffer {
-    fn default() -> Self {
-        return Self::new();
-    }
-}
-
-impl SelectionHistoryRingBuffer {
-    fn new() -> Self {
-        return Self {
-            index: 0,
-            entries: [0; MAX_SELECTION_HISTORY_LEN].map(|_| None),
-        };
-    }
-
-    fn push(&mut self, entry: SelectionHistoryEntry) {
-        self.entries[self.index].replace(entry);
-        self.index += 1;
-        if self.index >= MAX_SELECTION_HISTORY_LEN {
-            self.index = 0;
-        }
-    }
-
-    fn pop(&mut self) -> Option<SelectionHistoryEntry> {
-        if self.index == 0 {
-            self.index = MAX_SELECTION_HISTORY_LEN;
-        }
-        self.index -= 1;
-        return self.entries[self.index].take();
-    }
-
-    fn clear(&mut self) {
-        self.entries.fill(None);
-    }
-
-    fn back(&self) -> Option<&SelectionHistoryEntry> {
-        let mut index = self.index;
-        if index == 0 {
-            index = MAX_SELECTION_HISTORY_LEN;
-        }
-        index -= 1;
-        return self.entries[index].as_ref();
-    }
+    undo_stack: VecDeque<SelectionHistoryEntry>,
+    redo_stack: VecDeque<SelectionHistoryEntry>,
 }
 
 impl SelectionHistory {
@@ -1021,7 +972,10 @@ impl SelectionHistory {
             .back()
             .map_or(true, |e| e.selections != entry.selections)
         {
-            self.undo_stack.push(entry);
+            self.undo_stack.push_back(entry);
+            if self.undo_stack.len() > MAX_SELECTION_HISTORY_LEN {
+                self.undo_stack.pop_front();
+            }
         }
     }
 
@@ -1031,7 +985,10 @@ impl SelectionHistory {
             .back()
             .map_or(true, |e| e.selections != entry.selections)
         {
-            self.redo_stack.push(entry);
+            self.redo_stack.push_back(entry);
+            if self.redo_stack.len() > MAX_SELECTION_HISTORY_LEN {
+                self.redo_stack.pop_front();
+            }
         }
     }
 }
@@ -12790,7 +12747,7 @@ impl Editor {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
         self.end_selection(window, cx);
         self.selection_history.mode = SelectionHistoryMode::Undoing;
-        if let Some(entry) = self.selection_history.undo_stack.pop() {
+        if let Some(entry) = self.selection_history.undo_stack.pop_back() {
             self.change_selections(None, window, cx, |s| {
                 s.select_anchors(entry.selections.to_vec())
             });
@@ -12811,7 +12768,7 @@ impl Editor {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
         self.end_selection(window, cx);
         self.selection_history.mode = SelectionHistoryMode::Redoing;
-        if let Some(entry) = self.selection_history.redo_stack.pop() {
+        if let Some(entry) = self.selection_history.redo_stack.pop_back() {
             self.change_selections(None, window, cx, |s| {
                 s.select_anchors(entry.selections.to_vec())
             });
