@@ -2562,6 +2562,10 @@ impl Repository {
         }
     }
 
+    pub fn git_store(&self) -> Option<Entity<GitStore>> {
+        self.git_store.upgrade()
+    }
+
     fn reload_buffer_diff_bases(&mut self, cx: &mut Context<Self>) {
         let this = cx.weak_entity();
         let git_store = self.git_store.clone();
