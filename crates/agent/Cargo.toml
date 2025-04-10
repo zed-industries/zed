@@ -8,6 +8,10 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[[bin]]
+name = "eval"
+path = "eval/eval.rs"
+
 [lib]
 path = "src/assistant.rs"
 doctest = false
