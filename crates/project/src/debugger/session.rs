@@ -1152,6 +1152,10 @@ impl Session {
         }
     }
 
+    pub fn has_new_output(&self, last_update: OutputToken) -> bool {
+        self.output_token.0.checked_sub(last_update.0).unwrap_or(0) != 0
+    }
+
     pub fn output(
         &self,
         since: OutputToken,

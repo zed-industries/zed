@@ -22,12 +22,11 @@ use gpui::{
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
-use markdown::parser::CodeBlockKind;
-use markdown::{Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown, without_fences};
+use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
 use project::ProjectItem as _;
 use rope::Point;
 use settings::{Settings as _, update_settings_file};
-use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -65,6 +64,8 @@ pub struct ActiveThread {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     open_feedback_editors: HashMap<MessageId, Entity<Editor>>,
 }
+
+const MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK: usize = 5;
 
 struct RenderedMessage {
     language_registry: Arc<LanguageRegistry>,
@@ -295,7 +296,7 @@ fn render_markdown_code_block(
     ix: usize,
     kind: &CodeBlockKind,
     parsed_markdown: &ParsedMarkdown,
-    codeblock_range: Range<usize>,
+    metadata: CodeBlockMetadata,
     active_thread: Entity<ActiveThread>,
     workspace: WeakEntity<Workspace>,
     _window: &Window,
@@ -467,15 +468,6 @@ fn render_markdown_code_block(
         .element_background
         .blend(cx.theme().colors().editor_foreground.opacity(0.01));
 
-    const CODE_FENCES_LINE_COUNT: usize = 2;
-    const MAX_COLLAPSED_LINES: usize = 5;
-
-    let line_count = parsed_markdown.source()[codeblock_range.clone()]
-        .bytes()
-        .filter(|c| *c == b'\n')
-        .count()
-        .saturating_sub(CODE_FENCES_LINE_COUNT - 1);
-
     let codeblock_header = h_flex()
         .group("codeblock_header")
         .p_1()
@@ -505,16 +497,14 @@ fn render_markdown_code_block(
                         .on_click({
                             let active_thread = active_thread.clone();
                             let parsed_markdown = parsed_markdown.clone();
+                            let code_block_range = metadata.content_range.clone();
                             move |_event, _window, cx| {
                                 active_thread.update(cx, |this, cx| {
                                     this.copied_code_block_ids.insert((message_id, ix));
 
-                                    let code = without_fences(
-                                        &parsed_markdown.source()[codeblock_range.clone()],
-                                    )
-                                    .to_string();
-
-                                    cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                                    let code = parsed_markdown.source()[code_block_range.clone()]
+                                        .to_string();
+                                    cx.write_to_clipboard(ClipboardItem::new_string(code));
 
                                     cx.spawn(async move |this, cx| {
                                         cx.background_executor()
@@ -536,38 +526,41 @@ fn render_markdown_code_block(
                         }),
                     ),
                 )
-                .when(line_count > MAX_COLLAPSED_LINES, |header| {
-                    header.child(
-                        IconButton::new(
-                            ("expand-collapse-code", ix),
-                            if is_expanded {
-                                IconName::ChevronUp
+                .when(
+                    metadata.line_count > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK,
+                    |header| {
+                        header.child(
+                            IconButton::new(
+                                ("expand-collapse-code", ix),
+                                if is_expanded {
+                                    IconName::ChevronUp
+                                } else {
+                                    IconName::ChevronDown
+                                },
+                            )
+                            .icon_color(Color::Muted)
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::text(if is_expanded {
+                                "Collapse Code"
                             } else {
-                                IconName::ChevronDown
-                            },
+                                "Expand Code"
+                            }))
+                            .on_click({
+                                let active_thread = active_thread.clone();
+                                move |_event, _window, cx| {
+                                    active_thread.update(cx, |this, cx| {
+                                        let is_expanded = this
+                                            .expanded_code_blocks
+                                            .entry((message_id, ix))
+                                            .or_insert(false);
+                                        *is_expanded = !*is_expanded;
+                                        cx.notify();
+                                    });
+                                }
+                            }),
                         )
-                        .icon_color(Color::Muted)
-                        .shape(ui::IconButtonShape::Square)
-                        .tooltip(Tooltip::text(if is_expanded {
-                            "Collapse Code"
-                        } else {
-                            "Expand Code"
-                        }))
-                        .on_click({
-                            let active_thread = active_thread.clone();
-                            move |_event, _window, cx| {
-                                active_thread.update(cx, |this, cx| {
-                                    let is_expanded = this
-                                        .expanded_code_blocks
-                                        .entry((message_id, ix))
-                                        .or_insert(false);
-                                    *is_expanded = !*is_expanded;
-                                    cx.notify();
-                                });
-                            }
-                        }),
-                    )
-                }),
+                    },
+                ),
         );
 
     v_flex()
@@ -578,13 +571,16 @@ fn render_markdown_code_block(
         .border_color(cx.theme().colors().border_variant)
         .bg(cx.theme().colors().editor_background)
         .child(codeblock_header)
-        .when(line_count > MAX_COLLAPSED_LINES, |this| {
-            if is_expanded {
-                this.h_full()
-            } else {
-                this.max_h_40()
-            }
-        })
+        .when(
+            metadata.line_count > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK,
+            |this| {
+                if is_expanded {
+                    this.h_full()
+                } else {
+                    this.max_h_40()
+                }
+            },
+        )
 }
 
 fn open_markdown_link(
@@ -1896,13 +1892,13 @@ impl ActiveThread {
                                     render: Arc::new({
                                         let workspace = workspace.clone();
                                         let active_thread = cx.entity();
-                                        move |kind, parsed_markdown, range, window, cx| {
+                                        move |kind, parsed_markdown, range, metadata, window, cx| {
                                             render_markdown_code_block(
                                                 message_id,
                                                 range.start,
                                                 kind,
                                                 parsed_markdown,
-                                                range,
+                                                metadata,
                                                 active_thread.clone(),
                                                 workspace.clone(),
                                                 window,
@@ -1912,7 +1908,7 @@ impl ActiveThread {
                                     }),
                                     transform: Some(Arc::new({
                                         let active_thread = cx.entity();
-                                        move |el, range, _, cx| {
+                                        move |el, range, metadata, _, cx| {
                                             let is_expanded = active_thread
                                                 .read(cx)
                                                 .expanded_code_blocks
@@ -1920,7 +1916,10 @@ impl ActiveThread {
                                                 .copied()
                                                 .unwrap_or(false);
 
-                                            if is_expanded {
+                                            if is_expanded
+                                                || metadata.line_count
+                                                    <= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK
+                                            {
                                                 return el;
                                             }
                                             el.child(

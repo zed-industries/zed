@@ -138,6 +138,7 @@ welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zeta.workspace = true
+zlog.workspace = true
 zlog_settings.workspace = true
 workspace-hack.workspace = true
 
