@@ -1253,7 +1253,7 @@ impl GitStore {
             }
             if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
                 let recv = repo.update(cx, |repo, cx| {
-                    log::debug!("updating index text for buffer {}", path.display());
+                    log::debug!("hunks changed for {}", path.display());
                     repo.spawn_set_index_text_job(
                         path,
                         new_index_text.as_ref().map(|rope| rope.to_string()),
@@ -2014,6 +2014,8 @@ impl GitStore {
                 if let Some(buffer) = this.buffer_store.read(cx).get(buffer_id) {
                     let buffer = buffer.read(cx).text_snapshot();
                     diff_state.update(cx, |diff_state, cx| {
+                        diff_state.hunk_staging_operation_count_as_of_last_reload =
+                            diff_state.hunk_staging_operation_count;
                         diff_state.handle_base_texts_updated(buffer, request.payload, cx);
                     })
                 }
@@ -2137,11 +2139,8 @@ impl BufferDiffState {
             let mut rx = self.recalculating_tx.subscribe();
             return Some(async move {
                 loop {
-                    log::debug!(">>>>>>> check is_recalculating");
                     let is_recalculating = rx.recv().await;
-                    log::debug!("<<<<<<< check is_recalculating");
                     if is_recalculating != Some(true) {
-                        log::debug!("no longer recalculating");
                         break;
                     }
                 }
@@ -2201,8 +2200,6 @@ impl BufferDiffState {
     }
 
     fn recalculate_diffs(&mut self, buffer: text::BufferSnapshot, cx: &mut Context<Self>) {
-        log::debug!("recalculate diffs");
-
         *self.recalculating_tx.borrow_mut() = true;
 
         let language = self.language.clone();
@@ -2221,6 +2218,11 @@ impl BufferDiffState {
             _ => false,
         };
         self.recalculate_diff_task = Some(cx.spawn(async move |this, cx| {
+            log::debug!(
+                "start recalculating diffs for buffer {}",
+                buffer.remote_id()
+            );
+
             let mut new_unstaged_diff = None;
             if let Some(unstaged_diff) = &unstaged_diff {
                 new_unstaged_diff = Some(
@@ -2268,7 +2270,13 @@ impl BufferDiffState {
                 }
             })?;
             if cancel {
-                log::debug!("returning early because superseded by another staging operation");
+                log::debug!(
+                    concat!(
+                        "aborting recalculating diffs for buffer {}",
+                        "due to subsequent hunk operations",
+                    ),
+                    buffer.remote_id()
+                );
                 return Ok(());
             }
 
@@ -2301,6 +2309,11 @@ impl BufferDiffState {
                     );
                 })?;
             }
+
+            log::debug!(
+                "finished recalculating diffs for buffer {}",
+                buffer.remote_id()
+            );
 
             if let Some(this) = this.upgrade() {
                 this.update(cx, |this, _| {
@@ -2594,6 +2607,10 @@ impl Repository {
                                 let abs_path =
                                     file.worktree.read(cx).absolutize(&file.path).ok()?;
                                 let repo_path = this.abs_path_to_repo_path(&abs_path)?;
+                                log::debug!(
+                                    "reload diff bases for repo path {}",
+                                    repo_path.0.display()
+                                );
                                 diff_state.update(cx, |diff_state, _| {
                                     diff_state.hunk_staging_operation_count_as_of_last_reload =
                                         diff_state.hunk_staging_operation_count;
@@ -2607,10 +2624,6 @@ impl Repository {
                                         .as_ref()
                                         .is_some_and(|set| set.is_upgradable());
 
-                                    log::debug!(
-                                        "update diffs for repo path {}",
-                                        repo_path.0.display()
-                                    );
                                     Some((
                                         buffer,
                                         repo_path,
@@ -3444,14 +3457,16 @@ impl Repository {
         &mut self,
         path: RepoPath,
         content: Option<String>,
-        _cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
         let id = self.id;
-
+        let this = cx.weak_entity();
+        let git_store = self.git_store.clone();
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(path.clone())),
             None,
-            move |git_repo, _cx| async move {
+            move |git_repo, mut cx| async move {
+                log::debug!("updating index text for buffer {}", path.display());
                 match git_repo {
                     RepositoryState::Local {
                         backend,
@@ -3459,8 +3474,8 @@ impl Repository {
                         ..
                     } => {
                         backend
-                            .set_index_text(path, content, environment.clone())
-                            .await
+                            .set_index_text(path.clone(), content, environment.clone())
+                            .await?;
                     }
                     RepositoryState::Remote { project_id, client } => {
                         client
@@ -3471,9 +3486,25 @@ impl Repository {
                                 text: content,
                             })
                             .await?;
-                        Ok(())
                     }
                 }
+
+                let project_path = this
+                    .read_with(&cx, |this, cx| this.repo_path_to_project_path(&path, cx))
+                    .ok()
+                    .flatten();
+                git_store.update(&mut cx, |git_store, cx| {
+                    let buffer_id = git_store
+                        .buffer_store
+                        .read(cx)
+                        .buffer_id_for_project_path(&project_path?)?;
+                    let diff_state = git_store.diffs.get(buffer_id)?;
+                    diff_state.update(cx, |diff_state, _| {
+                        diff_state.hunk_staging_operation_count += 1;
+                    });
+                    Some(())
+                })?;
+                Ok(())
             },
         )
     }
