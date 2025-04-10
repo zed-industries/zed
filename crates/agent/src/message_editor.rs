@@ -4,7 +4,8 @@ use crate::assistant_model_selector::ModelType;
 use collections::HashSet;
 use editor::actions::MoveUp;
 use editor::{
-    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorStyle, MultiBuffer,
+    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode, EditorStyle,
+    MultiBuffer,
 };
 use file_icons::FileIcons;
 use fs::Fs;
@@ -55,6 +56,8 @@ pub struct MessageEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+const MAX_EDITOR_LINES: usize = 10;
+
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
@@ -81,7 +84,9 @@ impl MessageEditor {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
             let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight { max_lines: 10 },
+                editor::EditorMode::AutoHeight {
+                    max_lines: MAX_EDITOR_LINES,
+                },
                 buffer,
                 None,
                 window,
@@ -182,9 +187,14 @@ impl MessageEditor {
 
         self.editor.update(cx, |editor, _| {
             if self.expanded_editor {
-                editor.set_autoheight_max_lines(22)
+                editor.set_mode(EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                })
             } else {
-                editor.set_autoheight_max_lines(10)
+                editor.set_mode(EditorMode::AutoHeight {
+                    max_lines: MAX_EDITOR_LINES,
+                })
             }
         });
 

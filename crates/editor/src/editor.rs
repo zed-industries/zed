@@ -396,14 +396,26 @@ pub enum SelectMode {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
-    SingleLine { auto_width: bool },
-    AutoHeight { max_lines: usize },
-    Full,
+    SingleLine {
+        auto_width: bool,
+    },
+    AutoHeight {
+        max_lines: usize,
+    },
+    Full {
+        /// When set to `true`, the editor will scale its UI elements with the buffer font size.
+        scale_ui_elements_with_buffer_font_size: bool,
+        /// When set to `true`, the editor will render a background for the active line.
+        show_active_line_background: bool,
+    },
 }
 
 impl EditorMode {
     pub fn full() -> Self {
-        Self::Full
+        Self::Full {
+            scale_ui_elements_with_buffer_font_size: true,
+            show_active_line_background: true,
+        }
     }
 
     pub fn is_full(&self) -> bool {
@@ -15723,12 +15735,6 @@ impl Editor {
                 .expect("you can only call set_text on editors for singleton buffers")
                 .update(cx, |buffer, cx| buffer.set_text(text, cx));
         });
-    }
-
-    pub fn set_autoheight_max_lines(&mut self, new_max_lines: usize) {
-        if let EditorMode::AutoHeight { max_lines } = &mut self.mode {
-            *max_lines = new_max_lines;
-        }
     }
 
     pub fn display_text(&self, cx: &mut App) -> String {
