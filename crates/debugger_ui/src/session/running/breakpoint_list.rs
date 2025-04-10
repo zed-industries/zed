@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use gpui::{AppContext, Entity, ListState, MouseButton, Stateful, list};
+use editor::Editor;
+use gpui::{AppContext, Entity, ListState, MouseButton, Stateful, WeakEntity, list};
+use language::Point;
 use project::{
     Project,
     debugger::breakpoint_store::{BreakpointStore, SourceBreakpoint},
@@ -11,8 +13,11 @@ use ui::{
     LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce, Scrollbar, ScrollbarState,
     SharedString, StatefulInteractiveElement, Styled, div, h_flex, px, v_flex,
 };
+use util::maybe;
+use workspace::Workspace;
 
 pub(super) struct BreakpointList {
+    workspace: WeakEntity<Workspace>,
     breakpoint_store: Entity<BreakpointStore>,
     worktree_store: Entity<WorktreeStore>,
     list_state: ListState,
@@ -21,7 +26,11 @@ pub(super) struct BreakpointList {
 }
 
 impl BreakpointList {
-    pub(super) fn new(project: &Entity<Project>, cx: &mut App) -> Entity<Self> {
+    pub(super) fn new(
+        workspace: WeakEntity<Workspace>,
+        project: &Entity<Project>,
+        cx: &mut App,
+    ) -> Entity<Self> {
         let project = project.read(cx);
         let breakpoint_store = project.breakpoint_store();
         let worktree_store = project.worktree_store();
@@ -48,6 +57,7 @@ impl BreakpointList {
                 scrollbar_state: ScrollbarState::new(list_state.clone()),
                 list_state,
                 breakpoints: Default::default(),
+                workspace,
             }
         })
     }
@@ -94,7 +104,7 @@ impl Render for BreakpointList {
         let old_len = self.breakpoints.len();
         let breakpoints = self.breakpoint_store.read(cx).all_breakpoints(cx);
         self.breakpoints.clear();
-
+        let weak = cx.weak_entity();
         let breakpoints = breakpoints.into_iter().flat_map(|(path, mut breakpoints)| {
             let relative_worktree_path = self
                 .worktree_store
@@ -107,6 +117,7 @@ impl Render for BreakpointList {
                         .then(|| Path::new(worktree.read(cx).root_name()).join(relative_path))
                 });
             breakpoints.sort_by_key(|breakpoint| breakpoint.row);
+            let weak = weak.clone();
             breakpoints.into_iter().filter_map(move |breakpoint| {
                 debug_assert_eq!(&path, &breakpoint.path);
                 let file_name = breakpoint.path.file_name()?;
@@ -125,12 +136,16 @@ impl Render for BreakpointList {
                     .to_str()
                     .map(ToOwned::to_owned)
                     .map(SharedString::from)?;
+                let weak = weak.clone();
                 let line = format!("Line {}", breakpoint.row + 1).into();
-                Some(BreakpointEntry::LineBreakpoint {
-                    name,
-                    dir,
-                    line,
-                    breakpoint,
+                Some(BreakpointEntry {
+                    kind: BreakpointEntryKind::LineBreakpoint {
+                        name,
+                        dir,
+                        line,
+                        breakpoint,
+                    },
+                    weak,
                 })
             })
         });
@@ -147,7 +162,7 @@ impl Render for BreakpointList {
 }
 
 #[derive(Clone, Debug)]
-enum BreakpointEntry {
+enum BreakpointEntryKind {
     LineBreakpoint {
         name: SharedString,
         dir: Option<SharedString>,
@@ -156,27 +171,82 @@ enum BreakpointEntry {
     },
 }
 
+#[derive(Clone, Debug)]
+struct BreakpointEntry {
+    kind: BreakpointEntryKind,
+    weak: WeakEntity<BreakpointList>,
+}
 impl RenderOnce for BreakpointEntry {
     fn render(self, _: &mut ui::Window, _: &mut App) -> impl ui::IntoElement {
-        let Self::LineBreakpoint {
+        let BreakpointEntryKind::LineBreakpoint {
             name,
             dir,
             line,
             breakpoint,
-        } = self;
+        } = self.kind;
 
         let icon_name = if breakpoint.state.is_enabled() {
             IconName::DebugBreakpoint
         } else {
             IconName::DebugDisabledBreakpoint
         };
-        let indicator = Indicator::icon(Icon::new(icon_name)).color(Color::Debugger);
+        let weak = self.weak;
+        let path = breakpoint.path;
+        let indicator = div()
+            .child(Indicator::icon(Icon::new(icon_name)).color(Color::Debugger))
+            .on_mouse_down(MouseButton::Left, move |_, _, _| {});
         ListItem::new(SharedString::from(format!(
             "breakpoint-ui-item-{:?}/{}:{}",
             dir, name, line
         )))
         .start_slot(indicator)
         .rounded()
+        .on_click(move |_, window, cx| {
+            let path = path.clone();
+            let weak = weak.clone();
+            let row = breakpoint.row;
+            maybe!({
+                let task = weak
+                    .update(cx, |this, cx| {
+                        this.worktree_store
+                            .update(cx, |this, cx| this.find_or_create_worktree(path, false, cx))
+                    })
+                    .ok()?;
+                window
+                    .spawn(cx, async move |cx| {
+                        let (worktree, relative_path) = task.await?;
+                        let worktree_id = worktree.update(cx, |this, _| this.id())?;
+                        let item = weak
+                            .update_in(cx, |this, window, cx| {
+                                this.workspace.update(cx, |this, cx| {
+                                    this.open_path(
+                                        (worktree_id, relative_path),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                            })??
+                            .await?;
+                        if let Some(editor) = item.downcast::<Editor>() {
+                            editor
+                                .update_in(cx, |this, window, cx| {
+                                    this.go_to_singleton_buffer_point(
+                                        Point { row, column: 0 },
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        }
+                        Result::<_, anyhow::Error>::Ok(())
+                    })
+                    .detach();
+
+                Some(())
+            });
+        })
         .child(
             v_flex()
                 .py_0p5()
