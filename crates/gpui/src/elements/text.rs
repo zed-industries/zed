@@ -1,9 +1,9 @@
 use crate::{
-    register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, App, Bounds,
-    DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement,
-    LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
-    TextOverflow, TextRun, TextStyle, TextStyleRefinement, TooltipId, WhiteSpace, Window,
-    WrappedLine, WrappedLineLayout,
+    ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+    HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, SharedString, Size, TextOverflow, TextRun, TextStyle, TextStyleRefinement,
+    TooltipId, WhiteSpace, Window, WrappedLine, WrappedLineLayout, register_tooltip_mouse_handlers,
+    set_tooltip_on_window,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -423,11 +423,7 @@ impl TextLayout {
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
 
-        // Get current text_style refinements
-        let mut text_style = TextStyleRefinement::default();
-        for style in window.text_style_stack.iter().as_ref() {
-            text_style.refine(&style);
-        }
+        let text_style = window.text_style();
 
         for line in &element_state.lines {
             line.paint(
