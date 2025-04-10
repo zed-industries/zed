@@ -1,4 +1,3 @@
-use crate::AssistantPanel;
 use crate::context::{AssistantContext, ContextId};
 use crate::context_picker::MentionLink;
 use crate::thread::{
@@ -8,6 +7,7 @@ use crate::thread::{
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
+use crate::{AssistantPanel, OpenActiveThreadAsMarkdown};
 use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::{HashMap, HashSet};
@@ -1380,8 +1380,16 @@ impl ActiveThread {
         let editor_bg_color = colors.editor_background;
         let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
-        let feedback_container = h_flex().py_2().px_4().gap_1().justify_between();
+        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileCode)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::XSmall)
+            .icon_color(Color::Ignored)
+            .tooltip(Tooltip::text("Open Thread as Markdown"))
+            .on_click(|_event, window, cx| {
+                window.dispatch_action(Box::new(OpenActiveThreadAsMarkdown), cx)
+            });
 
+        let feedback_container = h_flex().py_2().px_4().gap_1().justify_between();
         let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
                 .child(
@@ -1433,7 +1441,8 @@ impl ActiveThread {
                                         cx,
                                     );
                                 })),
-                        ),
+                        )
+                        .child(open_as_markdown),
                 )
                 .into_any_element(),
             None => feedback_container
@@ -1446,6 +1455,7 @@ impl ActiveThread {
                 )
                 .child(
                     h_flex()
+                        .pr_1()
                         .gap_1()
                         .child(
                             IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
@@ -1476,7 +1486,8 @@ impl ActiveThread {
                                         cx,
                                     );
                                 })),
-                        ),
+                        )
+                        .child(open_as_markdown),
                 )
                 .into_any_element(),
         };
