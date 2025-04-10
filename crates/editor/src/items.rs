@@ -1540,8 +1540,24 @@ impl SearchableItem for Editor {
         let text = self.buffer.read(cx);
         let text = text.snapshot(cx);
         let mut edits = vec![];
+        let mut last_point: Option<Point> = None;
+
         for m in matches {
+            let point = m.start.to_point(&text);
             let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
+
+            // Check if the row for the current match is different from the last
+            // match. If that's not the case and we're still replacing matches
+            // in the same row/line, skip this match if the `one_match_per_line`
+            // option is enabled.
+            if last_point.is_none() {
+                last_point = Some(point);
+            } else if last_point.is_some() && point.row != last_point.unwrap().row {
+                last_point = Some(point);
+            } else if query.one_match_per_line().is_some_and(|enabled| enabled) {
+                continue;
+            }
+
             let text: Cow<_> = if text.len() == 1 {
                 text.first().cloned().unwrap().into()
             } else {

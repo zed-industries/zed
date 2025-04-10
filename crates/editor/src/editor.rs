@@ -3130,6 +3130,7 @@ impl Editor {
         let mut new_selections = Vec::with_capacity(selections.len());
         let mut new_autoclose_regions = Vec::new();
         let snapshot = self.buffer.read(cx).read(cx);
+        let mut clear_linked_edit_ranges = false;
 
         for (selection, autoclose_region) in
             self.selections_with_autoclose_regions(selections, &snapshot)
@@ -3357,6 +3358,8 @@ impl Editor {
                                 .extend(edits.into_iter().map(|range| (range, text.clone())));
                         }
                     }
+                } else {
+                    clear_linked_edit_ranges = true;
                 }
             }
 
@@ -3367,6 +3370,9 @@ impl Editor {
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
+            if clear_linked_edit_ranges {
+                this.linked_edit_ranges.clear();
+            }
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
@@ -5166,13 +5172,16 @@ impl Editor {
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
-        let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
+        let newest_selection_adjusted = self.selections.newest_adjusted(cx).clone();
+        let buffer = self.buffer.read(cx);
         if newest_selection.head().diff_base_anchor.is_some() {
             return None;
         }
-        let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
-        let (end_buffer, end) = buffer.text_anchor_for_position(newest_selection.end, cx)?;
+        let (start_buffer, start) =
+            buffer.text_anchor_for_position(newest_selection_adjusted.start, cx)?;
+        let (end_buffer, end) =
+            buffer.text_anchor_for_position(newest_selection_adjusted.end, cx)?;
         if start_buffer != end_buffer {
             return None;
         }
@@ -14175,12 +14184,28 @@ impl Editor {
             }
         };
 
+        let transaction_id_prev = buffer.read_with(cx, |b, cx| b.last_transaction_id(cx));
+        let selections_prev = transaction_id_prev
+            .and_then(|transaction_id_prev| {
+                // default to selections as they were after the last edit, if we have them,
+                // instead of how they are now.
+                // This will make it so that editing, moving somewhere else, formatting, then undoing the format
+                // will take you back to where you made the last edit, instead of staying where you scrolled
+                self.selection_history
+                    .transaction(transaction_id_prev)
+                    .map(|t| t.0.clone())
+            })
+            .unwrap_or_else(|| {
+                log::info!("Failed to determine selections from before format. Falling back to selections when format was initiated");
+                self.selections.disjoint_anchors()
+            });
+
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
         let format = project.update(cx, |project, cx| {
             project.format(buffers, target, true, trigger, cx)
         });
 
-        cx.spawn_in(window, async move |_, cx| {
+        cx.spawn_in(window, async move |editor, cx| {
             let transaction = futures::select_biased! {
                 transaction = format.log_err().fuse() => transaction,
                 () = timeout => {
@@ -14199,6 +14224,19 @@ impl Editor {
                     cx.notify();
                 })
                 .ok();
+
+            if let Some(transaction_id_now) =
+                buffer.read_with(cx, |b, cx| b.last_transaction_id(cx))?
+            {
+                let has_new_transaction = transaction_id_prev != Some(transaction_id_now);
+                if has_new_transaction {
+                    _ = editor.update(cx, |editor, _| {
+                        editor
+                            .selection_history
+                            .insert_transaction(transaction_id_now, selections_prev);
+                    });
+                }
+            }
 
             Ok(())
         })

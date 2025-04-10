@@ -9,6 +9,7 @@ use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
+use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
@@ -677,6 +678,9 @@ impl Thread {
                 git_checkpoint,
             });
         }
+
+        self.auto_capture_telemetry(cx);
+
         message_id
     }
 
@@ -1000,20 +1004,6 @@ impl Thread {
 
         self.attached_tracked_files_state(&mut request.messages, cx);
 
-        // Add reminder to the last user message about code blocks
-        if let Some(last_user_message) = request
-            .messages
-            .iter_mut()
-            .rev()
-            .find(|msg| msg.role == Role::User)
-        {
-            last_user_message
-                .content
-                .push(MessageContent::Text(system_prompt_reminder(
-                    &self.prompt_builder,
-                )));
-        }
-
         request
     }
 
@@ -1169,6 +1159,8 @@ impl Thread {
                         thread.touch_updated_at();
                         cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
+
+                        thread.auto_capture_telemetry(cx);
                     })?;
 
                     smol::future::yield_now().await;
@@ -1195,7 +1187,8 @@ impl Thread {
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
                             StopReason::ToolUse => {
-                                cx.emit(ThreadEvent::UsePendingTools);
+                                let tool_uses = thread.use_pending_tools(cx);
+                                cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
@@ -1223,6 +1216,8 @@ impl Thread {
                         }
                     }
                     cx.emit(ThreadEvent::DoneStreaming);
+
+                    thread.auto_capture_telemetry(cx);
 
                     if let Ok(initial_usage) = initial_token_usage {
                         let usage = thread.cumulative_token_usage.clone() - initial_usage;
@@ -1383,10 +1378,8 @@ impl Thread {
         )
     }
 
-    pub fn use_pending_tools(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> impl IntoIterator<Item = PendingToolUse> + use<> {
+    pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) -> Vec<PendingToolUse> {
+        self.auto_capture_telemetry(cx);
         let request = self.to_completion_request(RequestKind::Chat, cx);
         let messages = Arc::new(request.messages);
         let pending_tool_uses = self
@@ -1474,16 +1467,34 @@ impl Thread {
                             output,
                             cx,
                         );
-
-                        cx.emit(ThreadEvent::ToolFinished {
-                            tool_use_id,
-                            pending_tool_use,
-                            canceled: false,
-                        });
+                        thread.tool_finished(tool_use_id, pending_tool_use, false, cx);
                     })
                     .ok();
             }
         })
+    }
+
+    fn tool_finished(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        pending_tool_use: Option<PendingToolUse>,
+        canceled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.all_tools_finished() {
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
+                self.attach_tool_results(cx);
+                if !canceled {
+                    self.send_to_model(model, RequestKind::Chat, cx);
+                }
+            }
+        }
+
+        cx.emit(ThreadEvent::ToolFinished {
+            tool_use_id,
+            pending_tool_use,
+        });
     }
 
     pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
@@ -1509,11 +1520,12 @@ impl Thread {
             let mut canceled = false;
             for pending_tool_use in self.tool_use.cancel_pending() {
                 canceled = true;
-                cx.emit(ThreadEvent::ToolFinished {
-                    tool_use_id: pending_tool_use.id.clone(),
-                    pending_tool_use: Some(pending_tool_use),
-                    canceled: true,
-                });
+                self.tool_finished(
+                    pending_tool_use.id.clone(),
+                    Some(pending_tool_use),
+                    true,
+                    cx,
+                );
             }
             canceled
         };
@@ -1544,6 +1556,13 @@ impl Thread {
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
 
+        let enabled_tool_names: Vec<String> = self
+            .tools()
+            .enabled_tools(cx)
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+
         self.message_feedback.insert(message_id, feedback);
 
         cx.notify();
@@ -1567,6 +1586,7 @@ impl Thread {
                 "Assistant Thread Rated",
                 rating,
                 thread_id,
+                enabled_tool_names,
                 message_id = message_id.0,
                 message_content,
                 thread_data,
@@ -1839,6 +1859,65 @@ impl Thread {
         self.cumulative_token_usage.clone()
     }
 
+    pub fn auto_capture_telemetry(&self, cx: &mut Context<Self>) {
+        static mut LAST_CAPTURE: Option<std::time::Instant> = None;
+        let now = std::time::Instant::now();
+        let should_check = unsafe {
+            if let Some(last) = LAST_CAPTURE {
+                if now.duration_since(last).as_secs() < 10 {
+                    return;
+                }
+            }
+            LAST_CAPTURE = Some(now);
+            true
+        };
+
+        if !should_check {
+            return;
+        }
+
+        let feature_flag_enabled = cx.has_flag::<feature_flags::ThreadAutoCapture>();
+
+        if cfg!(debug_assertions) {
+            if !feature_flag_enabled {
+                return;
+            }
+        }
+
+        let thread_id = self.id().clone();
+
+        let github_handle = self
+            .project
+            .read(cx)
+            .user_store()
+            .read(cx)
+            .current_user()
+            .map(|user| user.github_login.clone());
+
+        let client = self.project.read(cx).client().clone();
+
+        let serialized_thread = self.serialize(cx);
+
+        cx.foreground_executor()
+            .spawn(async move {
+                if let Ok(serialized_thread) = serialized_thread.await {
+                    let thread_data = serde_json::to_value(serialized_thread)
+                        .unwrap_or_else(|_| serde_json::Value::Null);
+
+                    telemetry::event!(
+                        "Agent Thread AutoCaptured",
+                        thread_id = thread_id.to_string(),
+                        thread_data = thread_data,
+                        auto_capture_reason = "tracked_user",
+                        github_handle = github_handle
+                    );
+
+                    client.telemetry().flush_events();
+                }
+            })
+            .detach();
+    }
+
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(model) = model_registry.default_model() else {
@@ -1880,19 +1959,8 @@ impl Thread {
 
         self.tool_use
             .insert_tool_output(tool_use_id.clone(), tool_name, err, cx);
-
-        cx.emit(ThreadEvent::ToolFinished {
-            tool_use_id,
-            pending_tool_use: None,
-            canceled: true,
-        });
+        self.tool_finished(tool_use_id.clone(), None, true, cx);
     }
-}
-
-pub fn system_prompt_reminder(prompt_builder: &prompt_store::PromptBuilder) -> String {
-    prompt_builder
-        .generate_assistant_system_prompt_reminder()
-        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone)]
@@ -1917,14 +1985,14 @@ pub enum ThreadEvent {
     MessageDeleted(MessageId),
     SummaryGenerated,
     SummaryChanged,
-    UsePendingTools,
+    UsePendingTools {
+        tool_uses: Vec<PendingToolUse>,
+    },
     ToolFinished {
         #[allow(unused)]
         tool_use_id: LanguageModelToolUseId,
         /// The pending tool use that corresponds to this tool.
         pending_tool_use: Option<PendingToolUse>,
-        /// Whether the tool was canceled by the user.
-        canceled: bool,
     },
     CheckpointChanged,
     ToolConfirmationNeeded,
@@ -1964,7 +2032,7 @@ mod tests {
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store, prompt_builder) =
+        let (_workspace, _thread_store, thread, context_store) =
             setup_test_environment(cx, project.clone()).await;
 
         add_file_to_context(&project, &context_store, "test/code.rs", cx)
@@ -2018,14 +2086,8 @@ fn main() {{
         });
 
         assert_eq!(request.messages.len(), 1);
-        let actual_message = request.messages[0].string_contents();
-        let expected_content = format!(
-            "{}Please explain this code{}",
-            expected_context,
-            system_prompt_reminder(&prompt_builder)
-        );
-
-        assert_eq!(actual_message, expected_content);
+        let expected_full_message = format!("{}Please explain this code", expected_context);
+        assert_eq!(request.messages[0].string_contents(), expected_full_message);
     }
 
     #[gpui::test]
@@ -2042,7 +2104,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, thread, context_store, _prompt_builder) =
+        let (_, _thread_store, thread, context_store) =
             setup_test_environment(cx, project.clone()).await;
 
         // Open files individually
@@ -2142,7 +2204,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, thread, _context_store, prompt_builder) =
+        let (_, _thread_store, thread, _context_store) =
             setup_test_environment(cx, project.clone()).await;
 
         // Insert user message without any context (empty context vector)
@@ -2168,13 +2230,10 @@ fn main() {{
         });
 
         assert_eq!(request.messages.len(), 1);
-        let actual_message = request.messages[0].string_contents();
-        let expected_content = format!(
-            "What is the best way to learn Rust?{}",
-            system_prompt_reminder(&prompt_builder)
+        assert_eq!(
+            request.messages[0].string_contents(),
+            "What is the best way to learn Rust?"
         );
-
-        assert_eq!(actual_message, expected_content);
 
         // Add second message, also without context
         let message2_id = thread.update(cx, |thread, cx| {
@@ -2191,17 +2250,14 @@ fn main() {{
         });
 
         assert_eq!(request.messages.len(), 2);
-        // First message should be the system prompt
-        assert_eq!(request.messages[0].role, Role::User);
-
-        // Second message should be the user message with prompt reminder
-        let actual_message = request.messages[1].string_contents();
-        let expected_content = format!(
-            "Are there any good books?{}",
-            system_prompt_reminder(&prompt_builder)
+        assert_eq!(
+            request.messages[0].string_contents(),
+            "What is the best way to learn Rust?"
         );
-
-        assert_eq!(actual_message, expected_content);
+        assert_eq!(
+            request.messages[1].string_contents(),
+            "Are there any good books?"
+        );
     }
 
     #[gpui::test]
@@ -2214,7 +2270,7 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store, prompt_builder) =
+        let (_workspace, _thread_store, thread, context_store) =
             setup_test_environment(cx, project.clone()).await;
 
         // Open buffer and add it to context
@@ -2274,14 +2330,11 @@ fn main() {{
         // The last message should be the stale buffer notification
         assert_eq!(last_message.role, Role::User);
 
-        let actual_message = last_message.string_contents();
-        let expected_content = format!(
-            "These files changed since last read:\n- code.rs\n{}",
-            system_prompt_reminder(&prompt_builder)
-        );
-
+        // Check the exact content of the message
+        let expected_content = "These files changed since last read:\n- code.rs\n";
         assert_eq!(
-            actual_message, expected_content,
+            last_message.string_contents(),
+            expected_content,
             "Last message should be exactly the stale buffer notification"
         );
     }
@@ -2319,27 +2372,24 @@ fn main() {{
         Entity<ThreadStore>,
         Entity<Thread>,
         Entity<ContextStore>,
-        Arc<PromptBuilder>,
     ) {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-
         let thread_store = cx.update(|_, cx| {
-            ThreadStore::new(project.clone(), Arc::default(), prompt_builder.clone(), cx).unwrap()
+            ThreadStore::new(
+                project.clone(),
+                Arc::default(),
+                Arc::new(PromptBuilder::new(None).unwrap()),
+                cx,
+            )
+            .unwrap()
         });
 
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
 
-        (
-            workspace,
-            thread_store,
-            thread,
-            context_store,
-            prompt_builder,
-        )
+        (workspace, thread_store, thread, context_store)
     }
 
     async fn add_file_to_context(
