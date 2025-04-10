@@ -2736,6 +2736,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
         shift: true,
         ..Default::default()
     };
+    cx.run_until_parked();
     cx.simulate_modifiers_change(modifiers_with_shift);
     cx.update(|window, cx| {
         panel.update(cx, |this, cx| {

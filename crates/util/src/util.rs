@@ -477,7 +477,7 @@ pub fn iterate_expanded_and_wrapped_usize_range(
 }
 
 #[cfg(target_os = "windows")]
-pub fn retrieve_system_shell() -> String {
+pub fn get_windows_system_shell() -> String {
     use std::path::PathBuf;
 
     fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
@@ -992,6 +992,18 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
 
 pub fn default<D: Default>() -> D {
     Default::default()
+}
+
+pub fn get_system_shell() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_system_shell()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
+    }
 }
 
 #[cfg(test)]

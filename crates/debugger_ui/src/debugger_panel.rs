@@ -15,6 +15,7 @@ use gpui::{
     Action, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity, actions,
 };
+
 use project::{
     Project,
     debugger::{
@@ -94,6 +95,87 @@ impl DebugPanel {
         })
     }
 
+    fn filter_action_types(&self, cx: &mut App) {
+        let (has_active_session, supports_restart, support_step_back, status) = self
+            .active_session()
+            .map(|item| {
+                let running = item.read(cx).mode().as_running().cloned();
+
+                match running {
+                    Some(running) => {
+                        let caps = running.read(cx).capabilities(cx);
+                        (
+                            !running.read(cx).session().read(cx).is_terminated(),
+                            caps.supports_restart_request.unwrap_or_default(),
+                            caps.supports_step_back.unwrap_or_default(),
+                            running.read(cx).thread_status(cx),
+                        )
+                    }
+                    None => (false, false, false, None),
+                }
+            })
+            .unwrap_or((false, false, false, None));
+
+        let filter = CommandPaletteFilter::global_mut(cx);
+        let debugger_action_types = [
+            TypeId::of::<Disconnect>(),
+            TypeId::of::<Stop>(),
+            TypeId::of::<ToggleIgnoreBreakpoints>(),
+        ];
+
+        let running_action_types = [TypeId::of::<Pause>()];
+
+        let stopped_action_type = [
+            TypeId::of::<Continue>(),
+            TypeId::of::<StepOver>(),
+            TypeId::of::<StepInto>(),
+            TypeId::of::<StepOut>(),
+            TypeId::of::<editor::actions::DebuggerRunToCursor>(),
+            TypeId::of::<editor::actions::DebuggerEvaluateSelectedText>(),
+        ];
+
+        let step_back_action_type = [TypeId::of::<StepBack>()];
+        let restart_action_type = [TypeId::of::<Restart>()];
+
+        if has_active_session {
+            filter.show_action_types(debugger_action_types.iter());
+
+            if supports_restart {
+                filter.show_action_types(restart_action_type.iter());
+            } else {
+                filter.hide_action_types(&restart_action_type);
+            }
+
+            if support_step_back {
+                filter.show_action_types(step_back_action_type.iter());
+            } else {
+                filter.hide_action_types(&step_back_action_type);
+            }
+
+            match status {
+                Some(ThreadStatus::Running) => {
+                    filter.show_action_types(running_action_types.iter());
+                    filter.hide_action_types(&stopped_action_type);
+                }
+                Some(ThreadStatus::Stopped) => {
+                    filter.show_action_types(stopped_action_type.iter());
+                    filter.hide_action_types(&running_action_types);
+                }
+                _ => {
+                    filter.hide_action_types(&running_action_types);
+                    filter.hide_action_types(&stopped_action_type);
+                }
+            }
+        } else {
+            // show only the `debug: start`
+            filter.hide_action_types(&debugger_action_types);
+            filter.hide_action_types(&step_back_action_type);
+            filter.hide_action_types(&restart_action_type);
+            filter.hide_action_types(&running_action_types);
+            filter.hide_action_types(&stopped_action_type);
+        }
+    }
+
     pub fn load(
         workspace: WeakEntity<Workspace>,
         cx: AsyncWindowContext,
@@ -111,63 +193,15 @@ impl DebugPanel {
                     )
                 });
 
+                cx.observe_new::<DebugPanel>(|debug_panel, _, cx| {
+                    Self::filter_action_types(debug_panel, cx);
+                })
+                .detach();
+
                 cx.observe(&debug_panel, |_, debug_panel, cx| {
-                    let (has_active_session, supports_restart, support_step_back) = debug_panel
-                        .update(cx, |this, cx| {
-                            this.active_session()
-                                .map(|item| {
-                                    let running = item.read(cx).mode().as_running().cloned();
-
-                                    match running {
-                                        Some(running) => {
-                                            let caps = running.read(cx).capabilities(cx);
-                                            (
-                                                true,
-                                                caps.supports_restart_request.unwrap_or_default(),
-                                                caps.supports_step_back.unwrap_or_default(),
-                                            )
-                                        }
-                                        None => (false, false, false),
-                                    }
-                                })
-                                .unwrap_or((false, false, false))
-                        });
-
-                    let filter = CommandPaletteFilter::global_mut(cx);
-                    let debugger_action_types = [
-                        TypeId::of::<Continue>(),
-                        TypeId::of::<StepOver>(),
-                        TypeId::of::<StepInto>(),
-                        TypeId::of::<StepOut>(),
-                        TypeId::of::<Stop>(),
-                        TypeId::of::<Disconnect>(),
-                        TypeId::of::<Pause>(),
-                        TypeId::of::<ToggleIgnoreBreakpoints>(),
-                    ];
-
-                    let step_back_action_type = [TypeId::of::<StepBack>()];
-                    let restart_action_type = [TypeId::of::<Restart>()];
-
-                    if has_active_session {
-                        filter.show_action_types(debugger_action_types.iter());
-
-                        if supports_restart {
-                            filter.show_action_types(restart_action_type.iter());
-                        } else {
-                            filter.hide_action_types(&restart_action_type);
-                        }
-
-                        if support_step_back {
-                            filter.show_action_types(step_back_action_type.iter());
-                        } else {
-                            filter.hide_action_types(&step_back_action_type);
-                        }
-                    } else {
-                        // show only the `debug: start`
-                        filter.hide_action_types(&debugger_action_types);
-                        filter.hide_action_types(&step_back_action_type);
-                        filter.hide_action_types(&restart_action_type);
-                    }
+                    debug_panel.update(cx, |debug_panel, cx| {
+                        Self::filter_action_types(debug_panel, cx);
+                    });
                 })
                 .detach();
 
@@ -242,6 +276,12 @@ impl DebugPanel {
                     window,
                     cx,
                 );
+
+                if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
+                    // We might want to make this an event subscription and only notify when a new thread is selected
+                    // This is used to filter the command menu correctly
+                    cx.observe(&running, |_, _, cx| cx.notify()).detach();
+                }
 
                 self.sessions.push(session_item.clone());
                 self.activate_session(session_item, window, cx);
@@ -360,6 +400,8 @@ impl DebugPanel {
                 self.active_session = self.sessions.first().cloned();
             }
         }
+
+        cx.notify();
     }
 
     fn sessions_drop_down_menu(
@@ -378,7 +420,7 @@ impl DebugPanel {
             ContextMenu::build(window, cx, move |mut this, _, _| {
                 for session in sessions.into_iter() {
                     let weak_session = session.downgrade();
-                    let weak_id = weak_session.entity_id();
+                    let weak_session_id = weak_session.entity_id();
 
                     this = this.custom_entry(
                         {
@@ -400,7 +442,8 @@ impl DebugPanel {
                                                     let weak = weak.clone();
                                                     move |_, _, cx| {
                                                         weak.update(cx, |panel, cx| {
-                                                            panel.close_session(weak_id, cx);
+                                                            panel
+                                                                .close_session(weak_session_id, cx);
                                                         })
                                                         .ok();
                                                     }

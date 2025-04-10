@@ -289,12 +289,14 @@ impl ContextPicker {
                 path_prefix,
             } => {
                 let context_store = self.context_store.clone();
+                let worktree_id = project_path.worktree_id;
                 let path = project_path.path.clone();
 
                 ContextMenuItem::custom_entry(
                     move |_window, cx| {
                         render_file_context_entry(
                             ElementId::NamedInteger("ctx-recent".into(), ix),
+                            worktree_id,
                             &path,
                             &path_prefix,
                             false,
@@ -466,7 +468,7 @@ fn recent_context_picker_entries(
     recent.extend(
         workspace
             .recent_navigation_history_iter(cx)
-            .filter(|(path, _)| !current_files.contains(&path.path.to_path_buf()))
+            .filter(|(path, _)| !current_files.contains(path))
             .take(4)
             .filter_map(|(project_path, _)| {
                 project
