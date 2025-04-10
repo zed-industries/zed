@@ -865,6 +865,7 @@ impl AssistantPanel {
                 } else {
                     div()
                         .ml_2()
+                        .w_full()
                         .child(change_title_editor.clone())
                         .into_any_element()
                 }
