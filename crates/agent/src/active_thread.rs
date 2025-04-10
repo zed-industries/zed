@@ -1314,7 +1314,7 @@ impl ActiveThread {
         let editor_bg_color = colors.editor_background;
         let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
-        let copy_to_markdown = IconButton::new("open-as-markdown", IconName::FileCode)
+        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileCode)
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
@@ -1376,7 +1376,7 @@ impl ActiveThread {
                                     );
                                 })),
                         )
-                        .child(copy_to_markdown),
+                        .child(open_as_markdown),
                 )
                 .into_any_element(),
             None => feedback_container
@@ -1421,7 +1421,7 @@ impl ActiveThread {
                                     );
                                 })),
                         )
-                        .child(copy_to_markdown),
+                        .child(open_as_markdown),
                 )
                 .into_any_element(),
         };
