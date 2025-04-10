@@ -73,12 +73,34 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
+        let workspace_entity = cx.entity();
         cx.new(|cx| {
             let project = workspace.project().clone();
             let dap_store = project.read(cx).dap_store();
 
-            let _subscriptions =
-                vec![cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event)];
+            let _subscriptions = vec![
+                cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event),
+                cx.subscribe_in(
+                    &workspace_entity,
+                    window,
+                    |_, workspace, event, window, cx| {
+                        if let workspace::Event::ShowAttachModal { debug_config } = event {
+                            workspace.update(cx, |workspace, cx| {
+                                let project = workspace.project().clone();
+                                workspace.toggle_modal(window, cx, |window, cx| {
+                                    crate::attach_modal::AttachModal::new(
+                                        project,
+                                        debug_config.clone(),
+                                        true,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                            })
+                        }
+                    },
+                ),
+            ];
 
             let debug_panel = Self {
                 size: px(300.),

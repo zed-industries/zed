@@ -4230,6 +4230,7 @@ dependencies = [
  "settings",
  "sysinfo",
  "task",
+ "tasks_ui",
  "terminal_view",
  "theme",
  "ui",
@@ -14190,7 +14191,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "debugger_ui",
  "editor",
  "feature_flags",
  "file_icons",

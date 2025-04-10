@@ -156,7 +156,17 @@ pub fn init(cx: &mut App) {
                             });
                         }
                     },
-                );
+                )
+                .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
+                    tasks_ui::toggle_modal(
+                        workspace,
+                        None,
+                        task::TaskModal::DebugModal,
+                        window,
+                        cx,
+                    )
+                    .detach();
+                });
         })
     })
     .detach();

@@ -321,7 +321,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn confirm(
         &mut self,
         omit_history_entry: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) {
         let current_match_index = self.selected_index();
@@ -362,14 +362,8 @@ impl PickerDelegate for TasksModalDelegate {
                             DebugRequestType::Attach(attach_config)
                                 if attach_config.process_id.is_none() =>
                             {
-                                workspace.toggle_modal(window, cx, |window, cx| {
-                                    debugger_ui::attach_modal::AttachModal::new(
-                                        project,
-                                        config.clone(),
-                                        true,
-                                        window,
-                                        cx,
-                                    )
+                                cx.emit(workspace::Event::ShowAttachModal {
+                                    debug_config: config.clone(),
                                 });
                             }
                             _ => {

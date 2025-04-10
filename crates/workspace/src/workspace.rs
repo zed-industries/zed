@@ -777,6 +777,9 @@ pub enum Event {
         language: &'static str,
     },
     ZoomChanged,
+    ShowAttachModal {
+        debug_config: task::DebugTaskDefinition,
+    },
 }
 
 #[derive(Debug)]
