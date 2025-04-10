@@ -46,16 +46,7 @@ pub struct DiagnosticsToolInput {
 }
 
 #[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    PartialEq,
-    Eq,
-    Copy,
-    Clone,
-    strum::Display,
-    Hash,
+    Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Copy, Clone, strum::Display, Hash,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum Severity {
@@ -125,57 +116,77 @@ impl Tool for DiagnosticsTool {
     ) -> Task<Result<String>> {
         let input = serde_json::from_value::<DiagnosticsToolInput>(input).unwrap_or_default();
         let severity_filter = input.severity;
+        let mut summary_output = String::new();
+        let mut has_diagnostics = false;
 
-        if input.paths.is_empty() {
+        // Always report the global diagnostics summary.
+        {
             let project = project.read(cx);
-            let mut output = String::new();
-            let mut has_diagnostics = false;
 
             for (project_path, _, summary) in project.diagnostic_summaries(true, cx) {
                 if summary.error_count > 0 || summary.warning_count > 0 {
-                    let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx)
-                    else {
-                        continue;
-                    };
-
-                    has_diagnostics = true;
-                    output.push_str(&format!(
-                        "{}: {} error(s), {} warning(s)\n",
-                        Path::new(worktree.read(cx).root_name())
-                            .join(project_path.path)
-                            .display(),
-                        summary.error_count,
-                        summary.warning_count
-                    ));
+                    if let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx) {
+                        has_diagnostics = true;
+                        summary_output.push_str(&format!(
+                            "{}: {} error(s), {} warning(s)\n",
+                            Path::new(worktree.read(cx).root_name())
+                                .join(project_path.path)
+                                .display(),
+                            summary.error_count,
+                            summary.warning_count
+                        ));
+                    }
                 }
             }
 
             action_log.update(cx, |action_log, _cx| {
                 action_log.checked_project_diagnostics();
             });
+        }
 
+        if input.paths.is_empty() {
+            // If no paths specified, just return the summary
             if has_diagnostics {
-                Task::ready(Ok(output))
+                Task::ready(Ok(summary_output))
             } else {
-                Task::ready(Ok("No errors or warnings found in the project.".to_string()))
+                Task::ready(Ok("No errors or warnings found.".to_string()))
             }
         } else {
-            let mut output = String::new();
-            let mut buffer_tasks = Vec::with_capacity(input.paths.len());
-
-            for path in input.paths {
-                let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
-                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
-                };
-
-                buffer_tasks.push((
-                    path,
-                    project.update(cx, |project, cx| project.open_buffer(project_path, cx)),
-                ));
-            }
+            let buffer_tasks = input
+                .paths
+                .into_iter()
+                .filter_map(|path| {
+                    project
+                        .read(cx)
+                        .find_project_path(&path, cx)
+                        .map(|project_path| {
+                            (
+                                project_path.clone(),
+                                project.update(cx, |project, cx| {
+                                    project.open_buffer(project_path, cx)
+                                }),
+                            )
+                        })
+                })
+                .collect::<Vec<_>>();
 
             cx.spawn(async move |cx| {
-                for (path, buffer_task) in buffer_tasks {
+                let mut output = String::new();
+
+                output.push_str("# Project Summary\n\n");
+
+                if has_diagnostics {
+                    output.push_str(&summary_output);
+                    output.push_str("\n");
+                } else {
+                    output.push_str("No errors or warnings found in the project.\n");
+                }
+
+                output.push('\n');
+
+                let mut header_printed = false;
+
+                for (project_path, buffer_task) in buffer_tasks {
                     let mut path_printed = false;
                     let buffer = buffer_task.await?;
                     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
@@ -186,8 +197,13 @@ impl Tool for DiagnosticsTool {
 
                         if let Ok(severity) = Severity::try_from(&entry.diagnostic.severity) {
                             if severity_filter.is_empty() || severity_filter.contains(&severity) {
+                                if !header_printed {
+                                    output.push_str("# Per-Path Diagnostics\n\n");
+                                    header_printed = true;
+                                }
+
                                 if !path_printed {
-                                    writeln!(output, "## {path}",)?;
+                                    writeln!(output, "## {}", project_path.path.display())?;
                                     path_printed = true;
                                 }
 
@@ -202,11 +218,11 @@ impl Tool for DiagnosticsTool {
                     }
                 }
 
-                Ok(if output.is_empty() {
-                    "No diagnostics found!".to_string()
-                } else {
-                    output
-                })
+                if !header_printed {
+                    output.push_str("No specific diagnostics found for the requested paths.");
+                }
+
+                Ok(output)
             })
         }
     }
