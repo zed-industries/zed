@@ -483,6 +483,10 @@ const RUST_BIN_NAME_TASK_VARIABLE: VariableName =
 const RUST_BIN_KIND_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_BIN_KIND"));
 
+/// The flag to list required features for executing a bin, if any
+const RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_BIN_REQUIRED_FEATURES_FLAG"));
+
 /// The list of required features for executing a bin, if any
 const RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_BIN_REQUIRED_FEATURES"));
@@ -527,11 +531,16 @@ impl ContextProvider for RustContextProvider {
                 ),
             ]));
             if target.required_features.is_empty() {
+                variables.insert(RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE, "".into());
                 variables.insert(RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE, "".into());
             } else {
                 variables.insert(
+                    RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE.clone(),
+                    "--features".to_string(),
+                );
+                variables.insert(
                     RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.clone(),
-                    format!("--features {}", target.required_features.join(",")),
+                    target.required_features.join(","),
                 );
             }
         }
@@ -678,6 +687,7 @@ impl ContextProvider for RustContextProvider {
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                     format!("--{}", RUST_BIN_KIND_TASK_VARIABLE.template_value()),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
+                    RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE.template_value(),
                     RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.template_value(),
                 ],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
