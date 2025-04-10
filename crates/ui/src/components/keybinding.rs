@@ -451,7 +451,7 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
 
 impl Component for KeyBinding {
     fn scope() -> ComponentScope {
-        ComponentScope::Input
+        ComponentScope::Typography
     }
 
     fn name() -> &'static str {
