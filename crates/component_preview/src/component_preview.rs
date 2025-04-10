@@ -878,7 +878,7 @@ impl SerializableItem for ComponentPreview {
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
-       matches!(event, ItemEvent::UpdateTab);
+       matches!(event, ItemEvent::UpdateTab)
     }
 }
 
