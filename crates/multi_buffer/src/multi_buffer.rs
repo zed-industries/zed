@@ -1571,7 +1571,27 @@ impl MultiBuffer {
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
-        self.set_excerpt_ranges_for_path(
+        self.set_merged_excerpt_ranges_for_path(
+            path,
+            buffer,
+            excerpt_ranges,
+            &buffer_snapshot,
+            new,
+            counts,
+            cx,
+        )
+    }
+
+    pub fn set_excerpt_ranges_for_path(
+        &mut self,
+        path: PathKey,
+        buffer: Entity<Buffer>,
+        buffer_snapshot: &BufferSnapshot,
+        excerpt_ranges: Vec<ExcerptRange<Point>>,
+        cx: &mut Context<Self>,
+    ) -> (Vec<Range<Anchor>>, bool) {
+        let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
+        self.set_merged_excerpt_ranges_for_path(
             path,
             buffer,
             excerpt_ranges,
@@ -1605,11 +1625,11 @@ impl MultiBuffer {
 
             multi_buffer
                 .update(cx, move |multi_buffer, cx| {
-                    let (ranges, _) = multi_buffer.set_excerpt_ranges_for_path(
+                    let (ranges, _) = multi_buffer.set_merged_excerpt_ranges_for_path(
                         path_key,
                         buffer,
                         excerpt_ranges,
-                        buffer_snapshot,
+                        &buffer_snapshot,
                         new,
                         counts,
                         cx,
@@ -1622,12 +1642,12 @@ impl MultiBuffer {
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
-    fn set_excerpt_ranges_for_path(
+    fn set_merged_excerpt_ranges_for_path(
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,
         ranges: Vec<ExcerptRange<Point>>,
-        buffer_snapshot: BufferSnapshot,
+        buffer_snapshot: &BufferSnapshot,
         new: Vec<ExcerptRange<Point>>,
         counts: Vec<usize>,
         cx: &mut Context<Self>,

@@ -4,32 +4,26 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use anyhow::{Result, anyhow};
 use editor::{
     Anchor, Bias, Direction, DisplayPoint, Editor, EditorElement, EditorSnapshot, EditorStyle,
     MultiBuffer,
-    actions::Cancel,
-    diagnostic_style,
-    display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, RenderBlock},
+    display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle},
+    hover_markdown_style,
     scroll::Autoscroll,
 };
-use gpui::{
-    AppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Entity, FontWeight,
-    HighlightStyle, StyledText, Task, TextStyle, TextStyleRefinement, WeakEntity, size,
-};
+use gpui::{AppContext, Entity, Task, TextStyle, WeakEntity};
 use indoc;
 use language::{Buffer, BufferId, Diagnostic, DiagnosticEntry, DiagnosticSet, PointUtf16};
 use lsp::DiagnosticSeverity;
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement};
 use settings::Settings;
+use text::Point;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon, ButtonSize, ButtonStyle, Clickable, Color,
-    ComponentPreview, Context, FluentBuilder, IconButton, IconName, InteractiveElement,
-    IntoComponent, IntoElement, ParentElement, Pixels, SharedString, StatefulInteractiveElement,
-    Styled, Tooltip, VisibleOnHover, VisualContext, Window, div, h_flex, px, relative, v_flex,
+    ActiveTheme, AnyElement, App, ComponentPreview, InteractiveElement, IntoComponent, IntoElement,
+    ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, px, relative,
 };
-use util::{ResultExt, maybe};
+use util::maybe;
 
 fn escape_markdown<'a>(s: &'a str) -> Cow<'a, str> {
     if s.chars().any(|c| c.is_ascii_punctuation()) {
@@ -47,17 +41,18 @@ fn escape_markdown<'a>(s: &'a str) -> Cow<'a, str> {
 }
 
 impl DiagnosticRenderer {
-    async fn render(
-        diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
+    pub fn diagnostic_blocks_for_group(
+        diagnostic_group: Vec<DiagnosticEntry<Point>>,
         buffer_id: BufferId,
-        snapshot: EditorSnapshot,
-        editor: WeakEntity<Editor>,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<Vec<BlockProperties<Anchor>>> {
-        let primary_ix = diagnostic_group
+        cx: &mut App,
+    ) -> Vec<DiagnosticBlock> {
+        let Some(primary_ix) = diagnostic_group
             .iter()
             .position(|d| d.diagnostic.is_primary)
-            .ok_or_else(|| anyhow!("no primary diagnostic"))?;
+        else {
+            dbg!("ignoring", diagnostic_group);
+            return Vec::new();
+        };
         let primary = diagnostic_group[primary_ix].clone();
         let mut same_row = Vec::new();
         let mut close = Vec::new();
@@ -67,17 +62,9 @@ impl DiagnosticRenderer {
             if entry.diagnostic.is_primary {
                 continue;
             }
-            if entry.range.start.row() == primary.range.start.row() {
+            if entry.range.start.row == primary.range.start.row {
                 same_row.push(entry)
-            } else if entry
-                .range
-                .start
-                .row()
-                .0
-                .abs_diff(primary.range.start.row().0)
-                < 2
-            // todo!(5)
-            {
+            } else if entry.range.start.row.abs_diff(primary.range.start.row) < 5 {
                 close.push(entry)
             } else {
                 distant.push((ix, entry))
@@ -102,17 +89,14 @@ impl DiagnosticRenderer {
             markdown.push_str(&format!("](file://#diagnostic-{group_id}-{ix})\n",))
         }
 
-        let block = Self::create_block(
-            markdown,
-            primary.diagnostic.severity,
-            snapshot.display_point_to_anchor(primary.range.start, Bias::Right),
-            0,
+        let mut results = vec![DiagnosticBlock {
+            initial_range: primary.range,
+            severity: primary.diagnostic.severity,
+            group_id,
+            id: 0,
             buffer_id,
-            editor.clone(),
-            cx,
-        )
-        .await?;
-        let mut results = vec![block];
+            markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
+        }];
 
         for entry in close {
             let markdown = if let Some(source) = entry.diagnostic.source.as_ref() {
@@ -120,131 +104,57 @@ impl DiagnosticRenderer {
             } else {
                 entry.diagnostic.message
             };
+            let markdown = escape_markdown(&markdown).to_string();
 
-            let block = Self::create_block(
-                markdown,
-                entry.diagnostic.severity,
-                snapshot.display_point_to_anchor(entry.range.start, Bias::Right),
-                results.len(),
+            results.push(DiagnosticBlock {
+                initial_range: entry.range,
+                severity: entry.diagnostic.severity,
+                group_id,
+                id: results.len(),
                 buffer_id,
-                editor.clone(),
-                cx,
-            )
-            .await?;
-            results.push(block)
+                markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
+            });
         }
 
         for (_, entry) in distant {
-            let mut markdown = if let Some(source) = entry.diagnostic.source.as_ref() {
+            let markdown = if let Some(source) = entry.diagnostic.source.as_ref() {
                 format!("{}: {}", source, entry.diagnostic.message)
             } else {
                 entry.diagnostic.message
             };
+            let mut markdown = escape_markdown(&markdown).to_string();
             markdown.push_str(&format!(
                 " ([back](file://#diagnostic-{group_id}-{primary_ix}))"
             ));
 
-            let block = Self::create_block(
-                markdown,
-                entry.diagnostic.severity,
-                snapshot.display_point_to_anchor(entry.range.start, Bias::Right),
-                results.len(),
+            results.push(DiagnosticBlock {
+                initial_range: entry.range,
+                severity: entry.diagnostic.severity,
+                group_id,
+                id: results.len(),
                 buffer_id,
-                editor.clone(),
-                cx,
-            )
-            .await?;
-            results.push(block)
+                markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
+            });
         }
 
-        Ok(results)
-    }
-
-    pub fn open_link(
-        editor: &mut Editor,
-        link: SharedString,
-        window: &mut Window,
-        buffer_id: BufferId,
-        cx: &mut Context<Editor>,
-    ) {
-        let diagnostic = maybe!({
-            let diagnostic = link.strip_prefix("file://#diagnostic-")?;
-            let (group_id, ix) = diagnostic.split_once('-')?;
-
-            editor
-                .snapshot(window, cx)
-                .buffer_snapshot
-                .diagnostic_group(buffer_id, group_id.parse().ok()?)
-                .nth(ix.parse().ok()?)
-        });
-        let Some(diagnostic) = diagnostic else {
-            editor::hover_popover::open_markdown_url(link, window, cx);
-            return;
-        };
-        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            s.select_ranges([diagnostic.range.start..diagnostic.range.start]);
-        })
-    }
-
-    async fn create_block(
-        markdown: String,
-        severity: DiagnosticSeverity,
-        position: Anchor,
-        id: usize,
-        buffer_id: BufferId,
-        editor: WeakEntity<Editor>,
-        cx: &mut AsyncWindowContext,
-    ) -> BlockProperties<Anchor> {
-        let mut editor_line_height = px(0.);
-        let mut text_style = None;
-        let markdown = cx.new(|cx| {
-            let settings = ThemeSettings::get_global(cx);
-            let settings = ThemeSettings::get_global(cx);
-            editor_line_height = (settings.line_height() * settings.buffer_font_size(cx)).round();
-            text_style.replace(TextStyleRefinement {
-                font_family: Some(settings.ui_font.family.clone()),
-                font_fallbacks: settings.ui_font.fallbacks.clone(),
-                font_size: Some(settings.buffer_font_size(cx).into()),
-                line_height: Some((editor_line_height - px(2.)).into()),
-                color: Some(cx.theme().colors().editor_foreground),
-                ..Default::default()
-            });
-            Markdown::new(SharedString::new(markdown), None, None, cx).open_url(
-                move |link, window, cx| {
-                    editor
-                        .update(cx, |editor, cx| {
-                            Self::open_link(editor, link, window, buffer_id, cx)
-                        })
-                        .ok();
-                },
-            )
-        })?;
-        let block = DiagnosticBlock {
-            severity,
-            id,
-            markdown,
-        };
-
-        Ok(BlockProperties {
-            style: BlockStyle::Fixed,
-            placement: BlockPlacement::Below(position),
-            height: Some(1),
-            render: Arc::new(move |bcx| block.render_block(measured.width + px(4.), lines, bcx)),
-            priority: 0,
-        })
+        results
     }
 }
 
-struct DiagnosticBlock {
+pub(crate) struct DiagnosticBlock {
+    initial_range: Range<Point>,
     severity: DiagnosticSeverity,
+    group_id: usize,
     id: usize,
+    buffer_id: BufferId,
     markdown: Entity<Markdown>,
 }
 
 impl DiagnosticBlock {
-    fn render_block(&self, width: Pixels, height_in_lines: f32, bcx: &BlockContext) -> AnyElement {
+    pub fn render_block(&self, editor: WeakEntity<Editor>, bcx: &BlockContext) -> AnyElement {
         let cx = &bcx.app;
         let status_colors = bcx.app.theme().status();
+        let max_width = px(600.);
 
         let (background_color, border_color) = match self.severity {
             DiagnosticSeverity::ERROR => (status_colors.error_background, status_colors.error),
@@ -255,48 +165,92 @@ impl DiagnosticBlock {
             DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.info),
             _ => (status_colors.ignored_background, status_colors.ignored),
         };
-        let min_left = bcx.gutter_dimensions.full_width();
-        let max_left = min_left + bcx.max_width - width;
-        let left = bcx.anchor_x.min(max_left).max(min_left);
         let settings = ThemeSettings::get_global(cx);
         let editor_line_height = (settings.line_height() * settings.buffer_font_size(cx)).round();
-        let line_height = editor_line_height - px(2.);
+        let line_height = editor_line_height; // - px(2.);
+        let buffer_id = self.buffer_id;
 
         div()
             .border_l_2()
             .px_2()
-            .my(px(1.)) // NOTE: we can only borrow space from the line-height...
-            .h(height_in_lines * editor_line_height - px(2.))
+            // .my(px(1.)) // NOTE: we can only borrow space from the line-height...
+            .max_h(10 * editor_line_height) // - px(2.))
             .line_height(line_height)
             .bg(background_color)
             .border_color(border_color)
             .id(self.id)
-            .ml(left)
-            .max_w(width)
+            .max_w(max_width)
             .overflow_y_hidden()
             .overflow_scroll()
-            .child(self.markdown.clone())
+            .child(
+                MarkdownElement::new(self.markdown.clone(), hover_markdown_style(bcx.window, cx))
+                    .on_url_click({
+                        move |link, window, cx| {
+                            Self::open_link(editor.clone(), link, window, buffer_id, cx)
+                        }
+                    }),
+            )
             .into_any_element()
+    }
+
+    pub fn open_link(
+        editor: WeakEntity<Editor>,
+        link: SharedString,
+        window: &mut Window,
+        buffer_id: BufferId,
+        cx: &mut App,
+    ) {
+        editor
+            .update(cx, |editor, cx| {
+                let diagnostic = maybe!({
+                    let diagnostic = link.strip_prefix("file://#diagnostic-")?;
+                    let (group_id, ix) = diagnostic.split_once('-')?;
+
+                    editor
+                        .snapshot(window, cx)
+                        .buffer_snapshot
+                        .diagnostic_group(buffer_id, group_id.parse().ok()?)
+                        .nth(ix.parse().ok()?)
+                });
+                let Some(diagnostic) = diagnostic else {
+                    editor::hover_popover::open_markdown_url(link, window, cx);
+                    return;
+                };
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select_ranges([diagnostic.range.start..diagnostic.range.start]);
+                })
+            })
+            .ok();
     }
 }
 
 impl editor::DiagnosticRenderer for DiagnosticRenderer {
     fn render_group(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
+        diagnostic_group: Vec<DiagnosticEntry<Point>>,
         buffer_id: BufferId,
         snapshot: EditorSnapshot,
         editor: WeakEntity<Editor>,
-        window: &Window,
-        cx: &App,
-    ) -> Task<Vec<BlockProperties<Anchor>>> {
-        let mut window = window.to_async(cx);
-        cx.spawn(async move |_| {
-            Self::render(diagnostic_group, buffer_id, snapshot, editor, &mut window)
-                .await
-                .log_err()
-                .unwrap_or_default()
-        })
+        cx: &mut App,
+    ) -> Vec<BlockProperties<Anchor>> {
+        let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, cx);
+        blocks
+            .into_iter()
+            .map(|block| {
+                let editor = editor.clone();
+                BlockProperties {
+                    placement: BlockPlacement::Near(
+                        snapshot
+                            .buffer_snapshot
+                            .anchor_after(block.initial_range.start),
+                    ),
+                    height: Some(1),
+                    style: BlockStyle::Flex,
+                    render: Arc::new(move |bcx| block.render_block(editor.clone(), bcx)),
+                    priority: 1,
+                }
+            })
+            .collect()
     }
 }
 #[derive(IntoComponent)]

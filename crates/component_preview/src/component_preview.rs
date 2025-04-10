@@ -25,8 +25,6 @@ use workspace::{AppState, ItemId, SerializableItem};
 use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
-    let app_state = app_state.clone();
-
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {
         workspace.register_action(
             move |workspace, _: &workspace::OpenComponentPreview, window, cx| {
@@ -35,7 +33,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         );
         if let Some(window) = window {
             if let Ok(component) = std::env::var("ZED_COMPONENT_PREVIEW") {
-                dbg!("WATY");
                 cx.spawn_in(window, async move |workspace, cx| {
                     cx.background_executor()
                         .timer(Duration::from_millis(50))

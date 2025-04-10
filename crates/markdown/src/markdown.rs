@@ -46,6 +46,7 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
     pub table_overflow_x_scroll: bool,
+    pub height_is_multiple_of_line_height: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -64,6 +65,7 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             heading: Default::default(),
             table_overflow_x_scroll: false,
+            height_is_multiple_of_line_height: false,
         }
     }
 }
@@ -464,9 +466,9 @@ impl MarkdownElement {
                                 pending: true,
                             };
                             window.focus(&markdown.focus_handle);
-                            window.prevent_default();
                         }
 
+                        window.prevent_default();
                         cx.notify();
                     }
                 } else if phase.capture() {
@@ -600,7 +602,9 @@ impl Element for MarkdownElement {
                     match tag {
                         MarkdownTag::Paragraph => {
                             builder.push_div(
-                                div().mb_2().line_height(rems(1.3)),
+                                div().when(!self.style.height_is_multiple_of_line_height, |el| {
+                                    el.mb_2().line_height(rems(1.3))
+                                }),
                                 range,
                                 markdown_end,
                             );
@@ -726,11 +730,11 @@ impl Element for MarkdownElement {
                             };
                             builder.push_div(
                                 div()
-                                    .mb_1()
+                                    .when(!self.style.height_is_multiple_of_line_height, |el| {
+                                        el.mb_1().gap_1().line_height(rems(1.3))
+                                    })
                                     .h_flex()
                                     .items_start()
-                                    .gap_1()
-                                    .line_height(rems(1.3))
                                     .child(bullet),
                                 range,
                                 markdown_end,

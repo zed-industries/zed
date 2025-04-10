@@ -2764,12 +2764,13 @@ impl EditorElement {
                 let mut element_height_in_lines =
                     ((final_size.height / line_height).ceil() as u32).max(1);
 
-                if block.place_near() && element_height_in_lines == 1 {
+                if block.place_near() {
                     if let Some((x_target, line_width)) = x_position {
                         let margin = em_width * 2;
                         if line_width + final_size.width + margin
                             < editor_width + gutter_dimensions.full_width()
                             && !row_block_types.contains_key(&(row - 1))
+                            && element_height_in_lines == 1
                         {
                             x_offset = line_width + margin;
                             row = row - 1;
@@ -2785,12 +2786,6 @@ impl EditorElement {
                     }
                 };
                 if element_height_in_lines != block.height() {
-                    dbg!(
-                        final_size.height,
-                        line_height,
-                        element_height_in_lines,
-                        block.height()
-                    );
                     resized_blocks.insert(custom_block_id, element_height_in_lines);
                 }
             }
@@ -7030,7 +7025,6 @@ impl Element for EditorElement {
                     let (mut blocks, row_block_types) = match blocks {
                         Ok(blocks) => blocks,
                         Err(resized_blocks) => {
-                            dbg!(&resized_blocks);
                             self.editor.update(cx, |editor, cx| {
                                 editor.resize_blocks(resized_blocks, autoscroll_request, cx)
                             });

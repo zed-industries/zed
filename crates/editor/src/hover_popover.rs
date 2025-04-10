@@ -592,6 +592,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         },
         syntax: cx.theme().syntax().clone(),
         selection_background_color: { cx.theme().players().local().selection },
+        height_is_multiple_of_line_height: true,
         heading: StyleRefinement::default()
             .font_weight(FontWeight::BOLD)
             .text_base()

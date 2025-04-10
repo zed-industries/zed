@@ -4344,6 +4344,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "text",
  "theme",
  "ui",
  "unindent",

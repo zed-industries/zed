@@ -147,7 +147,7 @@ pub use multi_buffer::{
 };
 use multi_buffer::{
     ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
-    MultiOrSingleBufferOffsetRange, PathKey, ToOffsetUtf16,
+    MultiOrSingleBufferOffsetRange, ToOffsetUtf16,
 };
 use parking_lot::Mutex;
 use project::{
@@ -358,13 +358,12 @@ pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) 
 pub trait DiagnosticRenderer {
     fn render_group(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<DisplayPoint>>,
+        diagnostic_group: Vec<DiagnosticEntry<Point>>,
         buffer_id: BufferId,
         snapshot: EditorSnapshot,
         editor: WeakEntity<Editor>,
-        window: &Window,
-        cx: &App,
-    ) -> Task<Vec<BlockProperties<Anchor>>>;
+        cx: &mut App,
+    ) -> Vec<BlockProperties<Anchor>>;
 }
 
 pub(crate) struct GlobalDiagnosticRenderer(pub Arc<dyn DiagnosticRenderer>);
@@ -698,7 +697,6 @@ pub struct Editor {
     select_syntax_node_history: SelectSyntaxNodeHistory,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
-    active_diagnostics_update: Task<()>,
     show_inline_diagnostics: bool,
     inline_diagnostics_update: Task<()>,
     inline_diagnostics_enabled: bool,
@@ -1472,7 +1470,6 @@ impl Editor {
             select_syntax_node_history: SelectSyntaxNodeHistory::default(),
             ime_transaction: Default::default(),
             active_diagnostics: None,
-            active_diagnostics_update: Task::ready(()),
             show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline.enabled,
             inline_diagnostics_update: Task::ready(()),
             inline_diagnostics: Vec::new(),
@@ -14359,12 +14356,15 @@ impl Editor {
         group_id: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<()> {
+    ) {
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
-        let diagnostic_renderer = cx
+        let Some(diagnostic_renderer) = cx
             .try_global::<GlobalDiagnosticRenderer>()
-            .map(|g| g.0.clone())?;
+            .map(|g| g.0.clone())
+        else {
+            return;
+        };
         let buffer = self.buffer.read(cx).snapshot(cx);
 
         let mut primary_range = None;
@@ -14384,47 +14384,40 @@ impl Editor {
                     primary_range = Some(entry.range.clone());
                     primary_message = Some(entry.diagnostic.message.clone());
                 }
-                Some(DiagnosticEntry {
-                    range: entry.range.to_display_points(&snapshot),
-                    diagnostic: entry.diagnostic,
-                })
+                Some(entry)
             })
             .collect::<Vec<_>>();
-        let primary_range = primary_range?;
-        let primary_message = primary_message?;
+        let Some(primary_range) = primary_range else {
+            return;
+        };
+        let Some(primary_message) = primary_message else {
+            return;
+        };
 
         let blocks = diagnostic_renderer.render_group(
             diagnostic_group.clone(),
             buffer_id,
             snapshot,
             cx.weak_entity(),
-            window,
             cx,
         );
-        self.active_diagnostics_update = cx.spawn(async move |editor, cx| {
-            let blocks = blocks.await;
-            editor
-                .update(cx, |editor, cx| {
-                    let blocks = editor.display_map.update(cx, |display_map, cx| {
-                        display_map
-                            .insert_blocks(blocks, cx)
-                            .into_iter()
-                            .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
-                            .collect()
-                    });
-                    editor.active_diagnostics = Some(ActiveDiagnosticGroup {
-                        primary_range: buffer.anchor_before(primary_range.start)
-                            ..buffer.anchor_after(primary_range.end),
-                        primary_message,
-                        group_id,
-                        blocks,
-                        is_valid: true,
-                    });
-                    cx.notify();
-                })
-                .ok();
+
+        let blocks = self.display_map.update(cx, |display_map, cx| {
+            display_map
+                .insert_blocks(blocks, cx)
+                .into_iter()
+                .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
+                .collect()
         });
-        Some(())
+        self.active_diagnostics = Some(ActiveDiagnosticGroup {
+            primary_range: buffer.anchor_before(primary_range.start)
+                ..buffer.anchor_after(primary_range.end),
+            primary_message,
+            group_id,
+            blocks,
+            is_valid: true,
+        });
+        cx.notify();
     }
 
     fn dismiss_diagnostics(&mut self, cx: &mut Context<Self>) {

@@ -89,7 +89,7 @@ pub enum BlockPlacement<T> {
 }
 
 impl<T> BlockPlacement<T> {
-    fn start(&self) -> &T {
+    pub fn start(&self) -> &T {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
