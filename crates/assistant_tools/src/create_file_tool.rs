@@ -75,30 +75,27 @@ impl Tool for CreateFileTool {
             Some(project_path) => project_path,
             None => return Task::ready(Err(anyhow!("Path to create was outside the project"))),
         };
-        // let contents: Arc<str> = input.contents.as_str().into();
         let destination_path: Arc<str> = input.path.as_str().into();
 
-        dbg!(&destination_path);
-
         cx.spawn(async move |cx| {
-            //     let buffer = project
-            //         .update(cx, |project, cx| { project.open_buffer(project_path.clone(), cx)
-            //         })?
-            //         .await
-            //         .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
-            //     cx.update(|cx| {
-            //         buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
-            //         action_log.update(cx, |action_log, cx| {
-            //             action_log.will_create_buffer(buffer.clone(), cx)
-            //         });
-            //     })?;
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_buffer(project_path.clone(), cx)
+                })?
+                .await
+                .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
+            cx.update(|cx| {
+                action_log.update(cx, |action_log, cx| {
+                    action_log.will_create_buffer(buffer.clone(), cx)
+                });
+            })?;
 
-            //     project
-            //         .update(cx, |project, cx| project.save_buffer(buffer, cx))?
-            //         .await
-            //         .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
+            project
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .await
+                .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
 
-            Ok(format!("Created file {destination_path}"))
+            Ok(format!("Created file {destination_path} - next, its exact contents will become your response:"))
         })
     }
 }

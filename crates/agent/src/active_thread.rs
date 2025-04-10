@@ -823,7 +823,7 @@ impl ActiveThread {
 
     fn handle_thread_event(
         &mut self,
-        _thread: &Entity<Thread>,
+        thread: &Entity<Thread>,
         event: &ThreadEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -926,6 +926,45 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
+            ThreadEvent::StreamedFileChunk { path, chunk } => {
+                let project = thread.read(cx).project().clone();
+
+                if let Some(project_path) =
+                    project.update(cx, |project, cx| project.find_project_path(path, cx))
+                {
+                    log::info!("Appending {}B chunk to {path}", chunk.len());
+
+                    let path = path.clone();
+                    let chunk = chunk.clone();
+
+                    cx.spawn(async move |_, cx| {
+                        match project.update(cx, |project, cx| {
+                            project.open_buffer(project_path.clone(), cx)
+                        }) {
+                            Ok(buffer_task) => {
+                                if let Ok(buffer) = buffer_task.await {
+                                    // Append the text to the buffer
+                                    if let Err(e) = cx.update(|cx| {
+                                        buffer.update(cx, |buffer, cx| {
+                                            let point = buffer.snapshot().len();
+                                            buffer.edit([(point..point, chunk.as_str())], None, cx)
+                                        })
+                                    }) {
+                                        log::warn!("Failed to edit buffer: {}", e);
+                                    } else {
+                                        log::info!("Successfully appended chunk to file: {path}",);
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                let todo = (); // TODO record the error in the messages somehow.
+                                todo!();
+                            }
+                        }
+                    })
+                    .detach();
+                }
+            }
         }
     }
 
