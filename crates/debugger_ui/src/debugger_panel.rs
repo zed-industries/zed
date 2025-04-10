@@ -389,8 +389,12 @@ impl DebugPanel {
                                 weak_session
                                     .read_with(cx, |session, cx| {
                                         let context_menu = context_menu.clone();
+                                        let id: SharedString =
+                                            format!("debug-session-{}", session.session_id(cx).0)
+                                                .into();
                                         h_flex()
                                             .w_full()
+                                            .group(id.clone())
                                             .justify_between()
                                             .child(session.label_element(cx))
                                             .child(
@@ -398,6 +402,7 @@ impl DebugPanel {
                                                     "close-debug-session",
                                                     IconName::Close,
                                                 )
+                                                .visible_on_hover(id.clone())
                                                 .icon_size(IconSize::Small)
                                                 .on_click({
                                                     let weak = weak.clone();
