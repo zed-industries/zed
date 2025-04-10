@@ -1236,7 +1236,6 @@ impl Thread {
                             thread.cancel_last_completion(cx);
                         }
                     }
-                    // Don't save buffers here - we'll save them after we know streaming is complete
                     cx.emit(ThreadEvent::DoneStreaming);
 
                     if let Ok(initial_usage) = initial_token_usage {
@@ -1502,6 +1501,7 @@ impl Thread {
                 // For create_file tool, replace the output with the assistant's message content
                 if tool_name.as_ref() == "create_file" && output.is_ok() {
                     if let Some(content) = last_assistant_message_content {
+                        dbg!(&content);
                         output = Ok(content);
                     }
                 }
