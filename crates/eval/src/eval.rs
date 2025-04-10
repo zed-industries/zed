@@ -77,7 +77,7 @@ fn main() {
 
     app.run(move |cx| {
         let app_state = crate::agent::init(cx);
-        let agent = Agent::new(app_state, cx);
+        let _agent = Agent::new(app_state, cx);
 
         let model = agent::find_model("claude-3-7-sonnet-thinking-latest", cx).unwrap();
 

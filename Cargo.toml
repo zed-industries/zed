@@ -47,6 +47,7 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
+    "crates/eval",
     "crates/evals",
     "crates/extension",
     "crates/extension_api",
@@ -194,7 +195,7 @@ members = [
     #
 
     "tooling/workspace-hack",
-    "tooling/xtask", "crates/eval",
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 

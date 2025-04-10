@@ -4,7 +4,7 @@ use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
 use serde_derive::Deserialize;
-use std::{iter::Peekable, str::Chars, time::Duration};
+use std::{iter::Peekable, str::Chars};
 use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
@@ -484,16 +484,8 @@ impl Vim {
                 search_bar.update_in(cx, |search_bar, window, cx| {
                     search_bar.select_last_match(window, cx);
                     search_bar.replace_all(&Default::default(), window, cx);
-
-                    cx.spawn(async move |_, cx| {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(200))
-                            .await;
-                        editor
-                            .update(cx, |editor, cx| editor.clear_search_within_ranges(cx))
-                            .ok();
-                    })
-                    .detach();
+                    editor.update(cx, |editor, cx| editor.clear_search_within_ranges(cx));
+                    let _ = search_bar.search(&search_bar.query(cx), None, window, cx);
                     vim.update(cx, |vim, cx| {
                         vim.move_cursor(
                             Motion::StartOfLine {
