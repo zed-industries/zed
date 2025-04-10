@@ -4,7 +4,7 @@ use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
     ThreadEvent, ThreadFeedback,
 };
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{RulesLoadingError, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::{AssistantPanel, OpenActiveThreadAsMarkdown};
@@ -672,6 +672,7 @@ impl ActiveThread {
         let subscriptions = vec![
             cx.observe(&thread, |_, _, cx| cx.notify()),
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
+            cx.subscribe(&thread_store, Self::handle_rules_loading_error),
         ];
 
         let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.), {
@@ -927,6 +928,19 @@ impl ActiveThread {
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
         }
+    }
+
+    fn handle_rules_loading_error(
+        &mut self,
+        _thread_store: Entity<ThreadStore>,
+        error: &RulesLoadingError,
+        cx: &mut Context<Self>,
+    ) {
+        self.last_error = Some(ThreadError::Message {
+            header: "Error loading rules file".into(),
+            message: error.message.clone(),
+        });
+        cx.notify();
     }
 
     fn show_notification(
@@ -2702,12 +2716,13 @@ impl ActiveThread {
     }
 
     fn render_rules_item(&self, cx: &Context<Self>) -> AnyElement {
-        let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
-        else {
+        let project_context = self.thread.read(cx).project_context();
+        let project_context = project_context.borrow();
+        let Some(project_context) = project_context.as_ref() else {
             return div().into_any();
         };
 
-        let rules_files = system_prompt_context
+        let rules_files = project_context
             .worktrees
             .iter()
             .filter_map(|worktree| worktree.rules_file.as_ref())
@@ -2797,12 +2812,13 @@ impl ActiveThread {
     }
 
     fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
-        else {
+        let project_context = self.thread.read(cx).project_context();
+        let project_context = project_context.borrow();
+        let Some(project_context) = project_context.as_ref() else {
             return;
         };
 
-        let abs_paths = system_prompt_context
+        let abs_paths = project_context
             .worktrees
             .iter()
             .flat_map(|worktree| worktree.rules_file.as_ref())

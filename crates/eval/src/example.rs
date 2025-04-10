@@ -1,9 +1,9 @@
-use agent::{Thread, ThreadEvent, ThreadStore};
+use agent::{ThreadEvent, ThreadStore};
 use anyhow::{Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use dap::DapRegistry;
 use futures::channel::oneshot;
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{App, Task};
 use project::Project;
 use serde::Deserialize;
 use std::process::Command;
@@ -26,10 +26,10 @@ pub struct Example {
     pub base: ExampleBase,
 
     /// Content of the prompt.md file
-    pub prompt: String,
+    pub _prompt: String,
 
     /// Content of the rubric.md file
-    pub rubric: String,
+    pub _rubric: String,
 }
 
 impl Example {
@@ -44,8 +44,8 @@ impl Example {
 
         Ok(Example {
             base,
-            prompt: fs::read_to_string(prompt_path)?,
-            rubric: fs::read_to_string(rubric_path)?,
+            _prompt: fs::read_to_string(prompt_path)?,
+            _rubric: fs::read_to_string(rubric_path)?,
         })
     }
 
@@ -71,11 +71,7 @@ impl Example {
         Ok(())
     }
 
-    pub fn run(
-        &self,
-        app_state: Arc<AgentAppState>,
-        cx: &mut App,
-    ) -> impl 'static + Future<Output = Result<()>> + use<> {
+    pub fn run(&self, app_state: Arc<AgentAppState>, cx: &mut App) -> Task<Result<()>> {
         let project = Project::local(
             app_state.client.clone(),
             app_state.node_runtime.clone(),
@@ -88,49 +84,44 @@ impl Example {
         );
 
         let tools = Arc::new(ToolWorkingSet::default());
-        let thread_store = cx.new(|cx| {
-            ThreadStore::new(project.clone(), tools, app_state.prompt_builder.clone(), cx)
-        });
+        let thread_store =
+            ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
 
-        let thread = thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx));
+        cx.spawn(async move |cx| {
+            let thread_store = thread_store.await;
+            let thread =
+                thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
 
-        let (tx, rx) = oneshot::channel();
-        let mut tx = Some(tx);
+            let (tx, rx) = oneshot::channel();
+            let mut tx = Some(tx);
 
-        let subscription = cx.subscribe(
-            &thread,
-            move |thread, event: &ThreadEvent, cx| match event {
-                ThreadEvent::DoneStreaming => {
-                    if let Some(tx) = tx.take() {
-                        _ = tx.send(Ok(()));
+            let _subscription = cx.subscribe(
+                &thread,
+                move |_thread, event: &ThreadEvent, _cx| match event {
+                    ThreadEvent::DoneStreaming => {
+                        if let Some(tx) = tx.take() {
+                            tx.send(Ok(())).ok();
+                        }
                     }
-                }
-                ThreadEvent::ShowError(thread_error) => {
-                    if let Some(tx) = tx.take() {
-                        _ = tx.send(Err(anyhow!(thread_error.clone())));
+                    ThreadEvent::ShowError(thread_error) => {
+                        if let Some(tx) = tx.take() {
+                            tx.send(Err(anyhow!(thread_error.clone()))).ok();
+                        }
                     }
-                }
-                ThreadEvent::ToolFinished {
-                    tool_use_id,
-                    pending_tool_use,
-                } => todo!(),
-                _ => {}
-            },
-        );
+                    ThreadEvent::ToolFinished { .. } => todo!(),
+                    _ => {}
+                },
+            )?;
 
-        // let (system_prompt_context, load_error) = thread.read(cx).load_system_prompt_context(cx)?;
+            // thread.update(cx, |thread, cx| {
+            //     let context = vec![];
+            //     thread.insert_user_message(self.prompt.clone(), context, None, cx);
+            //     thread.send_to_model(model, RequestKind::Chat, cx);
+            // });
 
-        // thread.update(cx, |thread, cx| {
-        //     let context = vec![];
-        //     thread.insert_user_message(self.prompt.clone(), context, None, cx);
-        //     thread.set_system_prompt_context(system_prompt_context);
-        //     thread.send_to_model(model, RequestKind::Chat, cx);
-        // });
-
-        async move {
             rx.await??;
-            drop(subscription);
+
             Ok(())
-        }
+        })
     }
 }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use fs::Fs;
 use gpui::{App, AppContext, Task};
-use prompt_store::SystemPromptRulesFile;
+use prompt_store::RulesFileContext;
 use util::maybe;
 use worktree::Worktree;
 
@@ -20,7 +20,7 @@ pub fn load_worktree_rules_file(
     fs: Arc<dyn Fs>,
     worktree: &Worktree,
     cx: &App,
-) -> Option<Task<Result<SystemPromptRulesFile>>> {
+) -> Option<Task<Result<RulesFileContext>>> {
     let selected_rules_file = RULES_FILE_NAMES
         .into_iter()
         .filter_map(|name| {
@@ -41,7 +41,7 @@ pub fn load_worktree_rules_file(
                 .load(&abs_path)
                 .await
                 .with_context(|| format!("Failed to load assistant rules file {:?}", abs_path))?;
-            anyhow::Ok(SystemPromptRulesFile {
+            anyhow::Ok(RulesFileContext {
                 path_in_worktree,
                 abs_path: abs_path.into(),
                 text: text.trim().to_string(),
