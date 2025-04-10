@@ -324,7 +324,7 @@ impl LocalMode {
                     }
                 }
             }
-            let caps = caps.clone();
+
             session
                 .client
                 .on_request::<dap::requests::SetExceptionBreakpoints, _>(move |_, args| {
