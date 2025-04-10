@@ -47,19 +47,23 @@ impl ReqwestClient {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
         let mut client = Self::builder().default_headers(map);
-        if let Some(proxy) = proxy.clone().and_then(|proxy_uri| {
+
+        let client_has_proxy = if let Some(proxy) = proxy.clone().and_then(|proxy_uri| {
             reqwest::Proxy::all(proxy_uri.to_string())
-                .inspect_err(|e| log::error!("Failed to parse proxy URI {}: {}", proxy_uri, e))
+                .inspect_err(|e| log::error!("Failed to parse proxy URI '{}': {}", proxy_uri, e))
                 .ok()
         }) {
             client = client.proxy(proxy);
-        }
+            true
+        } else {
+            false
+        };
 
         let client = client
             .use_preconfigured_tls(http_client_tls::tls_config())
             .build()?;
         let mut client: ReqwestClient = client.into();
-        client.proxy = proxy;
+        client.proxy = client_has_proxy.then_some(proxy).flatten();
         Ok(client)
     }
 }
@@ -291,9 +295,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_invalid_proxy_uri() {
-        let proxy = http::Uri::from_static("file:///etc/hosts");
-        ReqwestClient::proxy_and_user_agent(Some(proxy), "test").unwrap();
+        let proxy = http::Uri::from_static("socks://127.0.0.1:20170");
+        let client = ReqwestClient::proxy_and_user_agent(Some(proxy), "test").unwrap();
+        assert!(
+            client.proxy.is_none(),
+            "An invalid proxy URI should add no proxy to the client!"
+        )
     }
 }
