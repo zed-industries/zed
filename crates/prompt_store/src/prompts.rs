@@ -16,7 +16,7 @@ use std::{
 use text::LineEnding;
 use util::{ResultExt, get_system_shell};
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
     pub has_rules: bool,
@@ -40,14 +40,14 @@ impl ProjectContext {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct WorktreeContext {
     pub root_name: String,
     pub abs_path: Arc<Path>,
     pub rules_file: Option<RulesFileContext>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RulesFileContext {
     pub path_in_worktree: Arc<Path>,
     pub abs_path: Arc<Path>,

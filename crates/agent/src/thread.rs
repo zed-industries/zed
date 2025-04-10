@@ -2013,9 +2013,9 @@ fn main() {{
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
-        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages.len(), 2);
         let expected_full_message = format!("{}Please explain this code", expected_context);
-        assert_eq!(request.messages[0].string_contents(), expected_full_message);
+        assert_eq!(request.messages[1].string_contents(), expected_full_message);
     }
 
     #[gpui::test]
@@ -2106,20 +2106,20 @@ fn main() {{
         });
 
         // The request should contain all 3 messages
-        assert_eq!(request.messages.len(), 3);
+        assert_eq!(request.messages.len(), 4);
 
         // Check that the contexts are properly formatted in each message
-        assert!(request.messages[0].string_contents().contains("file1.rs"));
-        assert!(!request.messages[0].string_contents().contains("file2.rs"));
-        assert!(!request.messages[0].string_contents().contains("file3.rs"));
-
-        assert!(!request.messages[1].string_contents().contains("file1.rs"));
-        assert!(request.messages[1].string_contents().contains("file2.rs"));
+        assert!(request.messages[1].string_contents().contains("file1.rs"));
+        assert!(!request.messages[1].string_contents().contains("file2.rs"));
         assert!(!request.messages[1].string_contents().contains("file3.rs"));
 
         assert!(!request.messages[2].string_contents().contains("file1.rs"));
-        assert!(!request.messages[2].string_contents().contains("file2.rs"));
-        assert!(request.messages[2].string_contents().contains("file3.rs"));
+        assert!(request.messages[2].string_contents().contains("file2.rs"));
+        assert!(!request.messages[2].string_contents().contains("file3.rs"));
+
+        assert!(!request.messages[3].string_contents().contains("file1.rs"));
+        assert!(!request.messages[3].string_contents().contains("file2.rs"));
+        assert!(request.messages[3].string_contents().contains("file3.rs"));
     }
 
     #[gpui::test]
@@ -2157,9 +2157,9 @@ fn main() {{
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
-        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages.len(), 2);
         assert_eq!(
-            request.messages[0].string_contents(),
+            request.messages[1].string_contents(),
             "What is the best way to learn Rust?"
         );
 
@@ -2177,13 +2177,13 @@ fn main() {{
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
-        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages.len(), 3);
         assert_eq!(
-            request.messages[0].string_contents(),
+            request.messages[1].string_contents(),
             "What is the best way to learn Rust?"
         );
         assert_eq!(
-            request.messages[1].string_contents(),
+            request.messages[2].string_contents(),
             "Are there any good books?"
         );
     }
