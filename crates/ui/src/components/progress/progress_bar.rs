@@ -1,8 +1,5 @@
-use std::time::Duration;
-
 use documented::Documented;
-use gpui::{StyleRefinement, point};
-use util::ResultExt;
+use gpui::{Hsla, point};
 
 use crate::components::Label;
 use crate::prelude::*;
@@ -15,15 +12,24 @@ pub struct ProgressBar {
     id: ElementId,
     value: f32,
     max_value: f32,
+    bg_color: Hsla,
+    fg_color: Hsla,
 }
 
 impl ProgressBar {
     /// Create a new progress bar with the given value and maximum value.
-    pub fn new(id: impl Into<ElementId>, value: f32, max_value: f32) -> Self {
+    pub fn new(
+        id: impl Into<ElementId>,
+        value: f32,
+        max_value: f32,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             id: id.into(),
             value,
             max_value,
+            bg_color: cx.theme().colors().background,
+            fg_color: cx.theme().status().info,
         }
     }
 
@@ -38,29 +44,43 @@ impl ProgressBar {
         self.max_value = max_value;
         self
     }
+
+    /// Set the background color of the progress bar.
+    pub fn bg_color(&mut self, color: Hsla) -> &mut Self {
+        self.bg_color = color;
+        self
+    }
+
+    /// Set the foreground color of the progress bar.
+    pub fn fg_color(&mut self, color: Hsla) -> &mut Self {
+        self.fg_color = color;
+        self
+    }
 }
 
 impl Render for ProgressBar {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let fill_width = (self.value / self.max_value).clamp(0.0, 1.0);
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let fill_width = (self.value / self.max_value).clamp(0.02, 1.0);
 
         div()
             .id(self.id.clone())
             .w_full()
             .h(px(8.0))
             .rounded_full()
-            .p(px(2.0))
+            .py(px(2.0))
+            .px(px(4.0))
+            .bg(self.bg_color)
+            .shadow(smallvec::smallvec![gpui::BoxShadow {
+                color: gpui::black().opacity(0.08),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(0.),
+                spread_radius: px(0.),
+            }])
             .child(
                 div()
                     .h_full()
                     .rounded_full()
-                    .bg(cx.theme().status().info)
-                    .shadow(smallvec::smallvec![gpui::BoxShadow {
-                        color: cx.theme().colors().text.opacity(0.15),
-                        offset: point(px(0.), px(1.)),
-                        blur_radius: px(0.),
-                        spread_radius: px(0.),
-                    }])
+                    .bg(self.fg_color)
                     .w(relative(fill_width)),
             )
     }
@@ -77,38 +97,11 @@ impl Component for ProgressBar {
 
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let max_value = 180.0;
-        let mut current_percent: f32 = 0.0;
 
-        let empty_progress_bar = cx.new(|_| ProgressBar::new("empty", 0.0, max_value));
+        let empty_progress_bar = cx.new(|cx| ProgressBar::new("empty", 0.0, max_value, cx));
         let partial_progress_bar =
-            cx.new(|_| ProgressBar::new("partial", max_value * 0.35, max_value));
-        let filled_progress_bar = cx.new(|_| ProgressBar::new("filled", max_value, max_value));
-        let animated_progress_bar =
-            cx.new(|_| ProgressBar::new("animated", current_percent, max_value));
-
-        cx.spawn({
-            let animated_progress_bar = animated_progress_bar.clone();
-            async move |cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(25))
-                        .await;
-
-                    animated_progress_bar
-                        .update(cx, |progress_bar, cx| {
-                            current_percent += 0.01;
-                            if current_percent > 1.0 {
-                                current_percent = 0.0;
-                            }
-
-                            progress_bar.value(current_percent * max_value);
-                            cx.notify();
-                        })
-                        .log_err();
-                }
-            }
-        })
-        .detach();
+            cx.new(|cx| ProgressBar::new("partial", max_value * 0.35, max_value, cx));
+        let filled_progress_bar = cx.new(|cx| ProgressBar::new("filled", max_value, max_value, cx));
 
         Some(
             div()
@@ -159,14 +152,6 @@ impl Component for ProgressBar {
                                 .child(Label::new("Complete")),
                         )
                         .child(filled_progress_bar.clone()),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(div().flex().child(Label::new("Animated")))
-                        .child(animated_progress_bar.clone()),
                 )
                 .into_any_element(),
         )
