@@ -1,8 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use dap::ExceptionBreakpointsFilter;
 use editor::Editor;
-use gpui::{AppContext, Entity, ListState, MouseButton, Stateful, WeakEntity, list};
+use gpui::{
+    AppContext, Entity, FocusHandle, Focusable, ListState, MouseButton, Stateful, Task, WeakEntity,
+    list,
+};
 use language::Point;
 use project::{
     Project,
@@ -15,10 +21,10 @@ use project::{
 use ui::{
     App, Clickable, Color, Context, Div, Icon, IconButton, IconName, Indicator, InteractiveElement,
     IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
-    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, div, h_flex, px,
-    v_flex,
+    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    h_flex, px, v_flex,
 };
-use util::maybe;
+use util::{ResultExt, maybe};
 use workspace::Workspace;
 
 pub(super) struct BreakpointList {
@@ -29,8 +35,16 @@ pub(super) struct BreakpointList {
     scrollbar_state: ScrollbarState,
     breakpoints: Vec<BreakpointEntry>,
     session: Entity<Session>,
+    hide_scrollbar_task: Option<Task<()>>,
+    show_scrollbar: bool,
+    focus_handle: FocusHandle,
 }
 
+impl Focusable for BreakpointList {
+    fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
 impl BreakpointList {
     pub(super) fn new(
         session: Entity<Session>,
@@ -64,43 +78,66 @@ impl BreakpointList {
                 scrollbar_state: ScrollbarState::new(list_state.clone()),
                 list_state,
                 breakpoints: Default::default(),
+                hide_scrollbar_task: None,
+                show_scrollbar: false,
                 workspace,
                 session,
+                focus_handle: cx.focus_handle(),
             }
         })
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("breakpoint-list-vertical-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
+    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+        self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |panel, cx| {
+            cx.background_executor()
+                .timer(SCROLLBAR_SHOW_INTERVAL)
+                .await;
+            panel
+                .update(cx, |panel, cx| {
+                    panel.show_scrollbar = false;
+                    cx.notify();
+                })
+                .log_err();
+        }))
+    }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        if !(self.show_scrollbar || self.scrollbar_state.is_dragging()) {
+            return None;
+        }
+        Some(
+            div()
+                .occlude()
+                .id("breakpoint-list-vertical-scrollbar")
+                .on_mouse_move(cx.listener(|_, _, _, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, _, cx| {
                     cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
+                })
+                .on_any_mouse_down(|_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|_, _, _, cx| {
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                    cx.notify();
+                }))
+                .h_full()
+                .absolute()
+                .right_1()
+                .top_1()
+                .bottom_0()
+                .w(px(12.))
+                .cursor_default()
+                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
+        )
     }
 }
 impl Render for BreakpointList {
@@ -175,10 +212,20 @@ impl Render for BreakpointList {
             self.list_state.reset(self.breakpoints.len());
         }
         v_flex()
+            .id("breakpoint-list")
+            .on_hover(cx.listener(|this, hovered, window, cx| {
+                if *hovered {
+                    this.show_scrollbar = true;
+                    this.hide_scrollbar_task.take();
+                    cx.notify();
+                } else if !this.focus_handle.contains_focused(window, cx) {
+                    this.hide_scrollbar(window, cx);
+                }
+            }))
             .size_full()
             .m_0p5()
             .child(list(self.list_state.clone()).flex_grow())
-            .child(self.render_vertical_scrollbar(cx))
+            .children(self.render_vertical_scrollbar(cx))
     }
 }
 #[derive(Clone, Debug)]
@@ -209,6 +256,7 @@ impl LineBreakpoint {
                 "breakpoint-ui-toggle-{:?}/{}:{}",
                 dir, name, line
             )))
+            .cursor_pointer()
             .on_click({
                 let weak = weak.clone();
                 let path = path.clone();
