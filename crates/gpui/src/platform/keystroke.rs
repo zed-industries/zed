@@ -183,40 +183,8 @@ impl Keystroke {
             keystroke: source.to_owned(),
         })?;
 
-        if !char_matching {
-            if let Ok((code, key_face)) = KeyCode::parse(&key, keyboard_mapper) {
-                if code != KeyCode::Unknown {
-                    if let Some(key_face) = key_face {
-                        key = key_face;
-                    }
-                    let ret = Ok(Keystroke {
-                        modifiers: Modifiers {
-                            control,
-                            alt,
-                            shift,
-                            platform,
-                            function,
-                        },
-                        code,
-                        face: key,
-                        key_char,
-                    });
-                    if code == KeyCode::Unknown {
-                        log::error!("Parse key stroke key-based: {}, {:#?}", source, ret);
-                    }
-                    return ret;
-                }
-            }
-        }
-        if let Some(key_equivalent) = key_equivalents {
-            if key.len() == 1 {
-                if let Some(equivalent) = key_equivalent.get(&key.chars().next().unwrap()) {
-                    key = equivalent.to_string();
-                }
-            }
-        }
         let (code, modifiers, key_face) =
-            KeyCode::parse_char(&key, keyboard_mapper).unwrap_or_default();
+            KeyCode::parse(&key, char_matching, keyboard_mapper).unwrap_or_default();
         if modifiers.shift {
             if shift {
                 log::error!(

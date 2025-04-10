@@ -371,37 +371,41 @@ impl KeyCode {
             _ => return None,
         })
     }
+
     /// input is standard US English layout key
     pub fn parse(
         input: &str,
+        char_matching: bool,
         keyboard_mapper: &dyn KeyboardMapper,
-    ) -> anyhow::Result<(Self, Option<String>)> {
+    ) -> anyhow::Result<(Self, Modifiers, Option<String>)> {
         if let Some(key) = Self::parse_immutable(input) {
-            return Ok((key, None));
+            return Ok((key, Modifiers::none(), None));
         }
-        if let Some((code, _)) = keyboard_mapper.parse(input, false) {
-            return Ok((code, keyboard_mapper.keycode_to_face(code)));
+        if let Some((code, modifers)) = keyboard_mapper.parse(input, char_matching) {
+            return Ok((code, modifers, keyboard_mapper.keycode_to_face(code)));
         }
         Err(anyhow::anyhow!(
             "Error parsing keystroke to keycode: {input}"
         ))
     }
 
-    /// TODO:
-    pub fn parse_char(
-        input: &str,
-        keyboard_mapper: &dyn KeyboardMapper,
-    ) -> anyhow::Result<(Self, Modifiers, Option<String>)> {
-        if let Some(code) = Self::parse_immutable(input) {
-            return Ok((code, Modifiers::default(), None));
-        }
-        if let Some((code, modifiers)) = keyboard_mapper.parse(input, true) {
-            return Ok((code, modifiers, keyboard_mapper.keycode_to_face(code)));
-        }
-        Err(anyhow::anyhow!(
-            "Error parsing keystroke to keycode: {input}"
-        ))
-    }
+    // /// TODO
+    // pub fn parse_us_layout(input: &str, keyboard_mapper: &dyn KeyboardMapper) -> anyhow::Result<(Self, Option<String>)> {
+    //     let code = match input {
+    //         "0" => Self::Digital0,
+    //         "1" => Self::Digital1,
+    //         "2" => Self::Digital2,
+    //         "3" => Self::Digital3,
+    //         "4" => Self::Digital4,
+    //         "5" => Self::Digital5,
+    //         "6" => Self::Digital6,
+    //         "7" => Self::Digital7,
+    //         "8" => Self::Digital8,
+    //         "9" => Self::Digital9,
+    //         "`" => Self::Tilde,
+    //         "a" => Self::A,
+    //     };
+    // }
 
     /// TODO:
     pub fn is_printable(&self) -> bool {

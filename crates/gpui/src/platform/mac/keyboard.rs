@@ -52,6 +52,7 @@ impl MacKeyboardMapper {
                 char_to_code.insert(key, (code, modifiers));
             }
         }
+        insert_letters_if_missing(&mut char_to_code);
         let manual_mappings = get_mannual_mappings(layout);
         let elapsed = start.elapsed();
         println!(
@@ -70,42 +71,17 @@ impl MacKeyboardMapper {
 
 impl KeyboardMapper for MacKeyboardMapper {
     fn parse(&self, input: &str, char_matching: bool) -> Option<(KeyCode, Modifiers)> {
-        if let Some(code) = parse_letters(input) {
-            return Some((code, Modifiers::none()));
-        }
-        if !char_matching {
-            if let Some(code) = match input {
-                "0" => Some(KeyCode::Digital0),
-                "1" => Some(KeyCode::Digital1),
-                "2" => Some(KeyCode::Digital2),
-                "3" => Some(KeyCode::Digital3),
-                "4" => Some(KeyCode::Digital4),
-                "5" => Some(KeyCode::Digital5),
-                "6" => Some(KeyCode::Digital6),
-                "7" => Some(KeyCode::Digital7),
-                "8" => Some(KeyCode::Digital8),
-                "9" => Some(KeyCode::Digital9),
-                ";" => Some(KeyCode::Semicolon),
-                "=" => Some(KeyCode::Plus),
-                "," => Some(KeyCode::Comma),
-                "-" => Some(KeyCode::Minus),
-                "." => Some(KeyCode::Period),
-                "/" => Some(KeyCode::Slash),
-                "`" => Some(KeyCode::Tilde),
-                "[" => Some(KeyCode::LeftBracket),
-                "\\" => Some(KeyCode::Backslash),
-                "]" => Some(KeyCode::RightBracket),
-                "'" => Some(KeyCode::Quote),
-                _ => None,
-            } {
-                return Some((code, Modifiers::none()));
-            }
+        let lookup_key = if !char_matching {
+            self.manual_mappings
+                .as_ref()
+                .and_then(|mapper| mapper.get(input))
+                .map(String::as_str)
+                .unwrap_or(input)
         } else {
-            if let Some((code, modifiers)) = self.char_to_code.get(input) {
-                return Some((*code, *modifiers));
-            }
-        }
-        None
+            input
+        };
+
+        self.char_to_code.get(lookup_key).copied()
     }
 
     fn keycode_to_face(&self, code: KeyCode) -> Option<String> {
@@ -115,18 +91,6 @@ impl KeyboardMapper for MacKeyboardMapper {
 
 fn generate_keymap_info(scan_code: u16) -> Vec<(String, Modifiers)> {
     let mut keymap = Vec::new();
-    let no_mod = chars_for_modified_key(scan_code, NO_MOD);
-    if !no_mod.is_empty() {
-        keymap.push((no_mod, Modifiers::none()));
-    }
-    let shift_mod = chars_for_modified_key(scan_code, SHIFT_MOD);
-    if !shift_mod.is_empty() {
-        keymap.push((shift_mod, Modifiers::shift()));
-    }
-    let alt_mod = chars_for_modified_key(scan_code, OPTION_MOD);
-    if !alt_mod.is_empty() {
-        keymap.push((alt_mod, Modifiers::alt()));
-    }
     let shift_alt_mod = chars_for_modified_key(scan_code, SHIFT_MOD | OPTION_MOD);
     if !shift_alt_mod.is_empty() {
         keymap.push((
@@ -138,39 +102,59 @@ fn generate_keymap_info(scan_code: u16) -> Vec<(String, Modifiers)> {
             },
         ));
     }
+    let alt_mod = chars_for_modified_key(scan_code, OPTION_MOD);
+    if !alt_mod.is_empty() {
+        keymap.push((alt_mod, Modifiers::alt()));
+    }
+    let shift_mod = chars_for_modified_key(scan_code, SHIFT_MOD);
+    if !shift_mod.is_empty() {
+        keymap.push((shift_mod, Modifiers::shift()));
+    }
+    let no_mod = chars_for_modified_key(scan_code, NO_MOD);
+    if !no_mod.is_empty() {
+        keymap.push((no_mod, Modifiers::none()));
+    }
     keymap
 }
 
-fn parse_letters(input: &str) -> Option<KeyCode> {
-    match input {
-        "a" => Some(KeyCode::A),
-        "b" => Some(KeyCode::B),
-        "c" => Some(KeyCode::C),
-        "d" => Some(KeyCode::D),
-        "e" => Some(KeyCode::E),
-        "f" => Some(KeyCode::F),
-        "g" => Some(KeyCode::G),
-        "h" => Some(KeyCode::H),
-        "i" => Some(KeyCode::I),
-        "j" => Some(KeyCode::J),
-        "k" => Some(KeyCode::K),
-        "l" => Some(KeyCode::L),
-        "m" => Some(KeyCode::M),
-        "n" => Some(KeyCode::N),
-        "o" => Some(KeyCode::O),
-        "p" => Some(KeyCode::P),
-        "q" => Some(KeyCode::Q),
-        "r" => Some(KeyCode::R),
-        "s" => Some(KeyCode::S),
-        "t" => Some(KeyCode::T),
-        "u" => Some(KeyCode::U),
-        "v" => Some(KeyCode::V),
-        "w" => Some(KeyCode::W),
-        "x" => Some(KeyCode::X),
-        "y" => Some(KeyCode::Y),
-        "z" => Some(KeyCode::Z),
-        _ => None,
-    }
+macro_rules! insert_letters_if_missing_internal {
+    ($char_to_code:expr, $code:expr, $key:literal, $upper:literal) => {
+        if !$char_to_code.contains_key($key) {
+            $char_to_code.insert($key.to_string(), ($code, Modifiers::none()));
+        }
+        if !$char_to_code.contains_key($upper) {
+            $char_to_code.insert($upper.to_string(), ($code, Modifiers::shift()));
+        }
+    };
+}
+
+fn insert_letters_if_missing(char_to_code: &mut HashMap<String, (KeyCode, Modifiers)>) {
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::A, "a", "A");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::B, "b", "B");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::C, "c", "C");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::D, "d", "D");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::E, "e", "E");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::F, "f", "F");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::G, "g", "G");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::H, "h", "H");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::I, "i", "I");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::J, "j", "J");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::K, "k", "K");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::L, "l", "L");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::M, "m", "M");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::N, "n", "N");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::O, "o", "O");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::P, "p", "P");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::Q, "q", "Q");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::R, "r", "R");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::S, "s", "S");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::T, "t", "T");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::U, "u", "U");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::V, "v", "V");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::W, "w", "W");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::X, "x", "X");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::Y, "y", "Y");
+    insert_letters_if_missing_internal!(char_to_code, KeyCode::Z, "z", "Z");
 }
 
 pub(crate) fn keyboard_layout() -> String {
