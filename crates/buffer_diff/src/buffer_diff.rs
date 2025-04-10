@@ -1,12 +1,20 @@
 use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, TaskLabel};
 use language::{Language, LanguageRegistry};
 use rope::Rope;
-use std::{cmp::Ordering, future::Future, iter, ops::Range, sync::Arc};
+use std::{
+    cmp::Ordering,
+    future::Future,
+    iter,
+    ops::Range,
+    sync::{Arc, LazyLock},
+};
 use sum_tree::SumTree;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _};
 use util::ResultExt;
+
+pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 pub struct BufferDiff {
     pub buffer_id: BufferId,
@@ -181,10 +189,12 @@ impl BufferDiffSnapshot {
             base_text_exists = false;
         };
 
-        let hunks = cx.background_spawn({
-            let buffer = buffer.clone();
-            async move { compute_hunks(base_text_pair, buffer) }
-        });
+        let hunks = cx
+            .background_executor()
+            .spawn_labeled(*CALCULATE_DIFF_TASK, {
+                let buffer = buffer.clone();
+                async move { compute_hunks(base_text_pair, buffer) }
+            });
 
         async move {
             let (base_text, hunks) = futures::join!(base_text_snapshot, hunks);
@@ -208,17 +218,18 @@ impl BufferDiffSnapshot {
     ) -> impl Future<Output = Self> + use<> {
         let base_text_exists = base_text.is_some();
         let base_text_pair = base_text.map(|text| (text, base_text_snapshot.as_rope().clone()));
-        cx.background_spawn(async move {
-            Self {
-                inner: BufferDiffInner {
-                    base_text: base_text_snapshot,
-                    pending_hunks: SumTree::new(&buffer),
-                    hunks: compute_hunks(base_text_pair, buffer),
-                    base_text_exists,
-                },
-                secondary_diff: None,
-            }
-        })
+        cx.background_executor()
+            .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
+                Self {
+                    inner: BufferDiffInner {
+                        base_text: base_text_snapshot,
+                        pending_hunks: SumTree::new(&buffer),
+                        hunks: compute_hunks(base_text_pair, buffer),
+                        base_text_exists,
+                    },
+                    secondary_diff: None,
+                }
+            })
     }
 
     #[cfg(test)]

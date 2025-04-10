@@ -5,7 +5,8 @@ use crate::{
     *,
 };
 use buffer_diff::{
-    BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
+    BufferDiffEvent, CALCULATE_DIFF_TASK, DiffHunkSecondaryStatus, DiffHunkStatus,
+    DiffHunkStatusKind, assert_hunks,
 };
 use fs::FakeFs;
 use futures::{StreamExt, future};
@@ -6967,10 +6968,19 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 }
 
 #[gpui::test]
-async fn test_staging_random_hunks(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
+async fn test_staging_random_hunks(
+    mut rng: StdRng,
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(20);
+
+    // Try to induce races between diff recalculation and index writes.
+    if rng.gen_bool(0.5) {
+        executor.deprioritize(*CALCULATE_DIFF_TASK);
+    }
 
     use DiffHunkSecondaryStatus::*;
     init_test(cx);
