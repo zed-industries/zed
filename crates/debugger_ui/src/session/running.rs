@@ -84,6 +84,7 @@ struct SubView {
     inner: AnyView,
     pane_focus_handle: FocusHandle,
     tab_name: SharedString,
+    show_indicator: Box<dyn Fn(&App) -> bool>,
 }
 
 impl SubView {
@@ -91,12 +92,14 @@ impl SubView {
         pane_focus_handle: FocusHandle,
         view: AnyView,
         tab_name: SharedString,
+        show_indicator: Option<Box<dyn Fn(&App) -> bool>>,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|_| Self {
             tab_name,
             inner: view,
             pane_focus_handle,
+            show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
         })
     }
 }
@@ -119,13 +122,7 @@ impl Item for SubView {
             .color(params.text_color())
             .into_any_element();
 
-        if !params.selected
-            && self
-                .inner
-                .clone()
-                .downcast::<Console>()
-                .map_or(false, |console| console.read(cx).show_indicator(cx))
-        {
+        if !params.selected && self.show_indicator.as_ref()(cx) {
             return h_flex()
                 .justify_between()
                 .child(ui::Indicator::dot())
@@ -338,6 +335,7 @@ impl RunningState {
                     this.focus_handle(cx),
                     stack_frame_list.clone().into(),
                     SharedString::new_static("Frames"),
+                    None,
                     cx,
                 )),
                 true,
@@ -354,6 +352,7 @@ impl RunningState {
                     variable_list.focus_handle(cx),
                     variable_list.clone().into(),
                     SharedString::new_static("Variables"),
+                    None,
                     cx,
                 )),
                 true,
@@ -367,6 +366,7 @@ impl RunningState {
                     this.focus_handle(cx),
                     module_list.clone().into(),
                     SharedString::new_static("Modules"),
+                    None,
                     cx,
                 )),
                 false,
@@ -379,11 +379,17 @@ impl RunningState {
         });
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         rightmost_pane.update(cx, |this, cx| {
+            let weak_console = console.downgrade();
             this.add_item(
                 Box::new(SubView::new(
                     this.focus_handle(cx),
                     console.clone().into(),
                     SharedString::new_static("Console"),
+                    Some(Box::new(move |cx| {
+                        weak_console
+                            .read_with(cx, |console, cx| console.show_indicator(cx))
+                            .unwrap_or_default()
+                    })),
                     cx,
                 )),
                 true,
