@@ -624,14 +624,14 @@
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
     // The model to use when applying edits from the assistant.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
@@ -656,8 +656,9 @@
         "name": "Write",
         "enable_all_context_servers": true,
         "tools": {
-          "bash": true,
+          "terminal": true,
           "batch_tool": true,
+          "code_actions": true,
           "code_symbols": true,
           "copy_path": false,
           "create_file": true,
@@ -671,6 +672,7 @@
           "path_search": true,
           "read_file": true,
           "regex_search": true,
+          "rename": true,
           "symbol_info": true,
           "thinking": true
         }

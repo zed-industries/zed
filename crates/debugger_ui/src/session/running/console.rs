@@ -17,7 +17,7 @@ use project::{
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc, usize};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{Divider, prelude::*};
 
 pub struct Console {
     console: Entity<Editor>,
@@ -141,7 +141,7 @@ impl Console {
             state.evaluate(
                 expression,
                 Some(dap::EvaluateArgumentsContext::Variables),
-                self.stack_frame_list.read(cx).current_stack_frame_id(),
+                self.stack_frame_list.read(cx).selected_stack_frame_id(),
                 None,
                 cx,
             );
@@ -229,7 +229,8 @@ impl Render for Console {
             .size_full()
             .child(self.render_console(cx))
             .when(self.is_local(cx), |this| {
-                this.child(self.render_query_bar(cx))
+                this.child(Divider::horizontal())
+                    .child(self.render_query_bar(cx))
                     .pt(DynamicSpacing::Base04.rems(cx))
             })
             .border_2()
@@ -384,7 +385,7 @@ impl ConsoleQueryBarCompletionProvider {
     ) -> Task<Result<Option<Vec<Completion>>>> {
         let completion_task = console.update(cx, |console, cx| {
             console.session.update(cx, |state, cx| {
-                let frame_id = console.stack_frame_list.read(cx).current_stack_frame_id();
+                let frame_id = console.stack_frame_list.read(cx).selected_stack_frame_id();
 
                 state.completions(
                     CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),

@@ -1,3 +1,4 @@
+mod breakpoint_list;
 mod console;
 mod loaded_source_list;
 mod module_list;
@@ -7,6 +8,7 @@ pub mod variable_list;
 use std::{any::Any, ops::ControlFlow, sync::Arc};
 
 use super::DebugPanelItemEvent;
+use breakpoint_list::BreakpointList;
 use collections::HashMap;
 use console::Console;
 use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
@@ -321,6 +323,21 @@ impl RunningState {
                 window,
                 cx,
             );
+            let breakpoints = BreakpointList::new(session.clone(), workspace.clone(), &project, cx);
+            this.add_item(
+                Box::new(SubView::new(
+                    breakpoints.focus_handle(cx),
+                    breakpoints.into(),
+                    SharedString::new_static("Breakpoints"),
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+            this.activate_item(0, false, false, window, cx);
         });
         let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         center_pane.update(cx, |this, cx| {
@@ -432,6 +449,10 @@ impl RunningState {
         self.session_id
     }
 
+    pub(crate) fn selected_stack_frame_id(&self, cx: &App) -> Option<dap::StackFrameId> {
+        self.stack_frame_list.read(cx).selected_stack_frame_id()
+    }
+
     #[cfg(test)]
     pub fn stack_frame_list(&self) -> &Entity<StackFrameList> {
         &self.stack_frame_list
@@ -492,7 +513,6 @@ impl RunningState {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn selected_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }

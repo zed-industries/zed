@@ -106,6 +106,7 @@ impl Tool for RegexSearchTool {
             false,
             case_sensitive,
             false,
+            false,
             PathMatcher::default(),
             PathMatcher::default(),
             None,

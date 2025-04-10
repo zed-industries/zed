@@ -2,12 +2,15 @@ use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use futures::io::BufReader;
-use futures::{AsyncBufReadExt, AsyncReadExt};
+use futures::{AsyncBufReadExt, AsyncReadExt, FutureExt};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::future;
+use util::get_system_shell;
+
 use std::path::Path;
 use std::sync::Arc;
 use ui::IconName;
@@ -15,18 +18,18 @@ use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct BashToolInput {
-    /// The bash one-liner command to execute.
+pub struct TerminalToolInput {
+    /// The one-liner command to execute.
     command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     cd: String,
 }
 
-pub struct BashTool;
+pub struct TerminalTool;
 
-impl Tool for BashTool {
+impl Tool for TerminalTool {
     fn name(&self) -> String {
-        "bash".to_string()
+        "terminal".to_string()
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
@@ -34,7 +37,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> String {
-        include_str!("./bash_tool/description.md").to_string()
+        include_str!("./terminal_tool/description.md").to_string()
     }
 
     fn icon(&self) -> IconName {
@@ -42,11 +45,11 @@ impl Tool for BashTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        json_schema_for::<BashToolInput>(format)
+        json_schema_for::<TerminalToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<BashToolInput>(input.clone()) {
+        match serde_json::from_value::<TerminalToolInput>(input.clone()) {
             Ok(input) => {
                 let mut lines = input.command.lines();
                 let first_line = lines.next().unwrap_or_default();
@@ -65,7 +68,7 @@ impl Tool for BashTool {
                     }
                 }
             }
-            Err(_) => "Run bash command".to_string(),
+            Err(_) => "Run terminal command".to_string(),
         }
     }
 
@@ -77,7 +80,7 @@ impl Tool for BashTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let input: BashToolInput = match serde_json::from_value(input) {
+        let input: TerminalToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
@@ -130,67 +133,87 @@ impl Tool for BashTool {
 const LIMIT: usize = 16 * 1024;
 
 async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
-    // Add 2>&1 to merge stderr into stdout for proper interleaving.
-    let command = format!("({}) 2>&1", command);
+    let shell = get_system_shell();
 
-    let mut cmd = new_smol_command("bash")
+    let mut cmd = new_smol_command(&shell)
         .arg("-c")
         .arg(&command)
         .current_dir(working_dir)
         .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
-        .context("Failed to execute bash command")?;
+        .context("Failed to execute terminal command")?;
 
-    // Capture stdout with a limit
-    let stdout = cmd.stdout.take().unwrap();
-    let mut reader = BufReader::new(stdout);
+    let mut combined_buffer = String::with_capacity(LIMIT + 1);
 
-    // Read one more byte to determine whether the output was truncated
-    let mut buffer = vec![0; LIMIT + 1];
-    let mut bytes_read = 0;
+    let mut out_reader = BufReader::new(cmd.stdout.take().context("Failed to get stdout")?);
+    let mut out_tmp_buffer = String::with_capacity(512);
+    let mut err_reader = BufReader::new(cmd.stderr.take().context("Failed to get stderr")?);
+    let mut err_tmp_buffer = String::with_capacity(512);
 
-    // Read until we reach the limit
-    loop {
-        let read = reader.read(&mut buffer[bytes_read..]).await?;
-        if read == 0 {
-            break;
-        }
+    let mut out_line = Box::pin(
+        out_reader
+            .read_line(&mut out_tmp_buffer)
+            .left_future()
+            .fuse(),
+    );
+    let mut err_line = Box::pin(
+        err_reader
+            .read_line(&mut err_tmp_buffer)
+            .left_future()
+            .fuse(),
+    );
 
-        bytes_read += read;
-        if bytes_read > LIMIT {
-            bytes_read = LIMIT + 1;
-            break;
-        }
+    let mut has_stdout = true;
+    let mut has_stderr = true;
+    while (has_stdout || has_stderr) && combined_buffer.len() < LIMIT + 1 {
+        futures::select_biased! {
+            read = out_line => {
+                drop(out_line);
+                combined_buffer.extend(out_tmp_buffer.drain(..));
+                if read? == 0 {
+                    out_line = Box::pin(future::pending().right_future().fuse());
+                    has_stdout = false;
+                } else {
+                    out_line = Box::pin(out_reader.read_line(&mut out_tmp_buffer).left_future().fuse());
+                }
+            }
+            read = err_line => {
+                drop(err_line);
+                combined_buffer.extend(err_tmp_buffer.drain(..));
+                if read? == 0 {
+                    err_line = Box::pin(future::pending().right_future().fuse());
+                    has_stderr = false;
+                } else {
+                    err_line = Box::pin(err_reader.read_line(&mut err_tmp_buffer).left_future().fuse());
+                }
+            }
+        };
     }
 
-    // Repeatedly fill the output reader's buffer without copying it.
-    loop {
-        let skipped_bytes = reader.fill_buf().await?;
-        if skipped_bytes.is_empty() {
-            break;
-        }
-        let skipped_bytes_len = skipped_bytes.len();
-        reader.consume_unpin(skipped_bytes_len);
-    }
+    drop((out_line, err_line));
 
-    let output_bytes = &buffer[..bytes_read.min(LIMIT)];
+    let truncated = combined_buffer.len() > LIMIT;
+    combined_buffer.truncate(LIMIT);
+
+    consume_reader(out_reader, truncated).await?;
+    consume_reader(err_reader, truncated).await?;
 
     let status = cmd.status().await.context("Failed to get command status")?;
 
-    let output_string = if bytes_read > LIMIT {
+    let output_string = if truncated {
         // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
         // multi-byte characters.
-        let last_line_ix = output_bytes.iter().rposition(|b| *b == b'\n');
-        let until_last_line = &output_bytes[..last_line_ix.unwrap_or(output_bytes.len())];
-        let output_string = String::from_utf8_lossy(until_last_line);
+        let last_line_ix = combined_buffer.bytes().rposition(|b| b == b'\n');
+        let combined_buffer = &combined_buffer[..last_line_ix.unwrap_or(combined_buffer.len())];
 
         format!(
             "Command output too long. The first {} bytes:\n\n{}",
-            output_string.len(),
-            output_block(&output_string),
+            combined_buffer.len(),
+            output_block(&combined_buffer),
         )
     } else {
-        output_block(&String::from_utf8_lossy(&output_bytes))
+        output_block(&combined_buffer)
     };
 
     let output_with_status = if status.success() {
@@ -201,13 +224,32 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
         }
     } else {
         format!(
-            "Command failed with exit code {}\n\n{}",
+            "Command failed with exit code {} (shell: {}).\n\n{}",
             status.code().unwrap_or(-1),
+            shell,
             output_string,
         )
     };
 
     Ok(output_with_status)
+}
+
+async fn consume_reader<T: AsyncReadExt + Unpin>(
+    mut reader: BufReader<T>,
+    truncated: bool,
+) -> Result<(), std::io::Error> {
+    loop {
+        let skipped_bytes = reader.fill_buf().await?;
+        if skipped_bytes.is_empty() {
+            break;
+        }
+        let skipped_bytes_len = skipped_bytes.len();
+        reader.consume_unpin(skipped_bytes_len);
+
+        // Should only skip if we went over the limit
+        debug_assert!(truncated);
+    }
+    Ok(())
 }
 
 fn output_block(output: &str) -> String {
@@ -225,7 +267,7 @@ mod tests {
 
     use super::*;
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_run_command_simple(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
@@ -236,12 +278,11 @@ mod tests {
         assert_eq!(result.unwrap(), "```\nHello, World!\n```");
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_interleaved_stdout_stderr(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let command =
-            "echo 'stdout 1' && echo 'stderr 1' >&2 && echo 'stdout 2' && echo 'stderr 2' >&2";
+        let command = "echo 'stdout 1' && sleep 0.01 && echo 'stderr 1' >&2 && sleep 0.01 && echo 'stdout 2' && sleep 0.01 && echo 'stderr 2' >&2";
         let result = run_command_limited(Path::new(".").into(), command.to_string()).await;
 
         assert!(result.is_ok());
@@ -251,7 +292,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_multiple_output_reads(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
@@ -266,11 +307,11 @@ mod tests {
         assert_eq!(result.unwrap(), "```\n1\n2\n3\n```");
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_output_truncation_single_line(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let cmd = format!("echo '{}';", "X".repeat(LIMIT * 2));
+        let cmd = format!("echo '{}'; sleep 0.01;", "X".repeat(LIMIT * 2));
 
         let result = run_command_limited(Path::new(".").into(), cmd).await;
 
@@ -285,7 +326,7 @@ mod tests {
         assert_eq!(content_length, LIMIT);
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_output_truncation_multiline(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
@@ -302,5 +343,24 @@ mod tests {
         let content_length = content_end - content_start;
 
         assert!(content_length <= LIMIT);
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_command_failure(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let result = run_command_limited(Path::new(".").into(), "exit 42".to_string()).await;
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        // Extract the shell name from path for cleaner test output
+        let shell_path = std::env::var("SHELL").unwrap_or("bash".to_string());
+
+        let expected_output = format!(
+            "Command failed with exit code 42 (shell: {}).\n\n```\n\n```",
+            shell_path
+        );
+        assert_eq!(output, expected_output);
     }
 }
