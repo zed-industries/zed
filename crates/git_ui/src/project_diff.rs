@@ -1554,7 +1554,8 @@ mod tests {
             cx,
             &"
                 - original
-                + ˇdifferent
+                + different
+                  ˇ
             "
             .unindent(),
         );
