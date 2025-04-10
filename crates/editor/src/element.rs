@@ -387,14 +387,12 @@ impl EditorElement {
         register_action(editor, window, Editor::fold_at_level);
         register_action(editor, window, Editor::fold_all);
         register_action(editor, window, Editor::fold_function_bodies);
-        register_action(editor, window, Editor::fold_at);
         register_action(editor, window, Editor::fold_recursive);
         register_action(editor, window, Editor::toggle_fold);
         register_action(editor, window, Editor::toggle_fold_recursive);
         register_action(editor, window, Editor::unfold_lines);
         register_action(editor, window, Editor::unfold_recursive);
         register_action(editor, window, Editor::unfold_all);
-        register_action(editor, window, Editor::unfold_at);
         register_action(editor, window, Editor::fold_selected_ranges);
         register_action(editor, window, Editor::set_mark);
         register_action(editor, window, Editor::swap_selection_ends);

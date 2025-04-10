@@ -187,22 +187,20 @@ impl ComponentPreview {
 
         let mut entries = Vec::new();
 
-        let known_scopes = [
-            ComponentScope::Layout,
-            ComponentScope::Input,
-            ComponentScope::Editor,
-            ComponentScope::Notification,
-            ComponentScope::Collaboration,
-            ComponentScope::VersionControl,
-            ComponentScope::None,
-        ];
-
         // Always show all components first
         entries.push(PreviewEntry::AllComponents);
         entries.push(PreviewEntry::Separator);
 
-        for scope in known_scopes.iter() {
-            if let Some(components) = scope_groups.remove(scope) {
+        let mut scopes: Vec<_> = scope_groups
+            .keys()
+            .filter(|scope| !matches!(**scope, ComponentScope::None))
+            .cloned()
+            .collect();
+
+        scopes.sort_by_key(|s| s.to_string());
+
+        for scope in scopes {
+            if let Some(components) = scope_groups.remove(&scope) {
                 if !components.is_empty() {
                     entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
                     let mut sorted_components = components;
@@ -215,6 +213,7 @@ impl ComponentPreview {
             }
         }
 
+        // Add uncategorized components last
         if let Some(components) = scope_groups.get(&ComponentScope::None) {
             if !components.is_empty() {
                 entries.push(PreviewEntry::Separator);
@@ -272,7 +271,12 @@ impl ComponentPreview {
                     .into_any_element()
             }
             PreviewEntry::Separator => ListItem::new(ix)
-                .child(h_flex().pt_3().child(Divider::horizontal_dashed()))
+                .child(
+                    h_flex()
+                        .occlude()
+                        .pt_3()
+                        .child(Divider::horizontal_dashed()),
+                )
                 .into_any_element(),
         }
     }

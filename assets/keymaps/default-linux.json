@@ -645,7 +645,6 @@
   },
   {
     "context": "AgentPanel && prompt_editor",
-    "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewPromptEditor",
       "cmd-alt-t": "agent::NewThread"
@@ -661,7 +660,6 @@
   },
   {
     "context": "EditMessageEditor > Editor",
-    "use_key_equivalents": true,
     "bindings": {
       "escape": "menu::Cancel",
       "enter": "menu::Confirm",
@@ -670,7 +668,6 @@
   },
   {
     "context": "AgentFeedbackMessageEditor > Editor",
-    "use_key_equivalents": true,
     "bindings": {
       "escape": "menu::Cancel",
       "enter": "menu::Confirm",
@@ -802,7 +799,6 @@
   },
   {
     "context": "GitPanel",
-    "use_key_equivalents": true,
     "bindings": {
       "ctrl-g ctrl-g": "git::Fetch",
       "ctrl-g up": "git::Push",

@@ -516,6 +516,14 @@ const RUST_BIN_NAME_TASK_VARIABLE: VariableName =
 const RUST_BIN_KIND_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_BIN_KIND"));
 
+/// The flag to list required features for executing a bin, if any
+const RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_BIN_REQUIRED_FEATURES_FLAG"));
+
+/// The list of required features for executing a bin, if any
+const RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_BIN_REQUIRED_FEATURES"));
+
 const RUST_TEST_FRAGMENT_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_TEST_FRAGMENT"));
 
@@ -544,8 +552,8 @@ impl ContextProvider for RustContextProvider {
 
         let mut variables = TaskVariables::default();
 
-        if let Some(target) = local_abs_path
-            .and_then(|path| package_name_and_bin_name_from_abs_path(path, project_env.as_ref()))
+        if let Some(target) =
+            local_abs_path.and_then(|path| target_info_from_abs_path(path, project_env.as_ref()))
         {
             variables.extend(TaskVariables::from_iter([
                 (RUST_PACKAGE_TASK_VARIABLE.clone(), target.package_name),
@@ -555,6 +563,19 @@ impl ContextProvider for RustContextProvider {
                     target.target_kind.to_string(),
                 ),
             ]));
+            if target.required_features.is_empty() {
+                variables.insert(RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE, "".into());
+                variables.insert(RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE, "".into());
+            } else {
+                variables.insert(
+                    RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE.clone(),
+                    "--features".to_string(),
+                );
+                variables.insert(
+                    RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.clone(),
+                    target.required_features.join(","),
+                );
+            }
         }
 
         if let Some(package_name) = local_abs_path
@@ -730,6 +751,8 @@ impl ContextProvider for RustContextProvider {
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                     format!("--{}", RUST_BIN_KIND_TASK_VARIABLE.template_value()),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
+                    RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE.template_value(),
+                    RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.template_value(),
                 ],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
                 tags: vec!["rust-main".to_owned()],
@@ -827,6 +850,8 @@ struct CargoTarget {
     name: String,
     kind: Vec<String>,
     src_path: String,
+    #[serde(rename = "required-features", default)]
+    required_features: Vec<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -855,13 +880,15 @@ impl TryFrom<&str> for TargetKind {
     }
 }
 /// Which package and binary target are we in?
+#[derive(Debug, PartialEq)]
 struct TargetInfo {
     package_name: String,
     target_name: String,
     target_kind: TargetKind,
+    required_features: Vec<String>,
 }
 
-fn package_name_and_bin_name_from_abs_path(
+fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<TargetInfo> {
@@ -881,23 +908,10 @@ fn package_name_and_bin_name_from_abs_path(
 
     let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
 
-    retrieve_package_id_and_bin_name_from_metadata(metadata, abs_path).and_then(
-        |(package_id, bin_name, target_kind)| {
-            let package_name = package_name_from_pkgid(&package_id);
-
-            package_name.map(|package_name| TargetInfo {
-                package_name: package_name.to_owned(),
-                target_name: bin_name,
-                target_kind,
-            })
-        },
-    )
+    target_info_from_metadata(metadata, abs_path)
 }
 
-fn retrieve_package_id_and_bin_name_from_metadata(
-    metadata: CargoMetadata,
-    abs_path: &Path,
-) -> Option<(String, String, TargetKind)> {
+fn target_info_from_metadata(metadata: CargoMetadata, abs_path: &Path) -> Option<TargetInfo> {
     for package in metadata.packages {
         for target in package.targets {
             let Some(bin_kind) = target
@@ -909,7 +923,12 @@ fn retrieve_package_id_and_bin_name_from_metadata(
             };
             let target_path = PathBuf::from(target.src_path);
             if target_path == abs_path {
-                return Some((package.id, target.name, bin_kind));
+                return package_name_from_pkgid(&package.id).map(|package_name| TargetInfo {
+                    package_name: package_name.to_owned(),
+                    target_name: target.name,
+                    required_features: target.required_features,
+                    target_kind: bin_kind,
+                });
             }
         }
     }
@@ -1321,34 +1340,57 @@ mod tests {
     }
 
     #[test]
-    fn test_retrieve_package_id_and_bin_name_from_metadata() {
+    fn test_target_info_from_metadata() {
         for (input, absolute_path, expected) in [
             (
-                r#"{"packages":[{"id":"path+file:///path/to/zed/crates/zed#0.131.0","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///absolute/path/to/project/zed/crates/zed#0.131.0","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
                 "/path/to/zed/src/main.rs",
-                Some((
-                    "path+file:///path/to/zed/crates/zed#0.131.0",
-                    "zed",
-                    TargetKind::Bin,
-                )),
+                Some(TargetInfo {
+                    package_name: "zed".into(),
+                    target_name: "zed".into(),
+                    required_features: Vec::new(),
+                    target_kind: TargetKind::Bin,
+                }),
             ),
             (
                 r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["bin"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                Some((
-                    "path+file:///path/to/custom-package#my-custom-package@0.1.0",
-                    "my-custom-bin",
-                    TargetKind::Bin,
-                )),
+                Some(TargetInfo {
+                    package_name: "my-custom-package".into(),
+                    target_name: "my-custom-bin".into(),
+                    required_features: Vec::new(),
+                    target_kind: TargetKind::Bin,
+                }),
             ),
             (
                 r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                Some((
-                    "path+file:///path/to/custom-package#my-custom-package@0.1.0",
-                    "my-custom-bin",
-                    TargetKind::Example,
-                )),
+                Some(TargetInfo {
+                    package_name: "my-custom-package".into(),
+                    target_name: "my-custom-bin".into(),
+                    required_features: Vec::new(),
+                    target_kind: TargetKind::Example,
+                }),
+            ),
+            (
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":["foo","bar"]}]}]}"#,
+                "/path/to/custom-package/src/main.rs",
+                Some(TargetInfo {
+                    package_name: "my-custom-package".into(),
+                    target_name: "my-custom-bin".into(),
+                    required_features: vec!["foo".to_owned(), "bar".to_owned()],
+                    target_kind: TargetKind::Example,
+                }),
+            ),
+            (
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":[]}]}]}"#,
+                "/path/to/custom-package/src/main.rs",
+                Some(TargetInfo {
+                    package_name: "my-custom-package".into(),
+                    target_name: "my-custom-bin".into(),
+                    required_features: vec![],
+                    target_kind: TargetKind::Example,
+                }),
             ),
             (
                 r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-package","kind":["lib"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
@@ -1360,10 +1402,7 @@ mod tests {
 
             let absolute_path = Path::new(absolute_path);
 
-            assert_eq!(
-                retrieve_package_id_and_bin_name_from_metadata(metadata, absolute_path),
-                expected.map(|(pkgid, name, kind)| (pkgid.to_owned(), name.to_owned(), kind))
-            );
+            assert_eq!(target_info_from_metadata(metadata, absolute_path), expected);
         }
     }
 

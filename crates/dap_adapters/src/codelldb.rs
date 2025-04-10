@@ -105,6 +105,12 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         Ok(DebugAdapterBinary {
             command,
             cwd: Some(adapter_dir),
+            arguments: Some(vec![
+                "--settings".into(),
+                json!({"sourceLanguages": ["cpp", "rust"]})
+                    .to_string()
+                    .into(),
+            ]),
             ..Default::default()
         })
     }
@@ -117,6 +123,8 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             },
         });
         let map = args.as_object_mut().unwrap();
+        // CodeLLDB uses `name` for a terminal label.
+        map.insert("name".into(), Value::String(config.label.clone()));
         match &config.request {
             DebugRequestType::Attach(attach) => {
                 map.insert("pid".into(), attach.process_id.into());

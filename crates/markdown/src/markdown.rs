@@ -88,12 +88,21 @@ struct Options {
 }
 
 pub enum CodeBlockRenderer {
-    Default { copy_button: bool },
-    Custom { render: CodeBlockRenderFn },
+    Default {
+        copy_button: bool,
+    },
+    Custom {
+        render: CodeBlockRenderFn,
+        /// A function that can modify the parent container after the code block
+        /// content has been appended as a child element.
+        transform: Option<CodeBlockTransformFn>,
+    },
 }
 
 pub type CodeBlockRenderFn =
-    Arc<dyn Fn(usize, &CodeBlockKind, &ParsedMarkdown, Range<usize>, &mut Window, &App) -> Div>;
+    Arc<dyn Fn(&CodeBlockKind, &ParsedMarkdown, Range<usize>, &mut Window, &App) -> Div>;
+
+pub type CodeBlockTransformFn = Arc<dyn Fn(AnyDiv, Range<usize>, &mut Window, &App) -> AnyDiv>;
 
 actions!(markdown, [Copy, CopyAsMarkdown]);
 
@@ -594,7 +603,7 @@ impl Element for MarkdownElement {
             0
         };
 
-        for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
+        for (range, event) in parsed_markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
@@ -676,15 +685,9 @@ impl Element for MarkdownElement {
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
-                                (CodeBlockRenderer::Custom { render }, _) => {
-                                    let parent_container = render(
-                                        index,
-                                        kind,
-                                        &parsed_markdown,
-                                        range.clone(),
-                                        window,
-                                        cx,
-                                    );
+                                (CodeBlockRenderer::Custom { render, .. }, _) => {
+                                    let parent_container =
+                                        render(kind, &parsed_markdown, range.clone(), window, cx);
 
                                     builder.push_div(parent_container, range, markdown_end);
 
@@ -695,9 +698,12 @@ impl Element for MarkdownElement {
                                             if self.style.code_block_overflow_x_scroll {
                                                 code_block.style().restrict_scroll_to_axis =
                                                     Some(true);
-                                                code_block.flex().overflow_x_scroll()
+                                                code_block
+                                                    .flex()
+                                                    .overflow_x_scroll()
+                                                    .overflow_y_hidden()
                                             } else {
-                                                code_block.w_full()
+                                                code_block.w_full().overflow_hidden()
                                             }
                                         });
 
@@ -844,6 +850,14 @@ impl Element for MarkdownElement {
                         builder.pop_code_block();
                         if self.style.code_block.text.is_some() {
                             builder.pop_text_style();
+                        }
+
+                        if let CodeBlockRenderer::Custom {
+                            transform: Some(modify),
+                            ..
+                        } = &self.code_block_renderer
+                        {
+                            builder.modify_current_div(|el| modify(el, range.clone(), window, cx));
                         }
 
                         if matches!(
@@ -1049,7 +1063,7 @@ impl IntoElement for MarkdownElement {
     }
 }
 
-enum AnyDiv {
+pub enum AnyDiv {
     Div(Div),
     Stateful(Stateful<Div>),
 }

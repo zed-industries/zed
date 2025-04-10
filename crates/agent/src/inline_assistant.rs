@@ -28,6 +28,7 @@ use language_model::{LanguageModelRegistry, report_assistant_event};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::LspAction;
+use project::Project;
 use project::{CodeAction, ProjectTransaction};
 use prompt_store::PromptBuilder;
 use settings::{Settings, SettingsStore};
@@ -254,6 +255,7 @@ impl InlineAssistant {
                         assistant.assist(
                             &active_editor,
                             cx.entity().downgrade(),
+                            workspace.project().downgrade(),
                             thread_store,
                             window,
                             cx,
@@ -262,7 +264,14 @@ impl InlineAssistant {
                 }
                 InlineAssistTarget::Terminal(active_terminal) => {
                     TerminalInlineAssistant::update_global(cx, |assistant, cx| {
-                        assistant.assist(&active_terminal, cx.entity(), thread_store, window, cx)
+                        assistant.assist(
+                            &active_terminal,
+                            cx.entity().downgrade(),
+                            workspace.project().downgrade(),
+                            thread_store,
+                            window,
+                            cx,
+                        )
                     })
                 }
             };
@@ -312,17 +321,11 @@ impl InlineAssistant {
         &mut self,
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
+        project: WeakEntity<Project>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().downgrade())
-        else {
-            return;
-        };
-
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
             (
                 editor.snapshot(window, cx),

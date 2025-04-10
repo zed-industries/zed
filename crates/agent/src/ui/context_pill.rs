@@ -280,9 +280,10 @@ impl AddedContext {
             }
 
             AssistantContext::Directory(directory_context) => {
-                // TODO: handle worktree disambiguation. Maybe by storing an `Arc<dyn File>` to also
-                // handle renames?
-                let full_path = &directory_context.project_path.path;
+                let full_path = directory_context
+                    .worktree
+                    .read(cx)
+                    .full_path(&directory_context.path);
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
                 let name = full_path

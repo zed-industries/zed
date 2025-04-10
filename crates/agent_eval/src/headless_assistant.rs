@@ -95,11 +95,7 @@ impl HeadlessAssistant {
                     self.done_tx.send_blocking(Ok(())).unwrap()
                 }
             }
-            ThreadEvent::UsePendingTools => {
-                thread.update(cx, |thread, cx| {
-                    thread.use_pending_tools(cx);
-                });
-            }
+            ThreadEvent::UsePendingTools { .. } => {}
             ThreadEvent::ToolConfirmationNeeded => {
                 // Automatically approve all tools that need confirmation in headless mode
                 println!("Tool confirmation needed - automatically approving in headless mode");
@@ -151,19 +147,6 @@ impl HeadlessAssistant {
                 }
                 if let Some(tool_result) = thread.read(cx).tool_result(tool_use_id) {
                     println!("Tool result: {:?}", tool_result);
-                }
-                if thread.read(cx).all_tools_finished() {
-                    let model_registry = LanguageModelRegistry::read_global(cx);
-                    if let Some(model) = model_registry.default_model() {
-                        thread.update(cx, |thread, cx| {
-                            thread.attach_tool_results(cx);
-                            thread.send_to_model(model.model, RequestKind::Chat, cx);
-                        });
-                    } else {
-                        println!(
-                            "Warning: No active language model available to continue conversation"
-                        );
-                    }
                 }
             }
             _ => {}

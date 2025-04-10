@@ -9,6 +9,7 @@ use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
+use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
@@ -182,7 +183,7 @@ pub struct ThreadCheckpoint {
     git_checkpoint: GitStoreCheckpoint,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ThreadFeedback {
     Positive,
     Negative,
@@ -260,6 +261,7 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
+    message_feedback: HashMap<MessageId, ThreadFeedback>,
 }
 
 impl Thread {
@@ -298,6 +300,7 @@ impl Thread {
             },
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
+            message_feedback: HashMap::default(),
         }
     }
 
@@ -361,6 +364,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
+            message_feedback: HashMap::default(),
         }
     }
 
@@ -674,6 +678,9 @@ impl Thread {
                 git_checkpoint,
             });
         }
+
+        self.auto_capture_telemetry(cx);
+
         message_id
     }
 
@@ -1152,6 +1159,8 @@ impl Thread {
                         thread.touch_updated_at();
                         cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
+
+                        thread.auto_capture_telemetry(cx);
                     })?;
 
                     smol::future::yield_now().await;
@@ -1178,7 +1187,8 @@ impl Thread {
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
                             StopReason::ToolUse => {
-                                cx.emit(ThreadEvent::UsePendingTools);
+                                let tool_uses = thread.use_pending_tools(cx);
+                                cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
@@ -1206,6 +1216,8 @@ impl Thread {
                         }
                     }
                     cx.emit(ThreadEvent::DoneStreaming);
+
+                    thread.auto_capture_telemetry(cx);
 
                     if let Ok(initial_usage) = initial_token_usage {
                         let usage = thread.cumulative_token_usage.clone() - initial_usage;
@@ -1366,10 +1378,8 @@ impl Thread {
         )
     }
 
-    pub fn use_pending_tools(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> impl IntoIterator<Item = PendingToolUse> + use<> {
+    pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) -> Vec<PendingToolUse> {
+        self.auto_capture_telemetry(cx);
         let request = self.to_completion_request(RequestKind::Chat, cx);
         let messages = Arc::new(request.messages);
         let pending_tool_uses = self
@@ -1457,16 +1467,34 @@ impl Thread {
                             output,
                             cx,
                         );
-
-                        cx.emit(ThreadEvent::ToolFinished {
-                            tool_use_id,
-                            pending_tool_use,
-                            canceled: false,
-                        });
+                        thread.tool_finished(tool_use_id, pending_tool_use, false, cx);
                     })
                     .ok();
             }
         })
+    }
+
+    fn tool_finished(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        pending_tool_use: Option<PendingToolUse>,
+        canceled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.all_tools_finished() {
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
+                self.attach_tool_results(cx);
+                if !canceled {
+                    self.send_to_model(model, RequestKind::Chat, cx);
+                }
+            }
+        }
+
+        cx.emit(ThreadEvent::ToolFinished {
+            tool_use_id,
+            pending_tool_use,
+        });
     }
 
     pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
@@ -1492,11 +1520,12 @@ impl Thread {
             let mut canceled = false;
             for pending_tool_use in self.tool_use.cancel_pending() {
                 canceled = true;
-                cx.emit(ThreadEvent::ToolFinished {
-                    tool_use_id: pending_tool_use.id.clone(),
-                    pending_tool_use: Some(pending_tool_use),
-                    canceled: true,
-                });
+                self.tool_finished(
+                    pending_tool_use.id.clone(),
+                    Some(pending_tool_use),
+                    true,
+                    cx,
+                );
             }
             canceled
         };
@@ -1504,23 +1533,44 @@ impl Thread {
         canceled
     }
 
-    /// Returns the feedback given to the thread, if any.
     pub fn feedback(&self) -> Option<ThreadFeedback> {
         self.feedback
     }
 
-    /// Reports feedback about the thread and stores it in our telemetry backend.
-    pub fn report_feedback(
+    pub fn message_feedback(&self, message_id: MessageId) -> Option<ThreadFeedback> {
+        self.message_feedback.get(&message_id).copied()
+    }
+
+    pub fn report_message_feedback(
         &mut self,
+        message_id: MessageId,
         feedback: ThreadFeedback,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.message_feedback.get(&message_id) == Some(&feedback) {
+            return Task::ready(Ok(()));
+        }
+
         let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
-        self.feedback = Some(feedback);
+
+        let enabled_tool_names: Vec<String> = self
+            .tools()
+            .enabled_tools(cx)
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+
+        self.message_feedback.insert(message_id, feedback);
+
         cx.notify();
+
+        let message_content = self
+            .message(message_id)
+            .map(|msg| msg.to_string())
+            .unwrap_or_default();
 
         cx.background_spawn(async move {
             let final_project_snapshot = final_project_snapshot.await;
@@ -1536,6 +1586,9 @@ impl Thread {
                 "Assistant Thread Rated",
                 rating,
                 thread_id,
+                enabled_tool_names,
+                message_id = message_id.0,
+                message_content,
                 thread_data,
                 final_project_snapshot
             );
@@ -1543,6 +1596,52 @@ impl Thread {
 
             Ok(())
         })
+    }
+
+    pub fn report_feedback(
+        &mut self,
+        feedback: ThreadFeedback,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let last_assistant_message_id = self
+            .messages
+            .iter()
+            .rev()
+            .find(|msg| msg.role == Role::Assistant)
+            .map(|msg| msg.id);
+
+        if let Some(message_id) = last_assistant_message_id {
+            self.report_message_feedback(message_id, feedback, cx)
+        } else {
+            let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
+            let serialized_thread = self.serialize(cx);
+            let thread_id = self.id().clone();
+            let client = self.project.read(cx).client();
+            self.feedback = Some(feedback);
+            cx.notify();
+
+            cx.background_spawn(async move {
+                let final_project_snapshot = final_project_snapshot.await;
+                let serialized_thread = serialized_thread.await?;
+                let thread_data = serde_json::to_value(serialized_thread)
+                    .unwrap_or_else(|_| serde_json::Value::Null);
+
+                let rating = match feedback {
+                    ThreadFeedback::Positive => "positive",
+                    ThreadFeedback::Negative => "negative",
+                };
+                telemetry::event!(
+                    "Assistant Thread Rated",
+                    rating,
+                    thread_id,
+                    thread_data,
+                    final_project_snapshot
+                );
+                client.telemetry().flush_events();
+
+                Ok(())
+            })
+        }
     }
 
     /// Create a snapshot of the current project state including git information and unsaved buffers.
@@ -1760,6 +1859,65 @@ impl Thread {
         self.cumulative_token_usage.clone()
     }
 
+    pub fn auto_capture_telemetry(&self, cx: &mut Context<Self>) {
+        static mut LAST_CAPTURE: Option<std::time::Instant> = None;
+        let now = std::time::Instant::now();
+        let should_check = unsafe {
+            if let Some(last) = LAST_CAPTURE {
+                if now.duration_since(last).as_secs() < 10 {
+                    return;
+                }
+            }
+            LAST_CAPTURE = Some(now);
+            true
+        };
+
+        if !should_check {
+            return;
+        }
+
+        let feature_flag_enabled = cx.has_flag::<feature_flags::ThreadAutoCapture>();
+
+        if cfg!(debug_assertions) {
+            if !feature_flag_enabled {
+                return;
+            }
+        }
+
+        let thread_id = self.id().clone();
+
+        let github_handle = self
+            .project
+            .read(cx)
+            .user_store()
+            .read(cx)
+            .current_user()
+            .map(|user| user.github_login.clone());
+
+        let client = self.project.read(cx).client().clone();
+
+        let serialized_thread = self.serialize(cx);
+
+        cx.foreground_executor()
+            .spawn(async move {
+                if let Ok(serialized_thread) = serialized_thread.await {
+                    let thread_data = serde_json::to_value(serialized_thread)
+                        .unwrap_or_else(|_| serde_json::Value::Null);
+
+                    telemetry::event!(
+                        "Agent Thread AutoCaptured",
+                        thread_id = thread_id.to_string(),
+                        thread_data = thread_data,
+                        auto_capture_reason = "tracked_user",
+                        github_handle = github_handle
+                    );
+
+                    client.telemetry().flush_events();
+                }
+            })
+            .detach();
+    }
+
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(model) = model_registry.default_model() else {
@@ -1801,12 +1959,7 @@ impl Thread {
 
         self.tool_use
             .insert_tool_output(tool_use_id.clone(), tool_name, err, cx);
-
-        cx.emit(ThreadEvent::ToolFinished {
-            tool_use_id,
-            pending_tool_use: None,
-            canceled: true,
-        });
+        self.tool_finished(tool_use_id.clone(), None, true, cx);
     }
 }
 
@@ -1832,14 +1985,14 @@ pub enum ThreadEvent {
     MessageDeleted(MessageId),
     SummaryGenerated,
     SummaryChanged,
-    UsePendingTools,
+    UsePendingTools {
+        tool_uses: Vec<PendingToolUse>,
+    },
     ToolFinished {
         #[allow(unused)]
         tool_use_id: LanguageModelToolUseId,
         /// The pending tool use that corresponds to this tool.
         pending_tool_use: Option<PendingToolUse>,
-        /// Whether the tool was canceled by the user.
-        canceled: bool,
     },
     CheckpointChanged,
     ToolConfirmationNeeded,

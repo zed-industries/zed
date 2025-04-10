@@ -68,7 +68,7 @@ impl ProjectEnvironment {
         }
 
         if let Some(cli_environment) = self.get_cli_environment() {
-            log::info!("using project environment variables from CLI");
+            log::debug!("using project environment variables from CLI");
             return Task::ready(Some(cli_environment)).shared();
         }
 
@@ -94,7 +94,7 @@ impl ProjectEnvironment {
         }
 
         if let Some(cli_environment) = self.get_cli_environment() {
-            log::info!("using project environment variables from CLI");
+            log::debug!("using project environment variables from CLI");
             return Task::ready(Some(cli_environment)).shared();
         }
 
@@ -128,7 +128,7 @@ impl ProjectEnvironment {
         }
 
         if let Some(cli_environment) = self.get_cli_environment() {
-            log::info!("using project environment variables from CLI");
+            log::debug!("using project environment variables from CLI");
             return Task::ready(Some(cli_environment)).shared();
         }
 

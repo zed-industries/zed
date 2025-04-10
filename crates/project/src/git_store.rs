@@ -2630,9 +2630,7 @@ impl RepositorySnapshot {
     }
 
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
-        self.statuses_by_path
-            .get(&PathKey(repo_path.0.clone()), &())
-            .map_or(false, |entry| entry.status.is_conflicted())
+        self.merge_conflicts.contains(repo_path)
     }
 
     /// This is the name that will be displayed in the repository selector for this repository.

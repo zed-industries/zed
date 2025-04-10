@@ -380,7 +380,7 @@ impl TerminalBuilder {
                     #[cfg(target_os = "windows")]
                     {
                         Some(alacritty_terminal::tty::Shell::new(
-                            util::retrieve_system_shell(),
+                            util::get_windows_system_shell(),
                             Vec::new(),
                         ))
                     }
