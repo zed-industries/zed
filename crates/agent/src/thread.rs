@@ -1547,6 +1547,13 @@ impl Thread {
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
 
+        let enabled_tool_names: Vec<String> = self
+            .tools()
+            .enabled_tools(cx)
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+
         self.message_feedback.insert(message_id, feedback);
 
         cx.notify();
@@ -1570,6 +1577,7 @@ impl Thread {
                 "Assistant Thread Rated",
                 rating,
                 thread_id,
+                enabled_tool_names,
                 message_id = message_id.0,
                 message_content,
                 thread_data,
