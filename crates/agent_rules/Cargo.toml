@@ -19,6 +19,7 @@ gpui.workspace = true
 prompt_store.workspace = true
 util.workspace = true
 worktree.workspace = true
+workspace-hack = { version = "0.1", path = "../../tooling/workspace-hack" }
 
 [dev-dependencies]
 indoc.workspace = true

@@ -2918,7 +2918,32 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-async fn test_tab_with_mixed_whitespace(cx: &mut TestAppContext) {
+async fn test_tab_with_mixed_whitespace_txt(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(3)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+         ˇ
+        \t ˇ
+        \t  ˇ
+        \t   ˇ
+         \t  \t\t \t      \t\t   \t\t    \t \t ˇ
+    "});
+
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+           ˇ
+        \t   ˇ
+        \t   ˇ
+        \t      ˇ
+         \t  \t\t \t      \t\t   \t\t    \t \t   ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_tab_with_mixed_whitespace_rust(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4)
     });
@@ -3872,6 +3897,41 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
         «2ˇ»
 
         «bbbbˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_case(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // If all lower case -> upper case
+    cx.set_state(indoc! {"
+        «hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+
+    // If all upper case -> lower case
+    cx.set_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
+    "});
+
+    // If any upper case characters are identified -> lower case
+    // This matches JetBrains IDEs
+    cx.set_state(indoc! {"
+        «hEllo worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
     "});
 }
 
@@ -5780,6 +5840,37 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("abc\n«  ˇ»abc\nabc");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let large_body_1 = "\nd".repeat(200);
+    let large_body_2 = "\ne".repeat(200);
+
+    cx.set_state(&format!(
+        "abc\nabc{large_body_1} «ˇa»bc{large_body_2}\nefabc\nabc"
+    ));
+    let initial_scroll_position = cx.update_editor(|editor, _, cx| {
+        let scroll_position = editor.scroll_position(cx);
+        assert!(scroll_position.y > 0.0, "Initial selection is between two large bodies and should have the editor scrolled to it");
+        scroll_position
+    });
+
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state(&format!(
+        "«ˇa»bc\n«ˇa»bc{large_body_1} «ˇa»bc{large_body_2}\nef«ˇa»bc\n«ˇa»bc"
+    ));
+    let scroll_position_after_selection =
+        cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
+    assert_eq!(
+        initial_scroll_position, scroll_position_after_selection,
+        "Scroll position should not change after selecting all matches"
+    );
 }
 
 #[gpui::test]
