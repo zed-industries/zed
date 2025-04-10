@@ -293,18 +293,36 @@ struct ExceptionBreakpoint {
 }
 
 impl ExceptionBreakpoint {
-    fn render(self, _: WeakEntity<BreakpointList>) -> ListItem {
+    fn render(self, list: WeakEntity<BreakpointList>) -> ListItem {
         let color = if self.is_enabled {
             Color::Debugger
         } else {
             Color::Muted
         };
+        let id = SharedString::from(&self.id);
         ListItem::new(SharedString::from(format!(
             "exception-breakpoint-ui-item-{}",
             self.id
         )))
         .rounded()
-        .start_slot(Indicator::icon(Icon::new(IconName::Flame)).color(color))
+        .start_slot(
+            div()
+                .id(SharedString::from(format!(
+                    "exception-breakpoint-ui-item-{}-click-handler",
+                    self.id
+                )))
+                .on_click(move |_, _, cx| {
+                    list.update(cx, |this, cx| {
+                        this.session.update(cx, |this, _| {
+                            this.toggle_exception_breakpoint(&id);
+                        });
+                        cx.notify();
+                    })
+                    .ok();
+                })
+                .cursor_pointer()
+                .child(Indicator::icon(Icon::new(IconName::Flame)).color(color)),
+        )
         .child(
             div().py_1().child(
                 Label::new(self.data.label)

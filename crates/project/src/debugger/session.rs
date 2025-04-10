@@ -1493,6 +1493,12 @@ impl Session {
         self.exception_breakpoints.values()
     }
 
+    pub fn toggle_exception_breakpoint(&mut self, id: &str) {
+        if let Some((_, is_enabled)) = self.exception_breakpoints.get_mut(id) {
+            *is_enabled = !*is_enabled;
+        }
+    }
+
     pub fn breakpoints_enabled(&self) -> bool {
         self.ignore_breakpoints
     }
