@@ -261,12 +261,6 @@ impl PromptBuilder {
             .render("assistant_system_prompt", context)
     }
 
-    pub fn generate_assistant_system_prompt_reminder(&self) -> Result<String, RenderError> {
-        self.handlebars
-            .lock()
-            .render("assistant_system_prompt_reminder", &())
-    }
-
     pub fn generate_inline_transformation_prompt(
         &self,
         user_prompt: String,
