@@ -29,5 +29,3 @@ workspace.workspace = true
 db.workspace = true
 anyhow.workspace = true
 serde.workspace = true
-util.workspace = true
-futures.workspace = true
