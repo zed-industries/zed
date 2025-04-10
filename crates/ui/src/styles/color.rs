@@ -1,8 +1,21 @@
-use gpui::{App, Hsla};
+use crate::{Label, LabelCommon, component_prelude::*, v_flex};
+use documented::{DocumentedFields, DocumentedVariants};
+use gpui::{App, Hsla, IntoElement, ParentElement, Styled};
 use theme::ActiveTheme;
 
 /// Sets a color that has a consistent meaning across all themes.
-#[derive(Debug, Default, Eq, PartialEq, Copy, Clone)]
+#[derive(
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Copy,
+    Clone,
+    RegisterComponent,
+    Documented,
+    DocumentedFields,
+    DocumentedVariants,
+)]
 pub enum Color {
     #[default]
     /// The default text color. Might be known as "foreground" or "primary" in
@@ -22,6 +35,8 @@ pub enum Color {
     ///
     /// A custom color specified by an HSLA value.
     Custom(Hsla),
+    /// A color used for all debugger UI elements.
+    Debugger,
     /// A color used to indicate a deleted item, such as a file removed from version control.
     Deleted,
     /// A color used for disabled UI elements or text, like a disabled button or menu item.
@@ -56,6 +71,16 @@ pub enum Color {
     Selected,
     /// A color used to indicate a successful operation or status.
     Success,
+    /// A version control color used to indicate a newly added file or content in version control.
+    VersionControlAdded,
+    /// A version control color used to indicate conflicting changes that need resolution.
+    VersionControlConflict,
+    /// A version control color used to indicate a file or content that has been deleted in version control.
+    VersionControlDeleted,
+    /// A version control color used to indicate files or content that is being ignored by version control.
+    VersionControlIgnored,
+    /// A version control color used to indicate modified files or content in version control.
+    VersionControlModified,
     /// A color used to indicate a warning condition.
     Warning,
 }
@@ -70,6 +95,7 @@ impl Color {
             Color::Modified => cx.theme().status().modified,
             Color::Conflict => cx.theme().status().conflict,
             Color::Ignored => cx.theme().status().ignored,
+            Color::Debugger => cx.theme().colors().debugger_accent,
             Color::Deleted => cx.theme().status().deleted,
             Color::Disabled => cx.theme().colors().text_disabled,
             Color::Hidden => cx.theme().status().hidden,
@@ -81,6 +107,11 @@ impl Color {
             Color::Error => cx.theme().status().error,
             Color::Selected => cx.theme().colors().text_accent,
             Color::Success => cx.theme().status().success,
+            Color::VersionControlAdded => cx.theme().colors().version_control_added,
+            Color::VersionControlConflict => cx.theme().colors().version_control_conflict,
+            Color::VersionControlDeleted => cx.theme().colors().version_control_deleted,
+            Color::VersionControlIgnored => cx.theme().colors().version_control_ignored,
+            Color::VersionControlModified => cx.theme().colors().version_control_modified,
             Color::Warning => cx.theme().status().warning,
             Color::Custom(color) => *color,
         }
@@ -90,5 +121,124 @@ impl Color {
 impl From<Hsla> for Color {
     fn from(color: Hsla) -> Self {
         Color::Custom(color)
+    }
+}
+
+impl Component for Color {
+    fn scope() -> ComponentScope {
+        ComponentScope::None
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(Color::DOCS)
+    }
+
+    fn preview(_window: &mut gpui::Window, _cx: &mut App) -> Option<gpui::AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Text Colors",
+                        vec![
+                            single_example(
+                                "Default",
+                                Label::new("Default text color")
+                                    .color(Color::Default)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Default.get_variant_docs()),
+                            single_example(
+                                "Muted",
+                                Label::new("Muted text color")
+                                    .color(Color::Muted)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Muted.get_variant_docs()),
+                            single_example(
+                                "Accent",
+                                Label::new("Accent text color")
+                                    .color(Color::Accent)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Accent.get_variant_docs()),
+                            single_example(
+                                "Disabled",
+                                Label::new("Disabled text color")
+                                    .color(Color::Disabled)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Disabled.get_variant_docs()),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Status Colors",
+                        vec![
+                            single_example(
+                                "Success",
+                                Label::new("Success status")
+                                    .color(Color::Success)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Success.get_variant_docs()),
+                            single_example(
+                                "Warning",
+                                Label::new("Warning status")
+                                    .color(Color::Warning)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Warning.get_variant_docs()),
+                            single_example(
+                                "Error",
+                                Label::new("Error status")
+                                    .color(Color::Error)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Error.get_variant_docs()),
+                            single_example(
+                                "Info",
+                                Label::new("Info status")
+                                    .color(Color::Info)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Info.get_variant_docs()),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Version Control Colors",
+                        vec![
+                            single_example(
+                                "Created",
+                                Label::new("Created item")
+                                    .color(Color::Created)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Created.get_variant_docs()),
+                            single_example(
+                                "Modified",
+                                Label::new("Modified item")
+                                    .color(Color::Modified)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Modified.get_variant_docs()),
+                            single_example(
+                                "Deleted",
+                                Label::new("Deleted item")
+                                    .color(Color::Deleted)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Deleted.get_variant_docs()),
+                            single_example(
+                                "Conflict",
+                                Label::new("Conflict item")
+                                    .color(Color::Conflict)
+                                    .into_any_element(),
+                            )
+                            .description(Color::Conflict.get_variant_docs()),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }

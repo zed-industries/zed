@@ -1,12 +1,14 @@
+use std::sync::Arc;
+
 use editor::Editor;
 use gpui::{
-    div, AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription,
-    Task, WeakEntity, Window,
+    AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription, Task,
+    WeakEntity, Window, div,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
-use project::{Project, WorktreeId};
+use project::{Project, ProjectPath, WorktreeId};
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 use crate::ToolchainSelector;
 
@@ -30,40 +32,38 @@ impl ActiveToolchain {
         }
     }
     fn spawn_tracker_task(window: &mut Window, cx: &mut Context<Self>) -> Task<Option<()>> {
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let active_file = this
-                .update(&mut cx, |this, _| {
+                .update(cx, |this, _| {
                     this.active_buffer
                         .as_ref()
                         .map(|(_, buffer, _)| buffer.clone())
                 })
                 .ok()
                 .flatten()?;
-            let workspace = this
-                .update(&mut cx, |this, _| this.workspace.clone())
-                .ok()?;
+            let workspace = this.update(cx, |this, _| this.workspace.clone()).ok()?;
             let language_name = active_file
-                .update(&mut cx, |this, _| Some(this.language()?.name()))
+                .update(cx, |this, _| Some(this.language()?.name()))
                 .ok()
                 .flatten()?;
             let term = workspace
-                .update(&mut cx, |workspace, cx| {
+                .update(cx, |workspace, cx| {
                     let languages = workspace.project().read(cx).languages();
                     Project::toolchain_term(languages.clone(), language_name.clone())
                 })
                 .ok()?
                 .await?;
-            let _ = this.update(&mut cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 this.term = term;
                 cx.notify();
             });
             let worktree_id = active_file
-                .update(&mut cx, |this, cx| Some(this.file()?.worktree_id(cx)))
+                .update(cx, |this, cx| Some(this.file()?.worktree_id(cx)))
                 .ok()
                 .flatten()?;
             let toolchain =
-                Self::active_toolchain(workspace, worktree_id, language_name, &mut cx).await?;
-            let _ = this.update(&mut cx, |this, cx| {
+                Self::active_toolchain(workspace, worktree_id, language_name, cx).await?;
+            let _ = this.update(cx, |this, cx| {
                 this.active_toolchain = Some(toolchain);
 
                 cx.notify();
@@ -104,16 +104,21 @@ impl ActiveToolchain {
         language_name: LanguageName,
         cx: &mut AsyncWindowContext,
     ) -> Task<Option<Toolchain>> {
-        cx.spawn(move |mut cx| async move {
+        cx.spawn(async move |cx| {
             let workspace_id = workspace
-                .update(&mut cx, |this, _| this.database_id())
+                .update(cx, |this, _| this.database_id())
                 .ok()
                 .flatten()?;
             let selected_toolchain = workspace
-                .update(&mut cx, |this, cx| {
-                    this.project()
-                        .read(cx)
-                        .active_toolchain(worktree_id, language_name.clone(), cx)
+                .update(cx, |this, cx| {
+                    this.project().read(cx).active_toolchain(
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::from("".as_ref()),
+                        },
+                        language_name.clone(),
+                        cx,
+                    )
                 })
                 .ok()?
                 .await;
@@ -121,25 +126,37 @@ impl ActiveToolchain {
                 Some(toolchain)
             } else {
                 let project = workspace
-                    .update(&mut cx, |this, _| this.project().clone())
+                    .update(cx, |this, _| this.project().clone())
                     .ok()?;
                 let toolchains = cx
                     .update(|_, cx| {
-                        project
-                            .read(cx)
-                            .available_toolchains(worktree_id, language_name, cx)
+                        project.read(cx).available_toolchains(
+                            ProjectPath {
+                                worktree_id,
+                                path: Arc::from("".as_ref()),
+                            },
+                            language_name,
+                            cx,
+                        )
                     })
                     .ok()?
                     .await?;
                 if let Some(toolchain) = toolchains.toolchains.first() {
                     // Since we don't have a selected toolchain, pick one for user here.
                     workspace::WORKSPACE_DB
-                        .set_toolchain(workspace_id, worktree_id, toolchain.clone())
+                        .set_toolchain(workspace_id, worktree_id, "".to_owned(), toolchain.clone())
                         .await
                         .ok()?;
                     project
-                        .update(&mut cx, |this, cx| {
-                            this.activate_toolchain(worktree_id, toolchain.clone(), cx)
+                        .update(cx, |this, cx| {
+                            this.activate_toolchain(
+                                ProjectPath {
+                                    worktree_id,
+                                    path: Arc::from("".as_ref()),
+                                },
+                                toolchain.clone(),
+                                cx,
+                            )
                         })
                         .ok()?
                         .await;

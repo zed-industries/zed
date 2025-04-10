@@ -34,6 +34,10 @@ impl LinkedEditingRanges {
     pub(super) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    pub(super) fn clear(&mut self) {
+        self.0.clear();
+    }
 }
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
@@ -49,12 +53,12 @@ pub(super) fn refresh_linked_ranges(
     }
     let project = editor.project.as_ref()?.downgrade();
 
-    editor.linked_editing_range_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+    editor.linked_editing_range_task = Some(cx.spawn_in(window, async move |editor, cx| {
         cx.background_executor().timer(UPDATE_DEBOUNCE).await;
 
         let mut applicable_selections = Vec::new();
         editor
-            .update(&mut cx, |editor, cx| {
+            .update(cx, |editor, cx| {
                 let selections = editor.selections.all::<usize>(cx);
                 let snapshot = editor.buffer.read(cx).snapshot(cx);
                 let buffer = editor.buffer.read(cx);
@@ -84,7 +88,7 @@ pub(super) fn refresh_linked_ranges(
         }
 
         let highlights = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 let mut linked_edits_tasks = vec![];
 
                 for (buffer, start, end) in &applicable_selections {
@@ -133,7 +137,7 @@ pub(super) fn refresh_linked_ranges(
         let highlights = futures::future::join_all(highlights).await;
 
         editor
-            .update(&mut cx, |this, cx| {
+            .update(cx, |this, cx| {
                 this.linked_edit_ranges.0.clear();
                 if this.pending_rename.is_some() {
                     return;

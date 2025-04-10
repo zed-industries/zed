@@ -22,12 +22,12 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
+    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, HideMouseCursorOrigin, ToPoint,
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
-    KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
+    Render, Subscription, Task, WeakEntity, Window, actions, impl_actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -38,12 +38,12 @@ use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
+use settings::{Settings, SettingsSources, SettingsStore, update_settings_file};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{px, IntoElement, SharedString};
+use ui::{IntoElement, SharedString, px};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
@@ -144,6 +144,7 @@ actions!(
         PushReplace,
         PushDeleteSurrounds,
         PushMark,
+        ToggleMarksView,
         PushIndent,
         PushOutdent,
         PushAutoIndent,
@@ -152,6 +153,8 @@ actions!(
         PushLowercase,
         PushUppercase,
         PushOppositeCase,
+        PushRot13,
+        PushRot47,
         ToggleRegistersView,
         PushRegister,
         PushRecordRegister,
@@ -435,7 +438,7 @@ impl Vim {
 
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
-                vim.switch_mode(Mode::Normal, false, window, cx)
+                vim.switch_mode(vim.default_mode(cx), false, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
@@ -618,6 +621,14 @@ impl Vim {
                 vim.push_operator(Operator::OppositeCase, window, cx)
             });
 
+            Vim::action(editor, cx, |vim, _: &PushRot13, window, cx| {
+                vim.push_operator(Operator::Rot13, window, cx)
+            });
+
+            Vim::action(editor, cx, |vim, _: &PushRot47, window, cx| {
+                vim.push_operator(Operator::Rot47, window, cx)
+            });
+
             Vim::action(editor, cx, |vim, _: &PushRegister, window, cx| {
                 vim.push_operator(Operator::Register, window, cx)
             });
@@ -728,6 +739,10 @@ impl Vim {
         cx.on_release(|_, _| drop(subscription)).detach();
     }
 
+    pub fn default_mode(&self, cx: &App) -> Mode {
+        VimSettings::get_global(cx).default_mode
+    }
+
     pub fn editor(&self) -> Option<Entity<Editor>> {
         self.editor.upgrade()
     }
@@ -766,6 +781,9 @@ impl Vim {
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
             if action.name().starts_with("vim::") {
+                self.update_editor(window, cx, |_, editor, _, _| {
+                    editor.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction)
+                });
                 return;
             }
         } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
@@ -821,6 +839,19 @@ impl Vim {
             EditorEvent::Edited { .. } => self.push_to_change_list(window, cx),
             EditorEvent::FocusedIn => self.sync_vim_settings(window, cx),
             EditorEvent::CursorShapeChanged => self.cursor_shape_changed(window, cx),
+            EditorEvent::PushedToNavHistory {
+                anchor,
+                is_deactivate,
+            } => {
+                self.update_editor(window, cx, |vim, editor, window, cx| {
+                    let mark = if *is_deactivate {
+                        "\"".to_string()
+                    } else {
+                        "'".to_string()
+                    };
+                    vim.set_mark(mark, vec![*anchor], editor.buffer(), window, cx);
+                });
+            }
             _ => {}
         }
     }
@@ -837,6 +868,7 @@ impl Vim {
             Operator::AddSurrounds { .. }
                 | Operator::ChangeSurrounds { .. }
                 | Operator::DeleteSurrounds
+                | Operator::Exchange
         ) {
             self.operator_stack.clear();
         };
@@ -1078,7 +1110,7 @@ impl Vim {
             }
         }
 
-        if mode == "normal" || mode == "visual" || mode == "operator" {
+        if mode == "normal" || mode == "visual" || mode == "operator" || mode == "helix_normal" {
             context.add("VimControl");
         }
         context.set("vim_mode", mode);
@@ -1599,7 +1631,7 @@ impl Vim {
                     self.select_register(text, window, cx);
                 }
             },
-            Some(Operator::Jump { line }) => self.jump(text, line, window, cx),
+            Some(Operator::Jump { line }) => self.jump(text, line, true, window, cx),
             _ => {
                 if self.mode == Mode::Replace {
                     self.multi_replace(text, window, cx)

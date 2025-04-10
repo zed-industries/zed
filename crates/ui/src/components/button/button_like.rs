@@ -1,8 +1,11 @@
-use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
-use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
+use documented::Documented;
+use gpui::{
+    AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, Hsla, MouseButton,
+    MouseDownEvent, MouseUpEvent, Rems, relative, transparent_black,
+};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, DynamicSpacing, ElevationIndex};
+use crate::{DynamicSpacing, ElevationIndex, prelude::*};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
 pub trait SelectableButton: Toggleable {
@@ -343,7 +346,7 @@ impl ButtonSize {
 /// unconstrained and may make the UI feel less consistent.
 ///
 /// This is also used to build the prebuilt buttons.
-#[derive(IntoElement)]
+#[derive(IntoElement, Documented, RegisterComponent)]
 pub struct ButtonLike {
     pub(super) base: Div,
     id: ElementId,
@@ -359,6 +362,7 @@ pub struct ButtonLike {
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
     cursor_style: CursorStyle,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_right_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -379,6 +383,7 @@ impl ButtonLike {
             children: SmallVec::new(),
             cursor_style: CursorStyle::PointingHand,
             on_click: None,
+            on_right_click: None,
             layer: None,
         }
     }
@@ -396,13 +401,21 @@ impl ButtonLike {
         self
     }
 
-    pub(crate) fn height(mut self, height: DefiniteLength) -> Self {
+    pub fn height(mut self, height: DefiniteLength) -> Self {
         self.height = Some(height);
         self
     }
 
     pub(crate) fn rounding(mut self, rounding: impl Into<Option<ButtonLikeRounding>>) -> Self {
         self.rounding = rounding.into();
+        self
+    }
+
+    pub fn on_right_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_right_click = Some(Box::new(handler));
         self
     }
 }
@@ -529,6 +542,37 @@ impl RenderOnce for ButtonLike {
                     .active(|active| active.bg(style.active(cx).background))
             })
             .when_some(
+                self.on_right_click.filter(|_| !self.disabled),
+                |this, on_right_click| {
+                    this.on_mouse_down(MouseButton::Right, |_event, window, cx| {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    })
+                    .on_mouse_up(
+                        MouseButton::Right,
+                        move |event, window, cx| {
+                            cx.stop_propagation();
+                            let click_event = ClickEvent {
+                                down: MouseDownEvent {
+                                    button: MouseButton::Right,
+                                    position: event.position,
+                                    modifiers: event.modifiers,
+                                    click_count: 1,
+                                    first_mouse: false,
+                                },
+                                up: MouseUpEvent {
+                                    button: MouseButton::Right,
+                                    position: event.position,
+                                    modifiers: event.modifiers,
+                                    click_count: 1,
+                                },
+                            };
+                            (on_right_click)(&click_event, window, cx)
+                        },
+                    )
+                },
+            )
+            .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
                     this.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
@@ -542,5 +586,101 @@ impl RenderOnce for ButtonLike {
                 this.tooltip(move |window, cx| tooltip(window, cx))
             })
             .children(self.children)
+    }
+}
+
+impl Component for ButtonLike {
+    fn scope() -> ComponentScope {
+        ComponentScope::Input
+    }
+
+    fn sort_name() -> &'static str {
+        // ButtonLike should be at the bottom of the button list
+        "ButtonZ"
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(ButtonLike::DOCS)
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group(vec![
+                        single_example(
+                            "Default",
+                            ButtonLike::new("default")
+                                .child(Label::new("Default"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Filled",
+                            ButtonLike::new("filled")
+                                .style(ButtonStyle::Filled)
+                                .child(Label::new("Filled"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Subtle",
+                            ButtonLike::new("outline")
+                                .style(ButtonStyle::Subtle)
+                                .child(Label::new("Subtle"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Tinted",
+                            ButtonLike::new("tinted_accent_style")
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .child(Label::new("Accent"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Transparent",
+                            ButtonLike::new("transparent")
+                                .style(ButtonStyle::Transparent)
+                                .child(Label::new("Transparent"))
+                                .into_any_element(),
+                        ),
+                    ]),
+                    example_group_with_title(
+                        "Button Group Constructors",
+                        vec![
+                            single_example(
+                                "Left Rounded",
+                                ButtonLike::new_rounded_left("left_rounded")
+                                    .child(Label::new("Left Rounded"))
+                                    .style(ButtonStyle::Filled)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Right Rounded",
+                                ButtonLike::new_rounded_right("right_rounded")
+                                    .child(Label::new("Right Rounded"))
+                                    .style(ButtonStyle::Filled)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Button Group",
+                                h_flex()
+                                    .gap_px()
+                                    .child(
+                                        ButtonLike::new_rounded_left("bg_left")
+                                            .child(Label::new("Left"))
+                                            .style(ButtonStyle::Filled),
+                                    )
+                                    .child(
+                                        ButtonLike::new_rounded_right("bg_right")
+                                            .child(Label::new("Right"))
+                                            .style(ButtonStyle::Filled),
+                                    )
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }

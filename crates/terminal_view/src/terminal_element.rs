@@ -1,27 +1,28 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, size, AnyElement, App, AvailableSpace, Bounds, ContentMask,
-    Context, DispatchPhase, Element, ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight,
-    GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point,
-    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase, Element,
+    ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
+    Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UTF16Selection,
+    UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem, div, fill, point, px,
+    relative, size,
 };
 use itertools::Itertools;
 use language::CursorShape;
 use settings::Settings;
 use terminal::{
+    IndexedCell, Terminal, TerminalBounds, TerminalContent,
     alacritty_terminal::{
         grid::Dimensions,
         index::Point as AlacPoint,
-        term::{cell::Flags, TermMode},
+        term::{TermMode, cell::Flags},
         vte::ansi::{
             Color::{self as AnsiColor, Named},
             CursorShape as AlacCursorShape, NamedColor,
         },
     },
     terminal_settings::TerminalSettings,
-    IndexedCell, Terminal, TerminalBounds, TerminalContent,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::{ParentElement, Tooltip};
@@ -424,14 +425,23 @@ impl TerminalElement {
     fn register_mouse_listeners(&mut self, mode: TermMode, hitbox: &Hitbox, window: &mut Window) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
+        let terminal_view = self.terminal_view.clone();
 
         self.interactivity.on_mouse_down(MouseButton::Left, {
             let terminal = terminal.clone();
             let focus = focus.clone();
+            let terminal_view = terminal_view.clone();
+
             move |e, window, cx| {
                 window.focus(&focus);
+
+                let scroll_top = terminal_view.read(cx).scroll_top;
                 terminal.update(cx, |terminal, cx| {
-                    terminal.mouse_down(e, cx);
+                    let mut adjusted_event = e.clone();
+                    if scroll_top > Pixels::ZERO {
+                        adjusted_event.position.y += scroll_top;
+                    }
+                    terminal.mouse_down(&adjusted_event, cx);
                     cx.notify();
                 })
             }
@@ -441,6 +451,7 @@ impl TerminalElement {
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
             let focus = focus.clone();
+            let terminal_view = terminal_view.clone();
             move |e: &MouseMoveEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
@@ -448,9 +459,15 @@ impl TerminalElement {
 
                 if e.pressed_button.is_some() && !cx.has_active_drag() && focus.is_focused(window) {
                     let hovered = hitbox.is_hovered(window);
+
+                    let scroll_top = terminal_view.read(cx).scroll_top;
                     terminal.update(cx, |terminal, cx| {
                         if terminal.selection_started() || hovered {
-                            terminal.mouse_drag(e, hitbox.bounds, cx);
+                            let mut adjusted_event = e.clone();
+                            if scroll_top > Pixels::ZERO {
+                                adjusted_event.position.y += scroll_top;
+                            }
+                            terminal.mouse_drag(&adjusted_event, hitbox.bounds, cx);
                             cx.notify();
                         }
                     })
@@ -662,7 +679,8 @@ impl Element for TerminalElement {
                 let dimensions = {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
-                    let line_height = font_pixels * line_height.to_pixels(rem_size);
+                    // TODO: line_height should be an f32 not an AbsoluteLength.
+                    let line_height = font_pixels * line_height.to_pixels(rem_size).0;
                     let font_id = cx.text_system().resolve_font(&text_style.font());
 
                     let cell_width = text_system

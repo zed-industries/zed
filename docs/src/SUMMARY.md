@@ -75,6 +75,7 @@
 - [CSS](./languages/css.md)
 - [Dart](./languages/dart.md)
 - [Deno](./languages/deno.md)
+- [Diff](./languages/diff.md)
 - [Docker](./languages/docker.md)
 - [Elixir](./languages/elixir.md)
 - [Elm](./languages/elm.md)

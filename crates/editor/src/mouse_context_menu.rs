@@ -1,9 +1,10 @@
-use crate::actions::FormatSelections;
 use crate::{
-    actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
-    DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,
-    GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager,
-    SelectMode, ToDisplayPoint, ToggleCodeActions,
+    Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DebuggerEvaluateSelectedText, DisplayPoint,
+    DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration, GoToDefinition,
+    GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode,
+    ToDisplayPoint, ToggleCodeActions,
+    actions::{Format, FormatSelections},
+    selections_collection::SelectionsCollection,
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscription, Window};
@@ -137,9 +138,9 @@ pub fn deploy_context_menu(
         menu
     } else {
         // Don't show the context menu if there isn't a project associated with this editor
-        if editor.project.is_none() {
+        let Some(project) = editor.project.clone() else {
             return;
-        }
+        };
 
         let display_map = editor.selections.display_map(cx);
         let buffer = &editor.snapshot(window, cx).buffer_snapshot;
@@ -159,15 +160,28 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(cx)
             .into_iter()
             .any(|s| !s.is_empty());
-        let has_git_repo = editor.project.as_ref().map_or(false, |project| {
-            project.update(cx, |project, cx| {
-                project.get_first_worktree_root_repo(cx).is_some()
-            })
+        let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {
+            project
+                .read(cx)
+                .git_store()
+                .read(cx)
+                .repository_and_path_for_buffer_id(buffer_id, cx)
+                .is_some()
         });
+
+        let evaluate_selection = command_palette_hooks::CommandPaletteFilter::try_global(cx)
+            .map_or(false, |filter| {
+                !filter.is_hidden(&DebuggerEvaluateSelectedText)
+            });
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
+                .when(evaluate_selection && has_selections, |builder| {
+                    builder
+                        .action("Evaluate Selection", Box::new(DebuggerEvaluateSelectedText))
+                        .separator()
+                })
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
@@ -188,6 +202,7 @@ pub fn deploy_context_menu(
                 .separator()
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))
+                .action("Copy and trim", Box::new(CopyAndTrim))
                 .action("Paste", Box::new(Paste))
                 .separator()
                 .map(|builder| {

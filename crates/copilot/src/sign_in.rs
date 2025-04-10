@@ -1,11 +1,11 @@
-use crate::{request::PromptUserDeviceFlow, Copilot, Status};
+use crate::{Copilot, Status, request::PromptUserDeviceFlow};
 use gpui::{
-    div, percentage, svg, Animation, AnimationExt, App, ClipboardItem, Context, DismissEvent,
-    Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    MouseDownEvent, ParentElement, Render, Styled, Subscription, Transformation, Window,
+    Animation, AnimationExt, App, ClipboardItem, Context, DismissEvent, Element, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseDownEvent,
+    ParentElement, Render, Styled, Subscription, Transformation, Window, div, percentage, svg,
 };
 use std::time::Duration;
-use ui::{prelude::*, Button, Label, Vector, VectorName};
+use ui::{Button, Label, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
 use workspace::notifications::NotificationId;
 use workspace::{ModalView, Toast, Workspace};
@@ -37,11 +37,11 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
             });
 
             let workspace = workspace.downgrade();
-            cx.spawn(|mut cx| async move {
+            cx.spawn(async move |cx| {
                 task.await;
                 if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
                     workspace
-                        .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
+                        .update(cx, |workspace, cx| match copilot.read(cx).status() {
                             Status::Authorized => workspace.show_toast(
                                 Toast::new(
                                     NotificationId::unique::<CopilotStartingToast>(),

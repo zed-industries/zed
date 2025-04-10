@@ -35,7 +35,7 @@ pub fn app_menus() -> Vec<Menu> {
                     items: vec![],
                 }),
                 MenuItem::separator(),
-                MenuItem::action("Extensions", zed_actions::Extensions),
+                MenuItem::action("Extensions", zed_actions::Extensions::default()),
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
@@ -95,6 +95,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::os_action("Cut", editor::actions::Cut, OsAction::Cut),
                 MenuItem::os_action("Copy", editor::actions::Copy, OsAction::Copy),
+                MenuItem::action("Copy and trim", editor::actions::CopyAndTrim),
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),

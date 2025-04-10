@@ -1,6 +1,6 @@
 use crate::proto;
 use serde::{Deserialize, Serialize};
-use serde_json::{map, Value};
+use serde_json::{Value, map};
 use strum::VariantNames;
 
 const KIND: &str = "kind";

@@ -4,7 +4,7 @@ use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, TryStreamExt as _};
-use http_client::{http, RedirectPolicy};
+use http_client::{RedirectPolicy, http};
 use regex::Regex;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
@@ -56,7 +56,7 @@ impl ReqwestClient {
         }
 
         let client = client
-            .use_preconfigured_tls(http_client::tls_config())
+            .use_preconfigured_tls(http_client_tls::tls_config())
             .build()?;
         let mut client: ReqwestClient = client.into();
         client.proxy = proxy;
@@ -256,7 +256,7 @@ impl http_client::HttpClient for ReqwestClient {
 
 #[cfg(test)]
 mod tests {
-    use http_client::{http, HttpClient};
+    use http_client::{HttpClient, http};
 
     use crate::ReqwestClient;
 

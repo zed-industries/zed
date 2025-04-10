@@ -1,7 +1,6 @@
 mod markdown_preview;
 mod repl_menu;
 
-use assistant::AssistantPanel;
 use assistant_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
@@ -13,15 +12,15 @@ use gpui::{
     Action, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
 };
-use search::{buffer_search, BufferSearchBar};
+use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
 use ui::{
-    prelude::*, ButtonStyle, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, IconName,
-    IconSize, PopoverMenu, PopoverMenuHandle, Tooltip,
+    ButtonStyle, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, IconName, IconSize,
+    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
-    item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
 };
 use zed_actions::{assistant::InlineAssist, outline::ToggleOutline};
 
@@ -130,20 +129,8 @@ impl Render for QuickActionBar {
             Box::new(InlineAssist::default()),
             focus_handle.clone(),
             "Inline Assist",
-            {
-                let workspace = self.workspace.clone();
-                move |_, window, cx| {
-                    if let Some(workspace) = workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
-                            AssistantPanel::inline_assist(
-                                workspace,
-                                &InlineAssist::default(),
-                                window,
-                                cx,
-                            );
-                        });
-                    }
-                }
+            move |_, window, cx| {
+                window.dispatch_action(Box::new(InlineAssist::default()), cx);
             },
         );
 
