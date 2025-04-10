@@ -416,7 +416,11 @@ impl TextLayout {
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
 
-        let text_style = window.text_style();
+        // Get current text_style refinements
+        let mut text_style = TextStyleRefinement::default();
+        for style in window.text_style_stack.iter().as_ref() {
+            text_style.refine(&style);
+        }
 
         for line in &element_state.lines {
             line.paint_background(

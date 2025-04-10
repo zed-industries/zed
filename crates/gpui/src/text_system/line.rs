@@ -1,7 +1,7 @@
 use crate::{
     App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result, SharedString, StrikethroughStyle,
-    TextAlign, TextStyle, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill,
-    point, px, size,
+    TextAlign, TextStyleRefinement, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black,
+    fill, point, px, size,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -130,7 +130,7 @@ impl WrappedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
-        text_style: Option<&TextStyle>,
+        text_style: Option<&TextStyleRefinement>,
         bounds: Option<Bounds<Pixels>>,
         window: &mut Window,
         cx: &mut App,
@@ -190,7 +190,7 @@ fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
     line_height: Pixels,
-    text_style: Option<&TextStyle>,
+    text_style: Option<&TextStyleRefinement>,
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
@@ -206,7 +206,9 @@ fn paint_line(
     );
 
     // TODO: text_align and line_height need to inherit from normal style when is hovered or activated.
-    let mut text_align = text_style.map(|s| s.text_align).unwrap_or(TextAlign::Left);
+    let mut text_align = text_style
+        .and_then(|s| s.text_align)
+        .unwrap_or(TextAlign::Left);
 
     window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
@@ -301,7 +303,7 @@ fn paint_line(
                         let mut run_underline = style_run.underline.as_ref();
                         let mut run_strikethrough = style_run.strikethrough;
                         // Override by text run by current style when hovered or activated.
-                        if let Some(val) = text_style.map(|s| s.color) {
+                        if let Some(val) = text_style.and_then(|s| s.color) {
                             run_color = val;
                         }
                         if let Some(val) = text_style.and_then(|s| s.underline.as_ref()) {
