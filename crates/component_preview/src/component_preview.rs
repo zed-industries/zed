@@ -14,14 +14,11 @@ use gpui::{
 };
 
 use collections::HashMap;
-use util::{ResultExt, log_err};
 
 use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use persistence::COMPONENT_PREVIEW_DB;
-// Editor will be accessed through ui_input
-// We'll implement our own simple matching
 use project::Project;
 use ui::{Divider, HighlightedLabel, ListItem, ListSubHeader, prelude::*};
 
@@ -227,7 +224,6 @@ impl ComponentPreview {
         let lowercase_filter = self.filter_text.to_lowercase();
 
         for component in &self.components {
-            // If filter is empty, add all components without highlighting
             if self.filter_text.is_empty() {
                 scope_groups
                     .entry(component.scope())
@@ -236,29 +232,16 @@ impl ComponentPreview {
                 continue;
             }
 
-            // For filtering, check various component parts
-            let full_component_name = component.name();
+            // let full_component_name = component.name();
             let scopeless_name = component.scopeless_name();
             let scope_name = component.scope().to_string();
             let description = component.description().unwrap_or_default();
-
-            // Debug print component info
-            println!(
-                "[Filter Debug] Filter: '{}' | Component: '{}' (scopeless: '{}')",
-                self.filter_text, full_component_name, scopeless_name
-            );
 
             let lowercase_scopeless = scopeless_name.to_lowercase();
             let lowercase_scope = scope_name.to_lowercase();
             let lowercase_desc = description.to_lowercase();
 
-            // Try to match in the scopeless component name first
             if lowercase_scopeless.contains(&lowercase_filter) {
-                println!(
-                    "[Filter Debug] '{}' contains '{}'",
-                    scopeless_name, self.filter_text
-                );
-                // Find positions for highlighting in the name
                 if let Some(index) = lowercase_scopeless.find(&lowercase_filter) {
                     println!(
                         "[Filter Debug] Match at index {} in '{}'",
@@ -266,12 +249,9 @@ impl ComponentPreview {
                     );
                     let end = index + lowercase_filter.len();
 
-                    // Validate and ensure the range is valid
                     if end <= scopeless_name.len() {
-                        // Create positions for each byte in the matched range
                         let mut positions = Vec::new();
                         for i in index..end {
-                            // Ensure we're on a character boundary
                             if scopeless_name.is_char_boundary(i) {
                                 positions.push(i);
                             }
@@ -293,12 +273,10 @@ impl ComponentPreview {
                 }
             }
 
-            // If no name match or couldn't highlight, check other fields
             if lowercase_scopeless.contains(&lowercase_filter)
                 || lowercase_scope.contains(&lowercase_filter)
                 || lowercase_desc.contains(&lowercase_filter)
             {
-                // We have a match but couldn't highlight properly
                 scope_groups
                     .entry(component.scope())
                     .or_insert_with(|| Vec::new())
@@ -371,13 +349,8 @@ impl ComponentPreview {
                 ListItem::new(ix)
                     .child(
                         if let Some(positions) = highlight_positions {
-                            // Ensure highlight positions are within bounds
-                            // When filtering, we were using the full component name with module path
-                            // but we only display the scopeless name in the sidebar
-                            // Need to discard the previous positions and calculate them based on the scopeless name
                             println!("[Filter Debug] Full positions {:?} are not valid for scopeless name '{}'", positions, name);
 
-                            // Get positions for the scopeless name directly
                             let name_lower = name.to_lowercase();
                             let filter_lower = self.filter_text.to_lowercase();
                             let valid_positions = if let Some(start) = name_lower.find(&filter_lower) {
@@ -390,7 +363,6 @@ impl ComponentPreview {
                             println!("[Filter Debug] RENDER: '{}' positions: {:?}, valid: {:?}", name, positions, valid_positions);
 
                             if valid_positions.is_empty() {
-                                // Fall back to regular label if no valid positions
                                 Label::new(name.clone()).color(Color::Default).into_any_element()
                             } else {
                                 HighlightedLabel::new(name.clone(), valid_positions).into_any_element()
@@ -442,16 +414,13 @@ impl ComponentPreview {
         let new_len = entries.len();
         let weak_entity = cx.entity().downgrade();
 
-        // Reset the scroll position when the filter changes
         if new_len > 0 {
             self.nav_scroll_handle
                 .scroll_to_item(0, ScrollStrategy::Top);
         }
 
-        // Get filtered components for the main component list view
         let filtered_components = self.filtered_components();
 
-        // Update the component list for the 'All Components' view
         self.component_list = ListState::new(
             filtered_components.len(),
             gpui::ListAlignment::Top,
@@ -474,7 +443,6 @@ impl ComponentPreview {
             },
         );
 
-        // Create list for sidebar navigation
         let new_list = ListState::new(
             new_len,
             gpui::ListAlignment::Top,
@@ -502,6 +470,7 @@ impl ComponentPreview {
         );
 
         self.component_list = new_list;
+        cx.emit(ItemEvent::UpdateTab);
     }
 
     fn render_scope_header(
@@ -636,7 +605,7 @@ impl ComponentPreview {
 
 impl Render for ComponentPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Check for filter changes
+        // TODO: move this into the struct
         let current_filter = self.filter_editor.update(cx, |input, cx| {
             if input.is_empty(cx) {
                 String::new()
@@ -740,6 +709,7 @@ impl Focusable for ComponentPreview {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ActivePageId(pub String);
 
 impl Default for ActivePageId {
@@ -828,22 +798,37 @@ impl SerializableItem for ComponentPreview {
             match COMPONENT_PREVIEW_DB.get_active_page(item_id, workspace_id) {
                 Ok(page) => {
                     if let Some(page) = page {
+                        println!("Deserialized active page: {:?}", page);
                         ActivePageId(page)
                     } else {
+                        println!("No active page found");
                         ActivePageId::default()
                     }
                 }
-                Err(_) => ActivePageId::default(),
+                Err(e) => {
+                    println!("Error deserializing active page: {}", e);
+                    ActivePageId::default()
+                }
             };
 
         let user_store = project.read(cx).user_store().clone();
         let language_registry = project.read(cx).languages().clone();
-        let preview_page = if deserialized_active_page == ActivePageId::default() {
+        let preview_page = if deserialized_active_page.0 == ActivePageId::default().0 {
+            println!("No active page found");
             Some(PreviewPage::default())
         } else {
-            // Convert the active page ID to a component ID and create a Component preview page
-            let component_id = ComponentId(deserialized_active_page.0.into());
-            Some(PreviewPage::Component(component_id))
+            let component_str = deserialized_active_page.0;
+            let component_registry = components();
+            let all_components = component_registry.all();
+            let found_component = all_components.iter().find(|c| c.id().0 == component_str);
+
+            if let Some(component) = found_component {
+                println!("Found component: {:?}", component.id());
+                Some(PreviewPage::Component(component.id().clone()))
+            } else {
+                println!("Component not found");
+                Some(PreviewPage::default())
+            }
         };
 
         window.spawn(cx, async move |cx| {
@@ -857,7 +842,7 @@ impl SerializableItem for ComponentPreview {
                         language_registry,
                         user_store,
                         None,
-                        deserialized_active_page,
+                        preview_page,
                         window,
                         cx,
                     )
@@ -873,6 +858,7 @@ impl SerializableItem for ComponentPreview {
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
         cx.background_spawn(async move {
+            println!("Cleaning up component preview");
             COMPONENT_PREVIEW_DB
                 .delete_unloaded_items(workspace_id, alive_items)
                 .await
@@ -887,9 +873,11 @@ impl SerializableItem for ComponentPreview {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
+        println!("serializing component preview page");
         let active_page = self.active_page_id(cx);
         let workspace_id = self.workspace_id?;
         Some(cx.background_spawn(async move {
+            println!("Serializing active page: {:?}", active_page);
             COMPONENT_PREVIEW_DB
                 .save_active_page(item_id, workspace_id, active_page.0)
                 .await
@@ -897,10 +885,17 @@ impl SerializableItem for ComponentPreview {
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
-        matches!(event, ItemEvent::UpdateTab)
+        let should_serialize = matches!(event, ItemEvent::UpdateTab);
+
+        if should_serialize {
+            println!("Should serialize component preview page");
+        }
+
+        should_serialize
     }
 }
 
+// TODO: use language registry to allow rendering markdown
 #[derive(IntoElement)]
 pub struct ComponentPreviewPage {
     // languages: Arc<LanguageRegistry>,
