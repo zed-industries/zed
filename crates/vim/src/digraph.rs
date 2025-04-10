@@ -68,7 +68,7 @@ impl Vim {
         if let Some(Operator::Literal { prefix }) = self.active_operator() {
             if let Some(prefix) = prefix {
                 let mapper = cx.keyboard_mapper();
-                if let Some(keystroke) = Keystroke::parse(&action.0, false, None, mapper).ok() {
+                if let Some(keystroke) = Keystroke::parse(&action.0, false, mapper).ok() {
                     window.defer(cx, |window, cx| {
                         window.dispatch_keystroke(keystroke, cx);
                     });

@@ -1,4 +1,3 @@
-use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -82,7 +81,6 @@ impl Keystroke {
     pub fn parse(
         source: &str,
         char_matching: bool,
-        key_equivalents: Option<&HashMap<char, char>>,
         keyboard_mapper: &dyn KeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut control = false;

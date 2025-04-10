@@ -4,7 +4,6 @@ use gpui::{
 };
 use itertools::Itertools;
 use serde_json::json;
-use settings::get_key_equivalents;
 use ui::{Button, ButtonStyle};
 use ui::{
     ButtonCommon, Clickable, Context, FluentBuilder, InteractiveElement, Label, LabelCommon,
@@ -173,7 +172,6 @@ impl Item for KeyContextView {
 impl Render for KeyContextView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         use itertools::Itertools;
-        let key_equivalents = get_key_equivalents(cx.keyboard_layout());
         v_flex()
             .id("key-context-view")
             .overflow_scroll()
@@ -281,18 +279,6 @@ impl Render for KeyContextView {
                                     .child(div().min_w(px(200.)).child(Label::new(name.clone())))
                                     .child(Label::new(predicate.clone()))
                                     .child(Label::new(text).color(color))
-                            }),
-                    )
-            })
-            .when_some(key_equivalents, |el, key_equivalents| {
-                el.child(Label::new("Key Equivalents").mt_4().size(LabelSize::Large))
-                    .child(Label::new("Shortcuts defined using some characters have been remapped so that shortcuts can be typed without holding option."))
-                    .children(
-                        key_equivalents
-                            .iter()
-                            .sorted()
-                            .map(|(key, equivalent)| {
-                                Label::new(format!("cmd-{} => cmd-{}", key, equivalent)).ml_8()
                             }),
                     )
             })

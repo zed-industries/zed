@@ -587,7 +587,7 @@ impl TerminalView {
 
     fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
         let mapper = cx.keyboard_mapper();
-        if let Some(keystroke) = Keystroke::parse(&text.0, false, None, mapper).log_err() {
+        if let Some(keystroke) = Keystroke::parse(&text.0, false, mapper).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);

@@ -1,7 +1,5 @@
 use std::rc::Rc;
 
-use collections::HashMap;
-
 use crate::{Action, InvalidKeystrokeError, KeyBindingContextPredicate, KeyboardMapper, Keystroke};
 use smallvec::SmallVec;
 
@@ -40,7 +38,6 @@ impl KeyBinding {
             Box::new(action),
             context_predicate,
             false,
-            None,
             keyboard_mapper,
         )
         .unwrap()
@@ -52,12 +49,11 @@ impl KeyBinding {
         action: Box<dyn Action>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         char_matching: bool,
-        key_equivalents: Option<&HashMap<char, char>>,
         keyboard_mapper: &dyn KeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
-            .map(|input| Keystroke::parse(input, char_matching, key_equivalents, keyboard_mapper))
+            .map(|input| Keystroke::parse(input, char_matching, keyboard_mapper))
             .collect::<std::result::Result<_, _>>()?;
 
         Ok(Self {

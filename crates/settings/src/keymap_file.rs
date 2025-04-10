@@ -195,8 +195,6 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        let layout = cx.keyboard_layout();
-        let key_equivalents = crate::key_equivalents::get_key_equivalents(&layout);
         let keyboard_mapper = cx.keyboard_mapper();
 
         if content.is_empty() {
@@ -240,12 +238,6 @@ impl KeymapFile {
                 }
             };
 
-            let key_equivalents = if *use_key_equivalents {
-                key_equivalents.as_ref()
-            } else {
-                None
-            };
-
             let mut section_errors = String::new();
 
             if !unrecognized_fields.is_empty() {
@@ -264,7 +256,6 @@ impl KeymapFile {
                         action,
                         context_predicate.clone(),
                         !(*use_key_equivalents),
-                        key_equivalents,
                         keyboard_mapper,
                         cx,
                     );
@@ -325,7 +316,6 @@ impl KeymapFile {
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
         char_matching: bool,
-        key_equivalents: Option<&HashMap<char, char>>,
         keyboard_mapper: &dyn KeyboardMapper,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
@@ -390,23 +380,17 @@ impl KeymapFile {
             },
         };
 
-        let key_binding = match KeyBinding::load(
-            keystrokes,
-            action,
-            context,
-            char_matching,
-            key_equivalents,
-            keyboard_mapper,
-        ) {
-            Ok(key_binding) => key_binding,
-            Err(InvalidKeystrokeError { keystroke }) => {
-                return Err(format!(
-                    "invalid keystroke {}. {}",
-                    inline_code_string(&keystroke),
-                    KEYSTROKE_PARSE_EXPECTED_MESSAGE
-                ));
-            }
-        };
+        let key_binding =
+            match KeyBinding::load(keystrokes, action, context, char_matching, keyboard_mapper) {
+                Ok(key_binding) => key_binding,
+                Err(InvalidKeystrokeError { keystroke }) => {
+                    return Err(format!(
+                        "invalid keystroke {}. {}",
+                        inline_code_string(&keystroke),
+                        KEYSTROKE_PARSE_EXPECTED_MESSAGE
+                    ));
+                }
+            };
 
         if let Some(validator) = KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
             match validator.validate(&key_binding) {
