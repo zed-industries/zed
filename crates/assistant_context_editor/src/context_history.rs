@@ -4,7 +4,7 @@ use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use ui::utils::{DateTimeType, format_distance_from_now};
-use ui::{Avatar, ListItem, ListItemSpacing, prelude::*};
+use ui::{Avatar, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{
@@ -258,6 +258,16 @@ impl PickerDelegate for SavedContextPickerDelegate {
                     ))
                     .color(Color::Muted)
                     .size(LabelSize::Small),
+                )
+                .child(
+                    IconButton::new("delete history item", IconName::TrashAlt)
+                        .tooltip(Tooltip::text("Delete conversation"))
+                        .on_click({
+                            let path = context.path.clone();
+                            move |_event, _window, _| {
+                                std::fs::remove_file(&path).unwrap_or_default()
+                            }
+                        }),
                 ),
         };
         Some(
