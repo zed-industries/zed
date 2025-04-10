@@ -1172,7 +1172,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -1347,7 +1347,7 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
 
     let (first_editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(first, cx),
             Some(project.clone()),
             window,
@@ -1357,7 +1357,7 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
 
     let (second_editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(second, cx),
             Some(project.clone()),
             window,

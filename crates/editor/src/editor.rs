@@ -401,6 +401,16 @@ pub enum EditorMode {
     Full,
 }
 
+impl EditorMode {
+    pub fn full() -> Self {
+        Self::Full
+    }
+
+    pub fn is_full(&self) -> bool {
+        matches!(self, Self::Full { .. })
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub enum SoftWrap {
     /// Prefer not to wrap at all.
@@ -1198,7 +1208,7 @@ impl Editor {
     pub fn multi_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, None, window, cx)
+        Self::new(EditorMode::full(), buffer, None, window, cx)
     }
 
     pub fn auto_width(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -1232,7 +1242,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, project, window, cx)
+        Self::new(EditorMode::full(), buffer, project, window, cx)
     }
 
     pub fn for_multibuffer(
@@ -1241,7 +1251,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new(EditorMode::Full, buffer, project, window, cx)
+        Self::new(EditorMode::full(), buffer, project, window, cx)
     }
 
     pub fn clone(&self, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -1329,7 +1339,7 @@ impl Editor {
             .then(|| language_settings::SoftWrap::None);
 
         let mut project_subscriptions = Vec::new();
-        if mode == EditorMode::Full {
+        if mode.is_full() {
             if let Some(project) = project.as_ref() {
                 project_subscriptions.push(cx.subscribe_in(
                     project,
@@ -1417,7 +1427,7 @@ impl Editor {
         };
 
         let breakpoint_store = match (mode, project.as_ref()) {
-            (EditorMode::Full, Some(project)) => Some(project.read(cx).breakpoint_store()),
+            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store()),
             _ => None,
         };
 
@@ -1468,7 +1478,7 @@ impl Editor {
             show_scrollbars: true,
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
-            show_gutter: mode == EditorMode::Full,
+            show_gutter: mode.is_full(),
             show_line_numbers: None,
             use_relative_line_numbers: None,
             show_git_diff_gutter: None,
@@ -1510,7 +1520,7 @@ impl Editor {
             collapse_matches: false,
             workspace: None,
             input_enabled: true,
-            use_modal_editing: mode == EditorMode::Full,
+            use_modal_editing: mode.is_full(),
             read_only: false,
             use_autoclose: true,
             use_auto_surround: true,
@@ -1527,7 +1537,7 @@ impl Editor {
             edit_prediction_preview: EditPredictionPreview::Inactive {
                 released_too_fast: false,
             },
-            inline_diagnostics_enabled: mode == EditorMode::Full,
+            inline_diagnostics_enabled: mode.is_full(),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -1635,7 +1645,7 @@ impl Editor {
         this.scroll_manager.show_scrollbars(window, cx);
         jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut this, &buffer, cx);
 
-        if mode == EditorMode::Full {
+        if mode.is_full() {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
 
@@ -1697,7 +1707,7 @@ impl Editor {
         let mode = match self.mode {
             EditorMode::SingleLine { .. } => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
-            EditorMode::Full => "full",
+            EditorMode::Full { .. } => "full",
         };
 
         if EditorSettings::jupyter_enabled(cx) {
@@ -1982,6 +1992,10 @@ impl Editor {
 
     pub fn mode(&self) -> EditorMode {
         self.mode
+    }
+
+    pub fn set_mode(&mut self, mode: EditorMode) {
+        self.mode = mode;
     }
 
     pub fn collaboration_hub(&self) -> Option<&dyn CollaborationHub> {
@@ -3006,7 +3020,7 @@ impl Editor {
             return;
         }
 
-        if self.mode == EditorMode::Full
+        if self.mode.is_full()
             && self.change_selections(Some(Autoscroll::fit()), window, cx, |s| s.try_cancel())
         {
             return;
@@ -3049,7 +3063,7 @@ impl Editor {
             return true;
         }
 
-        if self.mode == EditorMode::Full && self.active_diagnostics.is_some() {
+        if self.mode.is_full() && self.active_diagnostics.is_some() {
             self.dismiss_diagnostics(cx);
             return true;
         }
@@ -4037,7 +4051,7 @@ impl Editor {
     }
 
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
-        if self.semantics_provider.is_none() || self.mode != EditorMode::Full {
+        if self.semantics_provider.is_none() || !self.mode.is_full() {
             return;
         }
 
@@ -5545,7 +5559,7 @@ impl Editor {
         buffer_position: language::Anchor,
         cx: &App,
     ) -> EditPredictionSettings {
-        if self.mode != EditorMode::Full
+        if !self.mode.is_full()
             || !self.show_inline_completions_override.unwrap_or(true)
             || self.inline_completions_disabled_in_scope(buffer, buffer_position, cx)
         {
@@ -17258,7 +17272,7 @@ impl Editor {
         let project_settings = ProjectSettings::get_global(cx);
         self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
 
-        if self.mode == EditorMode::Full {
+        if self.mode.is_full() {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
             if self.show_inline_diagnostics != show_inline_diagnostics {
@@ -19542,7 +19556,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()
             },
-            EditorMode::Full => TextStyle {
+            EditorMode::Full { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
@@ -19560,7 +19574,7 @@ impl Render for Editor {
         let background = match self.mode {
             EditorMode::SingleLine { .. } => cx.theme().system().transparent,
             EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
-            EditorMode::Full => cx.theme().colors().editor_background,
+            EditorMode::Full { .. } => cx.theme().colors().editor_background,
         };
 
         EditorElement::new(
