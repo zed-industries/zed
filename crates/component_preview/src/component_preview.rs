@@ -2,6 +2,8 @@
 //!
 //! A view for exploring Zed components.
 
+mod persistence;
+
 use std::iter::Iterator;
 use std::sync::Arc;
 
@@ -16,6 +18,7 @@ use collections::HashMap;
 use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
+use persistence::COMPONENT_PREVIEW_DB;
 // Editor will be accessed through ui_input
 // We'll implement our own simple matching
 use project::Project;
@@ -91,6 +94,7 @@ enum PreviewPage {
 }
 
 struct ComponentPreview {
+    workspace_id: Option<WorkspaceId>,
     focus_handle: FocusHandle,
     _view_scroll_handle: ScrollHandle,
     nav_scroll_handle: UniformListScrollHandle,
@@ -121,7 +125,7 @@ impl ComponentPreview {
         let active_page = active_page.unwrap_or(PreviewPage::AllComponents);
         let filter_editor =
             cx.new(|cx| SingleLineInput::new(window, cx, "Find components or usages…"));
-        
+
         // We'll check for filter changes during rendering
 
         let component_list = ListState::new(
@@ -142,6 +146,7 @@ impl ComponentPreview {
         );
 
         let mut component_preview = Self {
+            workspace_id: None,
             focus_handle: cx.focus_handle(),
             _view_scroll_handle: ScrollHandle::new(),
             nav_scroll_handle: UniformListScrollHandle::new(),
@@ -166,6 +171,13 @@ impl ComponentPreview {
         component_preview
     }
 
+    pub fn active_page_id(&self, _cx: &App) -> ActivePageId {
+        match &self.active_page {
+            PreviewPage::AllComponents => ActivePageId("AllComponents".to_string()),
+            PreviewPage::Component(component_id) => ActivePageId(component_id.0.to_string()),
+        }
+    }
+
     fn scroll_to_preview(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.component_list.scroll_to_reveal_item(ix);
         self.cursor_index = ix;
@@ -174,32 +186,33 @@ impl ComponentPreview {
 
     fn set_active_page(&mut self, page: PreviewPage, cx: &mut Context<Self>) {
         self.active_page = page;
+        cx.emit(ItemEvent::UpdateTab);
         cx.notify();
     }
 
     fn get_component(&self, ix: usize) -> ComponentMetadata {
         self.components[ix].clone()
     }
-    
-    
 
-    
     fn filtered_components(&self) -> Vec<ComponentMetadata> {
         if self.filter_text.is_empty() {
             return self.components.clone();
         }
-        
+
         let filter = self.filter_text.to_lowercase();
         self.components
             .iter()
             .filter(|component| {
                 let component_name = component.name().to_lowercase();
                 let scope_name = component.scope().to_string().to_lowercase();
-                let description = component.description().map(|d| d.to_lowercase()).unwrap_or_default();
-                
-                component_name.contains(&filter) || 
-                scope_name.contains(&filter) || 
-                description.contains(&filter)
+                let description = component
+                    .description()
+                    .map(|d| d.to_lowercase())
+                    .unwrap_or_default();
+
+                component_name.contains(&filter)
+                    || scope_name.contains(&filter)
+                    || description.contains(&filter)
             })
             .cloned()
             .collect()
@@ -208,7 +221,10 @@ impl ComponentPreview {
     fn scope_ordered_entries(&self) -> Vec<PreviewEntry> {
         use std::collections::HashMap;
 
-        let mut scope_groups: HashMap<ComponentScope, Vec<(ComponentMetadata, Option<Vec<usize>>)>> = HashMap::default();
+        let mut scope_groups: HashMap<
+            ComponentScope,
+            Vec<(ComponentMetadata, Option<Vec<usize>>)>,
+        > = HashMap::default();
         let lowercase_filter = self.filter_text.to_lowercase();
 
         for component in &self.components {
@@ -220,29 +236,37 @@ impl ComponentPreview {
                     .push((component.clone(), None));
                 continue;
             }
-            
+
             // For filtering, check various component parts
             let full_component_name = component.name();
             let scopeless_name = component.scopeless_name();
             let scope_name = component.scope().to_string();
             let description = component.description().unwrap_or_default();
-            
+
             // Debug print component info
-            println!("[Filter Debug] Filter: '{}' | Component: '{}' (scopeless: '{}')", 
-                self.filter_text, full_component_name, scopeless_name);
-            
+            println!(
+                "[Filter Debug] Filter: '{}' | Component: '{}' (scopeless: '{}')",
+                self.filter_text, full_component_name, scopeless_name
+            );
+
             let lowercase_scopeless = scopeless_name.to_lowercase();
             let lowercase_scope = scope_name.to_lowercase();
             let lowercase_desc = description.to_lowercase();
-            
+
             // Try to match in the scopeless component name first
             if lowercase_scopeless.contains(&lowercase_filter) {
-                println!("[Filter Debug] '{}' contains '{}'", scopeless_name, self.filter_text);
+                println!(
+                    "[Filter Debug] '{}' contains '{}'",
+                    scopeless_name, self.filter_text
+                );
                 // Find positions for highlighting in the name
                 if let Some(index) = lowercase_scopeless.find(&lowercase_filter) {
-                    println!("[Filter Debug] Match at index {} in '{}'", index, scopeless_name);
+                    println!(
+                        "[Filter Debug] Match at index {} in '{}'",
+                        index, scopeless_name
+                    );
                     let end = index + lowercase_filter.len();
-                    
+
                     // Validate and ensure the range is valid
                     if end <= scopeless_name.len() {
                         // Create positions for each byte in the matched range
@@ -253,9 +277,12 @@ impl ComponentPreview {
                                 positions.push(i);
                             }
                         }
-                        
-                        println!("[Filter Debug] Positions for '{}': {:?}", scopeless_name, positions);
-                        
+
+                        println!(
+                            "[Filter Debug] Positions for '{}': {:?}",
+                            scopeless_name, positions
+                        );
+
                         if !positions.is_empty() {
                             scope_groups
                                 .entry(component.scope())
@@ -266,11 +293,12 @@ impl ComponentPreview {
                     }
                 }
             }
-            
+
             // If no name match or couldn't highlight, check other fields
-            if lowercase_scopeless.contains(&lowercase_filter) || 
-               lowercase_scope.contains(&lowercase_filter) || 
-               lowercase_desc.contains(&lowercase_filter) {
+            if lowercase_scopeless.contains(&lowercase_filter)
+                || lowercase_scope.contains(&lowercase_filter)
+                || lowercase_desc.contains(&lowercase_filter)
+            {
                 // We have a match but couldn't highlight properly
                 scope_groups
                     .entry(component.scope())
@@ -278,7 +306,7 @@ impl ComponentPreview {
                     .push((component.clone(), None));
             }
         }
-        
+
         // Sort the components in each group
         for components in scope_groups.values_mut() {
             components.sort_by_key(|(c, _)| c.sort_name());
@@ -340,7 +368,7 @@ impl ComponentPreview {
                 let id = component_metadata.id();
                 let selected = self.active_page == PreviewPage::Component(id.clone());
                 let name = component_metadata.scopeless_name();
-                
+
                 ListItem::new(ix)
                     .child(
                         if let Some(positions) = highlight_positions {
@@ -349,7 +377,7 @@ impl ComponentPreview {
                             // but we only display the scopeless name in the sidebar
                             // Need to discard the previous positions and calculate them based on the scopeless name
                             println!("[Filter Debug] Full positions {:?} are not valid for scopeless name '{}'", positions, name);
-                            
+
                             // Get positions for the scopeless name directly
                             let name_lower = name.to_lowercase();
                             let filter_lower = self.filter_text.to_lowercase();
@@ -359,9 +387,9 @@ impl ComponentPreview {
                             } else {
                                 Vec::new()
                             };
-                                
+
                             println!("[Filter Debug] RENDER: '{}' positions: {:?}, valid: {:?}", name, positions, valid_positions);
-                                
+
                             if valid_positions.is_empty() {
                                 // Fall back to regular label if no valid positions
                                 Label::new(name.clone()).color(Color::Default).into_any_element()
@@ -414,15 +442,16 @@ impl ComponentPreview {
         let entries = self.scope_ordered_entries();
         let new_len = entries.len();
         let weak_entity = cx.entity().downgrade();
-        
+
         // Reset the scroll position when the filter changes
         if new_len > 0 {
-            self.nav_scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+            self.nav_scroll_handle
+                .scroll_to_item(0, ScrollStrategy::Top);
         }
-        
+
         // Get filtered components for the main component list view
         let filtered_components = self.filtered_components();
-        
+
         // Update the component list for the 'All Components' view
         self.component_list = ListState::new(
             filtered_components.len(),
@@ -435,7 +464,7 @@ impl ComponentPreview {
                     if ix >= components.len() {
                         return div().w_full().h_0().into_any_element();
                     }
-                    
+
                     this.update(cx, |this, cx| {
                         let component = &components[ix];
                         this.render_preview(component, window, cx)
@@ -455,7 +484,7 @@ impl ComponentPreview {
                 if ix >= entries.len() {
                     return div().w_full().h_0().into_any_element();
                 }
-                
+
                 let entry = &entries[ix];
 
                 weak_entity
@@ -562,7 +591,7 @@ impl ComponentPreview {
                         .flex_grow()
                         .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                         .into_any_element()
-                }
+                },
             )
     }
 
@@ -616,7 +645,7 @@ impl Render for ComponentPreview {
                 input.editor().read(cx).text(cx).to_string()
             }
         });
-        
+
         if current_filter != self.filter_text {
             self.filter_text = current_filter;
             self.update_component_list(cx);
@@ -646,7 +675,11 @@ impl Render for ComponentPreview {
                                 range
                                     .filter_map(|ix| {
                                         if ix < sidebar_entries.len() {
-                                            Some(this.render_sidebar_entry(ix, &sidebar_entries[ix], cx))
+                                            Some(this.render_sidebar_entry(
+                                                ix,
+                                                &sidebar_entries[ix],
+                                                cx,
+                                            ))
                                         } else {
                                             None
                                         }
@@ -708,6 +741,14 @@ impl Focusable for ComponentPreview {
     }
 }
 
+pub struct ActivePageId(pub String);
+
+impl From<ComponentId> for ActivePageId {
+    fn from(id: ComponentId) -> Self {
+        ActivePageId(id.0.to_string())
+    }
+}
+
 impl Item for ComponentPreview {
     type Event = ItemEvent;
 
@@ -754,6 +795,15 @@ impl Item for ComponentPreview {
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
+
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.workspace_id = workspace.database_id();
+    }
 }
 
 impl SerializableItem for ComponentPreview {
@@ -793,31 +843,37 @@ impl SerializableItem for ComponentPreview {
     }
 
     fn cleanup(
-        _workspace_id: WorkspaceId,
-        _alive_items: Vec<ItemId>,
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
         _window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        Task::ready(Ok(()))
-        // window.spawn(cx, |_| {
-        // ...
-        // })
+        cx.background_spawn(async move {
+            COMPONENT_PREVIEW_DB
+                .delete_unloaded_items(workspace_id, alive_items)
+                .await
+        })
     }
 
     fn serialize(
         &mut self,
         _workspace: &mut Workspace,
-        _item_id: ItemId,
+        item_id: ItemId,
         _closing: bool,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
-        // TODO: Serialize the active index so we can re-open to the same place
-        None
+        let active_page = self.active_page_id(cx);
+        let workspace_id = self.workspace_id?;
+        Some(cx.background_spawn(async move {
+            COMPONENT_PREVIEW_DB
+                .save_active_page(item_id, workspace_id, active_page.0)
+                .await
+        }))
     }
 
-    fn should_serialize(&self, _event: &Self::Event) -> bool {
-        false
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        matches!(event, ItemEvent::UpdateTab)
     }
 }
 
