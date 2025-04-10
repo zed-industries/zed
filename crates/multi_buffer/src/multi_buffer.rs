@@ -7694,7 +7694,12 @@ impl ToOffset for Point {
 impl ToOffset for usize {
     #[track_caller]
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
-        assert!(*self <= snapshot.len(), "offset is out of range");
+        assert!(
+            *self <= snapshot.len(),
+            "offset {} is greater than the snapshot.len() {}",
+            *self,
+            snapshot.len(),
+        );
         *self
     }
 }

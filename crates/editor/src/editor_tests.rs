@@ -9679,9 +9679,9 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             buffer_marked_text: "before <edi|tor> after".into(),
             completion_text: "editor",
             expected_with_insert_mode: "before editorˇtor after".into(),
-            expected_with_replace_mode: "before ediˇtor after".into(),
-            expected_with_replace_subsequence_mode: "before ediˇtor after".into(),
-            expected_with_replace_suffix_mode: "before ediˇtor after".into(),
+            expected_with_replace_mode: "before editorˇ after".into(),
+            expected_with_replace_subsequence_mode: "before editorˇ after".into(),
+            expected_with_replace_suffix_mode: "before editorˇ after".into(),
         },
         Run {
             run_description: "End of word matches completion text -- cursor at end",
@@ -9729,9 +9729,9 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             buffer_marked_text: "[<el|element>]".into(),
             completion_text: "element",
             expected_with_insert_mode: "[elementˇelement]".into(),
-            expected_with_replace_mode: "[elˇement]".into(),
+            expected_with_replace_mode: "[elementˇ]".into(),
             expected_with_replace_subsequence_mode: "[elementˇelement]".into(),
-            expected_with_replace_suffix_mode: "[elˇement]".into(),
+            expected_with_replace_suffix_mode: "[elementˇ]".into(),
         },
         Run {
             run_description: "Ends with matching suffix",
@@ -9921,6 +9921,86 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
             .unwrap()
     });
     cx.assert_editor_state(&expected_with_insert_mode);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_completion_replacing_suffix_in_multicursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let initial_state = indoc! {"
+        1. buf.to_offˇsuffix
+        2. buf.to_offˇsuf
+        3. buf.to_offˇfix
+        4. buf.to_offˇ
+        5. into_offˇensive
+        6. ˇsuffix
+        7. let ˇ //
+        8. aaˇzz
+
+        buf.to_offˇsuffix  // newest cursor
+    "};
+    let completion_marked_buffer = indoc! {"
+        1. buf.to_offsuffix
+        2. buf.to_offsuf
+        3. buf.to_offfix
+        4. buf.to_off
+        5. into_offensive
+        6. suffix
+        7. let  //
+        8. aazz
+
+        buf.<to_off|suffix>  // newest cursor
+    "};
+    let completion_text = "to_offset";
+    let expected = indoc! {"
+        1. buf.to_offsetˇ
+        2. buf.to_offsetˇsuf
+        3. buf.to_offsetˇfix
+        4. buf.to_offsetˇ
+        5. into_offsetˇensive
+        6. to_offsetˇsuffix
+        7. let to_offsetˇ //
+        8. aato_offsetˇzz
+
+        buf.to_offsetˇ  // newest cursor
+    "};
+
+    cx.set_state(initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        completion_marked_buffer,
+        vec![completion_text],
+        counter.clone(),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(expected);
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 }
