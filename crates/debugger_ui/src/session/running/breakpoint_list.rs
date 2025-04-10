@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use dap::ExceptionBreakpointsFilter;
 use editor::Editor;
 use gpui::{AppContext, Entity, ListState, MouseButton, Stateful, WeakEntity, list};
 use language::Point;
@@ -145,18 +146,30 @@ impl Render for BreakpointList {
                 let weak = weak.clone();
                 let line = format!("Line {}", breakpoint.row + 1).into();
                 Some(BreakpointEntry {
-                    kind: BreakpointEntryKind::LineBreakpoint {
+                    kind: BreakpointEntryKind::LineBreakpoint(LineBreakpoint {
                         name,
                         dir,
                         line,
                         breakpoint,
-                    },
+                    }),
                     weak,
                 })
             })
         });
-
-        self.breakpoints.extend(breakpoints);
+        let exception_breakpoints =
+            self.session
+                .read(cx)
+                .exception_breakpoints()
+                .map(|(data, is_enabled)| BreakpointEntry {
+                    kind: BreakpointEntryKind::ExceptionBreakpoint(ExceptionBreakpoint {
+                        id: data.filter.clone(),
+                        data: data.clone(),
+                        is_enabled: *is_enabled,
+                    }),
+                    weak: weak.clone(),
+                });
+        self.breakpoints
+            .extend(breakpoints.chain(exception_breakpoints));
         if self.breakpoints.len() != old_len {
             self.list_state.reset(self.breakpoints.len());
         }
@@ -166,37 +179,27 @@ impl Render for BreakpointList {
             .child(self.render_vertical_scrollbar(cx))
     }
 }
-
 #[derive(Clone, Debug)]
-enum BreakpointEntryKind {
-    LineBreakpoint {
-        name: SharedString,
-        dir: Option<SharedString>,
-        line: SharedString,
-        breakpoint: SourceBreakpoint,
-    },
+struct LineBreakpoint {
+    name: SharedString,
+    dir: Option<SharedString>,
+    line: SharedString,
+    breakpoint: SourceBreakpoint,
 }
 
-#[derive(Clone, Debug)]
-struct BreakpointEntry {
-    kind: BreakpointEntryKind,
-    weak: WeakEntity<BreakpointList>,
-}
-impl RenderOnce for BreakpointEntry {
-    fn render(self, _: &mut ui::Window, _: &mut App) -> impl ui::IntoElement {
-        let BreakpointEntryKind::LineBreakpoint {
+impl LineBreakpoint {
+    fn render(self, weak: WeakEntity<BreakpointList>) -> ListItem {
+        let LineBreakpoint {
             name,
             dir,
             line,
             breakpoint,
-        } = self.kind;
-
+        } = self;
         let icon_name = if breakpoint.state.is_enabled() {
             IconName::DebugBreakpoint
         } else {
             IconName::DebugDisabledBreakpoint
         };
-        let weak = self.weak;
         let path = breakpoint.path;
         let indicator = div()
             .child(Indicator::icon(Icon::new(icon_name)).color(Color::Debugger))
@@ -279,5 +282,55 @@ impl RenderOnce for BreakpointEntry {
                         .line_height_style(ui::LineHeightStyle::UiLabel),
                 ),
         )
+    }
+}
+#[derive(Clone, Debug)]
+struct ExceptionBreakpoint {
+    id: String,
+    data: ExceptionBreakpointsFilter,
+    is_enabled: bool,
+}
+
+impl ExceptionBreakpoint {
+    fn render(self, _: WeakEntity<BreakpointList>) -> ListItem {
+        let color = if self.is_enabled {
+            Color::Debugger
+        } else {
+            Color::Muted
+        };
+        ListItem::new(SharedString::from(format!(
+            "exception-breakpoint-ui-item-{}",
+            self.id
+        )))
+        .rounded()
+        .start_slot(Indicator::icon(Icon::new(IconName::Flame)).color(color))
+        .child(
+            Label::new(self.data.label)
+                .size(LabelSize::Small)
+                .line_height_style(ui::LineHeightStyle::UiLabel),
+        )
+    }
+}
+#[derive(Clone, Debug)]
+enum BreakpointEntryKind {
+    LineBreakpoint(LineBreakpoint),
+    ExceptionBreakpoint(ExceptionBreakpoint),
+}
+
+#[derive(Clone, Debug)]
+struct BreakpointEntry {
+    kind: BreakpointEntryKind,
+    weak: WeakEntity<BreakpointList>,
+}
+impl RenderOnce for BreakpointEntry {
+    fn render(self, _: &mut ui::Window, _: &mut App) -> impl ui::IntoElement {
+        match self.kind {
+            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                line_breakpoint.render(self.weak)
+            }
+            BreakpointEntryKind::ExceptionBreakpoint(exception_breakpoint) => {
+                exception_breakpoint.render(self.weak)
+            }
+        }
     }
 }

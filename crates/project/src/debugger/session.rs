@@ -771,6 +771,8 @@ impl ThreadStates {
 }
 const MAX_TRACKED_OUTPUT_EVENTS: usize = 5000;
 
+type IsEnabled = bool;
+
 #[derive(Copy, Clone, Default, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub struct OutputToken(pub usize);
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
@@ -792,7 +794,7 @@ pub struct Session {
     locations: HashMap<u64, dap::LocationsResponse>,
     is_session_terminated: bool,
     requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
-    exception_breakpoints: HashMap<String, (ExceptionBreakpointsFilter, bool)>,
+    exception_breakpoints: HashMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     _background_tasks: Vec<Task<()>>,
 }
 
@@ -1483,6 +1485,12 @@ impl Session {
             // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
             unimplemented!()
         }
+    }
+
+    pub fn exception_breakpoints(
+        &self,
+    ) -> impl Iterator<Item = &(ExceptionBreakpointsFilter, IsEnabled)> {
+        self.exception_breakpoints.values()
     }
 
     pub fn breakpoints_enabled(&self) -> bool {
