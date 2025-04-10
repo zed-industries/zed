@@ -36,7 +36,7 @@ use ui::{
     IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
 };
 use util::ResultExt;
-use workspace::{BottomDockLayout, SetBottomDockLayout, Workspace, notifications::NotifyResultExt};
+use workspace::{BottomDockLayout, Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
@@ -635,89 +635,84 @@ impl TitleBar {
             )
             .anchor(gpui::Corner::TopRight)
             .menu(move |window, cx| {
-                ContextMenu::build(window, cx, move |menu, _, _| {
-                    menu.label("Bottom Dock")
-                        .separator()
-                        .toggleable_entry(
-                            "Contained",
-                            current_layout == BottomDockLayout::Contained,
-                            ui::IconPosition::End,
-                            Some(
-                                SetBottomDockLayout {
-                                    layout: BottomDockLayout::Contained,
-                                }
-                                .boxed_clone(),
-                            ),
-                            |window, cx| {
-                                window.dispatch_action(
-                                    SetBottomDockLayout {
-                                        layout: BottomDockLayout::Contained,
+                ContextMenu::build(window, cx, {
+                    let workspace = workspace.clone();
+                    move |menu, _, _| {
+                        menu.label("Bottom Dock")
+                            .separator()
+                            .toggleable_entry(
+                                "Contained",
+                                current_layout == BottomDockLayout::Contained,
+                                ui::IconPosition::End,
+                                None,
+                                {
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace.set_bottom_dock_layout(
+                                                BottomDockLayout::Contained,
+                                                window,
+                                                cx,
+                                            );
+                                        });
                                     }
-                                    .boxed_clone(),
-                                    cx,
-                                )
-                            },
-                        )
-                        .toggleable_entry(
-                            "Full",
-                            current_layout == BottomDockLayout::Full,
-                            ui::IconPosition::End,
-                            Some(
-                                SetBottomDockLayout {
-                                    layout: BottomDockLayout::Full,
-                                }
-                                .boxed_clone(),
-                            ),
-                            |window, cx| {
-                                window.dispatch_action(
-                                    SetBottomDockLayout {
-                                        layout: BottomDockLayout::Full,
+                                },
+                            )
+                            .toggleable_entry(
+                                "Full",
+                                current_layout == BottomDockLayout::Full,
+                                ui::IconPosition::End,
+                                None,
+                                {
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace.set_bottom_dock_layout(
+                                                BottomDockLayout::Full,
+                                                window,
+                                                cx,
+                                            );
+                                        });
                                     }
-                                    .boxed_clone(),
-                                    cx,
-                                )
-                            },
-                        )
-                        .toggleable_entry(
-                            "Left Aligned",
-                            current_layout == BottomDockLayout::LeftAligned,
-                            ui::IconPosition::End,
-                            Some(
-                                SetBottomDockLayout {
-                                    layout: BottomDockLayout::LeftAligned,
-                                }
-                                .boxed_clone(),
-                            ),
-                            |window, cx| {
-                                window.dispatch_action(
-                                    SetBottomDockLayout {
-                                        layout: BottomDockLayout::LeftAligned,
+                                },
+                            )
+                            .toggleable_entry(
+                                "Left Aligned",
+                                current_layout == BottomDockLayout::LeftAligned,
+                                ui::IconPosition::End,
+                                None,
+                                {
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace.set_bottom_dock_layout(
+                                                BottomDockLayout::LeftAligned,
+                                                window,
+                                                cx,
+                                            );
+                                        });
                                     }
-                                    .boxed_clone(),
-                                    cx,
-                                )
-                            },
-                        )
-                        .toggleable_entry(
-                            "Right Aligned",
-                            current_layout == BottomDockLayout::RightAligned,
-                            ui::IconPosition::End,
-                            Some(
-                                SetBottomDockLayout {
-                                    layout: BottomDockLayout::RightAligned,
-                                }
-                                .boxed_clone(),
-                            ),
-                            |window, cx| {
-                                window.dispatch_action(
-                                    SetBottomDockLayout {
-                                        layout: BottomDockLayout::RightAligned,
+                                },
+                            )
+                            .toggleable_entry(
+                                "Right Aligned",
+                                current_layout == BottomDockLayout::RightAligned,
+                                ui::IconPosition::End,
+                                None,
+                                {
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace.set_bottom_dock_layout(
+                                                BottomDockLayout::RightAligned,
+                                                window,
+                                                cx,
+                                            );
+                                        });
                                     }
-                                    .boxed_clone(),
-                                    cx,
-                                )
-                            },
-                        )
+                                },
+                            )
+                    }
                 })
                 .into()
             })

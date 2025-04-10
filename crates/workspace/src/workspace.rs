@@ -185,13 +185,6 @@ pub struct MoveItemToPane {
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct SetBottomDockLayout {
-    #[serde(default)]
-    pub layout: BottomDockLayout,
-}
-
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
@@ -254,7 +247,6 @@ impl_actions!(
         Save,
         SaveAll,
         SendKeystrokes,
-        SetBottomDockLayout
     ]
 );
 
@@ -5017,11 +5009,6 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ToggleBottomDock, window, cx| {
                     workspace.toggle_dock(DockPosition::Bottom, window, cx);
-                },
-            ))
-            .on_action(cx.listener(
-                |workspace: &mut Workspace, action: &SetBottomDockLayout, window, cx| {
-                    workspace.set_bottom_dock_layout(action.layout, window, cx);
                 },
             ))
             .on_action(
