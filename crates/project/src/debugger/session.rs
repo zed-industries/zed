@@ -5,9 +5,9 @@ use super::dap_command::{
     self, Attach, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand,
     EvaluateCommand, Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand,
     ModulesCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
-    ScopesCommand, SetVariableValueCommand, StackTraceCommand, StepBackCommand, StepCommand,
-    StepInCommand, StepOutCommand, TerminateCommand, TerminateThreadsCommand, ThreadsCommand,
-    VariablesCommand,
+    ScopesCommand, SetExceptionBreakpoints, SetVariableValueCommand, StackTraceCommand,
+    StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
+    TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{Context as _, Result, anyhow};
@@ -21,7 +21,10 @@ use dap::{
     client::{DebugAdapterClient, SessionId},
     messages::{Events, Message},
 };
-use dap::{DapRegistry, DebugRequestType, OutputEventCategory};
+use dap::{
+    DapRegistry, DebugRequestType, ExceptionBreakpointsFilter, ExceptionFilterOptions,
+    OutputEventCategory,
+};
 use futures::channel::oneshot;
 use futures::{FutureExt, future::Shared};
 use gpui::{
@@ -451,7 +454,31 @@ impl LocalMode {
         })
     }
 
-    fn send_all_breakpoints(&self, ignore_breakpoints: bool, cx: &App) -> Task<()> {
+    fn send_exception_breakpoints(
+        &self,
+        filters: Vec<ExceptionBreakpointsFilter>,
+        supports_filter_options: bool,
+        cx: &App,
+    ) -> Task<Result<Vec<dap::Breakpoint>>> {
+        let arg = if supports_filter_options {
+            SetExceptionBreakpoints::WithOptions {
+                filters: filters
+                    .into_iter()
+                    .map(|filter| ExceptionFilterOptions {
+                        filter_id: filter.filter,
+                        condition: None,
+                        mode: None,
+                    })
+                    .collect(),
+            }
+        } else {
+            SetExceptionBreakpoints::Plain {
+                filters: filters.into_iter().map(|filter| filter.filter).collect(),
+            }
+        };
+        self.request(arg, cx.background_executor().clone())
+    }
+    fn send_source_breakpoints(&self, ignore_breakpoints: bool, cx: &App) -> Task<()> {
         let mut breakpoint_tasks = Vec::new();
         let breakpoints = self
             .breakpoint_store
@@ -583,15 +610,37 @@ impl LocalMode {
         };
 
         let configuration_done_supported = ConfigurationDone::is_supported(capabilities);
-
+        let exception_filters = capabilities
+            .exception_breakpoint_filters
+            .as_ref()
+            .map(|exception_filters| {
+                exception_filters
+                    .iter()
+                    .filter(|filter| filter.default == Some(true))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let supports_exception_filters = capabilities
+            .supports_exception_filter_options
+            .unwrap_or_default();
         let configuration_sequence = cx.spawn({
             let this = self.clone();
             async move |cx| {
                 initialized_rx.await?;
                 // todo(debugger) figure out if we want to handle a breakpoint response error
                 // This will probably consist of letting a user know that breakpoints failed to be set
-                cx.update(|cx| this.send_all_breakpoints(false, cx))?.await;
-
+                cx.update(|cx| this.send_source_breakpoints(false, cx))?
+                    .await;
+                cx.update(|cx| {
+                    this.send_exception_breakpoints(
+                        exception_filters,
+                        supports_exception_filters,
+                        cx,
+                    )
+                })?
+                .await
+                .ok();
                 if configuration_done_supported {
                     this.request(ConfigurationDone {}, cx.background_executor().clone())
                 } else {
@@ -743,6 +792,7 @@ pub struct Session {
     locations: HashMap<u64, dap::LocationsResponse>,
     is_session_terminated: bool,
     requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
+    exception_breakpoints: HashMap<String, (ExceptionBreakpointsFilter, bool)>,
     _background_tasks: Vec<Task<()>>,
 }
 
@@ -951,6 +1001,7 @@ impl Session {
             _background_tasks: Vec::default(),
             locations: Default::default(),
             is_session_terminated: false,
+            exception_breakpoints: Default::default(),
         }
     }
 
@@ -1017,6 +1068,18 @@ impl Session {
                     let capabilities = capabilities.await?;
                     this.update(cx, |session, _| {
                         session.capabilities = capabilities;
+                        let filters = session
+                            .capabilities
+                            .exception_breakpoint_filters
+                            .clone()
+                            .unwrap_or_default();
+                        for filter in filters {
+                            let default = filter.default.unwrap_or_default();
+                            session
+                                .exception_breakpoints
+                                .entry(filter.filter.clone())
+                                .or_insert_with(|| (filter, default));
+                        }
                     })?;
                     Ok(())
                 })
@@ -1415,7 +1478,7 @@ impl Session {
         self.ignore_breakpoints = ignore;
 
         if let Some(local) = self.as_local() {
-            local.send_all_breakpoints(ignore, cx)
+            local.send_source_breakpoints(ignore, cx)
         } else {
             // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
             unimplemented!()
@@ -2035,6 +2098,7 @@ fn create_local_session(
         threads: IndexMap::default(),
         stack_frames: IndexMap::default(),
         locations: Default::default(),
+        exception_breakpoints: Default::default(),
         _background_tasks,
         is_session_terminated: false,
     }

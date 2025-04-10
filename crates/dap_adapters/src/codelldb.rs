@@ -105,6 +105,12 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         Ok(DebugAdapterBinary {
             command,
             cwd: Some(adapter_dir),
+            arguments: Some(vec![
+                "--settings".into(),
+                json!({"sourceLanguages": ["cpp", "rust"]})
+                    .to_string()
+                    .into(),
+            ]),
             ..Default::default()
         })
     }
