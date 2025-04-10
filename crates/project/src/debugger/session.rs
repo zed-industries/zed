@@ -35,6 +35,7 @@ use serde_json::{Value, json};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::any::TypeId;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::u64;
 use std::{
@@ -794,7 +795,7 @@ pub struct Session {
     locations: HashMap<u64, dap::LocationsResponse>,
     is_session_terminated: bool,
     requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
-    exception_breakpoints: HashMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
+    exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     _background_tasks: Vec<Task<()>>,
 }
 
@@ -1493,9 +1494,30 @@ impl Session {
         self.exception_breakpoints.values()
     }
 
-    pub fn toggle_exception_breakpoint(&mut self, id: &str) {
+    pub fn toggle_exception_breakpoint(&mut self, id: &str, cx: &App) {
         if let Some((_, is_enabled)) = self.exception_breakpoints.get_mut(id) {
             *is_enabled = !*is_enabled;
+            self.send_exception_breakpoints(cx);
+        }
+    }
+
+    fn send_exception_breakpoints(&mut self, cx: &App) {
+        if let Some(local) = self.as_local() {
+            let exception_filters = self
+                .exception_breakpoints
+                .values()
+                .filter_map(|(filter, is_enabled)| is_enabled.then(|| filter.clone()))
+                .collect();
+
+            let supports_exception_filters = self
+                .capabilities
+                .supports_exception_filter_options
+                .unwrap_or_default();
+            local
+                .send_exception_breakpoints(exception_filters, supports_exception_filters, cx)
+                .detach_and_log_err(cx);
+        } else {
+            debug_assert!(false, "Not implemented");
         }
     }
 

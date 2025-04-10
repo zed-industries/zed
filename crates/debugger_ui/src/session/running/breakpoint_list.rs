@@ -203,6 +203,11 @@ impl LineBreakpoint {
         };
         let path = breakpoint.path;
         let indicator = div()
+            .id(SharedString::from(format!(
+                "breakpoint-ui-toggle-{:?}/{}:{}",
+                dir, name, line
+            )))
+            .on_click(|_, _, _| {})
             .child(Indicator::icon(Icon::new(icon_name)).color(Color::Debugger))
             .on_mouse_down(MouseButton::Left, move |_, _, _| {});
         ListItem::new(SharedString::from(format!(
@@ -211,54 +216,60 @@ impl LineBreakpoint {
         )))
         .start_slot(indicator)
         .rounded()
-        .on_click(move |_, window, cx| {
-            let path = path.clone();
-            let weak = weak.clone();
-            let row = breakpoint.row;
-            maybe!({
-                let task = weak
-                    .update(cx, |this, cx| {
-                        this.worktree_store
-                            .update(cx, |this, cx| this.find_or_create_worktree(path, false, cx))
-                    })
-                    .ok()?;
-                window
-                    .spawn(cx, async move |cx| {
-                        let (worktree, relative_path) = task.await?;
-                        let worktree_id = worktree.update(cx, |this, _| this.id())?;
-                        let item = weak
-                            .update_in(cx, |this, window, cx| {
-                                this.workspace.update(cx, |this, cx| {
-                                    this.open_path(
-                                        (worktree_id, relative_path),
-                                        None,
-                                        true,
-                                        window,
-                                        cx,
-                                    )
-                                })
-                            })??
-                            .await?;
-                        if let Some(editor) = item.downcast::<Editor>() {
-                            editor
-                                .update_in(cx, |this, window, cx| {
-                                    this.go_to_singleton_buffer_point(
-                                        Point { row, column: 0 },
-                                        window,
-                                        cx,
-                                    );
-                                })
-                                .ok();
-                        }
-                        Result::<_, anyhow::Error>::Ok(())
-                    })
-                    .detach();
-
-                Some(())
-            });
-        })
         .child(
             v_flex()
+                .id(SharedString::from(format!(
+                    "breakpoint-ui-on-click-go-to-line-{:?}/{}:{}",
+                    dir, name, line
+                )))
+                .on_click(move |_, window, cx| {
+                    let path = path.clone();
+                    let weak = weak.clone();
+                    let row = breakpoint.row;
+                    maybe!({
+                        let task = weak
+                            .update(cx, |this, cx| {
+                                this.worktree_store.update(cx, |this, cx| {
+                                    this.find_or_create_worktree(path, false, cx)
+                                })
+                            })
+                            .ok()?;
+                        window
+                            .spawn(cx, async move |cx| {
+                                let (worktree, relative_path) = task.await?;
+                                let worktree_id = worktree.update(cx, |this, _| this.id())?;
+                                let item = weak
+                                    .update_in(cx, |this, window, cx| {
+                                        this.workspace.update(cx, |this, cx| {
+                                            this.open_path(
+                                                (worktree_id, relative_path),
+                                                None,
+                                                true,
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                    })??
+                                    .await?;
+                                if let Some(editor) = item.downcast::<Editor>() {
+                                    editor
+                                        .update_in(cx, |this, window, cx| {
+                                            this.go_to_singleton_buffer_point(
+                                                Point { row, column: 0 },
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                                Result::<_, anyhow::Error>::Ok(())
+                            })
+                            .detach();
+
+                        Some(())
+                    });
+                })
+                .cursor_pointer()
                 .py_1()
                 .items_center()
                 .child(
@@ -313,8 +324,8 @@ impl ExceptionBreakpoint {
                 )))
                 .on_click(move |_, _, cx| {
                     list.update(cx, |this, cx| {
-                        this.session.update(cx, |this, _| {
-                            this.toggle_exception_breakpoint(&id);
+                        this.session.update(cx, |this, cx| {
+                            this.toggle_exception_breakpoint(&id, cx);
                         });
                         cx.notify();
                     })
