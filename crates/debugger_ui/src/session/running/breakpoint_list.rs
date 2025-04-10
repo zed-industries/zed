@@ -5,7 +5,10 @@ use gpui::{AppContext, Entity, ListState, MouseButton, Stateful, WeakEntity, lis
 use language::Point;
 use project::{
     Project,
-    debugger::breakpoint_store::{BreakpointStore, SourceBreakpoint},
+    debugger::{
+        breakpoint_store::{BreakpointStore, SourceBreakpoint},
+        session::Session,
+    },
     worktree_store::WorktreeStore,
 };
 use ui::{
@@ -23,10 +26,12 @@ pub(super) struct BreakpointList {
     list_state: ListState,
     scrollbar_state: ScrollbarState,
     breakpoints: Vec<BreakpointEntry>,
+    session: Entity<Session>,
 }
 
 impl BreakpointList {
     pub(super) fn new(
+        session: Entity<Session>,
         workspace: WeakEntity<Workspace>,
         project: &Entity<Project>,
         cx: &mut App,
@@ -58,6 +63,7 @@ impl BreakpointList {
                 list_state,
                 breakpoints: Default::default(),
                 workspace,
+                session,
             }
         })
     }

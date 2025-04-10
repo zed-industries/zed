@@ -323,7 +323,7 @@ impl RunningState {
                 window,
                 cx,
             );
-            let breakpoints = BreakpointList::new(workspace.clone(), &project, cx);
+            let breakpoints = BreakpointList::new(session.clone(), workspace.clone(), &project, cx);
             this.add_item(
                 Box::new(SubView::new(
                     this.focus_handle(cx),
