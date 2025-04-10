@@ -9,14 +9,14 @@ use client::UserStore;
 use component::{ComponentId, ComponentMetadata, components};
 use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window, list, prelude::*,
-    uniform_list,
 };
 
 use collections::HashMap;
 
-use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
+use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
+// Editor will be accessed through ui_input
 use project::Project;
 use ui::{Divider, ListItem, ListSubHeader, prelude::*};
 
@@ -102,6 +102,7 @@ struct ComponentPreview {
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
     filter_editor: Entity<SingleLineInput>,
+    filter_text: String,
 }
 
 impl ComponentPreview {
@@ -119,6 +120,8 @@ impl ComponentPreview {
         let active_page = active_page.unwrap_or(PreviewPage::AllComponents);
         let filter_editor =
             cx.new(|cx| SingleLineInput::new(window, cx, "Find components or usages…"));
+        
+        // We'll check for filter changes during rendering
 
         let component_list = ListState::new(
             sorted_components.len(),
@@ -150,6 +153,7 @@ impl ComponentPreview {
             component_list,
             cursor_index: selected_index,
             filter_editor,
+            filter_text: String::new(),
         };
 
         if component_preview.cursor_index > 0 {
@@ -175,13 +179,48 @@ impl ComponentPreview {
     fn get_component(&self, ix: usize) -> ComponentMetadata {
         self.components[ix].clone()
     }
+    
+    fn filtered_components(&self) -> Vec<ComponentMetadata> {
+        if self.filter_text.is_empty() {
+            return self.components.clone();
+        }
+        
+        let filter = self.filter_text.to_lowercase();
+        self.components
+            .iter()
+            .filter(|component| {
+                let component_name = component.name().to_lowercase();
+                let scope_name = component.scope().to_string().to_lowercase();
+                let description = component.description().map(|d| d.to_lowercase()).unwrap_or_default();
+                
+                component_name.contains(&filter) || 
+                scope_name.contains(&filter) || 
+                description.contains(&filter)
+            })
+            .cloned()
+            .collect()
+    }
 
     fn scope_ordered_entries(&self) -> Vec<PreviewEntry> {
         use std::collections::HashMap;
 
         let mut scope_groups: HashMap<ComponentScope, Vec<ComponentMetadata>> = HashMap::default();
+        let filter = self.filter_text.to_lowercase();
 
+        // Filter components based on filter_text
         for component in &self.components {
+            let component_name = component.name().to_lowercase();
+            let scope_name = component.scope().to_string().to_lowercase();
+            let description = component.description().map(|d| d.to_lowercase()).unwrap_or_default();
+            
+            // Skip components that don't match the filter text
+            if !filter.is_empty() && 
+               !component_name.contains(&filter) && 
+               !scope_name.contains(&filter) && 
+               !description.contains(&filter) {
+                continue;
+            }
+            
             scope_groups
                 .entry(component.scope())
                 .or_insert_with(Vec::new)
@@ -289,15 +328,51 @@ impl ComponentPreview {
     }
 
     fn update_component_list(&mut self, cx: &mut Context<Self>) {
-        let new_len = self.scope_ordered_entries().len();
         let entries = self.scope_ordered_entries();
+        let new_len = entries.len();
         let weak_entity = cx.entity().downgrade();
+        
+        // Reset the scroll position when the filter changes
+        if new_len > 0 {
+            self.nav_scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+        }
+        
+        // Get filtered components for the main component list view
+        let filtered_components = self.filtered_components();
+        
+        // Update the component list for the 'All Components' view
+        self.component_list = ListState::new(
+            filtered_components.len(),
+            gpui::ListAlignment::Top,
+            px(1500.0),
+            {
+                let components = filtered_components.clone();
+                let this = cx.entity().downgrade();
+                move |ix, window: &mut Window, cx: &mut App| {
+                    if ix >= components.len() {
+                        return div().w_full().h_0().into_any_element();
+                    }
+                    
+                    this.update(cx, |this, cx| {
+                        let component = &components[ix];
+                        this.render_preview(component, window, cx)
+                            .into_any_element()
+                    })
+                    .unwrap()
+                }
+            },
+        );
 
+        // Create list for sidebar navigation
         let new_list = ListState::new(
             new_len,
             gpui::ListAlignment::Top,
             px(1500.0),
             move |ix, window, cx| {
+                if ix >= entries.len() {
+                    return div().w_full().h_0().into_any_element();
+                }
+                
                 let entry = &entries[ix];
 
                 weak_entity
@@ -384,16 +459,27 @@ impl ComponentPreview {
             .into_any_element()
     }
 
-    fn render_all_components(&self) -> impl IntoElement {
+    fn render_all_components(&self, cx: &Context<Self>) -> impl IntoElement {
         v_flex()
             .id("component-list")
             .px_8()
             .pt_4()
             .size_full()
             .child(
-                list(self.component_list.clone())
-                    .flex_grow()
-                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto),
+                if self.filtered_components().is_empty() && !self.filter_text.is_empty() {
+                    div()
+                        .size_full()
+                        .items_center()
+                        .justify_center()
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(format!("No components matching '{}'.", self.filter_text))
+                        .into_any_element()
+                } else {
+                    list(self.component_list.clone())
+                        .flex_grow()
+                        .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                        .into_any_element()
+                }
             )
     }
 
@@ -439,6 +525,19 @@ impl ComponentPreview {
 
 impl Render for ComponentPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Check for filter changes
+        let current_filter = self.filter_editor.update(cx, |input, cx| {
+            if input.is_empty(cx) {
+                String::new()
+            } else {
+                input.editor().read(cx).text(cx).to_string()
+            }
+        });
+        
+        if current_filter != self.filter_text {
+            self.filter_text = current_filter;
+            self.update_component_list(cx);
+        }
         let sidebar_entries = self.scope_ordered_entries();
         let active_page = self.active_page.clone();
 
@@ -456,14 +555,18 @@ impl Render for ComponentPreview {
                     .border_color(cx.theme().colors().border)
                     .h_full()
                     .child(
-                        uniform_list(
+                        gpui::uniform_list(
                             cx.entity().clone(),
                             "component-nav",
                             sidebar_entries.len(),
                             move |this, range, _window, cx| {
                                 range
-                                    .map(|ix| {
-                                        this.render_sidebar_entry(ix, &sidebar_entries[ix], cx)
+                                    .filter_map(|ix| {
+                                        if ix < sidebar_entries.len() {
+                                            Some(this.render_sidebar_entry(ix, &sidebar_entries[ix], cx))
+                                        } else {
+                                            None
+                                        }
                                     })
                                     .collect()
                             },
@@ -504,7 +607,7 @@ impl Render for ComponentPreview {
                     )
                     .child(match active_page {
                         PreviewPage::AllComponents => {
-                            self.render_all_components().into_any_element()
+                            self.render_all_components(cx).into_any_element()
                         }
                         PreviewPage::Component(id) => self
                             .render_component_page(&id, window, cx)
