@@ -20,13 +20,14 @@ use notifications::status_toast::{StatusToast, ToastIcon};
 use project::Project;
 use ui::{Divider, ListItem, ListSubHeader, prelude::*};
 
+use ui_input::SingleLineInput;
 use workspace::{AppState, ItemId, SerializableItem};
 use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     let app_state = app_state.clone();
 
-    cx.observe_new(move |workspace: &mut Workspace, _, cx| {
+    cx.observe_new(move |workspace: &mut Workspace, _window, cx| {
         let app_state = app_state.clone();
         let weak_workspace = cx.entity().downgrade();
 
@@ -44,6 +45,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                         user_store,
                         None,
                         None,
+                        window,
                         cx,
                     )
                 });
@@ -99,6 +101,7 @@ struct ComponentPreview {
     language_registry: Arc<LanguageRegistry>,
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
+    filter_editor: Entity<SingleLineInput>,
 }
 
 impl ComponentPreview {
@@ -108,11 +111,14 @@ impl ComponentPreview {
         user_store: Entity<UserStore>,
         selected_index: impl Into<Option<usize>>,
         active_page: Option<PreviewPage>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let sorted_components = components().all_sorted();
         let selected_index = selected_index.into().unwrap_or(0);
         let active_page = active_page.unwrap_or(PreviewPage::AllComponents);
+        let filter_editor =
+            cx.new(|cx| SingleLineInput::new(window, cx, "Find components or usages…"));
 
         let component_list = ListState::new(
             sorted_components.len(),
@@ -143,6 +149,7 @@ impl ComponentPreview {
             components: sorted_components,
             component_list,
             cursor_index: selected_index,
+            filter_editor,
         };
 
         if component_preview.cursor_index > 0 {
@@ -481,12 +488,29 @@ impl Render for ComponentPreview {
                         ),
                     ),
             )
-            .child(match active_page {
-                PreviewPage::AllComponents => self.render_all_components().into_any_element(),
-                PreviewPage::Component(id) => self
-                    .render_component_page(&id, window, cx)
-                    .into_any_element(),
-            })
+            .child(
+                v_flex()
+                    .id("content-area")
+                    .flex_1()
+                    .size_full()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .p_2()
+                            .w_full()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(self.filter_editor.clone()),
+                    )
+                    .child(match active_page {
+                        PreviewPage::AllComponents => {
+                            self.render_all_components().into_any_element()
+                        }
+                        PreviewPage::Component(id) => self
+                            .render_component_page(&id, window, cx)
+                            .into_any_element(),
+                    }),
+            )
     }
 }
 
@@ -516,7 +540,7 @@ impl Item for ComponentPreview {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Entity<Self>>
     where
@@ -535,6 +559,7 @@ impl Item for ComponentPreview {
                 user_store,
                 selected_index,
                 Some(active_page),
+                window,
                 cx,
             )
         }))
@@ -565,7 +590,7 @@ impl SerializableItem for ComponentPreview {
             let user_store = user_store.clone();
             let language_registry = language_registry.clone();
             let weak_workspace = workspace.clone();
-            cx.update(|_, cx| {
+            cx.update(move |window, cx| {
                 Ok(cx.new(|cx| {
                     ComponentPreview::new(
                         weak_workspace,
@@ -573,6 +598,7 @@ impl SerializableItem for ComponentPreview {
                         user_store,
                         None,
                         None,
+                        window,
                         cx,
                     )
                 }))
