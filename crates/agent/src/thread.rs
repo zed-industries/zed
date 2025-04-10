@@ -261,6 +261,8 @@ pub struct Thread {
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
+    // Tracks create_file tools that are currently streaming
+    active_create_file_tools: HashMap<LanguageModelToolUseId, (String, Option<Task<()>>)>,
 }
 
 impl Thread {
@@ -300,6 +302,7 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
             message_feedback: HashMap::default(),
+            active_create_file_tools: HashMap::default(),
         }
     }
 
@@ -364,6 +367,7 @@ impl Thread {
             cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
             message_feedback: HashMap::default(),
+            active_create_file_tools: HashMap::default(),
         }
     }
 
@@ -1091,6 +1095,49 @@ impl Thread {
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
+                                // Check for active create_file tools and update them with the new chunk
+                                // Create a copy of the active tools to avoid borrowing issues
+                                let active_tools: Vec<_> = thread.active_create_file_tools.iter()
+                                    .map(|(id, (path, _))| (id.clone(), path.clone()))
+                                    .collect();
+                                    
+                                for (tool_id, path_clone) in active_tools {
+                                    let project_clone = thread.project.clone();
+                                    let chunk_clone = chunk.clone();
+                                    
+                                    // Create a new task for handling this chunk
+                                    let task = cx.spawn(async move |_thread, cx| {
+                                        // Find the project path
+                                        let project_path = project_clone.update(cx, |project, cx| {
+                                            project.find_project_path(&path_clone, cx)
+                                        }).ok().flatten();
+                                        
+                                        if let Some(project_path) = project_path {
+                                            // Get or create the buffer
+                                            if let Ok(buffer_task) = project_clone.update(cx, |project, cx| {
+                                                project.open_buffer(project_path.clone(), cx)
+                                            }) {
+                                                if let Ok(buffer) = buffer_task.await {
+                                                    // Append the text to the buffer
+                                                    if let Err(e) = cx.update(|cx| {
+                                                        buffer.update(cx, |buffer, cx| {
+                                                            let point = buffer.snapshot().len();
+                                                            buffer.edit([(point..point, chunk_clone.as_str())], None, cx)
+                                                        })
+                                                    }) {
+                                                        log::warn!("Failed to edit buffer: {}", e);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    });
+                                    
+                                    // Update the buffer task in the map
+                                    if let Some((_, task_slot)) = thread.active_create_file_tools.get_mut(&tool_id) {
+                                        *task_slot = Some(task);
+                                    }
+                                }
+                                
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
                                         last_message.push_text(&chunk);
@@ -1143,6 +1190,13 @@ impl Thread {
                                     .unwrap_or_else(|| {
                                         thread.insert_message(Role::Assistant, vec![], cx)
                                     });
+                                    
+                                // Track create_file tools for real-time streaming updates
+                                if tool_use.name.as_ref() == "create_file" {
+                                    if let Some(path) = tool_use.input.get("path").and_then(|p| p.as_str()) {
+                                        thread.active_create_file_tools.insert(tool_use.id.clone(), (path.to_string(), None));
+                                    }
+                                }
 
                                 thread.tool_use.request_tool_use(
                                     last_assistant_message_id,
@@ -1179,13 +1233,53 @@ impl Thread {
                 .update(cx, |thread, cx| {
                     thread.finalize_pending_checkpoint(cx);
                     match result.as_ref() {
-                        Ok(stop_reason) => match stop_reason {
-                            StopReason::ToolUse => {
-                                let tool_uses = thread.use_pending_tools(cx);
-                                cx.emit(ThreadEvent::UsePendingTools { tool_uses });
+                        Ok(stop_reason) => {
+                            match stop_reason {
+                                StopReason::ToolUse => {
+                                    let tool_uses = thread.use_pending_tools(cx);
+                                    cx.emit(ThreadEvent::UsePendingTools { tool_uses });
+                                }
+                                StopReason::EndTurn => {}
+                                StopReason::MaxTokens => {}
                             }
-                            StopReason::EndTurn => {}
-                            StopReason::MaxTokens => {}
+        
+                            // Save any active create_file buffers after streaming is completely done
+                            let active_files: Vec<_> = thread.active_create_file_tools.iter()
+                                .map(|(id, (path, _))| (id.clone(), path.clone()))
+                                .collect();
+        
+                            for (tool_id, path) in active_files {
+                                let project_clone = thread.project.clone();
+                                let path_clone = path.clone();
+            
+                                let _ = cx.spawn(async move |_thread, cx| {
+                                    // Find the project path
+                                    let project_path = project_clone.update(cx, |project, cx| {
+                                        project.find_project_path(&path_clone, cx)
+                                    }).ok().flatten();
+                
+                                    if let Some(project_path) = project_path {
+                                        // Get the buffer
+                                        if let Ok(buffer_task) = project_clone.update(cx, |project, cx| {
+                                            project.open_buffer(project_path.clone(), cx)
+                                        }) {
+                                            if let Ok(buffer) = buffer_task.await {
+                                                // Save the buffer
+                                                if let Ok(save_task) = project_clone.update(cx, |project, cx| {
+                                                    project.save_buffer(buffer, cx)
+                                                }) {
+                                                    let _ = cx.spawn(async move |_| {
+                                                        let _ = save_task.await;
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+            
+                                // Remove this tool from active tools
+                                thread.active_create_file_tools.remove(&tool_id);
+                            }
                         },
                         Err(error) => {
                             if error.is::<PaymentRequiredError>() {
@@ -1209,6 +1303,7 @@ impl Thread {
                             thread.cancel_last_completion(cx);
                         }
                     }
+                    // Don't save buffers here - we'll save them after we know streaming is complete
                     cx.emit(ThreadEvent::DoneStreaming);
 
                     if let Ok(initial_usage) = initial_token_usage {
@@ -1434,6 +1529,26 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
+        // Get the last message content for create_file tool, which will be used as file content
+        let last_assistant_message_content = if tool_name.as_ref() == "create_file" {
+            self.messages
+                .iter()
+                .rev()
+                .find(|message| message.role == Role::Assistant)
+                .map(|message| {
+                    let mut content = String::new();
+                    for segment in &message.segments {
+                        match segment {
+                            MessageSegment::Text(text) => content.push_str(text),
+                            _ => {}
+                        }
+                    }
+                    content
+                })
+        } else {
+            None
+        };
+
         let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
             Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
         } else {
@@ -1446,9 +1561,17 @@ impl Thread {
             )
         };
 
+        let last_assistant_message_content = last_assistant_message_content;
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
-                let output = run_tool.await;
+                let mut output = run_tool.await;
+
+                // For create_file tool, replace the output with the assistant's message content
+                if tool_name.as_ref() == "create_file" && output.is_ok() {
+                    if let Some(content) = last_assistant_message_content {
+                        output = Ok(content);
+                    }
+                }
 
                 thread
                     .update(cx, |thread, cx| {

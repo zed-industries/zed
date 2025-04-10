@@ -24,13 +24,6 @@ pub struct CreateFileToolInput {
     /// You can create a new file by providing a path of "directory1/new_file.txt"
     /// </example>
     pub path: String,
-
-    /// The text contents of the file to create.
-    ///
-    /// <example>
-    /// To create a file with the text "Hello, World!", provide contents of "Hello, World!"
-    /// </example>
-    pub contents: String,
 }
 
 pub struct CreateFileTool;
@@ -82,27 +75,28 @@ impl Tool for CreateFileTool {
             Some(project_path) => project_path,
             None => return Task::ready(Err(anyhow!("Path to create was outside the project"))),
         };
-        let contents: Arc<str> = input.contents.as_str().into();
+        // let contents: Arc<str> = input.contents.as_str().into();
         let destination_path: Arc<str> = input.path.as_str().into();
 
-        cx.spawn(async move |cx| {
-            let buffer = project
-                .update(cx, |project, cx| {
-                    project.open_buffer(project_path.clone(), cx)
-                })?
-                .await
-                .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
-            cx.update(|cx| {
-                buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
-                action_log.update(cx, |action_log, cx| {
-                    action_log.will_create_buffer(buffer.clone(), cx)
-                });
-            })?;
+        dbg!(&destination_path);
 
-            project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
-                .await
-                .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
+        cx.spawn(async move |cx| {
+            //     let buffer = project
+            //         .update(cx, |project, cx| { project.open_buffer(project_path.clone(), cx)
+            //         })?
+            //         .await
+            //         .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
+            //     cx.update(|cx| {
+            //         buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
+            //         action_log.update(cx, |action_log, cx| {
+            //             action_log.will_create_buffer(buffer.clone(), cx)
+            //         });
+            //     })?;
+
+            //     project
+            //         .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+            //         .await
+            //         .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
 
             Ok(format!("Created file {destination_path}"))
         })
