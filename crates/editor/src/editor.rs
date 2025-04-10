@@ -399,6 +399,7 @@ pub enum EditorMode {
     SingleLine { auto_width: bool },
     AutoHeight { max_lines: usize },
     Full,
+    Minimap,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1697,6 +1698,7 @@ impl Editor {
         let mode = match self.mode {
             EditorMode::SingleLine { .. } => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
+            EditorMode::Minimap => "minimap",
             EditorMode::Full => "full",
         };
 
@@ -6804,6 +6806,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
+        if self.mode() == EditorMode::Minimap {
+            return None;
+        }
         let active_inline_completion = self.active_inline_completion.as_ref()?;
 
         if self.edit_prediction_visible_in_cursor_popover(true) {
@@ -16274,7 +16279,9 @@ impl Editor {
     }
 
     pub fn render_git_blame_gutter(&self, cx: &App) -> bool {
-        self.show_git_blame_gutter && self.has_blame_entries(cx)
+        self.show_git_blame_gutter
+            && self.has_blame_entries(cx)
+            && self.mode() != EditorMode::Minimap
     }
 
     pub fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
@@ -16287,6 +16294,7 @@ impl Editor {
                     .is_some())
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
+            && self.mode() != EditorMode::Minimap
     }
 
     fn has_blame_entries(&self, cx: &App) -> bool {
@@ -19542,7 +19550,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()
             },
-            EditorMode::Full => TextStyle {
+            EditorMode::Full | EditorMode::Minimap => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
@@ -19560,7 +19568,7 @@ impl Render for Editor {
         let background = match self.mode {
             EditorMode::SingleLine { .. } => cx.theme().system().transparent,
             EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
-            EditorMode::Full => cx.theme().colors().editor_background,
+            EditorMode::Full | EditorMode::Minimap => cx.theme().colors().editor_background,
         };
 
         EditorElement::new(
