@@ -1,6 +1,8 @@
 use crate::project_settings::ProjectSettings;
 
-use super::breakpoint_store::{BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason};
+use super::breakpoint_store::{
+    BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
+};
 use super::dap_command::{
     self, Attach, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand,
     EvaluateCommand, Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand,
@@ -163,6 +165,7 @@ pub struct LocalMode {
     config: DebugAdapterConfig,
     adapter: Arc<dyn DebugAdapter>,
     breakpoint_store: Entity<BreakpointStore>,
+    tmp_breakpoint: Option<SourceBreakpoint>,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -383,6 +386,7 @@ impl LocalMode {
                 client,
                 adapter,
                 breakpoint_store,
+                tmp_breakpoint: None,
                 config: config.clone(),
             };
 
@@ -431,6 +435,7 @@ impl LocalMode {
             .read_with(cx, |store, cx| store.breakpoints_from_path(&abs_path, cx))
             .into_iter()
             .filter(|bp| bp.state.is_enabled())
+            .chain(self.tmp_breakpoint.clone())
             .map(Into::into)
             .collect();
 
@@ -1040,6 +1045,40 @@ impl Session {
         }
     }
 
+    pub fn run_to_position(
+        &mut self,
+        breakpoint: SourceBreakpoint,
+        active_thread_id: ThreadId,
+        cx: &mut Context<Self>,
+    ) {
+        match &mut self.mode {
+            Mode::Local(local_mode) => {
+                if !matches!(
+                    self.thread_states.thread_state(active_thread_id),
+                    Some(ThreadStatus::Stopped)
+                ) {
+                    return;
+                };
+                let path = breakpoint.path.clone();
+                local_mode.tmp_breakpoint = Some(breakpoint);
+                let task = local_mode.send_breakpoints_from_path(
+                    path,
+                    BreakpointUpdatedReason::Toggled,
+                    cx,
+                );
+
+                cx.spawn(async move |this, cx| {
+                    task.await;
+                    this.update(cx, |this, cx| {
+                        this.continue_thread(active_thread_id, cx);
+                    })
+                })
+                .detach();
+            }
+            Mode::Remote(_) => {}
+        }
+    }
+
     pub fn output(
         &self,
         since: OutputToken,
@@ -1086,6 +1125,16 @@ impl Session {
     }
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
+        if let Some((local, path)) = self.as_local_mut().and_then(|local| {
+            let breakpoint = local.tmp_breakpoint.take()?;
+            let path = breakpoint.path.clone();
+            Some((local, path))
+        }) {
+            local
+                .send_breakpoints_from_path(path, BreakpointUpdatedReason::Toggled, cx)
+                .detach();
+        };
+
         if event.all_threads_stopped.unwrap_or_default() || event.thread_id.is_none() {
             self.thread_states.stop_all_threads();
 
