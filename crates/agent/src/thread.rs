@@ -1905,7 +1905,7 @@ impl Thread {
                         .unwrap_or_else(|_| serde_json::Value::Null);
 
                     telemetry::event!(
-                        "Assistant Thread AutoCapture",
+                        "Agent Thread AutoCaptured",
                         thread_id = thread_id.to_string(),
                         thread_data = thread_data,
                         auto_capture_reason = "tracked_user",
