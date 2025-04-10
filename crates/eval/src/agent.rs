@@ -17,7 +17,7 @@ use smol::channel;
 use std::sync::Arc;
 
 /// Subset of `workspace::AppState` needed by `HeadlessAssistant`, with additional fields.
-pub struct HeadlessAppState {
+pub struct AgentAppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
@@ -28,7 +28,7 @@ pub struct HeadlessAppState {
     pub prompt_builder: Arc<PromptBuilder>,
 }
 
-pub struct HeadlessAssistant {
+pub struct Agent {
     pub thread: Entity<Thread>,
     pub project: Entity<Project>,
     #[allow(dead_code)]
@@ -38,9 +38,9 @@ pub struct HeadlessAssistant {
     _subscription: Subscription,
 }
 
-impl HeadlessAssistant {
+impl Agent {
     pub fn new(
-        app_state: Arc<HeadlessAppState>,
+        app_state: Arc<AgentAppState>,
         cx: &mut App,
     ) -> anyhow::Result<(Entity<Self>, channel::Receiver<anyhow::Result<()>>)> {
         let env = None;
@@ -171,7 +171,7 @@ impl HeadlessAssistant {
     }
 }
 
-pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
+pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     release_channel::init(SemanticVersion::default(), cx);
     gpui_tokio::init(cx);
 
@@ -205,7 +205,7 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
     agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
 
-    Arc::new(HeadlessAppState {
+    Arc::new(AgentAppState {
         languages,
         client,
         user_store,

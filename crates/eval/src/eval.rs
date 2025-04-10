@@ -1,8 +1,13 @@
+use agent::Agent;
 use anyhow::Result;
+use gpui::Application;
+use language_model::LanguageModelRegistry;
+use reqwest_client::ReqwestClient;
 use serde::Deserialize;
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 mod agent;
 
@@ -65,9 +70,32 @@ impl Example {
     }
 }
 
-fn main() -> Result<()> {
-    let example =
-        Example::load_from_directory("./crates/eval/examples/find_and_replace_diff_card")?;
-    example.setup()?;
-    Ok(())
+fn main() {
+    env_logger::init();
+    let http_client = Arc::new(ReqwestClient::new());
+    let app = Application::headless().with_http_client(http_client.clone());
+
+    app.run(move |cx| {
+        let app_state = crate::agent::init(cx);
+        let agent = Agent::new(app_state, cx);
+
+        let model = agent::find_model("claude-3-7-sonnet-thinking-latest", cx).unwrap();
+
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.set_default_model(Some(model.clone()), cx);
+        });
+
+        let model_provider_id = model.provider_id();
+
+        let authenticate = agent::authenticate_model_provider(model_provider_id.clone(), cx);
+
+        cx.spawn(async move |_cx| {
+            authenticate.await.unwrap();
+        })
+        .detach();
+    });
+
+    // let example =
+    //     Example::load_from_directory("./crates/eval/examples/find_and_replace_diff_card")?;
+    // example.setup()?;
 }
