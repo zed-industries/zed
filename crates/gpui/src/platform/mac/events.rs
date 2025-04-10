@@ -347,16 +347,7 @@ fn parse_keystroke(native_event: id) -> Keystroke {
     })
 }
 
-pub fn always_use_command_layout() -> bool {
-    if chars_for_modified_key(0, NO_MOD).is_ascii() {
-        return false;
-    }
-
-    chars_for_modified_key(0, CMD_MOD).is_ascii()
-}
-
 const NO_MOD: u32 = 0;
-const CMD_MOD: u32 = 1;
 const SHIFT_MOD: u32 = 2;
 const OPTION_MOD: u32 = 8;
 
