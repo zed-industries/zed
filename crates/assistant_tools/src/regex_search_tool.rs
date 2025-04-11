@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, ResponseDest, Tool};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
@@ -92,7 +92,7 @@ impl Tool for RegexSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         const CONTEXT_LINES: u32 = 2;
 
         let (offset, regex, case_sensitive) =
@@ -189,18 +189,20 @@ impl Tool for RegexSearchTool {
                 })??;
             }
 
-            if matches_found == 0 {
-                Ok("No matches found".to_string())
-            } else if has_more_matches {
-                Ok(format!(
-                    "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
-                    offset + 1,
-                    offset + matches_found,
-                    offset + RESULTS_PER_PAGE,
-                ))
-            } else {
-                Ok(format!("Found {matches_found} matches:\n{output}"))
-            }
+            Ok((ResponseDest::TextOnly,
+                if matches_found == 0 {
+                    "No matches found".to_string()
+                } else if has_more_matches {
+                    format!(
+                        "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
+                        offset + 1,
+                        offset + matches_found,
+                        offset + RESULTS_PER_PAGE,
+                    )
+                } else {
+                    format!("Found {matches_found} matches:\n{output}")
+                }
+            ))
         })
     }
 }

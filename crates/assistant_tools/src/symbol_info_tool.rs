@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, ResponseDest, Tool};
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{self, Anchor, Buffer, BufferSnapshot, Location, Point, ToPoint, ToPointUtf16};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -122,7 +122,7 @@ impl Tool for SymbolInfoTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         let input = match serde_json::from_value::<SymbolInfoToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -203,7 +203,7 @@ impl Tool for SymbolInfoTool {
             if output.is_empty() {
                 Err(anyhow!("None found."))
             } else {
-                Ok(output)
+                Ok((ResponseDest::TextOnly, output))
             }
         })
     }

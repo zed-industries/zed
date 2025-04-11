@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, ResponseDest, Tool};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -71,7 +71,7 @@ impl Tool for PathSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
             Ok(input) => (input.offset, input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -109,33 +109,35 @@ impl Tool for PathSearchTool {
                 }
             }
 
-            if matches.is_empty() {
-                Ok(format!("No paths in the project matched the glob {glob:?}"))
-            } else {
-                // Sort to group entries in the same directory together.
-                matches.sort();
-
-                let total_matches = matches.len();
-                let response = if total_matches > RESULTS_PER_PAGE + offset as usize {
-                let paginated_matches: Vec<_> = matches
-                      .into_iter()
-                      .skip(offset as usize)
-                      .take(RESULTS_PER_PAGE)
-                      .collect();
-
-                    format!(
-                        "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
-                        total_matches,
-                        offset + 1,
-                        offset as usize + paginated_matches.len(),
-                        paginated_matches.join("\n")
-                    )
+            Ok((ResponseDest::TextOnly,
+                if matches.is_empty() {
+                    format!("No paths in the project matched the glob {glob:?}")
                 } else {
-                    matches.join("\n")
-                };
+                    // Sort to group entries in the same directory together.
+                    matches.sort();
 
-                Ok(response)
-            }
-        })
+                    let total_matches = matches.len();
+                    let response = if total_matches > RESULTS_PER_PAGE + offset as usize {
+                    let paginated_matches: Vec<_> = matches
+                          .into_iter()
+                          .skip(offset as usize)
+                          .take(RESULTS_PER_PAGE)
+                          .collect();
+
+                        format!(
+                            "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
+                            total_matches,
+                            offset + 1,
+                            offset as usize + paginated_matches.len(),
+                            paginated_matches.join("\n")
+                        )
+                    } else {
+                        matches.join("\n")
+                    };
+
+                    response
+                }
+            ))
+          })
     }
 }

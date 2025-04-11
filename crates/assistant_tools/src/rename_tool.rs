@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, ResponseDest, Tool};
 use gpui::{App, Entity, Task};
 use language::{self, Buffer, ToPointUtf16};
 use language_model::LanguageModelRequestMessage;
@@ -90,7 +90,7 @@ impl Tool for RenameTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         let input = match serde_json::from_value::<RenameToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -139,7 +139,7 @@ impl Tool for RenameTool {
                 log.buffer_edited(buffer.clone(), cx)
             })?;
 
-            Ok(format!("Renamed '{}' to '{}'", input.symbol, input.new_name))
+            Ok((ResponseDest::TextOnly, format!("Renamed '{}' to '{}'", input.symbol, input.new_name)))
         })
     }
 }

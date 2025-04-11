@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, ResponseDest, Tool};
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt, AsyncReadExt, FutureExt};
 use gpui::{App, AppContext, Entity, Task};
@@ -79,7 +79,7 @@ impl Tool for TerminalTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         let input: TerminalToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -132,7 +132,10 @@ impl Tool for TerminalTool {
 
 const LIMIT: usize = 16 * 1024;
 
-async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
+async fn run_command_limited(
+    working_dir: Arc<Path>,
+    command: String,
+) -> Result<(ResponseDest, String)> {
     let shell = get_system_shell();
 
     let mut cmd = new_smol_command(&shell)
@@ -231,7 +234,7 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
         )
     };
 
-    Ok(output_with_status)
+    Ok((ResponseDest::TextOnly, output_with_status))
 }
 
 async fn consume_reader<T: AsyncReadExt + Unpin>(
@@ -275,7 +278,7 @@ mod tests {
             run_command_limited(Path::new(".").into(), "echo 'Hello, World!'".to_string()).await;
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "```\nHello, World!\n```");
+        assert_eq!(result.unwrap().1, "```\nHello, World!\n```");
     }
 
     #[gpui::test(iterations = 10)]
@@ -287,7 +290,7 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(
-            result.unwrap(),
+            result.unwrap().1,
             "```\nstdout 1\nstderr 1\nstdout 2\nstderr 2\n```"
         );
     }
@@ -304,7 +307,7 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "```\n1\n2\n3\n```");
+        assert_eq!(result.unwrap().1, "```\n1\n2\n3\n```");
     }
 
     #[gpui::test(iterations = 10)]
@@ -316,7 +319,7 @@ mod tests {
         let result = run_command_limited(Path::new(".").into(), cmd).await;
 
         assert!(result.is_ok());
-        let output = result.unwrap();
+        let output = result.unwrap().1;
 
         let content_start = output.find("```\n").map(|i| i + 4).unwrap_or(0);
         let content_end = output.rfind("\n```").unwrap_or(output.len());
@@ -334,7 +337,7 @@ mod tests {
         let result = run_command_limited(Path::new(".").into(), cmd).await;
 
         assert!(result.is_ok());
-        let output = result.unwrap();
+        let output = result.unwrap().1;
 
         assert!(output.starts_with("Command output too long. The first 16334 bytes:\n\n"));
 
@@ -352,7 +355,7 @@ mod tests {
         let result = run_command_limited(Path::new(".").into(), "exit 42".to_string()).await;
 
         assert!(result.is_ok());
-        let output = result.unwrap();
+        let output = result.unwrap().1;
 
         // Extract the shell name from path for cleaner test output
         let shell_path = std::env::var("SHELL").unwrap_or("bash".to_string());

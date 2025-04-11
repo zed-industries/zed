@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, ResponseDest, Tool};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -53,7 +53,7 @@ impl Tool for OpenTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         let input: OpenToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -62,7 +62,10 @@ impl Tool for OpenTool {
         cx.background_spawn(async move {
             open::that(&input.path_or_url).context("Failed to open URL or file path")?;
 
-            Ok(format!("Successfully opened {}", input.path_or_url))
+            Ok((
+                ResponseDest::TextOnly,
+                format!("Successfully opened {}", input.path_or_url),
+            ))
         })
     }
 }

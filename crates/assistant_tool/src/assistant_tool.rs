@@ -18,6 +18,20 @@ pub use crate::action_log::*;
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
 
+/// Where the streamed-in text should go.
+/// For example, the file creation tool streams it to a file.
+#[derive(Debug, Clone)]
+pub enum ResponseDest {
+    File { path: Arc<str> },
+    TextOnly,
+}
+
+impl Default for ResponseDest {
+    fn default() -> Self {
+        Self::TextOnly
+    }
+}
+
 pub fn init(cx: &mut App) {
     ToolRegistry::default_global(cx);
 }
@@ -66,7 +80,7 @@ pub trait Tool: 'static + Send + Sync {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>>;
+    ) -> Task<Result<(ResponseDest, String)>>;
 }
 
 impl Debug for dyn Tool {

@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, ResponseDest, Tool};
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -83,7 +83,7 @@ impl Tool for DiagnosticsTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         match serde_json::from_value::<DiagnosticsToolInput>(input)
             .ok()
             .and_then(|input| input.path)
@@ -119,11 +119,14 @@ impl Tool for DiagnosticsTool {
                         )?;
                     }
 
-                    if output.is_empty() {
-                        Ok("File doesn't have errors or warnings!".to_string())
-                    } else {
-                        Ok(output)
-                    }
+                    Ok((
+                        ResponseDest::TextOnly,
+                        if output.is_empty() {
+                            "File doesn't have errors or warnings!".to_string()
+                        } else {
+                            output
+                        },
+                    ))
                 })
             }
             _ => {
@@ -154,11 +157,14 @@ impl Tool for DiagnosticsTool {
                     action_log.checked_project_diagnostics();
                 });
 
-                if has_diagnostics {
-                    Task::ready(Ok(output))
-                } else {
-                    Task::ready(Ok("No errors or warnings found in the project.".to_string()))
-                }
+                Task::ready(Ok((
+                    ResponseDest::TextOnly,
+                    if has_diagnostics {
+                        output
+                    } else {
+                        "No errors or warnings found in the project.".to_string()
+                    },
+                )))
             }
         }
     }

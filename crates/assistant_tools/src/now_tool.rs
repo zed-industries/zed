@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, ResponseDest, Tool};
 use chrono::{Local, Utc};
 use gpui::{App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -60,7 +60,7 @@ impl Tool for NowTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         let input: NowToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -72,6 +72,6 @@ impl Tool for NowTool {
         };
         let text = format!("The current datetime is {now}.");
 
-        Task::ready(Ok(text))
+        Task::ready(Ok((ResponseDest::TextOnly, text)))
     }
 }

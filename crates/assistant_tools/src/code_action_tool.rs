@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, ResponseDest, Tool};
 use gpui::{App, Entity, Task};
 use language::{self, Anchor, Buffer, ToPointUtf16};
 use language_model::LanguageModelRequestMessage;
@@ -143,7 +143,7 @@ impl Tool for CodeActionTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         let input = match serde_json::from_value::<CodeActionToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -251,7 +251,7 @@ impl Tool for CodeActionTool {
                     log.buffer_edited(buffer.clone(), cx)
                 })?;
 
-                Ok(response)
+                Ok((ResponseDest::TextOnly, response))
             } else {
                 // No action specified, so list the available ones.
                 let (position_start, position_end) = buffer.read_with(cx, |buffer, _| {
@@ -319,7 +319,7 @@ impl Tool for CodeActionTool {
                     }
                 }
 
-                Ok(response)
+                Ok((ResponseDest::TextOnly, response))
             }
         })
     }

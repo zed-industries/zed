@@ -929,9 +929,9 @@ impl ActiveThread {
             ThreadEvent::StreamedFileChunk { path, chunk } => {
                 let project = thread.read(cx).project().clone();
 
-                if let Some(project_path) =
-                    project.update(cx, |project, cx| project.find_project_path(path, cx))
-                {
+                if let Some(project_path) = project.update(cx, |project, cx| {
+                    project.find_project_path(path.as_ref(), cx)
+                }) {
                     log::info!("Appending {}B chunk to {path}", chunk.len());
 
                     let path = path.clone();

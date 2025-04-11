@@ -657,7 +657,6 @@
         "enable_all_context_servers": true,
         "tools": {
           "terminal": true,
-          "batch_tool": true,
           "code_actions": true,
           "code_symbols": true,
           "copy_path": false,

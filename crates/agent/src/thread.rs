@@ -6,7 +6,7 @@ use std::sync::Arc;
 use agent_rules::load_worktree_rules_file;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
-use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, ResponseDest, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
@@ -261,6 +261,7 @@ pub struct Thread {
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
+    response_dest: ResponseDest,
 }
 
 impl Thread {
@@ -300,6 +301,7 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
             message_feedback: HashMap::default(),
+            response_dest: ResponseDest::default(),
         }
     }
 
@@ -364,6 +366,7 @@ impl Thread {
             cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
             message_feedback: HashMap::default(),
+            response_dest: ResponseDest::default(),
         }
     }
 
@@ -1116,27 +1119,18 @@ impl Thread {
                                     };
                                 }
 
-                                for path in dbg!(thread.pending_tool_uses()).into_iter().filter_map(
-                                    |tool_use| {
-                                        if dbg!(tool_use.name.as_ref()) == "create_file" {
-                                            dbg!(tool_use.input.as_object().and_then(|obj| {
-                                                obj.get("path").and_then(|value| {
-                                                    value.as_str().map(ToString::to_string)
-                                                })
-                                            }))
-                                        } else {
-                                            None
-                                        }
-                                    },
-                                ) {
-                                    log::info!(
-                                        "Emitting {}B StreamedFileChunk for {path}",
-                                        chunk.len()
-                                    );
-                                    cx.emit(ThreadEvent::StreamedFileChunk {
-                                        path,
-                                        chunk: chunk.clone(),
-                                    });
+                                match &thread.response_dest {
+                                    ResponseDest::File { path } => {
+                                        log::info!(
+                                            "Emitting {}B StreamedFileChunk for {path}",
+                                            chunk.len()
+                                        );
+                                        cx.emit(ThreadEvent::StreamedFileChunk {
+                                            path: path.clone(),
+                                            chunk: chunk.clone(),
+                                        });
+                                    }
+                                    ResponseDest::TextOnly => {}
                                 }
                             }
                             LanguageModelCompletionEvent::Thinking(chunk) => {
@@ -1461,26 +1455,6 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        // Get the last message content for create_file tool, which will be used as file content
-        let last_assistant_message_content = if tool_name.as_ref() == "create_file" {
-            self.messages
-                .iter()
-                .rev()
-                .find(|message| message.role == Role::Assistant)
-                .map(|message| {
-                    let mut content = String::new();
-                    for segment in &message.segments {
-                        match segment {
-                            MessageSegment::Text(text) => content.push_str(text),
-                            _ => {}
-                        }
-                    }
-                    content
-                })
-        } else {
-            None
-        };
-
         let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
             Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
         } else {
@@ -1493,18 +1467,26 @@ impl Thread {
             )
         };
 
-        let last_assistant_message_content = last_assistant_message_content;
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
-                let mut output = run_tool.await;
+                let new_response_dest;
+                let output = match run_tool.await {
+                    Ok((response_dest, output)) => {
+                        new_response_dest = response_dest;
 
-                // For create_file tool, replace the output with the assistant's message content
-                if tool_name.as_ref() == "create_file" && output.is_ok() {
-                    if let Some(content) = last_assistant_message_content {
-                        dbg!(&content);
-                        output = Ok(content);
+                        Ok(output)
                     }
-                }
+                    Err(err) => {
+                        new_response_dest = ResponseDest::default();
+                        Err(err)
+                    }
+                };
+
+                thread.upgrade().map(|thread| {
+                    thread.update(cx, |thread, _cx| {
+                        thread.response_dest = new_response_dest;
+                    })
+                });
 
                 thread
                     .update(cx, |thread, cx| {
@@ -1968,7 +1950,7 @@ pub enum ThreadEvent {
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
     StreamedFileChunk {
-        path: String,
+        path: Arc<str>,
         chunk: String,
     },
     DoneStreaming,

@@ -1,4 +1,3 @@
-mod batch_tool;
 mod code_action_tool;
 mod code_symbols_tool;
 mod copy_path_tool;
@@ -30,7 +29,6 @@ use gpui::App;
 use http_client::HttpClientWithUrl;
 use move_path_tool::MovePathTool;
 
-use crate::batch_tool::BatchTool;
 use crate::code_action_tool::CodeActionTool;
 use crate::code_symbols_tool::CodeSymbolsTool;
 use crate::create_directory_tool::CreateDirectoryTool;
@@ -55,7 +53,6 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 
     let registry = ToolRegistry::global(cx);
     registry.register_tool(TerminalTool);
-    registry.register_tool(BatchTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CreateFileTool);
     registry.register_tool(CopyPathTool);

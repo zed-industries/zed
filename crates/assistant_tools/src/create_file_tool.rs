@@ -1,5 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
+use assistant_tool::ResponseDest;
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
@@ -66,7 +67,7 @@ impl Tool for CreateFileTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         let input = match serde_json::from_value::<CreateFileToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -95,7 +96,7 @@ impl Tool for CreateFileTool {
                 .await
                 .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
 
-            Ok(format!("Created file {destination_path} - next, its exact contents will become your response:"))
+            Ok((ResponseDest::File { path: destination_path.clone() }, format!("Created file {destination_path} - next, its exact contents will become your response:")))
         })
     }
 }

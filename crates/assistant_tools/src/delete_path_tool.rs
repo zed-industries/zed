@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, ResponseDest, Tool};
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -63,7 +63,7 @@ impl Tool for DeletePathTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<(ResponseDest, String)>> {
         let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {
             Ok(input) => input.path,
             Err(err) => return Task::ready(Err(anyhow!(err))),
@@ -124,7 +124,7 @@ impl Tool for DeletePathTool {
 
             match delete {
                 Some(deletion_task) => match deletion_task.await {
-                    Ok(()) => Ok(format!("Deleted {path_str}")),
+                    Ok(()) => Ok((ResponseDest::TextOnly, format!("Deleted {path_str}"))),
                     Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
                 },
                 None => Err(anyhow!(
