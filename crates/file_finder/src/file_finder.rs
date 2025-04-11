@@ -85,18 +85,20 @@ impl FileFinder {
         _: &mut Context<Workspace>,
     ) {
         workspace.register_action(
-            |workspace, action: &workspace::ToggleFileFinder, window, cx| {
-                let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
-                    Self::open(workspace, action.separate_history, window, cx).detach();
-                    return;
-                };
-
-                file_finder.update(cx, |file_finder, cx| {
-                    file_finder.init_modifiers = Some(window.modifiers());
-                    file_finder.picker.update(cx, |picker, cx| {
-                        picker.cycle_selection(window, cx);
+            |workspace, action: &workspace::ToggleFileFinder, window, cx| match workspace
+                .active_modal::<Self>(cx)
+            {
+                Some(file_finder) if window.modifiers().number_of_modifiers() > 0 => {
+                    file_finder.update(cx, |file_finder, cx| {
+                        file_finder.init_modifiers = Some(window.modifiers());
+                        file_finder.picker.update(cx, |picker, cx| {
+                            picker.cycle_selection(window, cx);
+                        });
                     });
-                });
+                }
+                _ => {
+                    Self::open(workspace, action.separate_history, window, cx).detach();
+                }
             },
         );
     }
