@@ -1098,8 +1098,6 @@ impl Thread {
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
-                                let code_block_surround;
-
                                 match &thread.response_dest {
                                     ResponseDest::File { path } => {
                                         log::info!(
@@ -1110,45 +1108,17 @@ impl Thread {
                                             path: path.clone(),
                                             chunk: chunk.clone(),
                                         });
-
-                                        code_block_surround = Some("markdown");
                                     }
-                                    ResponseDest::TextOnly => {
-                                        code_block_surround = None;
-                                    }
+                                    ResponseDest::TextOnly => {}
                                 }
-
-                                const BACKTICKS: &str = "```"; // TODO don't do any of this. Just do this in gpui.
 
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
-                                        if let Some(tag) = code_block_surround {
-                                            if !dbg!(last_message.to_string())
-                                                .starts_with(BACKTICKS)
-                                            {
-                                                last_message.push_text(BACKTICKS);
-                                                last_message.push_text(tag);
-                                                last_message.push_text("\n");
-                                                last_message.push_text(&chunk);
-
-                                                cx.emit(ThreadEvent::StreamedAssistantText(
-                                                    last_message.id,
-                                                    format!("{BACKTICKS}{tag}\n{chunk}"),
-                                                ));
-                                            } else {
-                                                last_message.push_text(&chunk);
-                                                cx.emit(ThreadEvent::StreamedAssistantText(
-                                                    last_message.id,
-                                                    chunk,
-                                                ));
-                                            }
-                                        } else {
-                                            last_message.push_text(&chunk);
-                                            cx.emit(ThreadEvent::StreamedAssistantText(
-                                                last_message.id,
-                                                chunk,
-                                            ));
-                                        }
+                                        last_message.push_text(&chunk);
+                                        cx.emit(ThreadEvent::StreamedAssistantText(
+                                            last_message.id,
+                                            chunk,
+                                        ));
                                     } else {
                                         // If we won't have an Assistant message yet, assume this chunk marks the beginning
                                         // of a new Assistant response.
@@ -1157,9 +1127,7 @@ impl Thread {
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
                                         thread.insert_message(
                                             Role::Assistant,
-                                            vec![MessageSegment::Text(format!(
-                                                "{BACKTICKS}markdown\n{chunk}"
-                                            ))],
+                                            vec![MessageSegment::Text(chunk)],
                                             cx,
                                         );
                                     };
