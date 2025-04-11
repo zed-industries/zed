@@ -8960,10 +8960,16 @@ impl Editor {
             .map(|selection| {
                 let cursor_position: Point = selection.head().to_point(&snapshot.buffer_snapshot);
 
-                let breakpoint_position = snapshot
-                    .display_snapshot
-                    .buffer_snapshot
-                    .anchor_after(Point::new(cursor_position.row, 0));
+                let breakpoint_position = self
+                    .breakpoint_at_row(cursor_position.row, window, cx)
+                    .map(|bp| bp.0)
+                    .unwrap_or_else(|| {
+                        snapshot
+                            .display_snapshot
+                            .buffer_snapshot
+                            .anchor_after(Point::new(cursor_position.row, 0))
+                    });
+
                 let breakpoint = self
                     .breakpoint_at_anchor(breakpoint_position, &snapshot, cx)
                     .map(|(anchor, breakpoint)| (anchor, Some(breakpoint)));
