@@ -2,16 +2,16 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
-#[cfg(unix)]
-use futures::AsyncWriteExt as _;
 use futures::channel::{mpsc, oneshot};
-#[cfg(unix)]
-use futures::{AsyncBufReadExt as _, io::BufReader};
-use futures::{FutureExt as _, SinkExt, StreamExt, select_biased};
+use futures::{
+    AsyncBufReadExt as _, AsyncWriteExt as _, FutureExt as _, SinkExt, StreamExt, io::BufReader,
+    select_biased,
+};
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
 #[cfg(unix)]
 use smol::net::unix::UnixListener;
+#[cfg(unix)]
 use util::{ResultExt as _, fs::make_file_executable, get_shell_safe_zed_path};
 
 #[derive(PartialEq, Eq)]
@@ -63,6 +63,8 @@ impl AskPassSession {
         executor: &BackgroundExecutor,
         mut delegate: AskPassDelegate,
     ) -> anyhow::Result<Self> {
+        use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
+
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join("askpass.sh");
