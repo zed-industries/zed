@@ -34,7 +34,7 @@ use crate::thread::{RequestKind, Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
     AgentDiff, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
-    ThreadEvent, ToggleContextPicker, ToggleProfileSelector,
+    ToggleContextPicker, ToggleProfileSelector,
 };
 
 pub struct MessageEditor {
@@ -183,8 +183,11 @@ impl MessageEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor_is_expanded = !self.editor_is_expanded;
+        self.set_editor_is_expanded(!self.editor_is_expanded, cx);
+    }
 
+    fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
+        self.editor_is_expanded = is_expanded;
         self.editor.update(cx, |editor, _| {
             if self.editor_is_expanded {
                 editor.set_mode(EditorMode::Full {
@@ -197,7 +200,6 @@ impl MessageEditor {
                 })
             }
         });
-
         cx.notify();
     }
 
@@ -228,7 +230,7 @@ impl MessageEditor {
             return;
         }
 
-        self.editor_is_expanded = false;
+        self.set_editor_is_expanded(false, cx);
         self.send_to_model(RequestKind::Chat, window, cx);
 
         cx.notify();
