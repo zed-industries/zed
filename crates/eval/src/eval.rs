@@ -18,10 +18,9 @@ use project::Project;
 use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
-use std::path::{Path, PathBuf};
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
-
-const EXAMPLES_DIR: &str = "./crates/eval/examples";
 
 #[derive(Parser, Debug)]
 #[command(name = "eval", disable_version_flag = true)]
@@ -75,15 +74,55 @@ fn main() {
         cx.spawn(async move |cx| {
             authenticate.await.unwrap();
 
-            let tasks = example_paths
+            let mut examples = Vec::new();
+            for example_path in example_paths {
+                let example = Example::load_from_directory(&example_path)?;
+                examples.push((example_path, example));
+            }
+
+            std::fs::create_dir_all(WORKTREES_DIR)?;
+
+            let mut repo_urls = HashSet::new();
+
+            let mut clone_tasks = Vec::new();
+
+            for (_, example) in examples.iter() {
+                let repo_url = example.base.url.clone();
+                if repo_urls.insert(repo_url.clone()) {
+                    let repo_path = repo_path_for_url(&repo_url);
+                    if !repo_path.join(".git").is_dir() {
+                        let git_task = cx.spawn(async move |_cx| {
+                            std::fs::create_dir_all(&repo_path)?;
+                            run_git(&repo_path, &["init"]).await?;
+                            run_git(&repo_path, &["remote", "add", "origin", &repo_url]).await
+                        });
+
+                        clone_tasks.push(git_task);
+                    } else {
+                        let actual_origin =
+                            run_git(&repo_path, &["remote", "get-url", "origin"]).await?;
+                        if actual_origin != repo_url {
+                            return Err(anyhow!(
+                                "remote origin {} does not match expected origin {}",
+                                actual_origin,
+                                repo_url,
+                            ));
+                        }
+                    }
+                }
+            }
+
+            future::join_all(clone_tasks).await;
+
+            let tasks = examples
                 .into_iter()
-                .map(|example_path| {
+                .map(|(example_path, example)| {
                     let app_state = app_state.clone();
                     let model = model.clone();
                     cx.spawn(async move |cx| {
                         (
-                            example_path.to_path_buf(),
-                            run_example(&example_path, model, app_state, cx).await,
+                            example_path,
+                            run_example(example, model, app_state, cx).await,
                         )
                     })
                 })
@@ -127,19 +166,18 @@ fn main() {
                 / (score_count as f32);
             println!("\nAverage score: {average_score}");
 
-            anyhow::Ok(())
+            cx.update(|cx| cx.quit())
         })
         .detach_and_log_err(cx);
     });
 }
 
 async fn run_example(
-    example_path: &Path,
+    example: Example,
     model: Arc<dyn LanguageModel>,
     app_state: Arc<AgentAppState>,
     cx: &mut AsyncApp,
 ) -> Result<JudgeOutput> {
-    let example = Example::load_from_directory(example_path)?;
     example.setup().await?;
     cx.update(|cx| example.run(model.clone(), app_state, cx))?
         .await?;
@@ -148,7 +186,8 @@ async fn run_example(
 }
 
 fn list_all_examples() -> Result<Vec<PathBuf>> {
-    let entries = std::fs::read_dir(EXAMPLES_DIR)?;
+    let path = std::fs::canonicalize(EXAMPLES_DIR).unwrap();
+    let entries = std::fs::read_dir(path).unwrap();
     let mut result_paths = Vec::new();
     for entry in entries {
         let entry = entry?;

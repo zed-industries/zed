@@ -22,14 +22,22 @@ use util::command::new_smol_command;
 
 use crate::AgentAppState;
 
+pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
+pub const REPOS_DIR: &str = "./crates/eval/repos";
+pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExampleBase {
-    pub path: PathBuf,
+    pub url: String,
     pub revision: String,
+    pub language: String,
+    pub insert_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Example {
+    pub path: PathBuf,
+
     pub base: ExampleBase,
 
     /// Content of the prompt.md file
@@ -60,32 +68,64 @@ pub struct JudgeOutput {
 
 impl Example {
     /// Load an example from a directory containing base.toml, prompt.md, and criteria.md
-    pub fn load_from_directory<P: AsRef<Path>>(dir_path: P) -> Result<Self> {
-        let base_path = dir_path.as_ref().join("base.toml");
-        let prompt_path = dir_path.as_ref().join("prompt.md");
-        let criteria_path = dir_path.as_ref().join("criteria.md");
-
-        let mut base: ExampleBase = toml::from_str(&fs::read_to_string(&base_path)?)?;
-        base.path = base
-            .path
-            .canonicalize()
-            .with_context(|| format!("Failed to canonicalize path: {:?}", base.path))?;
+    pub fn load_from_directory(dir_path: &Path) -> Result<Self> {
+        let base_path = dir_path.join("base.toml");
+        let prompt_path = dir_path.join("prompt.md");
+        let criteria_path = dir_path.join("criteria.md");
 
         Ok(Example {
-            base,
+            path: dir_path.to_path_buf(),
+            base: toml::from_str(&fs::read_to_string(&base_path)?)?,
             prompt: fs::read_to_string(prompt_path.clone())?,
             criteria: fs::read_to_string(criteria_path.clone())?,
         })
     }
 
+    pub fn name(&self) -> String {
+        self.path.file_name().unwrap().to_string_lossy().to_string()
+    }
+
+    pub fn worktree_path(&self) -> PathBuf {
+        Path::new(WORKTREES_DIR)
+            .canonicalize()
+            .context(format!("No such directory {WORKTREES_DIR}"))
+            .unwrap()
+            .join(self.name())
+    }
+
     /// Set up the example by checking out the specified Git revision
     pub async fn setup(&self) -> Result<()> {
-        // Check if the directory exists
-        let path = Path::new(&self.base.path);
-        anyhow::ensure!(path.exists(), "Path does not exist: {:?}", self.base.path);
+        let repo_path = repo_path_for_url(&self.base.url);
 
-        // Change to the project directory and checkout the specified revision
-        run_git(&self.base.path, &["checkout", &self.base.revision]).await?;
+        run_git(
+            &repo_path,
+            &["fetch", "--depth", "1", "origin", &self.base.revision],
+        )
+        .await?;
+
+        let worktree_path = self.worktree_path();
+
+        if worktree_path.is_dir() {
+            // TODO: consider including "-x" to remove ignored files. The downside of this is that
+            // it will also remove build artifacts, and so prevent incremental reuse there.
+            run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
+            run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
+            run_git(&worktree_path, &["checkout", &self.base.revision]).await?;
+        } else {
+            let worktree_path_string = worktree_path.to_string_lossy().to_string();
+
+            run_git(
+                &repo_path,
+                &[
+                    "worktree",
+                    "add",
+                    "-f",
+                    &worktree_path_string,
+                    &self.base.revision,
+                ],
+            )
+            .await?;
+        }
 
         Ok(())
     }
@@ -107,8 +147,9 @@ impl Example {
             cx,
         );
 
+        let worktree_path = self.worktree_path();
         let worktree = project.update(cx, |project, cx| {
-            project.create_worktree(&self.base.path, true, cx)
+            project.create_worktree(&worktree_path, true, cx)
         });
 
         let tools = Arc::new(ToolWorkingSet::default());
@@ -238,12 +279,13 @@ impl Example {
 
         let response = send_language_model_request(model, request, cx).await?;
 
-        Ok(parse_judge_output(&response)?)
+        parse_judge_output(&response)
     }
 
     pub async fn repository_diff(&self) -> Result<String> {
-        run_git(&self.base.path, &["add", "-N"]).await?;
-        run_git(&self.base.path, &["diff"]).await
+        let worktree_path = self.worktree_path();
+        run_git(&worktree_path, &["add", "-N"]).await?;
+        run_git(&worktree_path, &["diff"]).await
     }
 }
 
@@ -256,7 +298,7 @@ fn parse_judge_output(response: &str) -> Result<JudgeOutput> {
     Ok(JudgeOutput { analysis, score })
 }
 
-fn get_tag<'a>(name: &'static str, response: &'a str) -> Result<String> {
+fn get_tag(name: &'static str, response: &str) -> Result<String> {
     let start_tag = format!("<{}>", name);
     let end_tag = format!("</{}>", name);
 
@@ -273,6 +315,17 @@ fn get_tag<'a>(name: &'static str, response: &'a str) -> Result<String> {
     let content = response[content_start_ix..end_ix].trim().unindent();
 
     anyhow::Ok(content)
+}
+
+pub fn repo_path_for_url(repo_url: &str) -> PathBuf {
+    let repo_name = repo_url
+        .trim_start_matches("https://")
+        .replace(|c: char| !c.is_alphanumeric(), "-");
+    Path::new(REPOS_DIR)
+        .canonicalize()
+        .context(format!("No such directory {REPOS_DIR}"))
+        .unwrap()
+        .join(repo_name)
 }
 
 #[cfg(test)]
@@ -320,10 +373,12 @@ pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
         Ok(String::from_utf8(output.stdout)?.trim().to_string())
     } else {
         Err(anyhow!(
-            "`git {}` within `{}` failed with status: {}",
+            "`git {}` within `{}` failed with status: {}\nstderr:\n{}\nstdout:\n{}",
             args.join(" "),
             repo_path.display(),
-            output.status
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
         ))
     }
 }
