@@ -1,17 +1,21 @@
 use std::sync::Arc;
 
-use anyhow::Result;
-use client::Client;
-use gpui::{App, Task};
+use anyhow::{Context as _, Result, anyhow};
+use futures::AsyncReadExt;
+use gpui::{App, AppContext, Task};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use serde::{Deserialize, Serialize};
 use web_search::{WebSearchProvider, WebSearchProviderId, WebSearchResponse};
 
+const OPENAI_API_URL: &str = "https://api.openai.com/v1";
+
 pub struct OpenAiWebSearchProvider {
-    client: Arc<Client>,
+    http_client: Arc<dyn HttpClient>,
 }
 
 impl OpenAiWebSearchProvider {
-    pub fn new(client: Arc<Client>) -> Self {
-        Self { client }
+    pub fn new(http_client: Arc<dyn HttpClient>) -> Self {
+        Self { http_client }
     }
 }
 
@@ -21,6 +25,63 @@ impl WebSearchProvider for OpenAiWebSearchProvider {
     }
 
     fn search(&self, query: String, cx: &mut App) -> Task<Result<WebSearchResponse>> {
-        todo!()
+        let client = self.http_client.clone();
+
+        let input = serde_json::json!({
+            "model": "gpt-4o",
+            "input": query,
+            "tools": [{"type": "web_search_preview"}],
+            "tool_choice": {"type": "web_search_preview"}
+        });
+
+        let api_key_task = read_api_key(OPENAI_API_URL, cx);
+        cx.background_spawn(async move {
+            let api_key = api_key_task.await?;
+            let response = perform_web_search(client, &input, &api_key).await?;
+            println!("Response:\n{}", response);
+            todo!()
+        })
     }
+}
+
+async fn perform_web_search(
+    client: Arc<dyn HttpClient>,
+    request: &serde_json::Value,
+    api_key: &str,
+) -> Result<String> {
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(format!("{OPENAI_API_URL}/responses"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key));
+
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(request)?))?;
+    let mut response = client.send(request).await?;
+    if response.status().is_success() {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        Ok(body)
+    } else {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        Err(anyhow!(
+            "Failed to connect to OpenAI API: {} {}",
+            response.status(),
+            body,
+        ))
+    }
+}
+
+fn read_api_key(api_url: &str, cx: &mut App) -> Task<Result<String>> {
+    const OPENAI_API_KEY_VAR: &str = "OPENAI_API_KEY";
+    if let Ok(api_key) = std::env::var(OPENAI_API_KEY_VAR) {
+        return Task::ready(Ok(api_key));
+    };
+
+    let task = cx.read_credentials(api_url);
+    cx.background_spawn(async move {
+        let (_, api_key) = task.await?.context("credentials not found")?;
+
+        String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")
+    })
 }

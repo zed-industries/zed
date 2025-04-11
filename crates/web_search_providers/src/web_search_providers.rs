@@ -17,5 +17,8 @@ fn register_web_search_providers(
     client: Arc<Client>,
     cx: &mut Context<WebSearchRegistry>,
 ) {
-    registry.register_provider(open_ai::OpenAiWebSearchProvider::new(client), cx);
+    registry.register_provider(
+        open_ai::OpenAiWebSearchProvider::new(client.http_client()),
+        cx,
+    );
 }
