@@ -6,7 +6,6 @@ use client::Client;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal as _,
 };
-use icons::IconName;
 use proto::{Plan, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -50,13 +49,6 @@ impl CloudModel {
             Self::Anthropic(model) => model.display_name(),
             Self::OpenAi(model) => model.display_name(),
             Self::Google(model) => model.display_name(),
-        }
-    }
-
-    pub fn icon(&self) -> Option<IconName> {
-        match self {
-            Self::Anthropic(_) => Some(IconName::AiAnthropicHosted),
-            _ => None,
         }
     }
 

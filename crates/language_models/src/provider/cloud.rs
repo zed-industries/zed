@@ -225,6 +225,20 @@ impl CloudLanguageModelProvider {
             _maintain_client_status: maintain_client_status,
         }
     }
+
+    fn create_language_model(
+        &self,
+        model: CloudModel,
+        llm_api_token: LlmApiToken,
+    ) -> Arc<dyn LanguageModel> {
+        Arc::new(CloudLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            llm_api_token: llm_api_token.clone(),
+            client: self.client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }) as Arc<dyn LanguageModel>
+    }
 }
 
 impl LanguageModelProviderState for CloudLanguageModelProvider {
@@ -258,6 +272,17 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             client: self.client.clone(),
             request_limiter: RateLimiter::new(4),
         }))
+    }
+
+    fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let llm_api_token = self.state.read(cx).llm_api_token.clone();
+        [
+            CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
+            CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+        ]
+        .into_iter()
+        .map(|model| self.create_language_model(model, llm_api_token.clone()))
+        .collect()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -345,15 +370,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
         models
             .into_values()
-            .map(|model| {
-                Arc::new(CloudLanguageModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    llm_api_token: llm_api_token.clone(),
-                    client: self.client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model, llm_api_token.clone()))
             .collect()
     }
 
@@ -573,10 +590,6 @@ impl LanguageModel for CloudLanguageModel {
 
     fn name(&self) -> LanguageModelName {
         LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn icon(&self) -> Option<IconName> {
-        self.model.icon()
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
