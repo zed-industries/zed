@@ -275,6 +275,8 @@ fn new_debugger_pane(
             let active_pane_item = pane.active_item();
             h_flex()
                 .w_full()
+                .px_2()
+                .gap_1()
                 .h(Tab::container_height(cx))
                 .drag_over::<DraggedTab>(|bar, _, _, cx| {
                     bar.bg(cx.theme().colors().drop_target_background)
