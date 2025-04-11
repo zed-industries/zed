@@ -4676,8 +4676,21 @@ impl Editor {
         };
 
         let replace_range = choose_completion_range(&completion, intent, &buffer_handle, cx);
-        let snapshot = self.buffer.read(cx).snapshot(cx);
         let buffer = buffer_handle.read(cx);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let replace_range_multibuffer = {
+            let excerpt = snapshot
+                .excerpt_containing(self.selections.newest_anchor().range())
+                .unwrap();
+            let multibuffer_anchor = snapshot
+                .anchor_in_excerpt(excerpt.id(), buffer.anchor_before(replace_range.start))
+                .unwrap()
+                ..snapshot
+                    .anchor_in_excerpt(excerpt.id(), buffer.anchor_before(replace_range.end))
+                    .unwrap();
+            multibuffer_anchor.start.to_offset(&snapshot)
+                ..multibuffer_anchor.end.to_offset(&snapshot)
+        };
         let newest_anchor = self.selections.newest_anchor();
         if newest_anchor.head().buffer_id != Some(buffer.remote_id()) {
             return None;
@@ -4700,9 +4713,10 @@ impl Editor {
         let selections = self.selections.all::<usize>(cx);
         let mut edits = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
+
         for selection in &selections {
             let edit = if selection.id == newest_anchor.id {
-                (replace_range.clone(), new_text.as_str())
+                (replace_range_multibuffer.clone(), new_text.as_str())
             } else {
                 let mut range = selection.range();
                 let mut text = new_text.as_str();
