@@ -28,7 +28,7 @@ use stack_frame_list::StackFrameList;
 use ui::{
     ActiveTheme, AnyElement, App, Context, ContextMenu, DropdownMenu, FluentBuilder,
     InteractiveElement, IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Tab, Window, div, h_flex, px, v_flex,
+    StatefulInteractiveElement, Styled, Tab, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
