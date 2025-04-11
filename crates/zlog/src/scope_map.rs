@@ -3,7 +3,7 @@ use std::{
     hash::{DefaultHasher, Hasher},
     sync::{
         OnceLock, RwLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU8, AtomicU64, Ordering},
     },
     usize,
 };
@@ -16,80 +16,71 @@ static ENV_FILTER: OnceLock<env_config::EnvFilter> = OnceLock::new();
 static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
 static SCOPE_MAP_HASH: AtomicU64 = AtomicU64::new(0);
 
+/// The maximum log level of verbosity that is enabled by default.
+/// All messages more verbose than this level will be discarded by default.
+///
+/// This is used instead of the `log::max_level` as we need to tell the `log`
+/// crate that the max level is everything, so that we can dynamically enable
+/// logs that are more verbose than this level without the `log` crate throwing
+/// them away before we see them
+const LEVEL_ENABLED_MAX_STATIC: log_impl::Level = log_impl::Level::Info;
+
+/// A cache of the true maximum log level that _could_ be printed. This is based
+/// on the maximally verbose level that is configured by the user, and is used
+/// to filter out logs more verbose than any configured level.
+///
+/// E.g. if `LEVEL_ENABLED_MAX_STATIC `is 'info' but a user has configured some
+/// scope to print at a `debug` level, then this will be `debug`, and all
+/// `trace` logs will be discarded.
+/// Therefore, it should always be `>= LEVEL_ENABLED_MAX_STATIC`
+// PERF: this doesn't need to be an atomic, we don't actually care about race conditions here
+static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_STATIC as u8);
+
 pub fn init_env_filter(filter: env_config::EnvFilter) {
     if ENV_FILTER.set(filter).is_err() {
         panic!("Environment filter cannot be initialized twice");
     }
 }
 
-/// because we are currently just wrapping the `log` crate in `zlog`,
-/// we need to work around the fact that the `log` crate only provides a
-/// single global level filter. In order to have more precise control until
-/// we no longer wrap `log`, we bump up the priority of log level so that it
-/// will be logged, even if the actual level is lower
-/// This is fine for now, as we use a `info` level filter by default in releases,
-/// which hopefully won't result in confusion like `warn` or `error` levels might.
-pub fn min_printed_log_level(level: log_impl::Level) -> log_impl::Level {
-    // this logic is defined based on the logic used in the `log` crate,
-    // which checks that a logs level is <= both of these values,
-    // so we take the minimum of the two values to ensure that check passes
-    let level_min_static = log_impl::STATIC_MAX_LEVEL;
-    let level_min_dynamic = log_impl::max_level();
-    if level <= level_min_static && level <= level_min_dynamic {
-        return level;
-    }
-    return log_impl::LevelFilter::min(level_min_static, level_min_dynamic)
-        .to_level()
-        .unwrap_or(level);
-}
-
 pub fn is_possibly_enabled_level(level: log_impl::Level) -> bool {
-    // FIXME: should be based on the min allowed level currently
-    // i.e. the MIN enabled level that is configured, or GLOBAL_MIN_LEVEL if no additional configuration,
-    let level_min = min_printed_log_level(level);
-    return level <= level_min;
+    return LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed) <= level as u8;
 }
 
-pub fn is_scope_enabled(scope: &Scope, level: log_impl::Level) -> (bool, log_impl::Level) {
-    let level_min = min_printed_log_level(level);
-    if level <= level_min {
+pub fn is_scope_enabled(scope: &Scope, level: log_impl::Level) -> bool {
+    if level <= LEVEL_ENABLED_MAX_STATIC {
         // [FAST PATH]
         // if the message is at or below the minimum printed log level
         // (where error < warn < info etc) then always enable
-        return (true, level);
+        return true;
+    }
+    if !is_possibly_enabled_level(level) {
+        // [FAST PATH PT. 2]
+        // if the message is above the maximum enabled log level
+        // (where error < warn < info etc) then disable without checking
+        // scope map
+        return false;
     }
     let Ok(map) = SCOPE_MAP.read() else {
-        // on failure, default to enabled detection done by `log` crate
-        return (true, level);
+        // on failure, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
+        return false;
     };
 
     let Some(map) = map.as_ref() else {
-        // on failure, default to enabled detection done by `log` crate
-        return (true, level);
+        // on failure, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
+        return false;
     };
 
     if map.is_empty() {
-        // if no scopes are enabled, default to enabled detection done by `log` crate
-        return (true, level);
+        // if no scopes are enabled, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
+        return false;
     }
     let enabled_status = map.is_enabled(&scope, level);
-    match enabled_status {
-        EnabledStatus::NotConfigured => {
-            // if this scope isn't configured, default to enabled detection done by `log` crate
-            return (true, level);
-        }
-        EnabledStatus::Enabled => {
-            // if this scope is enabled, enable logging
-            // note: bumping level to min level that will be printed
-            // to work around log crate limitations
-            return (true, level_min);
-        }
-        EnabledStatus::Disabled => {
-            // if the configured level is lower than the requested level, disable logging
-            // note: err = 0, warn = 1, etc.
-            return (false, level);
-        }
-    }
+    return match enabled_status {
+        // if it isn't configured, then it it's disabled because it's not <= LEVEL_ENABLED_MAX_STATIC
+        EnabledStatus::NotConfigured => false,
+        EnabledStatus::Enabled => true,
+        EnabledStatus::Disabled => false,
+    };
 }
 
 fn hash_scope_map_settings(map: &HashMap<String, String>) -> u64 {

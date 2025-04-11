@@ -51,9 +51,8 @@ impl log::Log for Zlog {
             // TODO: when do we hit this
             None => private::scope_new(&[]),
         };
-        // FIXME: remove level from return
-        let (enabled, level) = scope_map::is_scope_enabled(&scope, record.metadata().level());
-        if !enabled {
+        let level = record.metadata().level();
+        if !scope_map::is_scope_enabled(&scope, level) {
             return;
         }
         sink::submit(sink::Record {
@@ -74,7 +73,7 @@ macro_rules! log {
     ($logger:expr, $level:expr, $($arg:tt)+) => {
         let level = $level;
         let logger = $logger;
-        let (enabled, level) = $crate::scope_map::is_scope_enabled(&logger.scope, level);
+        let enabled = $crate::scope_map::is_scope_enabled(&logger.scope, level);
         if enabled {
             $crate::sink::submit($crate::sink::Record {
                 scope: logger.scope,
