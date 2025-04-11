@@ -51,7 +51,7 @@ pub struct MessageEditor {
     model_selector: Entity<AssistantModelSelector>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
-    expanded_editor: bool,
+    editor_is_expanded: bool,
     waiting_for_summaries_to_send: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -165,7 +165,7 @@ impl MessageEditor {
                 )
             }),
             edits_expanded: false,
-            expanded_editor: false,
+            editor_is_expanded: false,
             waiting_for_summaries_to_send: false,
             profile_selector: cx
                 .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
@@ -183,10 +183,10 @@ impl MessageEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.expanded_editor = !self.expanded_editor;
+        self.editor_is_expanded = !self.editor_is_expanded;
 
         self.editor.update(cx, |editor, _| {
-            if self.expanded_editor {
+            if self.editor_is_expanded {
                 editor.set_mode(EditorMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
@@ -228,7 +228,10 @@ impl MessageEditor {
             return;
         }
 
+        self.editor_is_expanded = false;
         self.send_to_model(RequestKind::Chat, window, cx);
+
+        cx.notify();
     }
 
     fn is_editor_empty(&self, cx: &App) -> bool {
@@ -395,7 +398,7 @@ impl Render for MessageEditor {
         let focus_handle_clone = focus_handle.clone();
         let inline_context_picker = self.inline_context_picker.clone();
 
-        let is_editor_expanded = self.expanded_editor;
+        let is_editor_expanded = self.editor_is_expanded;
         let expand_icon = if is_editor_expanded {
             IconName::Minimize
         } else {
