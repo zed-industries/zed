@@ -4739,14 +4739,8 @@ impl Editor {
             }
         }
 
-        let utf16_edit_range_relative = {
-            let newest_selection = self.selections.newest::<OffsetUtf16>(cx).range();
-            let selection_start_utf16 = newest_selection.start.0 as isize;
-            replace_range.start.to_offset_utf16(&snapshot).0 as isize - selection_start_utf16
-                ..replace_range.end.to_offset_utf16(&snapshot).0 as isize - selection_start_utf16
-        };
         cx.emit(EditorEvent::InputHandled {
-            utf16_range_to_replace: Some(utf16_edit_range_relative),
+            utf16_range_to_replace: None,
             text: new_text.clone().into(),
         });
 
