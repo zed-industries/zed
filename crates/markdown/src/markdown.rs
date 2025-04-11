@@ -1,6 +1,7 @@
 pub mod parser;
 mod path_range;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::iter;
 use std::mem;
@@ -184,6 +185,22 @@ impl Markdown {
         &self.parsed_markdown
     }
 
+    pub fn escape<'a>(s: &'a str) -> Cow<'a, str> {
+        let count = s.bytes().filter(|c| c.is_ascii_punctuation()).count();
+        if count > 0 {
+            let mut output = String::with_capacity(s.len() + count);
+            for c in s.chars() {
+                if c.is_ascii_punctuation() {
+                    output.push('\\')
+                }
+                output.push(c)
+            }
+            output.into()
+        } else {
+            s.into()
+        }
+    }
+
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.end <= self.selection.start {
             return;
@@ -344,6 +361,27 @@ impl MarkdownElement {
             code_block_renderer: CodeBlockRenderer::Default { copy_button: true },
             on_url_click: None,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rendered_text(
+        markdown: Entity<Markdown>,
+        cx: &mut gpui::VisualTestContext,
+        style: impl FnOnce(&Window, &App) -> MarkdownStyle,
+    ) -> String {
+        use gpui::size;
+
+        let (text, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |window, cx| Self::new(markdown, style(window, cx)),
+        );
+        text.text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub fn code_block_renderer(mut self, variant: CodeBlockRenderer) -> Self {

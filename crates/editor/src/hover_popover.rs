@@ -89,7 +89,7 @@ pub fn show_keyboard_hover(
 }
 
 pub struct InlayHover {
-    pub range: InlayHighlight,
+    pub(crate) range: InlayHighlight,
     pub tooltip: HoverBlock,
 }
 
@@ -662,7 +662,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
 
 #[derive(Default, Debug)]
 pub struct HoverState {
-    pub info_popovers: Vec<InfoPopover>,
+    pub(crate) info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
     pub triggered_from: Option<Anchor>,
     pub info_task: Option<Task<Option<()>>>,

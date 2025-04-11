@@ -32,7 +32,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use text::BufferId;
+use text::{BufferId, OffsetRangeExt};
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{Icon, IconName, Label, h_flex, prelude::*};
@@ -58,6 +58,7 @@ struct ProjectDiagnosticsEditor {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     editor: Entity<Editor>,
+    diagnostics: HashMap<BufferId, Vec<DiagnosticEntry<text::Anchor>>>,
     blocks: HashMap<BufferId, Vec<CustomBlockId>>,
     summary: DiagnosticSummary,
     multibuffer: Entity<MultiBuffer>,
@@ -214,6 +215,7 @@ impl ProjectDiagnosticsEditor {
         let mut this = Self {
             project: project_handle.clone(),
             summary: project.diagnostic_summary(false, cx),
+            diagnostics: Default::default(),
             blocks: Default::default(),
             include_warnings,
             workspace,
@@ -339,6 +341,23 @@ impl ProjectDiagnosticsEditor {
         self.update_stale_excerpts(window, cx);
     }
 
+    fn diagnostics_are_unchanged(
+        &self,
+        existing: &Vec<DiagnosticEntry<text::Anchor>>,
+        new: &Vec<DiagnosticEntry<text::Anchor>>,
+        snapshot: &BufferSnapshot,
+    ) -> bool {
+        if existing.len() != new.len() {
+            return false;
+        }
+        existing.iter().zip(new.iter()).all(|(existing, new)| {
+            existing.diagnostic.message == new.diagnostic.message
+                && existing.diagnostic.severity == new.diagnostic.severity
+                && existing.diagnostic.is_primary == new.diagnostic.is_primary
+                && existing.range.to_offset(snapshot) == new.range.to_offset(snapshot)
+        })
+    }
+
     fn update_excerpts(
         &mut self,
         buffer: Entity<Buffer>,
@@ -356,19 +375,34 @@ impl ProjectDiagnosticsEditor {
 
         cx.spawn_in(window, async move |this, mut cx| {
             let diagnostics = buffer_snapshot
-                .diagnostics_in_range::<_, text::Point>(
+                .diagnostics_in_range::<_, text::Anchor>(
                     Point::zero()..buffer_snapshot.max_point(),
                     false,
                 )
                 .filter(|d| !(d.diagnostic.is_primary && d.diagnostic.is_unnecessary))
                 .collect::<Vec<_>>();
+            let unchanged = this.update(cx, |this, _| {
+                if this.diagnostics.get(&buffer_id).is_some_and(|existing| {
+                    this.diagnostics_are_unchanged(existing, &diagnostics, &buffer_snapshot)
+                }) {
+                    return true;
+                }
+                this.diagnostics.insert(buffer_id, diagnostics.clone());
+                return false;
+            })?;
+            if unchanged {
+                return Ok(());
+            }
 
             let mut grouped: HashMap<usize, Vec<_>> = HashMap::default();
             for entry in diagnostics {
                 grouped
                     .entry(entry.diagnostic.group_id)
                     .or_default()
-                    .push(entry)
+                    .push(DiagnosticEntry {
+                        range: entry.range.to_point(&buffer_snapshot),
+                        diagnostic: entry.diagnostic,
+                    })
             }
             let mut blocks: Vec<DiagnosticBlock> = Vec::new();
 
@@ -412,13 +446,6 @@ impl ProjectDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
-                debug_assert!(
-                    excerpt_ranges.last().is_none()
-                        || excerpt_ranges.last().unwrap().context.start <= excerpt_range.start,
-                    "{:?} > {:?}!",
-                    excerpt_ranges.last(),
-                    excerpt_range
-                );
                 excerpt_ranges.push(ExcerptRange {
                     context: excerpt_range,
                     primary: b.initial_range.clone(),
@@ -442,6 +469,9 @@ impl ProjectDiagnosticsEditor {
                         cx,
                     )
                 });
+                #[cfg(test)]
+                let cloned_blocks = blocks.clone();
+
                 let editor_blocks =
                     anchor_ranges
                         .into_iter()
@@ -463,30 +493,25 @@ impl ProjectDiagnosticsEditor {
                         display_map.insert_blocks(editor_blocks, cx)
                     })
                 });
+
+                #[cfg(test)]
+                {
+                    for (block_id, block) in block_ids.iter().zip(cloned_blocks.iter()) {
+                        let markdown = block.markdown.clone();
+                        editor::test::set_block_content_for_tests(*block_id, cx, move |cx| {
+                            markdown::MarkdownElement::rendered_text(
+                                markdown.clone(),
+                                cx,
+                                editor::hover_markdown_style,
+                            )
+                        });
+                    }
+                }
+
                 this.blocks.insert(buffer_id, block_ids);
                 cx.notify()
             })
         })
-    }
-
-    #[cfg(test)]
-    fn check_invariants(&self, cx: &mut Context<Self>) {
-        let mut excerpts = Vec::new();
-        for (id, buffer, _) in self.multibuffer.read(cx).snapshot(cx).excerpts() {
-            if let Some(file) = buffer.file() {
-                excerpts.push((id, file.path().clone()));
-            }
-        }
-
-        let mut prev_path = None;
-        for (_, path) in &excerpts {
-            if let Some(prev_path) = prev_path {
-                if path < prev_path {
-                    panic!("excerpts are not sorted by path {:?}", excerpts);
-                }
-            }
-            prev_path = Some(path);
-        }
     }
 }
 
@@ -690,31 +715,6 @@ impl Item for ProjectDiagnosticsEditor {
             editor.added_to_workspace(workspace, window, cx)
         });
     }
-}
-
-fn compare_diagnostics(
-    old: &DiagnosticEntry<language::Anchor>,
-    new: &DiagnosticEntry<language::Anchor>,
-    snapshot: &language::BufferSnapshot,
-) -> Ordering {
-    use language::ToOffset;
-
-    // The diagnostics may point to a previously open Buffer for this file.
-    if !old.range.start.is_valid(snapshot) || !new.range.start.is_valid(snapshot) {
-        return Ordering::Greater;
-    }
-
-    old.range
-        .start
-        .to_offset(snapshot)
-        .cmp(&new.range.start.to_offset(snapshot))
-        .then_with(|| {
-            old.range
-                .end
-                .to_offset(snapshot)
-                .cmp(&new.range.end.to_offset(snapshot))
-        })
-        .then_with(|| old.diagnostic.message.cmp(&new.diagnostic.message))
 }
 
 const DIAGNOSTIC_EXPANSION_ROW_LIMIT: u32 = 32;

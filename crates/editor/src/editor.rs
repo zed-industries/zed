@@ -72,7 +72,7 @@ pub use element::{
 use feature_flags::{Debugger, FeatureFlagAppExt};
 use futures::{
     FutureExt,
-    future::{self, BoxFuture, Shared, join},
+    future::{self, Shared, join},
 };
 use fuzzy::StringMatchCandidate;
 

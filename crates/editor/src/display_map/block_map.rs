@@ -187,9 +187,9 @@ impl BlockPlacement<Anchor> {
 }
 
 pub struct CustomBlock {
-    id: CustomBlockId,
+    pub id: CustomBlockId,
     placement: BlockPlacement<Anchor>,
-    height: Option<u32>,
+    pub height: Option<u32>,
     style: BlockStyle,
     render: Arc<Mutex<RenderBlock>>,
     priority: usize,

@@ -1,17 +1,19 @@
 pub mod editor_lsp_test_context;
 pub mod editor_test_context;
 
-use std::sync::LazyLock;
+use std::{rc::Rc, sync::LazyLock};
 
 use crate::{
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
-    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
+    display_map::{CustomBlockId, DisplayMap, DisplaySnapshot, ToDisplayPoint},
 };
+use collections::HashMap;
 use gpui::{
-    AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels, Window,
-    font,
+    AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels,
+    VisualTestContext, Window, font,
 };
 use project::Project;
+use ui::{App, BorrowAppContext};
 use util::test::{marked_text_offsets, marked_text_ranges};
 
 pub use crate::rust_analyzer_ext::expand_macro_recursively;
@@ -118,4 +120,22 @@ pub(crate) fn build_editor_with_project(
     cx: &mut Context<Editor>,
 ) -> Editor {
     Editor::new(EditorMode::Full, buffer, Some(project), window, cx)
+}
+
+#[derive(Default)]
+struct TestBlockContent(HashMap<CustomBlockId, Rc<dyn Fn(&mut VisualTestContext) -> String>>);
+
+impl gpui::Global for TestBlockContent {}
+
+pub fn set_block_content_for_tests(
+    id: CustomBlockId,
+    cx: &mut App,
+    f: impl Fn(&mut VisualTestContext) -> String + 'static,
+) {
+    cx.update_default_global::<TestBlockContent, _>(|bc, _| bc.0.insert(id, Rc::new(f)));
+}
+
+pub fn block_content_for_tests(id: CustomBlockId, cx: &mut VisualTestContext) -> Option<String> {
+    let f = cx.update(|_, cx| cx.default_global::<TestBlockContent>().0.get(&id).cloned())?;
+    Some(f(cx))
 }

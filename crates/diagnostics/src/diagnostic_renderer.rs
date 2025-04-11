@@ -1,44 +1,24 @@
-use std::{
-    borrow::Cow,
-    ops::Range,
-    sync::{Arc, OnceLock},
-};
+use std::{ops::Range, sync::Arc};
 
 use editor::{
-    Anchor, Bias, Direction, DisplayPoint, Editor, EditorElement, EditorSnapshot, EditorStyle,
-    MultiBuffer,
+    Anchor, Editor, EditorSnapshot,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle},
     hover_markdown_style,
     scroll::Autoscroll,
 };
-use gpui::{AppContext, Entity, Task, TextStyle, WeakEntity};
-use indoc;
-use language::{Buffer, BufferId, Diagnostic, DiagnosticEntry, DiagnosticSet, PointUtf16};
+use gpui::{AppContext, Entity, Focusable, WeakEntity};
+use language::{BufferId, DiagnosticEntry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownElement};
 use settings::Settings;
 use text::Point;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, InteractiveElement, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px, relative,
+    ActiveTheme, AnyElement, App, IntoElement, ParentElement, SharedString, Styled, Window, div, px,
 };
 use util::maybe;
 
-fn escape_markdown<'a>(s: &'a str) -> Cow<'a, str> {
-    if s.chars().any(|c| c.is_ascii_punctuation()) {
-        let mut output = String::new();
-        for c in s.chars() {
-            if c.is_ascii_punctuation() {
-                output.push('\\')
-            }
-            output.push(c)
-        }
-        output.into()
-    } else {
-        s.into()
-    }
-}
+pub struct DiagnosticRenderer;
 
 impl DiagnosticRenderer {
     pub fn diagnostic_blocks_for_group(
@@ -71,7 +51,7 @@ impl DiagnosticRenderer {
         }
 
         let mut markdown =
-            escape_markdown(&if let Some(source) = primary.diagnostic.source.as_ref() {
+            Markdown::escape(&if let Some(source) = primary.diagnostic.source.as_ref() {
                 format!("{}: {}", source, primary.diagnostic.message)
             } else {
                 primary.diagnostic.message
@@ -79,20 +59,18 @@ impl DiagnosticRenderer {
             .to_string();
         for entry in same_row {
             markdown.push_str("\n- hint: ");
-            markdown.push_str(&escape_markdown(&entry.diagnostic.message))
+            markdown.push_str(&Markdown::escape(&entry.diagnostic.message))
         }
 
         for (ix, entry) in &distant {
             markdown.push_str("\n- hint: [");
-            markdown.push_str(&escape_markdown(&entry.diagnostic.message));
+            markdown.push_str(&Markdown::escape(&entry.diagnostic.message));
             markdown.push_str(&format!("](file://#diagnostic-{group_id}-{ix})\n",))
         }
 
         let mut results = vec![DiagnosticBlock {
             initial_range: primary.range,
             severity: primary.diagnostic.severity,
-            group_id,
-            id: 0,
             buffer_id,
             markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
         }];
@@ -103,13 +81,11 @@ impl DiagnosticRenderer {
             } else {
                 entry.diagnostic.message
             };
-            let markdown = escape_markdown(&markdown).to_string();
+            let markdown = Markdown::escape(&markdown).to_string();
 
             results.push(DiagnosticBlock {
                 initial_range: entry.range,
                 severity: entry.diagnostic.severity,
-                group_id,
-                id: results.len(),
                 buffer_id,
                 markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
             });
@@ -121,7 +97,7 @@ impl DiagnosticRenderer {
             } else {
                 entry.diagnostic.message
             };
-            let mut markdown = escape_markdown(&markdown).to_string();
+            let mut markdown = Markdown::escape(&markdown).to_string();
             markdown.push_str(&format!(
                 " ([back](file://#diagnostic-{group_id}-{primary_ix}))"
             ));
@@ -129,8 +105,6 @@ impl DiagnosticRenderer {
             results.push(DiagnosticBlock {
                 initial_range: entry.range,
                 severity: entry.diagnostic.severity,
-                group_id,
-                id: results.len(),
                 buffer_id,
                 markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
             });
@@ -140,11 +114,40 @@ impl DiagnosticRenderer {
     }
 }
 
+impl editor::DiagnosticRenderer for DiagnosticRenderer {
+    fn render_group(
+        &self,
+        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        buffer_id: BufferId,
+        snapshot: EditorSnapshot,
+        editor: WeakEntity<Editor>,
+        cx: &mut App,
+    ) -> Vec<BlockProperties<Anchor>> {
+        let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, cx);
+        blocks
+            .into_iter()
+            .map(|block| {
+                let editor = editor.clone();
+                BlockProperties {
+                    placement: BlockPlacement::Near(
+                        snapshot
+                            .buffer_snapshot
+                            .anchor_after(block.initial_range.start),
+                    ),
+                    height: Some(1),
+                    style: BlockStyle::Flex,
+                    render: Arc::new(move |bcx| block.render_block(editor.clone(), bcx)),
+                    priority: 1,
+                }
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct DiagnosticBlock {
     pub(crate) initial_range: Range<Point>,
     pub(crate) severity: DiagnosticSeverity,
-    pub(crate) group_id: usize,
-    pub(crate) id: usize,
     pub(crate) buffer_id: BufferId,
     pub(crate) markdown: Entity<Markdown>,
 }
@@ -175,7 +178,6 @@ impl DiagnosticBlock {
             .line_height(line_height)
             .bg(background_color)
             .border_color(border_color)
-            .id(self.id)
             .max_w(max_width)
             .child(
                 MarkdownElement::new(self.markdown.clone(), hover_markdown_style(bcx.window, cx))
@@ -215,62 +217,9 @@ impl DiagnosticBlock {
                 };
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.select_ranges([diagnostic.range.start..diagnostic.range.start]);
-                })
+                });
+                window.focus(&editor.focus_handle(cx));
             })
             .ok();
-    }
-}
-
-impl editor::DiagnosticRenderer for DiagnosticRenderer {
-    fn render_group(
-        &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
-        buffer_id: BufferId,
-        snapshot: EditorSnapshot,
-        editor: WeakEntity<Editor>,
-        cx: &mut App,
-    ) -> Vec<BlockProperties<Anchor>> {
-        let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, cx);
-        blocks
-            .into_iter()
-            .map(|block| {
-                let editor = editor.clone();
-                BlockProperties {
-                    placement: BlockPlacement::Near(
-                        snapshot
-                            .buffer_snapshot
-                            .anchor_after(block.initial_range.start),
-                    ),
-                    height: Some(1),
-                    style: BlockStyle::Flex,
-                    render: Arc::new(move |bcx| block.render_block(editor.clone(), bcx)),
-                    priority: 1,
-                }
-            })
-            .collect()
-    }
-}
-pub struct DiagnosticRenderer;
-
-fn new_entry(
-    range: Range<PointUtf16>,
-    severity: lsp::DiagnosticSeverity,
-    message: &str,
-    group_id: usize,
-    is_primary: bool,
-) -> DiagnosticEntry<PointUtf16> {
-    DiagnosticEntry {
-        range,
-        diagnostic: Diagnostic {
-            source: Some("rustc".to_string()),
-            code: None,
-            severity,
-            message: message.to_owned(),
-            group_id,
-            is_primary,
-            is_disk_based: false,
-            is_unnecessary: false,
-            data: None,
-        },
     }
 }

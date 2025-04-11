@@ -2778,6 +2778,7 @@ impl EditorElement {
                 if block.place_near() {
                     if let Some((x_target, line_width)) = x_position {
                         let margin = em_width * 2;
+
                         if line_width + final_size.width + margin
                             < editor_width + gutter_dimensions.full_width()
                             && !row_block_types.contains_key(&(row - 1))
@@ -5966,7 +5967,6 @@ impl LineWithInvisibles {
                             max_width: text_width,
                         });
                         let line_height = text_style.line_height_in_pixels(window.rem_size());
-                        dbg!(line_height);
                         let size = element.layout_as_root(
                             size(available_width, AvailableSpace::Definite(line_height)),
                             window,
