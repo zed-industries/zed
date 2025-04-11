@@ -89,28 +89,18 @@ impl Render for HelloWorld {
 fn main() {
     Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    ..Default::default()
-                },
-                |_, cx| {
-                    cx.new(|_| HelloWorld {
-                        text: "World".into(),
-                    })
-                },
-            )
-            .unwrap();
-
-        let entity = cx.new(|_| HelloWorld {
-            text: "World".into(),
-        });
-        window
-            .update(cx, |_, window, cx| {
-                dbg!(window.measure(entity, size(px(100.), px(100.)).into(), cx))
-            })
-            .unwrap();
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |_, cx| {
+                cx.new(|_| HelloWorld {
+                    text: "World".into(),
+                })
+            },
+        )
+        .unwrap();
         cx.activate(true);
     });
 }

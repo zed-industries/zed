@@ -151,19 +151,12 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
 
     // Open the project diagnostics view while there are already diagnostics.
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new_with_context(
-            1,
-            true,
-            project.clone(),
-            workspace.downgrade(),
-            window,
-            cx,
-        )
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -250,7 +243,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -364,7 +357,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -469,14 +462,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let workspace = window.root(cx).unwrap();
 
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new_with_context(
-            1,
-            true,
-            project.clone(),
-            workspace.downgrade(),
-            window,
-            cx,
-        )
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
@@ -512,7 +498,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -560,7 +546,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -628,7 +614,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are updated.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -686,7 +672,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language servers' diagnostics are updated.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -737,14 +723,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     let workspace = window.root(cx).unwrap();
 
     let mutated_diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new_with_context(
-            1,
-            true,
-            project.clone(),
-            workspace.downgrade(),
-            window,
-            cx,
-        )
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
 
     workspace.update_in(cx, |workspace, window, cx| {
@@ -829,7 +808,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                         .unwrap()
                 });
                 cx.executor()
-                    .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+                    .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
 
                 cx.run_until_parked();
             }
@@ -844,17 +823,10 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
     log::info!("constructing reference diagnostics view");
     let reference_diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new_with_context(
-            1,
-            true,
-            project.clone(),
-            workspace.downgrade(),
-            window,
-            cx,
-        )
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.run_until_parked();
 
     let mutated_excerpts = get_diagnostics_excerpts(&mutated_diagnostics, cx);
@@ -905,7 +877,7 @@ fn get_diagnostics_excerpts(
     diagnostics.update(cx, |diagnostics, cx| {
         let mut result = vec![];
         let mut excerpt_indices_by_id = HashMap::default();
-        diagnostics.excerpts.update(cx, |multibuffer, cx| {
+        diagnostics.multibuffer.update(cx, |multibuffer, cx| {
             let snapshot = multibuffer.snapshot(cx);
             for (id, buffer, range) in snapshot.excerpts() {
                 excerpt_indices_by_id.insert(id, result.len());
