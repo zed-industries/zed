@@ -10107,7 +10107,10 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
         .update(cx, |_, window, cx| {
             cx.new(|cx| {
                 Editor::new(
-                    EditorMode::Full,
+                    EditorMode::Full {
+                        scale_ui_elements_with_buffer_font_size: false,
+                        show_active_line_background: false,
+                    },
                     multi_buffer.clone(),
                     Some(project.clone()),
                     window,
