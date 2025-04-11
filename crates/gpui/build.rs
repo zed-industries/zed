@@ -77,8 +77,8 @@ mod macos {
 
     fn generate_dispatch_bindings() {
         println!("cargo:rustc-link-lib=framework=System");
-        println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
-        println!("cargo:rerun-if-changed=src/platform/mac/dispatch.h");
+        // println!("cargo:rustc-link-lib=weak_framework=ScreenCaptureKit");
+        println!("cargo:rustc-link-arg=-Wl,-weak_framework,ScreenCaptureKit");
 
         let bindings = bindgen::Builder::default()
             .header("src/platform/mac/dispatch.h")
