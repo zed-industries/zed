@@ -106,11 +106,22 @@ impl ExtensionBuilder {
         }
 
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
-            let snake_cased_grammar_name = grammar_name.to_case(Case::Snake);
-            if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
-                bail!(
-                    "grammar name '{grammar_name}' must be written in snake_case: {snake_cased_grammar_name}"
-                );
+            // Allow `d2` to not have to be `d_2`
+            // See: https://github.com/rutrum/convert-case/issues/21
+            if grammar_name.len() == 2 {
+                let lower_cased_grammar_name = grammar_name.to_lowercase();
+                if grammar_name.as_ref() != lower_cased_grammar_name.as_str() {
+                    bail!(
+                        "grammar name '{grammar_name}' must be written in snake_case: {lower_cased_grammar_name}"
+                    );
+                }
+            } else {
+                let snake_cased_grammar_name = grammar_name.to_case(Case::Snake);
+                if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
+                    bail!(
+                        "grammar name '{grammar_name}' must be written in snake_case: {snake_cased_grammar_name}"
+                    );
+                }
             }
 
             log::info!(
