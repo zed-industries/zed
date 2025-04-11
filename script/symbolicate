@@ -59,11 +59,10 @@ else # ips file
         echo "You need to update your symbolicate: cargo install symbolicate"
         exit 1
     fi
-
     dsym="$uuid.dwarf"
     if [[ ! -f target/dsyms/$dsym ]]; then
         echo "Downloading $dsym..."
-        curl -f -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/by_uuid/${uuid}.dwarf.gz" ||
+        curl -f -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/by-uuid/${uuid}.dwarf.gz" ||
             curl -f -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/$channel/Zed-$version-$arch.dwarf.gz"
         gunzip  target/dsyms/$dsym.gz
     fi

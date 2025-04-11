@@ -209,7 +209,7 @@ function prepare_binaries() {
     echo "Gzipping dSYMs for $architecture"
     gzip -f target/${architecture}/${target_dir}/Zed.dwarf
 
-    echo "Uploading dSYMs${architecture} for $architecture to by_uuid/${uuid}.dwarf.gz"
+    echo "Uploading dSYMs${architecture} for $architecture to by-uuid/${uuid}.dwarf.gz"
     upload_to_blob_store_public \
         "zed-debug-symbols" \
         target/${architecture}/${target_dir}/Zed.dwarf.gz \

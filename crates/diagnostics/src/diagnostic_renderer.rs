@@ -20,8 +20,8 @@ use settings::Settings;
 use text::Point;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, ComponentPreview, InteractiveElement, IntoComponent, IntoElement,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, px, relative,
+    ActiveTheme, AnyElement, App, InteractiveElement, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, px, relative,
 };
 use util::maybe;
 
@@ -249,8 +249,6 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
             .collect()
     }
 }
-#[derive(IntoComponent)]
-#[component(scope = "Diagnostics")]
 pub struct DiagnosticRenderer;
 
 fn new_entry(
@@ -273,106 +271,5 @@ fn new_entry(
             is_unnecessary: false,
             data: None,
         },
-    }
-}
-
-impl ComponentPreview for DiagnosticRenderer {
-    fn preview(window: &mut Window, cx: &mut App) -> AnyElement {
-        static EDITOR: OnceLock<Entity<Editor>> = OnceLock::new();
-        let editor = EDITOR.get_or_init(|| {
-            let buffer = cx.new(|cx| {
-                let mut buffer = Buffer::local(
-                    indoc::indoc! {
-                        r#" //
-                fn main() {
-                    println!("{}", foo(1, "Hello, world!"));
-                }
-
-                fn foo(_: i32) -> bool {
-                    true
-                }
-            "#
-                    },
-                    cx,
-                );
-                let entries = [
-                    new_entry(
-                        PointUtf16::new(2, 26)..PointUtf16::new(2, 42),
-                        DiagnosticSeverity::ERROR,
-                        "expected 1 argument, found 2",
-                        1,
-                        true,
-                    ),
-                    new_entry(
-                        PointUtf16::new(2, 19)..PointUtf16::new(2, 22),
-                        DiagnosticSeverity::ERROR,
-                        "this function takes 1 argument but 2 arguments were supplied",
-                        2,
-                        true,
-                    ),
-                    new_entry(
-                        PointUtf16::new(2, 26)..PointUtf16::new(2, 41),
-                        DiagnosticSeverity::HINT,
-                        "unexpected argument #2 of type `&'static str`",
-                        2,
-                        false,
-                    ),
-                    new_entry(
-                        PointUtf16::new(5, 3)..PointUtf16::new(5, 6),
-                        DiagnosticSeverity::HINT,
-                        "function defined here",
-                        2,
-                        false,
-                    ),
-                    new_entry(
-                        PointUtf16::new(2, 24)..PointUtf16::new(2, 41),
-                        DiagnosticSeverity::HINT,
-                        "remove the extra argument",
-                        2,
-                        false,
-                    ),
-                ];
-
-                let diagnostics = DiagnosticSet::new(entries, &buffer.snapshot());
-                buffer.update_diagnostics(lsp::LanguageServerId(1), diagnostics, cx);
-                buffer
-            });
-
-            cx.new(|cx| {
-                let mut editor = Editor::new(
-                    editor::EditorMode::Full,
-                    cx.new(|cx| MultiBuffer::singleton(buffer, cx)),
-                    None,
-                    window,
-                    cx,
-                );
-                editor.go_to_diagnostic_impl(Direction::Next, window, cx);
-
-                editor
-            })
-        });
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.buffer_font.family.clone(),
-            font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_size: settings.buffer_font_size(cx).into(),
-            font_weight: settings.buffer_font.weight,
-            line_height: relative(settings.buffer_line_height.value()),
-            ..TextStyle::default()
-        };
-        div()
-            .h(px(500.))
-            .w_full()
-            .child(EditorElement::new(
-                &editor,
-                EditorStyle {
-                    background: cx.theme().colors().editor_background,
-                    local_player: cx.theme().players().local(),
-                    text: text_style,
-                    ..EditorStyle::default()
-                },
-            ))
-            .into_any_element()
     }
 }

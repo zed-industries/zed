@@ -17,7 +17,7 @@ use project::{
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc, usize};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{Divider, prelude::*};
 
 pub struct Console {
     console: Entity<Editor>,
@@ -141,7 +141,7 @@ impl Console {
             state.evaluate(
                 expression,
                 Some(dap::EvaluateArgumentsContext::Variables),
-                self.stack_frame_list.read(cx).current_stack_frame_id(),
+                self.stack_frame_list.read(cx).selected_stack_frame_id(),
                 None,
                 cx,
             );
@@ -229,7 +229,8 @@ impl Render for Console {
             .size_full()
             .child(self.render_console(cx))
             .when(self.is_local(cx), |this| {
-                this.child(self.render_query_bar(cx))
+                this.child(Divider::horizontal())
+                    .child(self.render_query_bar(cx))
                     .pt(DynamicSpacing::Base04.rems(cx))
             })
             .border_2()
@@ -356,7 +357,7 @@ impl ConsoleQueryBarCompletionProvider {
                         let variable_value = variables.get(&string_match.string)?;
 
                         Some(project::Completion {
-                            old_range: buffer_position..buffer_position,
+                            replace_range: buffer_position..buffer_position,
                             new_text: string_match.string.clone(),
                             label: CodeLabel {
                                 filter_range: 0..string_match.string.len(),
@@ -384,7 +385,7 @@ impl ConsoleQueryBarCompletionProvider {
     ) -> Task<Result<Option<Vec<Completion>>>> {
         let completion_task = console.update(cx, |console, cx| {
             console.session.update(cx, |state, cx| {
-                let frame_id = console.stack_frame_list.read(cx).current_stack_frame_id();
+                let frame_id = console.stack_frame_list.read(cx).selected_stack_frame_id();
 
                 state.completions(
                     CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),
@@ -428,10 +429,10 @@ impl ConsoleQueryBarCompletionProvider {
                         let buffer_offset = buffer_position.to_offset(&snapshot);
                         let start = buffer_offset - word_bytes_length;
                         let start = snapshot.anchor_before(start);
-                        let old_range = start..buffer_position;
+                        let replace_range = start..buffer_position;
 
                         project::Completion {
-                            old_range,
+                            replace_range,
                             new_text,
                             label: CodeLabel {
                                 filter_range: 0..completion.label.len(),
