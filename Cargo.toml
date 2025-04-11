@@ -169,6 +169,7 @@ members = [
     "crates/web_search",
     "crates/web_search_providers",
     "crates/welcome",
+    "crates/windows_net",
     "crates/workspace",
     "crates/worktree",
     "crates/zed",
@@ -378,6 +379,7 @@ watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
+windows_net = { path = "crates/windows_net" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
@@ -473,7 +475,7 @@ json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
-jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+jupyter-websocket-client = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
@@ -485,7 +487,7 @@ mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
-nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+nbformat = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
@@ -527,7 +529,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "hickory-dns",
 ] }
 rsa = "0.9.6"
-runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
+runtimelib = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
@@ -657,6 +659,7 @@ features = [
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_Graphics_Imaging_D2D",
+    "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",
