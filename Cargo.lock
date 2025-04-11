@@ -1100,7 +1100,7 @@ source = "git+https://github.com/zed-industries/async-tls?rev=1e759a4b5e370f87dc
 dependencies = [
  "futures-core",
  "futures-io",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-pemfile 2.2.0",
  "webpki-roots",
 ]
