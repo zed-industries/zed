@@ -413,11 +413,11 @@
     "context": "Workspace",
     "bindings": {
       // Change the default action on `menu::Confirm` by setting the parameter
-      // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
-      "alt-open": "projects::OpenRecent",
-      "alt-ctrl-o": "projects::OpenRecent",
-      "alt-shift-open": "projects::OpenRemote",
-      "alt-ctrl-shift-o": "projects::OpenRemote",
+      // "alt-ctrl-o": ["projects::ToggleRecent", { "create_new_window": true }],
+      "alt-open": "projects::ToggleRecent",
+      "alt-ctrl-o": "projects::ToggleRecent",
+      "alt-shift-open": "projects::ToggleRemote",
+      "alt-ctrl-shift-o": "projects::ToggleRemote",
       "alt-ctrl-shift-b": "branches::OpenRecent",
       "alt-shift-enter": "toast::RunAction",
       "ctrl-~": "workspace::NewTerminal",

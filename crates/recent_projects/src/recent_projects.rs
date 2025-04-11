@@ -27,7 +27,7 @@ use workspace::{
     CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace,
     WorkspaceId,
 };
-use zed_actions::{OpenRecent, OpenRemote};
+use zed_actions::{OpenRecent, ToggleRecent, ToggleRemote};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
@@ -89,9 +89,13 @@ impl RecentProjects {
         _window: Option<&mut Window>,
         _cx: &mut Context<Workspace>,
     ) {
+        workspace.register_action(|workspace, action: &ToggleRecent, window, cx| {
+            Self::toggle(workspace, action.create_new_window, window, cx);
+        });
+
         workspace.register_action(|workspace, open_recent: &OpenRecent, window, cx| {
             let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, open_recent.create_new_window, window, cx);
+                Self::toggle(workspace, open_recent.create_new_window, window, cx);
                 return;
             };
 
@@ -103,7 +107,7 @@ impl RecentProjects {
         });
     }
 
-    pub fn open(
+    pub fn toggle(
         workspace: &mut Workspace,
         create_new_window: bool,
         window: &mut Window,
@@ -466,9 +470,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("remote", "Open Remote Folder")
-                        .key_binding(KeyBinding::for_action(&OpenRemote, window, cx))
+                        .key_binding(KeyBinding::for_action(&ToggleRemote, window, cx))
                         .on_click(|_, window, cx| {
-                            window.dispatch_action(OpenRemote.boxed_clone(), cx)
+                            window.dispatch_action(ToggleRemote.boxed_clone(), cx)
                         }),
                 )
                 .child(
@@ -717,7 +721,7 @@ mod tests {
     ) -> Entity<Picker<RecentProjectsDelegate>> {
         cx.dispatch_action(
             (*workspace).into(),
-            OpenRecent {
+            ToggleRecent {
                 create_new_window: false,
             },
         );
