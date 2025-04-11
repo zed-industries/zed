@@ -1039,7 +1039,7 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{AppContext as _, BorrowAppContext, Hsla, TestAppContext};
+    use gpui::{BorrowAppContext, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use lsp::CompletionItemLabelDetails;
     use settings::SettingsStore;
