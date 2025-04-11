@@ -136,9 +136,21 @@ impl ConflictSet {
         }
     }
 
-    pub fn clear(&mut self, cx: &mut Context<Self>) {
-        self.snapshot.conflicts = Default::default();
-        cx.notify();
+    pub fn set_has_conflict(&mut self, has_conflict: bool, cx: &mut Context<Self>) -> bool {
+        if has_conflict != self.has_conflict {
+            self.has_conflict = has_conflict;
+            if !self.has_conflict {
+                cx.emit(ConflictSetUpdate {
+                    buffer_range: None,
+                    old_range: 0..self.snapshot.conflicts.len(),
+                    new_range: 0..0,
+                });
+                self.snapshot.conflicts = Default::default();
+            }
+            true
+        } else {
+            false
+        }
     }
 
     pub fn snapshot(&self) -> ConflictSetSnapshot {
@@ -152,10 +164,13 @@ impl ConflictSet {
         cx: &mut Context<Self>,
     ) {
         self.snapshot = snapshot;
+        log::debug!("emit update to conflict set");
         cx.emit(update);
     }
 
     pub fn parse(buffer: &text::BufferSnapshot) -> ConflictSetSnapshot {
+        log::debug!("parse conflicts");
+
         let mut conflicts = Vec::new();
 
         let mut line_pos = 0;

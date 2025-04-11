@@ -710,6 +710,7 @@ impl GitStore {
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Entity<ConflictSet> {
+        log::debug!("open conflict set");
         let buffer_id = buffer.read(cx).remote_id();
 
         if let Some(git_state) = self.diffs.get(&buffer_id) {
@@ -1101,38 +1102,32 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let id = repo.read(cx).id;
-        if let RepositoryEvent::MergeHeadsChanged = event {
-            let merge_conflicts = repo.read(cx).snapshot.merge_conflicts.clone();
-            for (buffer_id, diff) in self.diffs.iter() {
-                if let Some((buffer_repo, repo_path)) =
-                    self.repository_and_path_for_buffer_id(*buffer_id, cx)
-                {
-                    if buffer_repo == repo {
-                        diff.update(cx, |diff, cx| {
-                            if let Some(conflict_set) = &diff.conflict_set {
-                                let conflict_status_changed = conflict_set
-                                    .update(cx, |conflict_set, _| {
-                                        let has_conflict = merge_conflicts.contains(&repo_path);
-                                        if has_conflict != conflict_set.has_conflict {
-                                            conflict_set.has_conflict = has_conflict;
-                                            true
-                                        } else {
-                                            false
-                                        }
-                                    })
-                                    .unwrap_or(false);
-                                if conflict_status_changed {
-                                    let buffer_store = self.buffer_store.read(cx);
-                                    if let Some(buffer) = buffer_store.get(*buffer_id) {
-                                        let _ = diff.reparse_conflict_markers(
-                                            buffer.read(cx).text_snapshot(),
-                                            cx,
-                                        );
-                                    }
+        let merge_conflicts = repo.read(cx).snapshot.merge_conflicts.clone();
+        for (buffer_id, diff) in self.diffs.iter() {
+            if let Some((buffer_repo, repo_path)) =
+                self.repository_and_path_for_buffer_id(*buffer_id, cx)
+            {
+                if buffer_repo == repo {
+                    diff.update(cx, |diff, cx| {
+                        if let Some(conflict_set) = &diff.conflict_set {
+                            let conflict_status_changed =
+                                conflict_set.update(cx, |conflict_set, cx| {
+                                    let has_conflict = merge_conflicts.contains(&repo_path);
+                                    conflict_set.set_has_conflict(has_conflict, cx)
+                                })?;
+                            if conflict_status_changed {
+                                let buffer_store = self.buffer_store.read(cx);
+                                if let Some(buffer) = buffer_store.get(*buffer_id) {
+                                    let _ = diff.reparse_conflict_markers(
+                                        buffer.read(cx).text_snapshot(),
+                                        cx,
+                                    );
                                 }
                             }
-                        });
-                    }
+                        }
+                        anyhow::Ok(())
+                    })
+                    .ok();
                 }
             }
         }
@@ -2314,37 +2309,46 @@ impl BufferGitState {
     ) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
 
-        let conflict_set = self.conflict_set.as_ref().and_then(|weak| weak.upgrade());
-        if let Some(conflict_set_handle) = conflict_set {
-            let conflict_set = conflict_set_handle.read(cx);
+        let Some(conflict_set) = self
+            .conflict_set
+            .as_ref()
+            .and_then(|conflict_set| conflict_set.upgrade())
+        else {
+            return rx;
+        };
+
+        let old_snapshot = conflict_set.read_with(cx, |conflict_set, _| {
             if conflict_set.has_conflict {
-                self.conflict_updated_futures.push(tx);
-                let old_snapshot = conflict_set.snapshot.clone();
-                self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
-                    let (snapshot, changed_range) = cx
-                        .background_spawn(async move {
-                            let new_snapshot = ConflictSet::parse(&buffer);
-                            let changed_range = old_snapshot.compare(&new_snapshot, &buffer);
-                            (new_snapshot, changed_range)
-                        })
-                        .await;
-                    this.update(cx, |this, cx| {
-                        if let Some(conflict_set) = &this.conflict_set {
-                            conflict_set
-                                .update(cx, |conflict_set, cx| {
-                                    conflict_set.set_snapshot(snapshot, changed_range, cx);
-                                })
-                                .ok();
-                        }
-                        let futures = std::mem::take(&mut this.conflict_updated_futures);
-                        for tx in futures {
-                            tx.send(()).ok();
-                        }
-                    })
-                }));
+                Some(conflict_set.snapshot())
             } else {
-                conflict_set_handle.update(cx, |conflict_set, cx| conflict_set.clear(cx));
+                None
             }
+        });
+
+        if let Some(old_snapshot) = old_snapshot {
+            self.conflict_updated_futures.push(tx);
+            self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
+                let (snapshot, changed_range) = cx
+                    .background_spawn(async move {
+                        let new_snapshot = ConflictSet::parse(&buffer);
+                        let changed_range = old_snapshot.compare(&new_snapshot, &buffer);
+                        (new_snapshot, changed_range)
+                    })
+                    .await;
+                this.update(cx, |this, cx| {
+                    if let Some(conflict_set) = &this.conflict_set {
+                        conflict_set
+                            .update(cx, |conflict_set, cx| {
+                                conflict_set.set_snapshot(snapshot, changed_range, cx);
+                            })
+                            .ok();
+                    }
+                    let futures = std::mem::take(&mut this.conflict_updated_futures);
+                    for tx in futures {
+                        tx.send(()).ok();
+                    }
+                })
+            }))
         }
 
         rx
@@ -2512,7 +2516,6 @@ impl BufferGitState {
             if this.update(cx, |this, _| {
                 this.hunk_staging_operation_count > prev_hunk_staging_operation_count
             })? {
-                eprintln!("early return");
                 return Ok(());
             }
 

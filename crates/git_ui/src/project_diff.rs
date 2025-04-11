@@ -27,7 +27,10 @@ use project::{
     Project, ProjectPath,
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    ops::Range,
+};
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt as _;
@@ -404,65 +407,20 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
-        let mut diff_hunk_ranges = diff
+        let diff_hunk_ranges = diff
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.clone())
-            .collect::<Vec<_>>()
-            .into_iter()
-            .fuse()
-            .peekable();
+            .map(|diff_hunk| diff_hunk.buffer_range.clone());
         let conflicts = conflict_addon
             .conflict_set(snapshot.remote_id())
             .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts.clone())
             .unwrap_or_default();
-        let mut conflicts = conflicts
-            .iter()
-            .map(|conflict| conflict.range.clone())
-            .fuse()
-            .peekable();
+        let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
 
-        let excerpt_ranges = std::iter::from_fn(|| {
-            let Some(diff_hunk_range) = diff_hunk_ranges.peek().cloned() else {
-                return conflicts.next();
-            };
-            let Some(conflict) = conflicts.next().clone() else {
-                return diff_hunk_ranges.next();
-            };
-
-            let mut next_range = if diff_hunk_range
-                .start
-                .cmp(&conflict.start, &snapshot)
-                .is_lt()
-            {
-                diff_hunk_ranges.next().unwrap()
-            } else {
-                conflicts.next().unwrap()
-            };
-
-            // Extend the basic range while there's overlap with a range from either stream.
-            loop {
-                if let Some(diff_hunk_range) = diff_hunk_ranges
-                    .peek()
-                    .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
-                    .cloned()
-                {
-                    diff_hunk_ranges.next();
-                    next_range.end = diff_hunk_range.end;
-                } else if let Some(conflict_range) = conflicts
-                    .peek()
-                    .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
-                    .cloned()
-                {
-                    conflicts.next();
-                    next_range.end = conflict_range.end;
-                } else {
-                    break;
-                }
-            }
-
-            Some(next_range)
-        })
-        .map(|range| range.to_point(&snapshot));
+        dbg!(">>>>>>>>>>>>>>>>>>>>>>>>>>>");
+        let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
+            .map(|range| dbg!(range.to_point(&snapshot)))
+            .collect::<Vec<_>>();
+        dbg!("<<<<<<<<<<<<<<<<<<<<<<<<<<<");
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
@@ -1348,6 +1306,53 @@ mod preview {
                 .into_any_element()
         }
     }
+}
+
+fn merge_anchor_ranges<'a>(
+    left: impl 'a + Iterator<Item = Range<Anchor>>,
+    right: impl 'a + Iterator<Item = Range<Anchor>>,
+    snapshot: &'a language::BufferSnapshot,
+) -> impl 'a + Iterator<Item = Range<Anchor>> {
+    let mut left = left.fuse().peekable();
+    let mut right = right.fuse().peekable();
+
+    std::iter::from_fn(move || {
+        let Some(left_range) = left.peek().cloned() else {
+            return right.next();
+        };
+        let Some(right_range) = right.peek().clone() else {
+            return left.next();
+        };
+
+        let mut next_range = if left_range.start.cmp(&right_range.start, snapshot).is_lt() {
+            left.next().unwrap()
+        } else {
+            right.next().unwrap()
+        };
+
+        // Extend the basic range while there's overlap with a range from either stream.
+        loop {
+            if let Some(left_range) = left
+                .peek()
+                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .cloned()
+            {
+                left.next();
+                next_range.end = left_range.end;
+            } else if let Some(right_range) = right
+                .peek()
+                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .cloned()
+            {
+                right.next();
+                next_range.end = right_range.end;
+            } else {
+                break;
+            }
+        }
+
+        Some(next_range)
+    })
 }
 
 #[cfg(not(target_os = "windows"))]

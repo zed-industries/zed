@@ -1938,7 +1938,6 @@ impl MultiBuffer {
 
         let mut buffers = self.buffers.borrow_mut();
         let buffer_state = buffers.entry(buffer_id).or_insert_with(|| {
-            // FIXME emit added buffers here
             self.buffer_changed_since_sync.replace(true);
             buffer.update(cx, |buffer, _| {
                 buffer.record_changes(Rc::downgrade(&self.buffer_changed_since_sync));
