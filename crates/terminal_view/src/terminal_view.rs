@@ -321,7 +321,11 @@ impl TerminalView {
                     face: "space".into(),
                     key_char: None,
                 };
-                term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta)
+                term.try_keystroke(
+                    &keystroke,
+                    TerminalSettings::get_global(cx).option_as_meta,
+                    cx.keyboard_mapper(),
+                )
             });
         } else {
             window.show_character_palette();
@@ -590,7 +594,11 @@ impl TerminalView {
         if let Some(keystroke) = Keystroke::parse(&text.0, false, mapper).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
-                term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
+                term.try_keystroke(
+                    &keystroke,
+                    TerminalSettings::get_global(cx).option_as_meta,
+                    mapper,
+                );
             });
         }
     }
@@ -1228,6 +1236,7 @@ impl TerminalView {
             let handled = term.try_keystroke(
                 &event.keystroke,
                 TerminalSettings::get_global(cx).option_as_meta,
+                cx.keyboard_mapper(),
             );
             if handled {
                 cx.stop_propagation();

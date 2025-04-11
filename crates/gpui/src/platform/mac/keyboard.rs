@@ -13,6 +13,7 @@ pub(crate) struct MacKeyboardMapperManager {
 pub(crate) struct MacKeyboardMapper {
     char_to_code: HashMap<String, (KeyCode, Modifiers)>,
     code_to_char: HashMap<KeyCode, String>,
+    code_to_char_with_shift: HashMap<KeyCode, String>,
     manual_mappings: Option<HashMap<String, String>>,
 }
 
@@ -42,15 +43,17 @@ impl MacKeyboardMapper {
     fn new(layout: &str) -> Self {
         let mut char_to_code = HashMap::default();
         let mut code_to_char = HashMap::default();
+        let mut code_to_char_with_shift = HashMap::default();
 
         let start = std::time::Instant::now();
         for (scan_code, code) in OTHER_CODES {
-            for (key, modifiers) in generate_keymap_info(scan_code) {
-                if modifiers == Modifiers::none() {
-                    code_to_char.insert(code, key.clone());
-                }
-                char_to_code.insert(key, (code, modifiers));
-            }
+            generate_keymap_info(
+                scan_code,
+                code,
+                &mut char_to_code,
+                &mut code_to_char,
+                &mut code_to_char_with_shift,
+            );
         }
         insert_letters_if_missing(&mut char_to_code);
         let manual_mappings = get_mannual_mappings(layout);
@@ -64,6 +67,7 @@ impl MacKeyboardMapper {
         Self {
             char_to_code,
             code_to_char,
+            code_to_char_with_shift,
             manual_mappings,
         }
     }
@@ -87,34 +91,44 @@ impl KeyboardMapper for MacKeyboardMapper {
     fn keycode_to_face(&self, code: KeyCode) -> Option<String> {
         self.code_to_char.get(&code).cloned()
     }
+
+    fn keycode_to_face_with_shift(&self, code: KeyCode, shift: bool) -> Option<String> {
+        if shift {
+            self.code_to_char_with_shift.get(&code).cloned()
+        } else {
+            self.code_to_char.get(&code).cloned()
+        }
+    }
 }
 
-fn generate_keymap_info(scan_code: u16) -> Vec<(String, Modifiers)> {
-    let mut keymap = Vec::new();
+fn generate_keymap_info(
+    scan_code: u16,
+    key_code: KeyCode,
+    char_to_code: &mut HashMap<String, (KeyCode, Modifiers)>,
+    code_to_char: &mut HashMap<KeyCode, String>,
+    code_to_char_with_shift: &mut HashMap<KeyCode, String>,
+) {
     let shift_alt_mod = chars_for_modified_key(scan_code, SHIFT_MOD | OPTION_MOD);
     if !shift_alt_mod.is_empty() {
-        keymap.push((
+        char_to_code.insert(
             shift_alt_mod,
-            Modifiers {
-                shift: true,
-                alt: true,
-                ..Default::default()
-            },
-        ));
+            (key_code, Modifiers::shift() | Modifiers::alt()),
+        );
     }
     let alt_mod = chars_for_modified_key(scan_code, OPTION_MOD);
     if !alt_mod.is_empty() {
-        keymap.push((alt_mod, Modifiers::alt()));
+        char_to_code.insert(alt_mod, (key_code, Modifiers::alt()));
     }
     let shift_mod = chars_for_modified_key(scan_code, SHIFT_MOD);
     if !shift_mod.is_empty() {
-        keymap.push((shift_mod, Modifiers::shift()));
+        code_to_char_with_shift.insert(key_code, shift_mod.clone());
+        char_to_code.insert(shift_mod, (key_code, Modifiers::shift()));
     }
     let no_mod = chars_for_modified_key(scan_code, NO_MOD);
     if !no_mod.is_empty() {
-        keymap.push((no_mod, Modifiers::none()));
+        code_to_char.insert(key_code, no_mod.clone());
+        char_to_code.insert(no_mod, (key_code, Modifiers::none()));
     }
-    keymap
 }
 
 macro_rules! insert_letters_if_missing_internal {

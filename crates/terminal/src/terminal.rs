@@ -1367,7 +1367,12 @@ impl Terminal {
         }
     }
 
-    pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
+    pub fn try_keystroke(
+        &mut self,
+        keystroke: &Keystroke,
+        alt_is_meta: bool,
+        keyboard_mapper: &dyn KeyboardMapper,
+    ) -> bool {
         if self.vi_mode_enabled {
             self.vi_motion(keystroke);
             return true;
@@ -1379,6 +1384,7 @@ impl Terminal {
             &self.last_content.mode,
             alt_is_meta,
             &self.manual_esc_str_mapper,
+            keyboard_mapper,
         );
         if let Some(esc) = esc {
             self.input(esc);

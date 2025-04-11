@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    ForegroundExecutor, Keymap, Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame,
-    ScreenCaptureSource, ScreenCaptureStream, Size, Task, TestDisplay, TestWindow,
-    WindowAppearance, WindowParams, size,
+    ForegroundExecutor, KeyCode, KeyboardMapper, Keymap, Modifiers, Platform, PlatformDisplay,
+    PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size, Task,
+    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -37,6 +37,7 @@ pub(crate) struct TestPlatform {
     pub text_system: Arc<dyn PlatformTextSystem>,
     #[cfg(target_os = "windows")]
     bitmap_factory: std::mem::ManuallyDrop<IWICImagingFactory>,
+    keyboard_mapper: Rc<TestKeyboardMapper>,
     weak: Weak<Self>,
 }
 
@@ -102,6 +103,7 @@ impl TestPlatform {
             crate::platform::windows::DirectWriteTextSystem::new(&bitmap_factory)
                 .expect("Unable to initialize direct write."),
         );
+        let keyboard_mapper = Rc::new(TestKeyboardMapper);
 
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
@@ -118,6 +120,7 @@ impl TestPlatform {
             opened_url: Default::default(),
             #[cfg(target_os = "windows")]
             bitmap_factory,
+            keyboard_mapper,
             text_system,
         })
     }
@@ -238,6 +241,10 @@ impl Platform for TestPlatform {
     }
 
     fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
+
+    fn keyboard_mapper(&self) -> Rc<dyn KeyboardMapper> {
+        self.keyboard_mapper.clone()
+    }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
         unimplemented!()
@@ -439,5 +446,17 @@ impl Drop for TestPlatform {
             std::mem::ManuallyDrop::drop(&mut self.bitmap_factory);
             windows::Win32::System::Ole::OleUninitialize();
         }
+    }
+}
+
+struct TestKeyboardMapper;
+
+impl KeyboardMapper for TestKeyboardMapper {
+    fn parse(&self, _input: &str, _char_matching: bool) -> Option<(KeyCode, Modifiers)> {
+        None
+    }
+
+    fn keycode_to_face(&self, _code: KeyCode) -> Option<String> {
+        None
     }
 }
