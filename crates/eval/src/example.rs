@@ -2,17 +2,20 @@ use agent::{RequestKind, ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use dap::DapRegistry;
-use futures::StreamExt as _;
-use futures::channel::oneshot;
-use gpui::{App, AsyncApp, Task};
+use futures::channel::{mpsc, oneshot};
+use futures::{FutureExt, StreamExt as _};
+use gpui::{App, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
+use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
     StopReason, TokenUsage,
 };
-use project::Project;
+use project::{LspStore, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::sync::Arc;
+use std::time::Duration;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -50,6 +53,7 @@ pub struct Example {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RunOutput {
     pub repository_diff: String,
+    pub diagnostics: String,
     pub response_count: usize,
     pub token_usage: TokenUsage,
 }
@@ -161,7 +165,54 @@ impl Example {
         println!("{}", self.prompt);
         println!("ASSISTANT:");
         cx.spawn(async move |cx| {
-            worktree.await?;
+            let worktree = worktree.await?;
+
+            // Start language server for example language
+            // TODO: unhardcode
+            let language_extension = "rs";
+
+            cx.background_executor().timer(Duration::new(5, 0)).await;
+
+            // std::thread::sleep(Duration::new(5, 0));
+
+            let language_file = worktree.read_with(cx, |worktree, _cx| {
+                worktree
+                    .files(false, 0)
+                    .find_map(|e| {
+                        if e.path.clone().extension().and_then(|ext| ext.to_str())
+                            == Some(language_extension)
+                        {
+                            Some(ProjectPath {
+                                worktree_id: worktree.id(),
+                                path: e.path.clone(),
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .context("Failed to find a file for example language")
+            })??;
+
+            dbg!(&language_file);
+
+            let open_language_file_buffer_task =
+                project.update(cx, |project, cx| project.open_buffer(language_file, cx))?;
+
+            let language_file_buffer = open_language_file_buffer_task.await?;
+
+            let (open_lsp_handle, lsp_store) = project.update(cx, |project, cx| {
+                (
+                    project.register_buffer_with_language_servers(&language_file_buffer, cx),
+                    project.lsp_store().clone(),
+                )
+            })?;
+
+            cx.background_executor().timer(Duration::new(5, 0)).await;
+
+            println!("Waiting for LSP diagnostics");
+            wait_for_lsp_diagnostics(lsp_store.clone(), cx).await?;
+            println!("Done waiting for LSP diagnostics");
+
             let thread_store = thread_store.await;
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
@@ -232,7 +283,17 @@ impl Example {
 
             rx.await??;
 
+            wait_for_lsp_diagnostics(lsp_store, cx).await?;
+
             let repository_diff = this.repository_diff().await?;
+            let diagnostics = cx
+                .update(move |cx| {
+                    cx.spawn(async move |cx| query_lsp_diagnostics(project, cx).await)
+                })?
+                .await?;
+
+            drop(language_file_buffer);
+            drop(open_lsp_handle);
 
             thread.update(cx, |thread, _cx| {
                 let response_count = thread
@@ -241,6 +302,7 @@ impl Example {
                     .count();
                 RunOutput {
                     repository_diff,
+                    diagnostics,
                     response_count,
                     token_usage: thread.cumulative_token_usage(),
                 }
@@ -287,6 +349,80 @@ impl Example {
         run_git(&worktree_path, &["add", "-N"]).await?;
         run_git(&worktree_path, &["diff"]).await
     }
+}
+
+fn wait_for_lsp_diagnostics(lsp_store: Entity<LspStore>, cx: &mut AsyncApp) -> Task<Result<()>> {
+    if cx
+        .update(|cx| !has_pending_diagnostics(lsp_store.clone(), cx))
+        .unwrap()
+    {
+        return Task::ready(anyhow::Ok(()));
+    }
+
+    let (mut tx, mut rx) = mpsc::channel(1);
+
+    let subscription = cx.subscribe(&lsp_store, move |lsp_store, event, cx| {
+        println!("{event:?}");
+        if !has_pending_diagnostics(lsp_store, cx) {
+            tx.try_send(()).ok();
+        }
+    });
+
+    cx.spawn(async move |cx| {
+        let timeout = cx.background_executor().timer(Duration::new(60 * 5, 0));
+        let result = futures::select! {
+            _ = rx.next() => anyhow::Ok(()),
+            _ = timeout.fuse() => {
+                Err(anyhow!("LSP diagnostics wait timed out after 5 minutes"))
+            }
+        };
+        drop(subscription);
+        result
+    })
+}
+
+fn has_pending_diagnostics(lsp_store: Entity<LspStore>, cx: &App) -> bool {
+    lsp_store
+        .read(cx)
+        .language_server_statuses()
+        .all(|(_, status)| dbg!(status).pending_work.is_empty())
+}
+
+async fn query_lsp_diagnostics(project: Entity<Project>, cx: &mut AsyncApp) -> Result<String> {
+    let paths_with_diagnostics = project.update(cx, |project, cx| {
+        project
+            .diagnostic_summaries(true, cx)
+            .filter(|(_, _, summary)| summary.error_count > 0 || summary.warning_count > 0)
+            .map(|(project_path, _, _)| project_path)
+            .collect::<Vec<_>>()
+    })?;
+
+    let mut output = String::new();
+    for project_path in paths_with_diagnostics {
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+            .await?;
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+        for (_, group) in snapshot.diagnostic_groups(None) {
+            let entry = &group.entries[group.primary_ix];
+            let range = entry.range.to_point(&snapshot);
+            let severity = match entry.diagnostic.severity {
+                DiagnosticSeverity::ERROR => "error",
+                DiagnosticSeverity::WARNING => "warning",
+                _ => continue,
+            };
+
+            writeln!(
+                output,
+                "{} at line {}: {}",
+                severity,
+                range.start.row + 1,
+                entry.diagnostic.message
+            )?;
+        }
+    }
+    anyhow::Ok(output)
 }
 
 fn parse_judge_output(response: &str) -> Result<JudgeOutput> {
