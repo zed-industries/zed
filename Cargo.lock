@@ -541,6 +541,7 @@ dependencies = [
  "smol",
  "tempfile",
  "util",
+ "windows_net",
  "workspace-hack",
 ]
 
@@ -18968,6 +18969,17 @@ name = "windows_i686_msvc"
 version = "0.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "581fee95406bb13382d2f65cd4a908ca7b1e4c2f1917f143ba16efe98a589b5d"
+
+[[package]]
+name = "windows_net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-io",
+ "smol",
+ "tempfile",
+ "windows 0.61.1",
+]
 
 [[package]]
 name = "windows_x86_64_gnu"

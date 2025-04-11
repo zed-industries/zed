@@ -219,6 +219,8 @@ impl AskPassSession {
         executor: &BackgroundExecutor,
         mut delegate: AskPassDelegate,
     ) -> anyhow::Result<Self> {
+        use windows_net::UnixListener;
+
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join("askpass.ps1");
@@ -232,7 +234,7 @@ impl AskPassSession {
         let askpass_task = executor.spawn(async move {
             let mut askpass_opened_tx = Some(askpass_opened_tx);
 
-            while let Ok((mut stream, _)) = listener.accept().await {
+            while let Ok(mut stream) = listener.accept().await {
                 if let Some(askpass_opened_tx) = askpass_opened_tx.take() {
                     askpass_opened_tx.send(()).ok();
                 }
