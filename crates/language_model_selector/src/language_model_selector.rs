@@ -26,9 +26,6 @@ type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &App) + 'static>;
 
 pub struct LanguageModelSelector {
     picker: Entity<Picker<LanguageModelPickerDelegate>>,
-    /// The task used to update the picker's matches when there is a change to
-    /// the language model registry.
-    update_matches_task: Option<Task<()>>,
     _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -63,7 +60,6 @@ impl LanguageModelSelector {
 
         LanguageModelSelector {
             picker,
-            update_matches_task: None,
             _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _subscriptions: vec![
                 cx.subscribe_in(
@@ -87,12 +83,13 @@ impl LanguageModelSelector {
             language_model::Event::ProviderStateChanged
             | language_model::Event::AddedProvider(_)
             | language_model::Event::RemovedProvider(_) => {
-                let task = self.picker.update(cx, |this, cx| {
+                self.picker.update(cx, |this, cx| {
                     let query = this.query(cx);
                     this.delegate.all_models = Arc::new(Self::all_models(cx));
-                    this.delegate.update_matches(query, window, cx)
+                    // Update matches will automatically drop the previous task
+                    // if we get a provider event again
+                    this.update_matches(query, window, cx)
                 });
-                self.update_matches_task = Some(task);
             }
             _ => {}
         }
@@ -313,7 +310,6 @@ pub struct LanguageModelPickerDelegate {
     selected_index: usize,
 }
 
-#[derive(Clone)]
 struct GroupedModels {
     recommended: Vec<ModelInfo>,
     other: IndexMap<LanguageModelProviderId, Vec<ModelInfo>>,
@@ -445,7 +441,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 } else {
                     current_index
                 };
-                this.set_selected_index(new_index, Some(picker::Bias::Down), true, window, cx);
+                this.set_selected_index(new_index, Some(picker::Direction::Down), true, window, cx);
                 cx.notify();
             })
             .ok();

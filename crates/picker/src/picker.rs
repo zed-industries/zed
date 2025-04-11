@@ -24,7 +24,7 @@ enum ElementContainer {
     UniformList(UniformListScrollHandle),
 }
 
-pub enum Bias {
+pub enum Direction {
     Up,
     Down,
 }
@@ -373,13 +373,20 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     /// Handles the selecting an index, and passing the change to the delegate.
-    /// If `scroll_to_index` is true, the new selected index will be scrolled into view.
+    /// If `fallback_direction` is set to `None`, the index will not be selected
+    /// if the element at that index cannot be selected.
+    /// If `fallback_direction` is set to
+    /// `Some(..)`, the next selectable element will be selected in the
+    /// specified direction (Down or Up), cycling through all elements until
+    /// finding one that can be selected or returning if there are no selectable elements.
+    /// If `scroll_to_index` is true, the new selected index will be scrolled into
+    /// view.
     ///
     /// If some effect is bound to `selected_index_changed`, it will be executed.
     pub fn set_selected_index(
         &mut self,
-        ix: usize,
-        bias: Option<Bias>,
+        mut ix: usize,
+        fallback_direction: Option<Direction>,
         scroll_to_index: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -389,31 +396,31 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         }
 
-        let mut index = ix;
-
-        if let Some(bias) = bias {
-            while !self.delegate.can_select(ix, window, cx) {
-                index = match bias {
-                    Bias::Down => {
-                        if index == match_count - 1 {
+        if let Some(bias) = fallback_direction {
+            let mut curr_ix = ix;
+            while !self.delegate.can_select(curr_ix, window, cx) {
+                curr_ix = match bias {
+                    Direction::Down => {
+                        if curr_ix == match_count - 1 {
                             0
                         } else {
-                            index + 1
+                            curr_ix + 1
                         }
                     }
-                    Bias::Up => {
-                        if index == 0 {
+                    Direction::Up => {
+                        if curr_ix == 0 {
                             match_count - 1
                         } else {
-                            index - 1
+                            curr_ix - 1
                         }
                     }
                 };
                 // There is no item that can be selected
-                if ix == index {
+                if ix == curr_ix {
                     return;
                 }
             }
+            ix = curr_ix;
         } else if !self.delegate.can_select(ix, window, cx) {
             return;
         }
@@ -442,7 +449,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == count - 1 { 0 } else { index + 1 };
-            self.set_selected_index(ix, Some(Bias::Down), true, window, cx);
+            self.set_selected_index(ix, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
     }
@@ -457,7 +464,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == 0 { count - 1 } else { index - 1 };
-            self.set_selected_index(ix, Some(Bias::Up), true, window, cx);
+            self.set_selected_index(ix, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
     }
@@ -465,7 +472,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.set_selected_index(0, Some(Bias::Down), true, window, cx);
+            self.set_selected_index(0, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
     }
@@ -473,7 +480,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.set_selected_index(count - 1, Some(Bias::Up), true, window, cx);
+            self.set_selected_index(count - 1, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
     }
@@ -554,7 +561,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
             self.set_query(update_query, window, cx);
-            self.set_selected_index(0, Some(Bias::Down), false, window, cx);
+            self.set_selected_index(0, Some(Direction::Down), false, window, cx);
         } else {
             self.delegate.confirm(secondary, window, cx)
         }
@@ -603,13 +610,8 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.delegate.match_count();
         let query = self.query(cx);
         self.update_matches(query, window, cx);
-        if let ElementContainer::List(state) = &mut self.element_container {
-            println!("Updating matches: {}", self.delegate.match_count());
-            state.splice(0..count, self.delegate.match_count());
-        }
     }
 
     pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
