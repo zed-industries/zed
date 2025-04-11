@@ -25,7 +25,7 @@ impl Tool for WebSearchTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
@@ -56,11 +56,13 @@ impl Tool for WebSearchTool {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
-        let provider = WebSearchRegistry::read_global(cx)
+        let Some(provider) = WebSearchRegistry::read_global(cx)
             .providers()
             .next()
-            .unwrap()
-            .clone();
+            .cloned()
+        else {
+            return Task::ready(Err(anyhow!("No web search provider configured.")));
+        };
 
         let search_task = provider.search(input.query, cx);
         cx.background_spawn(async move {
