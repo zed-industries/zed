@@ -4176,7 +4176,11 @@ impl EditorElement {
                 self.style.background,
             ));
 
-            if let EditorMode::Full { .. } = layout.mode {
+            if let EditorMode::Full {
+                show_active_line_background,
+                ..
+            } = layout.mode
+            {
                 let mut active_rows = layout.active_rows.iter().peekable();
                 while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
                     let mut end_row = start_row.0;
@@ -4191,7 +4195,7 @@ impl EditorElement {
                         end_row += 1;
                     }
 
-                    if !contains_non_empty_selection.selection {
+                    if show_active_line_background && !contains_non_empty_selection.selection {
                         let highlight_h_range =
                             match layout.position_map.snapshot.current_line_highlight {
                                 CurrentLineHighlight::Gutter => Some(Range {
@@ -6414,7 +6418,13 @@ impl EditorElement {
     /// This allows UI elements to scale based on the `buffer_font_size`.
     fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
         match self.editor.read(cx).mode {
-            EditorMode::Full { .. } => {
+            EditorMode::Full {
+                scale_ui_elements_with_buffer_font_size,
+                ..
+            } => {
+                if !scale_ui_elements_with_buffer_font_size {
+                    return None;
+                }
                 let buffer_font_size = self.style.text.font_size;
                 match buffer_font_size {
                     AbsoluteLength::Pixels(pixels) => {

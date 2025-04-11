@@ -50,6 +50,7 @@ actions!(
         ToggleContextPicker,
         ToggleProfileSelector,
         RemoveAllContext,
+        ExpandMessageEditor,
         OpenHistory,
         AddContextServer,
         RemoveSelectedThread,
