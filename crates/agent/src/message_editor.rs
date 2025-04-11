@@ -10,8 +10,8 @@ use editor::{
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
-    Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, Entity, Focusable, Subscription, TextStyle, WeakEntity,
+    linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
 use language_model::{ConfiguredModel, LanguageModelRegistry};
@@ -21,12 +21,12 @@ use project::Project;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{Disclosure, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
-use crate::context_picker::{ConfirmBehavior, ContextPicker, ContextPickerCompletionProvider};
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::{ContextStore, refresh_context_store_text};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
@@ -46,8 +46,6 @@ pub struct MessageEditor {
     context_store: Entity<ContextStore>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    inline_context_picker: Entity<ContextPicker>,
-    inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
@@ -69,7 +67,6 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) -> Self {
         let context_picker_menu_handle = PopoverMenuHandle::default();
-        let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let language = Language::new(
@@ -112,17 +109,6 @@ impl MessageEditor {
             ))));
         });
 
-        let inline_context_picker = cx.new(|cx| {
-            ContextPicker::new(
-                workspace.clone(),
-                Some(thread_store.clone()),
-                context_store.downgrade(),
-                ConfirmBehavior::Close,
-                window,
-                cx,
-            )
-        });
-
         let context_strip = cx.new(|cx| {
             ContextStrip::new(
                 context_store.clone(),
@@ -135,14 +121,8 @@ impl MessageEditor {
             )
         });
 
-        let subscriptions = vec![
-            cx.subscribe_in(
-                &inline_context_picker,
-                window,
-                Self::handle_inline_context_picker_event,
-            ),
-            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
-        ];
+        let subscriptions =
+            vec![cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event)];
 
         Self {
             editor: editor.clone(),
@@ -152,8 +132,6 @@ impl MessageEditor {
             context_store,
             context_strip,
             context_picker_menu_handle,
-            inline_context_picker,
-            inline_context_picker_menu_handle,
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs.clone(),
@@ -316,17 +294,6 @@ impl MessageEditor {
         .detach();
     }
 
-    fn handle_inline_context_picker_event(
-        &mut self,
-        _inline_context_picker: &Entity<ContextPicker>,
-        _event: &DismissEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let editor_focus_handle = self.editor.focus_handle(cx);
-        window.focus(&editor_focus_handle);
-    }
-
     fn handle_context_strip_event(
         &mut self,
         _context_strip: &Entity<ContextStrip>,
@@ -346,9 +313,7 @@ impl MessageEditor {
     }
 
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
-        if self.context_picker_menu_handle.is_deployed()
-            || self.inline_context_picker_menu_handle.is_deployed()
-        {
+        if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
         } else {
             self.context_strip.focus_handle(cx).focus(window);
@@ -385,8 +350,6 @@ impl Render for MessageEditor {
         let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
 
         let focus_handle = self.editor.focus_handle(cx);
-        let focus_handle_clone = focus_handle.clone();
-        let inline_context_picker = self.inline_context_picker.clone();
 
         let is_editor_expanded = self.editor_is_expanded;
         let expand_icon = if is_editor_expanded {
@@ -716,8 +679,9 @@ impl Render for MessageEditor {
                                 IconButton::new("toggle-height", expand_icon)
                                     .icon_size(IconSize::XSmall)
                                     .icon_color(Color::Muted)
-                                    .tooltip(move |window, cx| {
+                                    .tooltip({
                                         let focus_handle = focus_handle.clone();
+                                        move |window, cx| {
                                         let expand_label = if is_editor_expanded {
                                             "Minimize Message Editor".to_string()
                                         } else {
@@ -731,7 +695,7 @@ impl Render for MessageEditor {
                                             window,
                                             cx,
                                         )
-                                    })
+                                    }})
                                     .on_click(cx.listener(|_, _, window, cx| {
                                         window.dispatch_action(Box::new(ExpandMessageEditor), cx);
                                     }))
@@ -767,23 +731,6 @@ impl Render for MessageEditor {
                                     ).into_any()
                             }))
                             .child(
-                                PopoverMenu::new("inline-context-picker")
-                                    .menu(move |window, cx| {
-                                        inline_context_picker.update(cx, |this, cx| {
-                                            this.init(window, cx);
-                                        });
-                                        Some(inline_context_picker.clone())
-                                    })
-                                    .attach(gpui::Corner::TopLeft)
-                                    .anchor(gpui::Corner::BottomLeft)
-                                    .offset(gpui::Point {
-                                        x: px(0.0),
-                                        y: (-ThemeSettings::get_global(cx).ui_font_size(cx) * 2)
-                                            - px(4.0),
-                                    })
-                                    .with_handle(self.inline_context_picker_menu_handle.clone()),
-                            )
-                            .child(
                                 h_flex()
                                     .flex_none()
                                     .justify_between()
@@ -791,7 +738,9 @@ impl Render for MessageEditor {
                                     .child(
                                         h_flex().gap_1()
                                             .child(self.model_selector.clone())
-                                            .map(move |parent| {
+                                            .map({
+                                                let focus_handle = focus_handle.clone();
+                                                move |parent| {
                                                 if is_generating {
                                                     parent.child(
                                                         IconButton::new("stop-generation", IconName::StopFilled)
@@ -806,7 +755,7 @@ impl Render for MessageEditor {
                                                                 )
                                                             })
                                                             .on_click({
-                                                                let focus_handle = focus_handle_clone.clone();
+                                                                let focus_handle = focus_handle.clone();
                                                                 move |_event, window, cx| {
                                                                     focus_handle.dispatch_action(
                                                                         &editor::actions::Cancel,
@@ -834,7 +783,7 @@ impl Render for MessageEditor {
                                                                     || self.waiting_for_summaries_to_send
                                                             )
                                                             .on_click({
-                                                                let focus_handle = focus_handle_clone.clone();
+                                                                let focus_handle = focus_handle.clone();
                                                                 move |_event, window, cx| {
                                                                     focus_handle.dispatch_action(&Chat, window, cx);
                                                                 }
@@ -861,7 +810,9 @@ impl Render for MessageEditor {
                                                             })
                                                     )
                                                 }
-                                            })
+                                                }
+                                            }
+                                        )
                                     ),
                             ),
                     )
