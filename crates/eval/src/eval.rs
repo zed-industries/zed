@@ -26,7 +26,7 @@ fn main() {
     app.run(move |cx| {
         let app_state = init(cx);
 
-        let model = find_model("claude-3-7-sonnet-thinking-latest", cx).unwrap();
+        let model = find_model("claude-3-7-sonnet-latest", cx).unwrap();
 
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             registry.set_default_model(Some(model.clone()), cx);
