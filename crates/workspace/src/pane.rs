@@ -294,7 +294,7 @@ pub struct Pane {
     toolbar: Entity<Toolbar>,
     pub(crate) workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
-    drag_split_direction: Option<SplitDirection>,
+    pub drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool>>,
     custom_drop_handle: Option<
         Arc<dyn Fn(&mut Pane, &dyn Any, &mut Window, &mut Context<Pane>) -> ControlFlow<(), ()>>,
@@ -643,6 +643,14 @@ impl Pane {
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.set_can_navigate(can_navigate, cx);
         });
+        cx.notify();
+    }
+
+    pub fn set_render_tab_bar<F>(&mut self, cx: &mut Context<Self>, render: F)
+    where
+        F: 'static + Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement,
+    {
+        self.render_tab_bar = Rc::new(render);
         cx.notify();
     }
 
@@ -2786,7 +2794,7 @@ impl Pane {
         }
     }
 
-    fn handle_tab_drop(
+    pub fn handle_tab_drop(
         &mut self,
         dragged_tab: &DraggedTab,
         ix: usize,
