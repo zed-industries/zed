@@ -61,7 +61,8 @@ use sum_tree::{Edit, SumTree, TreeSet};
 use text::{Bias, BufferId};
 use util::{ResultExt, debug_panic, post_inc};
 use worktree::{
-    File, PathKey, PathProgress, PathSummary, PathTarget, UpdatedGitRepositoriesSet, Worktree,
+    File, PathKey, PathProgress, PathSummary, PathTarget, UpdatedGitRepositoriesSet,
+    UpdatedGitRepository, Worktree,
 };
 
 pub struct GitStore {
@@ -1144,18 +1145,23 @@ impl GitStore {
                 } else {
                     removed_ids.push(*id);
                 }
-            } else if let Some((work_directory_abs_path, dot_git_abs_path)) = update
-                .new_work_directory_abs_path
-                .clone()
-                .zip(update.dot_git_abs_path.clone())
+            } else if let UpdatedGitRepository {
+                new_work_directory_abs_path: Some(work_directory_abs_path),
+                dot_git_abs_path: Some(dot_git_abs_path),
+                repository_dir_abs_path: Some(repository_dir_abs_path),
+                common_dir_abs_path: Some(common_dir_abs_path),
+                ..
+            } = update
             {
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
                     let mut repo = Repository::local(
                         id,
-                        work_directory_abs_path,
-                        dot_git_abs_path,
+                        work_directory_abs_path.clone(),
+                        dot_git_abs_path.clone(),
+                        repository_dir_abs_path.clone(),
+                        common_dir_abs_path.clone(),
                         project_environment.downgrade(),
                         fs.clone(),
                         git_store,
@@ -2542,6 +2548,8 @@ impl Repository {
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
+        repository_dir_abs_path: Arc<Path>,
+        common_dir_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         git_store: WeakEntity<GitStore>,
@@ -2559,6 +2567,8 @@ impl Repository {
             job_sender: Repository::spawn_local_git_worker(
                 work_directory_abs_path,
                 dot_git_abs_path,
+                repository_dir_abs_path,
+                common_dir_abs_path,
                 project_environment,
                 fs,
                 cx,
@@ -3836,6 +3846,8 @@ impl Repository {
     fn spawn_local_git_worker(
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
+        repository_dir_abs_path: Arc<Path>,
+        common_dir_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
@@ -3860,6 +3872,9 @@ impl Repository {
                         .ok_or_else(|| anyhow!("failed to build repository"))
                 })
                 .await?;
+
+            debug_assert_eq!(backend.path().as_path(), repository_dir_abs_path.as_ref());
+            debug_assert_eq!(backend.main_repository_path().as_path(), common_dir_abs_path.as_ref());
 
             if let Some(git_hosting_provider_registry) =
                 cx.update(|cx| GitHostingProviderRegistry::try_global(cx))?
@@ -4091,6 +4106,10 @@ impl Repository {
     /// currently running git command and when it started
     pub fn current_job(&self) -> Option<JobInfo> {
         self.active_jobs.values().next().cloned()
+    }
+
+    pub fn barrier(&mut self) -> oneshot::Receiver<()> {
+        self.send_job(None, |_, _| async {})
     }
 }
 

@@ -229,12 +229,6 @@ pub trait GitRepository: Send + Sync {
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
     fn path(&self) -> PathBuf;
 
-    /// Returns the absolute path to the ".git" dir for the main repository, typically a `.git`
-    /// folder. For worktrees, this will be the path to the repository the worktree was created
-    /// from. Otherwise, this is the same value as `path()`.
-    ///
-    /// Git documentation calls this the "commondir", and for git CLI is overridden by
-    /// `GIT_COMMON_DIR`.
     fn main_repository_path(&self) -> PathBuf;
 
     /// Updates the index to match the worktree at the given paths.
