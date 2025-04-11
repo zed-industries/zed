@@ -53,7 +53,7 @@ impl IndexedDocsProvider for LocalRustdocProvider {
     }
 
     fn database_path(&self) -> PathBuf {
-        paths::support_dir().join("docs/rust/rustdoc-db.1.mdb")
+        paths::data_dir().join("docs/rust/rustdoc-db.1.mdb")
     }
 
     async fn suggest_packages(&self) -> Result<Vec<PackageName>> {
@@ -144,7 +144,7 @@ impl IndexedDocsProvider for DocsDotRsProvider {
     }
 
     fn database_path(&self) -> PathBuf {
-        paths::support_dir().join("docs/rust/docs-rs-db.1.mdb")
+        paths::data_dir().join("docs/rust/docs-rs-db.1.mdb")
     }
 
     async fn suggest_packages(&self) -> Result<Vec<PackageName>> {

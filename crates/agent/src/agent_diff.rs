@@ -792,15 +792,11 @@ impl editor::Addon for AgentDiffAddon {
 
 pub struct AgentDiffToolbar {
     agent_diff: Option<WeakEntity<AgentDiff>>,
-    _workspace: WeakEntity<Workspace>,
 }
 
 impl AgentDiffToolbar {
-    pub fn new(workspace: &Workspace, _: &mut Context<Self>) -> Self {
-        Self {
-            agent_diff: None,
-            _workspace: workspace.weak_handle(),
-        }
+    pub fn new() -> Self {
+        Self { agent_diff: None }
     }
 
     fn agent_diff(&self, _: &App) -> Option<Entity<AgentDiff>> {
@@ -925,15 +921,16 @@ mod tests {
             })
             .unwrap();
 
-        let thread_store = cx.update(|cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
-        });
+        let thread_store = cx
+            .update(|cx| {
+                ThreadStore::load(
+                    project.clone(),
+                    Arc::default(),
+                    Arc::new(PromptBuilder::new(None).unwrap()),
+                    cx,
+                )
+            })
+            .await;
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 

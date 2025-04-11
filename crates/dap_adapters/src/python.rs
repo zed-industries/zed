@@ -76,7 +76,7 @@ impl DebugAdapter for PythonDebugAdapter {
             user_installed_path
         } else {
             let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-            let file_name_prefix = format!("{}_", Self::ADAPTER_PACKAGE_NAME);
+            let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
 
             util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
                 file_name.starts_with(&file_name_prefix)

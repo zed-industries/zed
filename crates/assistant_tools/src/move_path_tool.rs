@@ -42,7 +42,7 @@ impl Tool for MovePathTool {
         "move_path".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         true
     }
 

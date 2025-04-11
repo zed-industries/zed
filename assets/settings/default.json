@@ -80,6 +80,8 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0
   },
+  // Layout mode of the bottom dock. Defaults to "contained"
+  "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
@@ -624,14 +626,14 @@
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
     // The model to use when applying edits from the assistant.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
@@ -656,8 +658,9 @@
         "name": "Write",
         "enable_all_context_servers": true,
         "tools": {
-          "bash": true,
+          "terminal": true,
           "batch_tool": true,
+          "code_actions": true,
           "code_symbols": true,
           "copy_path": false,
           "create_file": true,
@@ -671,6 +674,7 @@
           "path_search": true,
           "read_file": true,
           "regex_search": true,
+          "rename": true,
           "symbol_info": true,
           "thinking": true
         }
@@ -1136,7 +1140,8 @@
   "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
-    "variables": {}
+    "variables": {},
+    "enabled": true
   },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
@@ -1456,6 +1461,8 @@
   "lsp": {
     // Specify the LSP name as a key here.
     // "rust-analyzer": {
+    //     // A special flag for rust-analyzer integration, to use server-provided tasks
+    //     enable_lsp_tasks": true,
     //     // These initialization options are merged into Zed's defaults
     //     "initialization_options": {
     //         "check": {
