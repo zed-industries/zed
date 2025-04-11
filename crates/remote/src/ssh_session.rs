@@ -1481,13 +1481,13 @@ impl SshRemoteConnection {
             .args(connection_options.additional_args())
             .args([
                 "-N",
-                "-o",
-                "ControlPersist=no",
-                "-o",
-                "ControlMaster=yes",
-                "-o",
+                // "-o",
+                // "ControlPersist=no",
+                // "-o",
+                // "ControlMaster=yes",
+                // "-o",
             ])
-            .arg(format!("ControlPath={}", socket_path.display()))
+            // .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
             .kill_on_drop(true)
             .spawn()?;
@@ -1517,6 +1517,10 @@ impl SshRemoteConnection {
             return Err(e.context("Failed to connect to host"));
         }
 
+        {
+            let string = String::from_utf8_lossy(&output);
+            println!("stdout: {string}<-");
+        }
         if master_process.try_status()?.is_some() {
             output.clear();
             let mut stderr = master_process.stderr.take().unwrap();

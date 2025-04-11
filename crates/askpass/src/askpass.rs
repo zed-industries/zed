@@ -223,7 +223,8 @@ impl AskPassSession {
 
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
-        let askpass_script_path = temp_dir.path().join("askpass.ps1");
+        let askpass_script_path = temp_dir.path().join("askpass.cmd");
+        let askpass_script_pwsh_path = temp_dir.path().join("askpass.ps1");
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
@@ -266,18 +267,32 @@ impl AskPassSession {
         });
 
         // Create an askpass script that communicates back to this process.
+        let askpass_pwsh_script = format!(
+            r#"
+            $prompt = $args -join ' ';
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($prompt + [char]0);
+            $socket = New-Object System.Net.Sockets.Socket([System.Net.Sockets.AddressFamily]::Unix, [System.Net.Sockets.SocketType]::Stream, [System.Net.Sockets.ProtocolType]::Unspecified);
+            $endpoint = New-Object System.Net.Sockets.UnixDomainSocketEndPoint("{}");
+            $socket.Connect($endpoint);
+            $socket.Send($bytes) | Out-Null;
+            $buffer = New-Object byte[] 1024;
+            $received = $socket.Receive($buffer);
+            $response = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $received);
+            $socket.Close();
+            Write-Host $response
+            "#,
+            askpass_socket.display(),
+        );
+        println!("askpass_script: {}", askpass_pwsh_script);
+        fs::write(&askpass_script_pwsh_path, askpass_pwsh_script).await?;
         let askpass_script = format!(
-            "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
-            // on macOS `brew install netcat` provides the GNU netcat implementation
-            // which does not support -U.
-            nc = if cfg!(target_os = "macos") {
-                "/usr/bin/nc"
-            } else {
-                "nc"
-            },
-            askpass_socket = askpass_socket.display(),
-            print_args = "printf '%s\\0' \"$@\"",
-            shebang = "#!/bin/sh",
+            r#"
+            @echo off
+            setlocal enabledelayedexpansion
+            set args=%*
+            powershell -ExecutionPolicy Bypass -File "{}" %args%
+            "#,
+            askpass_script_pwsh_path.display()
         );
         fs::write(&askpass_script_path, askpass_script).await?;
 
@@ -298,7 +313,7 @@ impl AskPassSession {
     // future when this is no longer needed. Note that this can only be called once, but due to the
     // drop order this takes an &mut, so you can `drop()` it after you're done with the master process.
     pub async fn run(&mut self) -> AskPassResult {
-        let connection_timeout = Duration::from_secs(10);
+        let connection_timeout = Duration::from_secs(60);
         let askpass_opened_rx = self.askpass_opened_rx.take().expect("Only call run once");
         let askpass_kill_master_rx = self
             .askpass_kill_master_rx
