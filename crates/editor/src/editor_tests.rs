@@ -17999,7 +17999,15 @@ fn add_log_breakpoint_at_cursor(
     cx: &mut Context<Editor>,
 ) {
     let (anchor, bp) = editor
-        .breakpoint_at_cursor_head(window, cx)
+        .breakpoints_at_cursors(window, cx)
+        .first()
+        .and_then(|(anchor, bp)| {
+            if let Some(bp) = bp {
+                Some((*anchor, bp.clone()))
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| {
             let cursor_position: Point = editor.selections.newest(cx).head();
 

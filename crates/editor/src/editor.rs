@@ -396,14 +396,26 @@ pub enum SelectMode {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
-    SingleLine { auto_width: bool },
-    AutoHeight { max_lines: usize },
-    Full,
+    SingleLine {
+        auto_width: bool,
+    },
+    AutoHeight {
+        max_lines: usize,
+    },
+    Full {
+        /// When set to `true`, the editor will scale its UI elements with the buffer font size.
+        scale_ui_elements_with_buffer_font_size: bool,
+        /// When set to `true`, the editor will render a background for the active line.
+        show_active_line_background: bool,
+    },
 }
 
 impl EditorMode {
     pub fn full() -> Self {
-        Self::Full
+        Self::Full {
+            scale_ui_elements_with_buffer_font_size: true,
+            show_active_line_background: true,
+        }
     }
 
     pub fn is_full(&self) -> bool {
@@ -8842,15 +8854,6 @@ impl Editor {
         });
     }
 
-    fn breakpoint_at_cursor_head(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<(Anchor, Breakpoint)> {
-        let cursor_position: Point = self.selections.newest(cx).head();
-        self.breakpoint_at_row(cursor_position.row, window, cx)
-    }
-
     pub(crate) fn breakpoint_at_row(
         &self,
         row: u32,
@@ -8860,6 +8863,15 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let breakpoint_position = snapshot.buffer_snapshot.anchor_before(Point::new(row, 0));
 
+        self.breakpoint_at_anchor(breakpoint_position, &snapshot, cx)
+    }
+
+    pub(crate) fn breakpoint_at_anchor(
+        &self,
+        breakpoint_position: Anchor,
+        snapshot: &EditorSnapshot,
+        cx: &mut Context<Self>,
+    ) -> Option<(Anchor, Breakpoint)> {
         let project = self.project.clone()?;
 
         let buffer_id = breakpoint_position.buffer_id.or_else(|| {
@@ -8917,29 +8929,57 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (anchor, bp) = self
-            .breakpoint_at_cursor_head(window, cx)
-            .unwrap_or_else(|| {
-                let cursor_position: Point = self.selections.newest(cx).head();
-
-                let breakpoint_position = self
-                    .snapshot(window, cx)
-                    .display_snapshot
-                    .buffer_snapshot
-                    .anchor_after(Point::new(cursor_position.row, 0));
-
-                (
-                    breakpoint_position,
-                    Breakpoint {
-                        message: None,
-                        state: BreakpointState::Enabled,
-                        condition: None,
-                        hit_condition: None,
-                    },
-                )
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            let breakpoint = breakpoint.unwrap_or_else(|| Breakpoint {
+                message: None,
+                state: BreakpointState::Enabled,
+                condition: None,
+                hit_condition: None,
             });
 
-        self.add_edit_breakpoint_block(anchor, &bp, BreakpointPromptEditAction::Log, window, cx);
+            self.add_edit_breakpoint_block(
+                anchor,
+                &breakpoint,
+                BreakpointPromptEditAction::Log,
+                window,
+                cx,
+            );
+        }
+    }
+
+    fn breakpoints_at_cursors(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<(Anchor, Option<Breakpoint>)> {
+        let snapshot = self.snapshot(window, cx);
+        let cursors = self
+            .selections
+            .disjoint_anchors()
+            .into_iter()
+            .map(|selection| {
+                let cursor_position: Point = selection.head().to_point(&snapshot.buffer_snapshot);
+
+                let breakpoint_position = self
+                    .breakpoint_at_row(cursor_position.row, window, cx)
+                    .map(|bp| bp.0)
+                    .unwrap_or_else(|| {
+                        snapshot
+                            .display_snapshot
+                            .buffer_snapshot
+                            .anchor_after(Point::new(cursor_position.row, 0))
+                    });
+
+                let breakpoint = self
+                    .breakpoint_at_anchor(breakpoint_position, &snapshot, cx)
+                    .map(|(anchor, breakpoint)| (anchor, Some(breakpoint)));
+
+                breakpoint.unwrap_or_else(|| (breakpoint_position, None))
+            })
+            // There might be multiple cursors on the same line; all of them should have the same anchors though as their breakpoints positions, which makes it possible to sort and dedup the list.
+            .collect::<HashMap<Anchor, _>>();
+
+        cursors.into_iter().collect()
     }
 
     pub fn enable_breakpoint(
@@ -8948,15 +8988,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
-            if breakpoint.is_disabled() {
-                self.edit_breakpoint_at_anchor(
-                    anchor,
-                    breakpoint,
-                    BreakpointEditAction::InvertState,
-                    cx,
-                );
-            }
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            let Some(breakpoint) = breakpoint.filter(|breakpoint| breakpoint.is_disabled()) else {
+                continue;
+            };
+            self.edit_breakpoint_at_anchor(
+                anchor,
+                breakpoint,
+                BreakpointEditAction::InvertState,
+                cx,
+            );
         }
     }
 
@@ -8966,15 +9007,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
-            if breakpoint.is_enabled() {
-                self.edit_breakpoint_at_anchor(
-                    anchor,
-                    breakpoint,
-                    BreakpointEditAction::InvertState,
-                    cx,
-                );
-            }
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            let Some(breakpoint) = breakpoint.filter(|breakpoint| breakpoint.is_enabled()) else {
+                continue;
+            };
+            self.edit_breakpoint_at_anchor(
+                anchor,
+                breakpoint,
+                BreakpointEditAction::InvertState,
+                cx,
+            );
         }
     }
 
@@ -8984,25 +9026,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let edit_action = BreakpointEditAction::Toggle;
-
-        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
-            self.edit_breakpoint_at_anchor(anchor, breakpoint, edit_action, cx);
-        } else {
-            let cursor_position: Point = self.selections.newest(cx).head();
-
-            let breakpoint_position = self
-                .snapshot(window, cx)
-                .display_snapshot
-                .buffer_snapshot
-                .anchor_after(Point::new(cursor_position.row, 0));
-
-            self.edit_breakpoint_at_anchor(
-                breakpoint_position,
-                Breakpoint::new_standard(),
-                edit_action,
-                cx,
-            );
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            if let Some(breakpoint) = breakpoint {
+                self.edit_breakpoint_at_anchor(
+                    anchor,
+                    breakpoint,
+                    BreakpointEditAction::Toggle,
+                    cx,
+                );
+            } else {
+                self.edit_breakpoint_at_anchor(
+                    anchor,
+                    Breakpoint::new_standard(),
+                    BreakpointEditAction::Toggle,
+                    cx,
+                );
+            }
         }
     }
 
@@ -11983,6 +12022,54 @@ impl Editor {
                 });
                 self.select_previous(action, window, cx)?;
             }
+        }
+        Ok(())
+    }
+
+    pub fn find_next_match(
+        &mut self,
+        _: &FindNextMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let selections = self.selections.disjoint_anchors();
+        match selections.first() {
+            Some(first) if selections.len() >= 2 => {
+                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select_ranges([first.range()]);
+                });
+            }
+            _ => self.select_next(
+                &SelectNext {
+                    replace_newest: true,
+                },
+                window,
+                cx,
+            )?,
+        }
+        Ok(())
+    }
+
+    pub fn find_previous_match(
+        &mut self,
+        _: &FindPreviousMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let selections = self.selections.disjoint_anchors();
+        match selections.last() {
+            Some(last) if selections.len() >= 2 => {
+                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select_ranges([last.range()]);
+                });
+            }
+            _ => self.select_previous(
+                &SelectPrevious {
+                    replace_newest: true,
+                },
+                window,
+                cx,
+            )?,
         }
         Ok(())
     }

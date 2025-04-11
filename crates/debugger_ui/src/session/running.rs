@@ -26,13 +26,15 @@ use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use ui::{
-    AnyElement, App, Context, ContextMenu, DropdownMenu, InteractiveElement, IntoElement, Label,
-    LabelCommon as _, ParentElement, Render, SharedString, Styled, Window, div, h_flex, v_flex,
+    ActiveTheme, AnyElement, App, Context, ContextMenu, DropdownMenu, FluentBuilder,
+    InteractiveElement, IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Tab, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
-    ActivePaneDecorator, DraggedTab, Item, Pane, PaneGroup, Workspace, move_item, pane::Event,
+    ActivePaneDecorator, DraggedTab, Item, Pane, PaneGroup, Workspace, item::TabContentParams,
+    move_item, pane::Event,
 };
 
 pub struct RunningState {
@@ -121,8 +123,9 @@ impl Item for SubView {
         cx: &App,
     ) -> AnyElement {
         let label = Label::new(self.tab_name.clone())
+            .size(ui::LabelSize::Small)
             .color(params.text_color())
-            .into_any_element();
+            .line_height_style(ui::LineHeightStyle::UiLabel);
 
         if !params.selected && self.show_indicator.as_ref()(cx) {
             return h_flex()
@@ -133,7 +136,7 @@ impl Item for SubView {
                 .into_any_element();
         }
 
-        label
+        label.into_any_element()
     }
 }
 
@@ -266,7 +269,79 @@ fn new_debugger_pane(
         })));
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
+        pane.set_should_display_tab_bar(|_, _| true);
         pane.set_render_tab_bar_buttons(cx, |_, _, _| (None, None));
+        pane.set_render_tab_bar(cx, |pane, window, cx| {
+            let active_pane_item = pane.active_item();
+            h_flex()
+                .w_full()
+                .h(Tab::container_height(cx))
+                .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                    bar.bg(cx.theme().colors().drop_target_background)
+                })
+                .on_drop(
+                    cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
+                        this.drag_split_direction = None;
+                        this.handle_tab_drop(dragged_tab, this.items_len(), window, cx)
+                    }),
+                )
+                .bg(cx.theme().colors().tab_bar_background)
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .children(pane.items().enumerate().map(|(ix, item)| {
+                    let selected = active_pane_item
+                        .as_ref()
+                        .map_or(false, |active| active.item_id() == item.item_id());
+                    let item_ = item.boxed_clone();
+                    div()
+                        .id(SharedString::from(format!(
+                            "debugger_tab_{}",
+                            item.item_id().as_u64()
+                        )))
+                        .p_1()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .map(|this| {
+                            if selected {
+                                this.bg(cx.theme().colors().tab_active_background)
+                            } else {
+                                let hover_color = cx.theme().colors().element_hover;
+                                this.hover(|style| style.bg(hover_color))
+                            }
+                        })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let index = this.index_for_item(&*item_);
+                            if let Some(index) = index {
+                                this.activate_item(index, true, true, window, cx);
+                            }
+                        }))
+                        .child(item.tab_content(
+                            TabContentParams {
+                                selected,
+                                ..Default::default()
+                            },
+                            window,
+                            cx,
+                        ))
+                        .on_drop(
+                            cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
+                                this.drag_split_direction = None;
+                                this.handle_tab_drop(dragged_tab, ix, window, cx)
+                            }),
+                        )
+                        .on_drag(
+                            DraggedTab {
+                                item: item.boxed_clone(),
+                                pane: cx.entity().clone(),
+                                detail: 0,
+                                is_active: selected,
+                                ix,
+                            },
+                            |tab, _, _, cx| cx.new(|_| tab.clone()),
+                        )
+                }))
+                .into_any_element()
+        });
         pane
     });
 
