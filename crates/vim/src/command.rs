@@ -234,6 +234,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         let n = if count > 1 {
             format!(".,.+{}", count.saturating_sub(1))
         } else {
@@ -1323,6 +1324,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Vim>,
     ) {
@@ -1335,7 +1337,13 @@ impl Vim {
             let start = editor.selections.newest_display(cx);
             let text_layout_details = editor.text_layout_details(window);
             let (mut range, _) = motion
-                .range(&snapshot, start.clone(), times, &text_layout_details)
+                .range(
+                    &snapshot,
+                    start.clone(),
+                    times,
+                    &text_layout_details,
+                    forced_motion,
+                )
                 .unwrap_or((start.range(), MotionKind::Exclusive));
             if range.start != start.start {
                 editor.change_selections(None, window, cx, |s| {
