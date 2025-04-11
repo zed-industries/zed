@@ -12,7 +12,7 @@ pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
 use editor::Editor;
-use file_finder_settings::{FileFinderSettings, FileFinderWidth};
+use file_finder_settings::{FileFinderAutoSelect, FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
@@ -848,8 +848,15 @@ impl FileFinderDelegate {
                 extend_old_matches,
             );
 
+            let file_finder_settings = FileFinderSettings::get_global(cx);
+
             self.selected_index = selected_match.map_or_else(
-                || self.calculate_selected_index(),
+                || {
+                    if file_finder_settings.auto_select == FileFinderAutoSelect::SkipActive {
+                        return self.calculate_selected_index();
+                    }
+                    0
+                },
                 |m| {
                     self.matches
                         .position(&m, self.currently_opened_path.as_ref())
