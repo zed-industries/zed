@@ -44,7 +44,7 @@ use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AgentDiff, InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown,
+    AgentDiff, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown,
     OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
@@ -70,7 +70,7 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &NewPromptEditor, window, cx| {
+                .register_action(|workspace, _: &NewTextThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
@@ -1090,7 +1090,7 @@ impl AssistantPanel {
                                             |menu, _window, _cx| {
                                                 menu.action(
                                                     "New Text Thread",
-                                                    NewPromptEditor.boxed_clone(),
+                                                    NewTextThread.boxed_clone(),
                                                 )
                                                 .when(!is_empty, |menu| {
                                                     menu.action(
