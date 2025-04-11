@@ -94,7 +94,7 @@ impl FileFinder {
                 file_finder.update(cx, |file_finder, cx| {
                     file_finder.init_modifiers = Some(window.modifiers());
                     file_finder.picker.update(cx, |picker, cx| {
-                        picker.cycle_selection(window, cx);
+                        picker.select_next(&menu::SelectNext, window, cx);
                     });
                 });
             },
