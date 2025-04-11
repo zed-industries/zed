@@ -44,7 +44,7 @@ impl HyperlinkFinder {
         }
     }
 
-    pub(super) fn find_from_grid_point<'a, T: EventListener>(
+    pub(super) fn find_from_grid_point<T: EventListener>(
         &mut self,
         term: &Term<T>,
         point: AlacPoint,
@@ -377,7 +377,7 @@ mod tests {
 
         // path, line, column, and description
         test_hyperlink!("‹«/test/cool.rs»:«4»:«2»›👉:Error!");
-        test_hyperlink!("‹«/test/cool.rs»:«4»:«2»›:Erro👉r!");
+        test_hyperlink!("‹«/test/cool.rs»:«4»:«2»›:👉Error!");
         test_hyperlink!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
 
         // Cargo output
@@ -624,10 +624,7 @@ mod tests {
                             }
                             CapturesState::Path(start_point) => {
                                 path_with_position = PathWithPosition::from_path(PathBuf::from(
-                                    &term.bounds_to_string(
-                                        start_point.clone(),
-                                        prev_input_point.clone(),
-                                    ),
+                                    &term.bounds_to_string(start_point, prev_input_point),
                                 ));
                                 CapturesState::RowScan
                             }
@@ -687,7 +684,7 @@ mod tests {
             term.move_down_and_cr(1);
         }
 
-        let hovered_char = term.grid().index(hovered_grid_point.clone()).c;
+        let hovered_char = term.grid().index(hovered_grid_point).c;
         (
             term,
             ExpectedHyperlink {
