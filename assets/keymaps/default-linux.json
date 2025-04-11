@@ -625,7 +625,7 @@
     "context": "AgentPanel",
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "ctrl-alt-n": "agent::NewPromptEditor",
+      "ctrl-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenConfiguration",
       "ctrl-i": "agent::ToggleProfileSelector",
@@ -647,7 +647,7 @@
     "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "agent::NewPromptEditor",
+      "cmd-n": "agent::NewTextThread",
       "cmd-alt-t": "agent::NewThread"
     }
   },
