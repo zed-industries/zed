@@ -124,7 +124,8 @@ impl Item for SubView {
     ) -> AnyElement {
         let label = Label::new(self.tab_name.clone())
             .size(ui::LabelSize::Small)
-            .color(params.text_color());
+            .color(params.text_color())
+            .line_height_style(ui::LineHeightStyle::UiLabel);
 
         if !params.selected && self.show_indicator.as_ref()(cx) {
             return h_flex()
@@ -297,8 +298,7 @@ fn new_debugger_pane(
                             "debugger_tab_{}",
                             item.item_id().as_u64()
                         )))
-                        .px_1()
-                        .py(px(1.))
+                        .p_1()
                         .rounded_md()
                         .cursor_pointer()
                         .map(|this| {
