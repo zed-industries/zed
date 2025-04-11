@@ -14405,7 +14405,7 @@ impl Editor {
                     // self.display_map.update(cx, |display_map, _cx| {
                     //     display_map.replace_blocks(new_styles);
                     // });
-                    todo!()
+                    // todo!()
                 } else {
                     self.dismiss_diagnostics(cx);
                 }

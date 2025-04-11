@@ -408,7 +408,7 @@ impl ProjectDiagnosticsEditor {
 
             for (_, group) in grouped {
                 let group_severity = group.iter().map(|d| d.diagnostic.severity).min();
-                if !group_severity.is_some_and(|s| s <= max_severity) {
+                if group_severity.is_none_or(|s| s > max_severity) {
                     continue;
                 }
                 let more = cx.update(|_, cx| {

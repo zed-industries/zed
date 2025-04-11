@@ -1010,17 +1010,13 @@ const EXCERPT_HEADER: &str = "excerpt header";
 fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> String {
     cx.draw(
         gpui::Point::default(),
-        size(px(1000.0), px(1000.0).into()),
+        size(px(1000.0), px(1000.0)),
         |_, _| editor.clone(),
     );
     let (mut lines, blocks) = editor.update_in(cx, |editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let text = editor.display_text(cx);
-        let lines = text
-            .lines()
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<String>>();
+        let lines = text.lines().map(|s| s.to_string()).collect::<Vec<String>>();
         let blocks = snapshot
             .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
             .map(|(row, block)| (row, block.clone()))
@@ -1103,7 +1099,7 @@ fn editor_blocks(
     let mut blocks = Vec::new();
     cx.draw(
         gpui::Point::default(),
-        size(px(1000.0), px(1000.0).into()),
+        size(px(1000.0), px(1000.0)),
         |window, cx| {
             editor.update(cx, |editor, cx| {
                 let snapshot = editor.snapshot(window, cx);
