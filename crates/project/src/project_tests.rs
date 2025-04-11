@@ -6967,7 +6967,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 25)]
 async fn test_staging_random_hunks(
     mut rng: StdRng,
     executor: BackgroundExecutor,

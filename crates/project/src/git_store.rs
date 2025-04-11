@@ -96,16 +96,12 @@ struct BufferDiffState {
     /// values read from the git repository are up-to-date with any hunk staging
     /// operations that have been performed on the BufferDiff.
     ///
-    /// The operation_count is incremented immediately when the user initiates a
-    /// hunk stage/unstage operation. Then, upon writing the new index text do
-    /// disk, the `operation_count_as_of_write` is updated to reflect the
-    /// operation_count that prompted the write. Finally, when reloading
-    /// index/head text from disk in response to a filesystem event, the
-    /// `operation_count_as_of_read` is updated to reflect the latest previous
-    /// write.
+    /// The operation count is incremented immediately when the user initiates a
+    /// hunk stage/unstage operation. Then, upon finishing writing the new index
+    /// text do disk, the `operation count as of write` is updated to reflect
+    /// the operation count that prompted the write.
     hunk_staging_operation_count: usize,
     hunk_staging_operation_count_as_of_write: usize,
-    hunk_staging_operation_count_as_of_read: usize,
 
     head_text: Option<Arc<String>>,
     index_text: Option<Arc<String>>,
@@ -2031,8 +2027,6 @@ impl GitStore {
                 if let Some(buffer) = this.buffer_store.read(cx).get(buffer_id) {
                     let buffer = buffer.read(cx).text_snapshot();
                     diff_state.update(cx, |diff_state, cx| {
-                        diff_state.hunk_staging_operation_count_as_of_read =
-                            diff_state.hunk_staging_operation_count_as_of_write;
                         diff_state.handle_base_texts_updated(buffer, request.payload, cx);
                     })
                 }
@@ -2228,7 +2222,7 @@ impl BufferDiffState {
         let index_changed = self.index_changed;
         let head_changed = self.head_changed;
         let language_changed = self.language_changed;
-        let prev_hunk_staging_operation_count = self.hunk_staging_operation_count_as_of_read;
+        let prev_hunk_staging_operation_count = self.hunk_staging_operation_count_as_of_write;
         let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
             (Some(index), Some(head)) => Arc::ptr_eq(index, head),
             (None, None) => true,
@@ -2362,7 +2356,6 @@ impl Default for BufferDiffState {
             language_registry: Default::default(),
             recalculating_tx: postage::watch::channel_with(false).0,
             hunk_staging_operation_count: 0,
-            hunk_staging_operation_count_as_of_read: 0,
             hunk_staging_operation_count_as_of_write: 0,
             head_text: Default::default(),
             index_text: Default::default(),
@@ -2635,9 +2628,6 @@ impl Repository {
                                     repo_path.0.display()
                                 );
                                 diff_state.update(cx, |diff_state, _| {
-                                    diff_state.hunk_staging_operation_count_as_of_read =
-                                        diff_state.hunk_staging_operation_count_as_of_write;
-
                                     let has_unstaged_diff = diff_state
                                         .unstaged_diff
                                         .as_ref()
