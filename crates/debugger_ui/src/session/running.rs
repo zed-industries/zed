@@ -301,8 +301,13 @@ fn new_debugger_pane(
                         .py(px(1.))
                         .rounded_md()
                         .cursor_pointer()
-                        .when(selected, |this| {
-                            this.bg(cx.theme().colors().tab_active_background)
+                        .map(|this| {
+                            if selected {
+                                this.bg(cx.theme().colors().tab_active_background)
+                            } else {
+                                let hover_color = cx.theme().colors().element_hover;
+                                this.hover(|style| style.bg(hover_color))
+                            }
                         })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             let index = this.index_for_item(&*item_);
