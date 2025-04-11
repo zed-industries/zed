@@ -225,6 +225,20 @@ impl CloudLanguageModelProvider {
             _maintain_client_status: maintain_client_status,
         }
     }
+
+    fn create_language_model(
+        &self,
+        model: CloudModel,
+        llm_api_token: LlmApiToken,
+    ) -> Arc<dyn LanguageModel> {
+        Arc::new(CloudLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            llm_api_token: llm_api_token.clone(),
+            client: self.client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }) as Arc<dyn LanguageModel>
+    }
 }
 
 impl LanguageModelProviderState for CloudLanguageModelProvider {
@@ -267,15 +281,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
         ]
         .into_iter()
-        .map(|model| {
-            Arc::new(CloudLanguageModel {
-                id: LanguageModelId::from(model.id().to_string()),
-                model,
-                llm_api_token: llm_api_token.clone(),
-                client: self.client.clone(),
-                request_limiter: RateLimiter::new(4),
-            }) as Arc<dyn LanguageModel>
-        })
+        .map(|model| self.create_language_model(model, llm_api_token.clone()))
         .collect()
     }
 
@@ -364,15 +370,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
         models
             .into_values()
-            .map(|model| {
-                Arc::new(CloudLanguageModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    llm_api_token: llm_api_token.clone(),
-                    client: self.client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model, llm_api_token.clone()))
             .collect()
     }
 
