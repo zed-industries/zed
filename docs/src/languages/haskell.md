@@ -49,4 +49,3 @@ If you would like to use a specific hls binary, or perhaps use [static-ls](https
   }
 }
 ```
-
