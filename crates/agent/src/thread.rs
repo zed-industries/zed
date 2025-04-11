@@ -2,6 +2,7 @@ use std::fmt::Write as _;
 use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
@@ -261,6 +262,7 @@ pub struct Thread {
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
+    last_auto_capture_at: Option<Instant>,
 }
 
 impl Thread {
@@ -301,6 +303,7 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
             message_feedback: HashMap::default(),
+            last_auto_capture_at: None,
         }
     }
 
@@ -366,6 +369,7 @@ impl Thread {
             cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
             message_feedback: HashMap::default(),
+            last_auto_capture_at: None,
         }
     }
 
@@ -1784,60 +1788,45 @@ impl Thread {
         self.cumulative_token_usage.clone()
     }
 
-    pub fn auto_capture_telemetry(&self, cx: &mut Context<Self>) {
-        static mut LAST_CAPTURE: Option<std::time::Instant> = None;
-        let now = std::time::Instant::now();
-        let should_check = unsafe {
-            if let Some(last) = LAST_CAPTURE {
-                if now.duration_since(last).as_secs() < 10 {
-                    return;
-                }
-            }
-            LAST_CAPTURE = Some(now);
-            true
-        };
-
-        if !should_check {
+    pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
+        if !cx.has_flag::<feature_flags::ThreadAutoCapture>() {
             return;
         }
 
-        let feature_flag_enabled = cx.has_flag::<feature_flags::ThreadAutoCapture>();
-
-        if cfg!(debug_assertions) {
-            if !feature_flag_enabled {
+        let now = Instant::now();
+        if let Some(last) = self.last_auto_capture_at {
+            if now.duration_since(last).as_secs() < 10 {
                 return;
             }
         }
 
-        let thread_id = self.id().clone();
+        self.last_auto_capture_at = Some(now);
 
-        let github_handle = self
+        let thread_id = self.id().clone();
+        let github_login = self
             .project
             .read(cx)
             .user_store()
             .read(cx)
             .current_user()
             .map(|user| user.github_login.clone());
-
         let client = self.project.read(cx).client().clone();
+        let serialize_task = self.serialize(cx);
 
-        let serialized_thread = self.serialize(cx);
-
-        cx.foreground_executor()
+        cx.background_executor()
             .spawn(async move {
-                if let Ok(serialized_thread) = serialized_thread.await {
-                    let thread_data = serde_json::to_value(serialized_thread)
-                        .unwrap_or_else(|_| serde_json::Value::Null);
+                if let Ok(serialized_thread) = serialize_task.await {
+                    if let Ok(thread_data) = serde_json::to_value(serialized_thread) {
+                        telemetry::event!(
+                            "Agent Thread Auto-Captured",
+                            thread_id = thread_id.to_string(),
+                            thread_data = thread_data,
+                            auto_capture_reason = "tracked_user",
+                            github_login = github_login
+                        );
 
-                    telemetry::event!(
-                        "Agent Thread AutoCaptured",
-                        thread_id = thread_id.to_string(),
-                        thread_data = thread_data,
-                        auto_capture_reason = "tracked_user",
-                        github_handle = github_handle
-                    );
-
-                    client.telemetry().flush_events();
+                        client.telemetry().flush_events();
+                    }
                 }
             })
             .detach();
