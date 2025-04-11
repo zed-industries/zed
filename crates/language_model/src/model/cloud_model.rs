@@ -55,7 +55,7 @@ impl CloudModel {
 
     pub fn icon(&self) -> Option<IconName> {
         match self {
-            Self::Anthropic(_) => Some(IconName::AiAnthropicHosted),
+            Self::Anthropic(_) => Some(IconName::AiZed),
             _ => None,
         }
     }

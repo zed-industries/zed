@@ -260,6 +260,25 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         }))
     }
 
+    fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let llm_api_token = self.state.read(cx).llm_api_token.clone();
+        [
+            CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
+            CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+        ]
+        .into_iter()
+        .map(|model| {
+            Arc::new(CloudLanguageModel {
+                id: LanguageModelId::from(model.id().to_string()),
+                model,
+                llm_api_token: llm_api_token.clone(),
+                client: self.client.clone(),
+                request_limiter: RateLimiter::new(4),
+            }) as Arc<dyn LanguageModel>
+        })
+        .collect()
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
