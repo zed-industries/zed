@@ -1362,6 +1362,11 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let fs = self.project().read(cx).fs();
+        settings::update_settings_file::<WorkspaceSettings>(fs.clone(), cx, move |content, _cx| {
+            content.bottom_dock_layout = Some(layout);
+        });
+
         self.bottom_dock_layout = layout;
         cx.notify();
         self.serialize_workspace(window, cx);
