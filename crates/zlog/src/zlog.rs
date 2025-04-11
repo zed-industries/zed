@@ -5,6 +5,8 @@ mod env_config;
 pub mod scope_map;
 pub mod sink;
 
+pub use sink::{init_file_output, init_stdout_output};
+
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
 pub fn init() {
@@ -49,6 +51,7 @@ impl log::Log for Zlog {
                 private::scope_new(&[crate_name])
             }
             // TODO: when do we hit this
+            // FIXME: do unknown or something
             None => private::scope_new(&[]),
         };
         let level = record.metadata().level();

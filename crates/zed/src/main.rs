@@ -195,11 +195,15 @@ fn main() {
         return;
     }
 
+    zlog::init();
     if stdout_is_a_pty() {
-        zlog::init();
+        zlog::init_stdout_output();
     } else {
-        zlog::process_env();
-        init_logger();
+        let result = zlog::init_file_output(paths::log_file(), Some(paths::old_log_file()));
+        if let Err(err) = result {
+            eprintln!("Could not open log file: {}... Defaulting to stdout", err);
+            zlog::init_stdout_output();
+        };
     }
 
     log::info!("========== starting zed ==========");
