@@ -12,6 +12,7 @@ use diagnostic_renderer::DiagnosticBlock;
 use editor::{
     DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
+    scroll::Autoscroll,
 };
 use gpui::{
     AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -364,7 +365,7 @@ impl ProjectDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        // let was_empty = self.path_states.is_empty();
+        let was_empty = self.multibuffer.read(cx).is_empty();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
         let max_severity = if self.include_warnings {
@@ -381,6 +382,7 @@ impl ProjectDiagnosticsEditor {
                 )
                 .filter(|d| !(d.diagnostic.is_primary && d.diagnostic.is_unnecessary))
                 .collect::<Vec<_>>();
+            dbg!(&diagnostics);
             let unchanged = this.update(cx, |this, _| {
                 if this.diagnostics.get(&buffer_id).is_some_and(|existing| {
                     this.diagnostics_are_unchanged(existing, &diagnostics, &buffer_snapshot)
@@ -452,7 +454,7 @@ impl ProjectDiagnosticsEditor {
                 })
             }
 
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if let Some(block_ids) = this.blocks.remove(&buffer_id) {
                     this.editor.update(cx, |editor, cx| {
                         editor.display_map.update(cx, |display_map, cx| {
@@ -471,6 +473,17 @@ impl ProjectDiagnosticsEditor {
                 });
                 #[cfg(test)]
                 let cloned_blocks = blocks.clone();
+
+                if was_empty {
+                    if let Some(anchor_range) = anchor_ranges.first() {
+                        let range_to_select = anchor_range.start..anchor_range.start;
+                        this.editor.update(cx, |editor, cx| {
+                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                                s.select_anchor_ranges([range_to_select]);
+                            })
+                        })
+                    }
+                }
 
                 let editor_blocks =
                     anchor_ranges

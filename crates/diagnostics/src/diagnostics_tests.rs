@@ -1,10 +1,7 @@
 use super::*;
 use collections::{HashMap, HashSet};
-use editor::{
-    DisplayPoint, GutterDimensions,
-    display_map::{Block, BlockContext, DisplayRow},
-};
-use gpui::{Stateful, TestAppContext, VisualTestContext, px, size};
+use editor::{DisplayPoint, display_map::DisplayRow, test::editor_content_with_blocks};
+use gpui::{TestAppContext, VisualTestContext};
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, PointUtf16, Rope, Unclipped,
 };
@@ -65,89 +62,45 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
+    let uri = lsp::Url::parse("file:///test/main.rs").unwrap();
 
     // Create some diagnostics
     lsp_store.update(cx, |lsp_store, cx| {
-        lsp_store
-            .update_diagnostic_entries(
-                language_server_id,
-                PathBuf::from(path!("/test/main.rs")),
-                None,
-                vec![
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(1, 8))..Unclipped(PointUtf16::new(1, 9)),
-                        diagnostic: Diagnostic {
-                            message:
-                                "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait"
-                                    .to_string(),
-                            severity: DiagnosticSeverity::INFORMATION,
-                            is_primary: false,
-                            is_disk_based: true,
-                            group_id: 1,
-                            ..Default::default()
-                        },
-                    },
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(2, 8))..Unclipped(PointUtf16::new(2, 9)),
-                        diagnostic: Diagnostic {
-                            message:
-                                "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait"
-                                    .to_string(),
-                            severity: DiagnosticSeverity::INFORMATION,
-                            is_primary: false,
-                            is_disk_based: true,
-                            group_id: 0,
-                            ..Default::default()
-                        },
-                    },
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(3, 6))..Unclipped(PointUtf16::new(3, 7)),
-                        diagnostic: Diagnostic {
-                            message: "value moved here".to_string(),
-                            severity: DiagnosticSeverity::INFORMATION,
-                            is_primary: false,
-                            is_disk_based: true,
-                            group_id: 1,
-                            ..Default::default()
-                        },
-                    },
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(4, 6))..Unclipped(PointUtf16::new(4, 7)),
-                        diagnostic: Diagnostic {
-                            message: "value moved here".to_string(),
-                            severity: DiagnosticSeverity::INFORMATION,
-                            is_primary: false,
-                            is_disk_based: true,
-                            group_id: 0,
-                            ..Default::default()
-                        },
-                    },
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(7, 6))..Unclipped(PointUtf16::new(7, 7)),
-                        diagnostic: Diagnostic {
-                            message: "use of moved value\nvalue used here after move".to_string(),
-                            severity: DiagnosticSeverity::ERROR,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 0,
-                            ..Default::default()
-                        },
-                    },
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(8, 6))..Unclipped(PointUtf16::new(8, 7)),
-                        diagnostic: Diagnostic {
-                            message: "use of moved value\nvalue used here after move".to_string(),
-                            severity: DiagnosticSeverity::ERROR,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 1,
-                            ..Default::default()
-                        },
-                    },
-                ],
-                cx,
-            )
-            .unwrap();
+        lsp_store.update_diagnostics(language_server_id, lsp::PublishDiagnosticsParams {
+            uri: uri.clone(),
+            diagnostics: vec![lsp::Diagnostic{
+                range: lsp::Range::new(lsp::Position::new(7, 6),lsp::Position::new(7, 7)),
+                severity:Some(lsp::DiagnosticSeverity::ERROR),
+                message: "use of moved value\nvalue used here after move".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(2,8),lsp::Position::new(2,9))),
+                    message: "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait".to_string()
+                },
+                lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(4,6),lsp::Position::new(4,7))),
+                    message: "value moved here".to_string()
+                },
+                ]),
+                ..Default::default()
+            },
+            lsp::Diagnostic{
+                range: lsp::Range::new(lsp::Position::new(8, 6),lsp::Position::new(8, 7)),
+                severity:Some(lsp::DiagnosticSeverity::ERROR),
+                message: "use of moved value\nvalue used here after move".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(1,8),lsp::Position::new(1,9))),
+                    message: "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait".to_string()
+                },
+                lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location::new(uri.clone(), lsp::Range::new(lsp::Position::new(3,6),lsp::Position::new(3,7))),
+                    message: "value moved here".to_string()
+                },
+                ]),
+                ..Default::default()
+            }
+            ],
+            version: None
+        }, &[], cx).unwrap();
     });
 
     // Open the project diagnostics view while there are already diagnostics.
@@ -160,87 +113,40 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
         .await;
 
-    let expected = indoc::indoc! {
-       "§ main.rs
-       §
-       fn main() {
-           let x = vec![];
-       § move occurs because `x` has type `Vec<char>`, which does not implement
-       § the `Copy` trait (back)
-           let y = vec![];
-       § move occurs because `y` has type `Vec<char>`, which does not implement
-       § the `Copy` trait (back)
-           a(x); § value moved here (back)
-           b(y); § value moved here
-           // comment 1
-           // comment 2
-           c(y);
-       § use of moved value value used here after move
-       § hint: move occurs because `y` has type `Vec<char>`, which does not
-       § implement the `Copy` trait
-           d(x);
-       § use of moved value value used here after move
-       § hint: move occurs because `x` has type `Vec<char>`, which does not
-       § implement the `Copy` trait
-       § hint: value moved here
-       }"
-    };
-    let actual = editor_content_with_blocks(&editor, cx);
-    pretty_assertions::assert_eq!(expected, actual);
-    assert_eq!(
-        editor_blocks(&editor, cx),
-        [
-            (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(15), EXCERPT_HEADER.into()),
-            (DisplayRow(25), EXCERPT_HEADER.into()),
-        ]
-    );
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
-        concat!(
-            //
-            // main.rs
-            //
-            "\n", // filename
-            "\n", // padding
-            // diagnostic group 1
-            "\n", // primary message
-            "\n", // padding
-            "    let x = vec![];\n",
-            "    let y = vec![];\n",
-            "\n", // supporting diagnostic
-            "    a(x);\n",
-            "    b(y);\n",
-            "\n", // supporting diagnostic
-            "    // comment 1\n",
-            "    // comment 2\n",
-            "    c(y);\n",
-            "\n", // supporting diagnostic
-            "    d(x);\n",
-            "\n", // context ellipsis
-            // diagnostic group 2
-            "\n", // primary message
-            "\n", // padding
-            "fn main() {\n",
-            "    let x = vec![];\n",
-            "\n", // supporting diagnostic
-            "    let y = vec![];\n",
-            "    a(x);\n",
-            "\n", // supporting diagnostic
-            "    b(y);\n",
-            "\n", // context ellipsis
-            "    c(y);\n",
-            "    d(x);\n",
-            "\n", // supporting diagnostic
-            "}",
-        )
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.rs
+             § -----
+             fn main() {
+                 let x = vec![];
+             § move occurs because `x` has type `Vec<char>`, which does not implement
+             § the `Copy` trait (back)
+                 let y = vec![];
+             § move occurs because `y` has type `Vec<char>`, which does not implement
+             § the `Copy` trait (back)
+                 a(x); § value moved here (back)
+                 b(y); § value moved here
+                 // comment 1
+                 // comment 2
+                 c(y);
+             § use of moved value value used here after move
+             § hint: move occurs because `y` has type `Vec<char>`, which does not
+             § implement the `Copy` trait
+                 d(x);
+             § use of moved value value used here after move
+             § hint: move occurs because `x` has type `Vec<char>`, which does not
+             § implement the `Copy` trait
+             § hint: value moved here
+             }"
+        }
     );
 
     // Cursor is at the first diagnostic
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.selections.display_ranges(cx),
-            [DisplayPoint::new(DisplayRow(12), 6)..DisplayPoint::new(DisplayRow(12), 6)]
+            [DisplayPoint::new(DisplayRow(3), 8)..DisplayPoint::new(DisplayRow(3), 8)]
         );
     });
 
@@ -272,73 +178,46 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     diagnostics
         .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
         .await;
-    assert_eq!(
-        editor_blocks(&editor, cx),
-        [
-            (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(7), FILE_HEADER.into()),
-            (DisplayRow(22), EXCERPT_HEADER.into()),
-            (DisplayRow(32), EXCERPT_HEADER.into()),
-        ]
-    );
 
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
-        concat!(
-            //
-            // consts.rs
-            //
-            "\n", // filename
-            "\n", // padding
-            // diagnostic group 1
-            "\n", // primary message
-            "\n", // padding
-            "const a: i32 = 'a';\n",
-            "\n", // supporting diagnostic
-            "const b: i32 = c;\n",
-            //
-            // main.rs
-            //
-            "\n", // filename
-            "\n", // padding
-            // diagnostic group 1
-            "\n", // primary message
-            "\n", // padding
-            "    let x = vec![];\n",
-            "    let y = vec![];\n",
-            "\n", // supporting diagnostic
-            "    a(x);\n",
-            "    b(y);\n",
-            "\n", // supporting diagnostic
-            "    // comment 1\n",
-            "    // comment 2\n",
-            "    c(y);\n",
-            "\n", // supporting diagnostic
-            "    d(x);\n",
-            "\n", // collapsed context
-            // diagnostic group 2
-            "\n", // primary message
-            "\n", // filename
-            "fn main() {\n",
-            "    let x = vec![];\n",
-            "\n", // supporting diagnostic
-            "    let y = vec![];\n",
-            "    a(x);\n",
-            "\n", // supporting diagnostic
-            "    b(y);\n",
-            "\n", // context ellipsis
-            "    c(y);\n",
-            "    d(x);\n",
-            "\n", // supporting diagnostic
-            "}",
-        )
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ consts.rs
+             § -----
+             const a: i32 = 'a'; § mismatched types expected `usize`, found `char`
+             const b: i32 = c;
+
+             § main.rs
+             § -----
+             fn main() {
+                 let x = vec![];
+             § move occurs because `x` has type `Vec<char>`, which does not implement
+             § the `Copy` trait (back)
+                 let y = vec![];
+             § move occurs because `y` has type `Vec<char>`, which does not implement
+             § the `Copy` trait (back)
+                 a(x); § value moved here (back)
+                 b(y); § value moved here
+                 // comment 1
+                 // comment 2
+                 c(y);
+             § use of moved value value used here after move
+             § hint: move occurs because `y` has type `Vec<char>`, which does not
+             § implement the `Copy` trait
+                 d(x);
+             § use of moved value value used here after move
+             § hint: move occurs because `x` has type `Vec<char>`, which does not
+             § implement the `Copy` trait
+             § hint: value moved here
+             }"
+        }
     );
 
     // Cursor keeps its position.
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.selections.display_ranges(cx),
-            [DisplayPoint::new(DisplayRow(19), 6)..DisplayPoint::new(DisplayRow(19), 6)]
+            [DisplayPoint::new(DisplayRow(8), 8)..DisplayPoint::new(DisplayRow(8), 8)]
         );
     });
 
@@ -383,74 +262,39 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     diagnostics
         .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
         .await;
-    assert_eq!(
-        editor_blocks(&editor, cx),
-        [
-            (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(7), EXCERPT_HEADER.into()),
-            (DisplayRow(13), FILE_HEADER.into()),
-            (DisplayRow(28), EXCERPT_HEADER.into()),
-            (DisplayRow(38), EXCERPT_HEADER.into()),
-        ]
-    );
 
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
-        concat!(
-            //
-            // consts.rs
-            //
-            "\n", // filename
-            "\n", // padding
-            // diagnostic group 1
-            "\n", // primary message
-            "\n", // padding
-            "const a: i32 = 'a';\n",
-            "\n", // supporting diagnostic
-            "const b: i32 = c;\n",
-            "\n", // context ellipsis
-            // diagnostic group 2
-            "\n", // primary message
-            "\n", // padding
-            "const a: i32 = 'a';\n",
-            "const b: i32 = c;\n",
-            "\n", // supporting diagnostic
-            //
-            // main.rs
-            //
-            "\n", // filename
-            "\n", // padding
-            // diagnostic group 1
-            "\n", // primary message
-            "\n", // padding
-            "    let x = vec![];\n",
-            "    let y = vec![];\n",
-            "\n", // supporting diagnostic
-            "    a(x);\n",
-            "    b(y);\n",
-            "\n", // supporting diagnostic
-            "    // comment 1\n",
-            "    // comment 2\n",
-            "    c(y);\n",
-            "\n", // supporting diagnostic
-            "    d(x);\n",
-            "\n", // context ellipsis
-            // diagnostic group 2
-            "\n", // primary message
-            "\n", // filename
-            "fn main() {\n",
-            "    let x = vec![];\n",
-            "\n", // supporting diagnostic
-            "    let y = vec![];\n",
-            "    a(x);\n",
-            "\n", // supporting diagnostic
-            "    b(y);\n",
-            "\n", // context ellipsis
-            "    c(y);\n",
-            "    d(x);\n",
-            "\n", // supporting diagnostic
-            "}",
-        )
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ consts.rs
+             § -----
+             const a: i32 = 'a'; § mismatched types expected `usize`, found `char`
+             const b: i32 = c; § unresolved name `c`
+
+             § main.rs
+             § -----
+             fn main() {
+                 let x = vec![];
+             § move occurs because `x` has type `Vec<char>`, which does not implement
+             § the `Copy` trait (back)
+                 let y = vec![];
+             § move occurs because `y` has type `Vec<char>`, which does not implement
+             § the `Copy` trait (back)
+                 a(x); § value moved here (back)
+                 b(y); § value moved here
+                 // comment 1
+                 // comment 2
+                 c(y);
+             § use of moved value value used here after move
+             § hint: move occurs because `y` has type `Vec<char>`, which does not
+             § implement the `Copy` trait
+                 d(x);
+             § use of moved value value used here after move
+             § hint: move occurs because `x` has type `Vec<char>`, which does not
+             § implement the `Copy` trait
+             § hint: value moved here
+             }"
+        }
     );
 }
 
@@ -520,21 +364,16 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     cx.executor()
         .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
-    assert_eq!(
-        editor_blocks(&editor, cx),
-        [(DisplayRow(0), FILE_HEADER.into()),]
-    );
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
-        concat!(
-            "\n", // filename
-            "\n", // padding
-            // diagnostic group 1
-            "\n",     // primary message
-            "\n",     // padding
-            "a();\n", //
-            "b();",
-        )
+
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.js
+             § -----
+             a(); § error 1
+             b();
+             c();"
+        }
     );
 
     // The second language server finishes
@@ -565,31 +404,17 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     cx.executor()
         .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
-    assert_eq!(
-        editor_blocks(&editor, cx),
-        [
-            (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(6), EXCERPT_HEADER.into()),
-        ]
-    );
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
-        concat!(
-            "\n", // filename
-            "\n", // padding
-            // diagnostic group 1
-            "\n",     // primary message
-            "\n",     // padding
-            "a();\n", // location
-            "b();\n", //
-            "\n",     // collapsed context
-            // diagnostic group 2
-            "\n",     // primary message
-            "\n",     // padding
-            "a();\n", // context
-            "b();\n", //
-            "c();",   // context
-        )
+
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.js
+             § -----
+             a(); § error 1
+             b(); § warning 1
+             c();
+             d();"
+        }
     );
 
     // Both language servers start updating diagnostics, and the first server finishes.
@@ -631,32 +456,18 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     cx.executor()
         .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
-    assert_eq!(
-        editor_blocks(&editor, cx),
-        [
-            (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(7), EXCERPT_HEADER.into()),
-        ]
-    );
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
-        concat!(
-            "\n", // filename
-            "\n", // padding
-            // diagnostic group 1
-            "\n",     // primary message
-            "\n",     // padding
-            "a();\n", // location
-            "b();\n", //
-            "c();\n", // context
-            "\n",     // collapsed context
-            // diagnostic group 2
-            "\n",     // primary message
-            "\n",     // padding
-            "b();\n", // context
-            "c();\n", //
-            "d();",   // context
-        )
+
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.js
+             § -----
+             a();
+             b(); § warning 1
+             c(); § warning 2
+             d();
+             e();"
+        }
     );
 
     // The second language server finishes.
@@ -673,7 +484,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                         severity: DiagnosticSeverity::WARNING,
                         is_primary: true,
                         is_disk_based: true,
-                        group_id: 1,
+                        group_id: 2,
                         ..Default::default()
                     },
                 }],
@@ -687,33 +498,27 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     cx.executor()
         .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
-    assert_eq!(
-        editor_blocks(&editor, cx),
-        [
-            (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(7), EXCERPT_HEADER.into()),
-        ]
+
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.js
+                 § -----
+                 a();
+                 b();
+                 c(); § warning 2
+                 d(); § warning 2
+                 e();"
+        }
     );
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.display_text(cx)),
-        concat!(
-            "\n", // filename
-            "\n", // padding
-            // diagnostic group 1
-            "\n",     // primary message
-            "\n",     // padding
-            "b();\n", // location
-            "c();\n", //
-            "d();\n", // context
-            "\n",     // collapsed context
-            // diagnostic group 2
-            "\n",     // primary message
-            "\n",     // padding
-            "c();\n", // context
-            "d();\n", //
-            "e();",   // context
-        )
-    );
+}
+
+#[track_caller]
+fn editor_blocks<'a>(
+    editor: &'a Entity<Editor>,
+    cx: &'a TestAppContext,
+) -> Vec<(DisplayRow, &'a str)> {
+    todo!()
 }
 
 #[gpui::test(iterations = 20)]
@@ -1002,154 +807,4 @@ fn random_diagnostic(
             data: None,
         },
     }
-}
-
-const FILE_HEADER: &str = "file header";
-const EXCERPT_HEADER: &str = "excerpt header";
-
-fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> String {
-    cx.draw(
-        gpui::Point::default(),
-        size(px(1000.0), px(1000.0)),
-        |_, _| editor.clone(),
-    );
-    let (mut lines, blocks) = editor.update_in(cx, |editor, window, cx| {
-        let snapshot = editor.snapshot(window, cx);
-        let text = editor.display_text(cx);
-        let lines = text.lines().map(|s| s.to_string()).collect::<Vec<String>>();
-        let blocks = snapshot
-            .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
-            .map(|(row, block)| (row, block.clone()))
-            .collect::<Vec<_>>();
-        (lines, blocks)
-    });
-    for (row, block) in blocks {
-        match block {
-            Block::Custom(custom_block) => {
-                let content = editor::test::block_content_for_tests(custom_block.id, cx)
-                    .expect("block content not found");
-                if let Some(height) = custom_block.height {
-                    if height == 0 {
-                        lines[row.0 as usize - 1].push_str(" § ");
-                        lines[row.0 as usize - 1].push_str(&content);
-                    } else {
-                        let block_lines = content.lines().collect::<Vec<_>>();
-                        assert_eq!(block_lines.len(), height as usize);
-                        lines[row.0 as usize].push_str("§ ");
-                        lines[row.0 as usize].push_str(block_lines[0].trim_end());
-                        for i in 1..height as usize {
-                            lines[row.0 as usize + i].push_str("§ ");
-                            lines[row.0 as usize + i].push_str(block_lines[i].trim_end());
-                        }
-                    }
-                }
-            }
-            Block::FoldedBuffer {
-                first_excerpt,
-                height,
-            } => {
-                lines[row.0 as usize].push_str(&cx.update(|_, cx| {
-                    format!(
-                        "§ {}",
-                        first_excerpt
-                            .buffer
-                            .file()
-                            .unwrap()
-                            .file_name(cx)
-                            .to_string_lossy()
-                    )
-                }));
-                for row in row.0 + 1..row.0 + height {
-                    lines[row as usize].push_str("§");
-                }
-            }
-            Block::ExcerptBoundary {
-                excerpt,
-                height,
-                starts_new_buffer,
-            } => {
-                if starts_new_buffer {
-                    lines[row.0 as usize].push_str(&cx.update(|_, cx| {
-                        format!(
-                            "§ {}",
-                            excerpt
-                                .buffer
-                                .file()
-                                .unwrap()
-                                .file_name(cx)
-                                .to_string_lossy()
-                        )
-                    }));
-                } else {
-                    lines[row.0 as usize].push_str("§ -----")
-                }
-                for row in row.0 + 1..row.0 + height {
-                    lines[row as usize].push_str("§");
-                }
-            }
-        }
-    }
-    lines.join("\n")
-}
-
-fn editor_blocks(
-    editor: &Entity<Editor>,
-    cx: &mut VisualTestContext,
-) -> Vec<(DisplayRow, SharedString)> {
-    let mut blocks = Vec::new();
-    cx.draw(
-        gpui::Point::default(),
-        size(px(1000.0), px(1000.0)),
-        |window, cx| {
-            editor.update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                blocks.extend(
-                    snapshot
-                        .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
-                        .filter_map(|(row, block)| {
-                            let block_id = block.id();
-                            let name: SharedString = match block {
-                                Block::Custom(block) => {
-                                    let mut element = block.render(&mut BlockContext {
-                                        app: cx,
-                                        window,
-                                        anchor_x: px(0.),
-                                        gutter_dimensions: &GutterDimensions::default(),
-                                        line_height: px(0.),
-                                        em_width: px(0.),
-                                        max_width: px(0.),
-                                        block_id,
-                                        selected: false,
-                                        editor_style: &editor::EditorStyle::default(),
-                                    });
-                                    let element = element.downcast_mut::<Stateful<Div>>().unwrap();
-                                    element
-                                        .interactivity()
-                                        .element_id
-                                        .clone()?
-                                        .try_into()
-                                        .ok()?
-                                }
-
-                                Block::FoldedBuffer { .. } => FILE_HEADER.into(),
-                                Block::ExcerptBoundary {
-                                    starts_new_buffer, ..
-                                } => {
-                                    if *starts_new_buffer {
-                                        FILE_HEADER.into()
-                                    } else {
-                                        EXCERPT_HEADER.into()
-                                    }
-                                }
-                            };
-
-                            Some((row, name))
-                        }),
-                )
-            });
-
-            div().into_any()
-        },
-    );
-    blocks
 }
