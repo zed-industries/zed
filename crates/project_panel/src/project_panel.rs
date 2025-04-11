@@ -2721,7 +2721,14 @@ impl ProjectPanel {
         let old_ancestors = std::mem::take(&mut self.ancestors);
         self.visible_entries.clear();
         let mut max_width_item = None;
-        for worktree in project.visible_worktrees(cx) {
+
+        let visible_worktrees: Vec<_> = project.visible_worktrees(cx).collect();
+        // If there is only one worktree, we respect the hide_root setting;
+        // if there is more than one, we force hide_root to false (to show the root of each worktree)
+        let hide_root_setting = ProjectPanelSettings::get_global(cx).hide_root;
+        let hide_root = hide_root_setting && visible_worktrees.len() == 1;
+
+        for worktree in visible_worktrees {
             let worktree_snapshot = worktree.read(cx).snapshot();
             let worktree_id = worktree_snapshot.id();
 
@@ -2756,6 +2763,11 @@ impl ProjectPanel {
                 GitTraversal::new(&repo_snapshots, worktree_snapshot.entries(true, 0));
             let mut auto_folded_ancestors = vec![];
             while let Some(entry) = entry_iter.entry() {
+                if hide_root && Some(entry.entry) == worktree.read(cx).root_entry() {
+                    entry_iter.advance();
+                    continue;
+                }
+
                 if auto_collapse_dirs && entry.kind.is_dir() {
                     auto_folded_ancestors.push(entry.id);
                     if !self.unfolded_dir_ids.contains(&entry.id) {
