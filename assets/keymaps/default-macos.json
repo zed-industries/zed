@@ -287,6 +287,7 @@
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
+      "shift-escape": "agent::ExpandMessageEditor",
       "cmd-e": "agent::ChatMode",
       "cmd-alt-e": "agent::RemoveAllContext"
     }

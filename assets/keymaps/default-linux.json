@@ -631,6 +631,7 @@
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
+      "shift-escape": "agent::ExpandMessageEditor",
       "ctrl-e": "agent::ChatMode",
       "ctrl-alt-e": "agent::RemoveAllContext"
     }

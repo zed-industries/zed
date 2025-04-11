@@ -396,14 +396,26 @@ pub enum SelectMode {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
-    SingleLine { auto_width: bool },
-    AutoHeight { max_lines: usize },
-    Full,
+    SingleLine {
+        auto_width: bool,
+    },
+    AutoHeight {
+        max_lines: usize,
+    },
+    Full {
+        /// When set to `true`, the editor will scale its UI elements with the buffer font size.
+        scale_ui_elements_with_buffer_font_size: bool,
+        /// When set to `true`, the editor will render a background for the active line.
+        show_active_line_background: bool,
+    },
 }
 
 impl EditorMode {
     pub fn full() -> Self {
-        Self::Full
+        Self::Full {
+            scale_ui_elements_with_buffer_font_size: true,
+            show_active_line_background: true,
+        }
     }
 
     pub fn is_full(&self) -> bool {
