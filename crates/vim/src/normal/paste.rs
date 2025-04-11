@@ -909,7 +909,7 @@ mod test {
         );
         cx.simulate_keystrokes("y i w");
         cx.simulate_keystrokes("w");
-        cx.simulate_keystrokes("g r i w");
+        cx.simulate_keystrokes("g shift-r i w");
         cx.assert_state(
             indoc! {"
                 fish fisˇh
@@ -917,7 +917,7 @@ mod test {
                 "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("j b g r e");
+        cx.simulate_keystrokes("j b g shift-r e");
         cx.assert_state(
             indoc! {"
             fish fish
@@ -937,7 +937,7 @@ mod test {
         );
         cx.simulate_keystrokes("y i w");
         cx.simulate_keystrokes("w");
-        cx.simulate_keystrokes("v i w g r");
+        cx.simulate_keystrokes("v i w g shift-r");
         cx.assert_state(
             indoc! {"
                 fish fisˇh
@@ -945,7 +945,7 @@ mod test {
                 "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("g r r");
+        cx.simulate_keystrokes("g shift-r r");
         cx.assert_state(
             indoc! {"
                 fisˇh
@@ -953,7 +953,7 @@ mod test {
                 "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("j w g r $");
+        cx.simulate_keystrokes("j w g shift-r $");
         cx.assert_state(
             indoc! {"
                 fish
@@ -978,7 +978,7 @@ mod test {
         );
         cx.simulate_keystrokes("y i w");
         cx.simulate_keystrokes("w");
-        cx.simulate_keystrokes("g r i w");
+        cx.simulate_keystrokes("g shift-r i w");
         cx.assert_state(
             indoc! {"
                 fish fisˇh

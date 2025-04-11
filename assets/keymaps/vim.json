@@ -54,6 +54,8 @@
       "[ b": "pane::ActivatePreviousItem",
       "] shift-b": "pane::ActivateLastItem",
       "[ shift-b": ["pane::ActivateItem", 0],
+      "] space": ["workspace::SendKeystrokes", "o escape -"],
+      "[ space": ["workspace::SendKeystrokes", "shift-o escape +"],
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
@@ -312,7 +314,7 @@
       "!": "vim::ShellCommand",
       "i": ["vim::PushObject", { "around": false }],
       "a": ["vim::PushObject", { "around": true }],
-      "g r": ["vim::Paste", { "preserve_clipboard": true }],
+      "g shift-r": ["vim::Paste", { "preserve_clipboard": true }],
       "g c": "vim::ToggleComments",
       "g q": "vim::Rewrap",
       "g ?": "vim::ConvertToRot13",
@@ -636,9 +638,10 @@
     }
   },
   {
-    "context": "vim_operator == gr",
+    "context": "vim_operator == gR",
     "bindings": {
-      "r": "vim::CurrentLine"
+      "r": "vim::CurrentLine",
+      "shift-r": "vim::CurrentLine"
     }
   },
   {
