@@ -7,8 +7,8 @@ use gpui::{
     Focusable, Subscription, Task, WeakEntity, action_with_deprecated_aliases,
 };
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelRegistry,
+    AuthenticateError, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelRegistry,
 };
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
@@ -154,7 +154,6 @@ impl LanguageModelSelector {
             ModelInfo {
                 model: model.clone(),
                 icon,
-                availability: model.availability(),
             }
         };
 
@@ -299,7 +298,6 @@ where
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
     icon: IconName,
-    availability: LanguageModelAvailability,
 }
 
 pub struct LanguageModelPickerDelegate {
@@ -475,18 +473,25 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        use feature_flags::FeatureFlagAppExt;
-        let show_badges = cx.has_flag::<ZedPro>();
-
         match self.filtered_entries.get(ix)? {
             LanguageModelPickerEntry::Separator(title) => Some(
                 div()
                     .px_2()
-                    .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
+                    .pb_1()
+                    .when(ix > 1, |this| {
+                        this.mt_1()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    })
+                    .child(
+                        Label::new(title)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
                     .into_any_element(),
             ),
             LanguageModelPickerEntry::Model(model_info) => {
-                let provider_name: String = model_info.model.provider_name().0.clone().into();
                 let active_model = LanguageModelRegistry::read_global(cx).default_model();
 
                 let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
@@ -517,31 +522,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 .pl_0p5()
                                 .gap_1p5()
                                 .w(px(240.))
-                                .child(div().max_w_40().child(
-                                    Label::new(model_info.model.name().0.clone()).truncate(),
-                                ))
-                                .child(
-                                    h_flex()
-                                        .gap_0p5()
-                                        .child(
-                                            Label::new(provider_name)
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                        .children(match model_info.availability {
-                                            LanguageModelAvailability::Public => None,
-                                            LanguageModelAvailability::RequiresPlan(Plan::Free) => {
-                                                None
-                                            }
-                                            LanguageModelAvailability::RequiresPlan(
-                                                Plan::ZedPro,
-                                            ) => show_badges.then(|| {
-                                                Label::new("Pro")
-                                                    .size(LabelSize::XSmall)
-                                                    .color(Color::Muted)
-                                            }),
-                                        }),
-                                ),
+                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
                         )
                         .end_slot(div().pr_3().when(is_selected, |this| {
                             this.child(
