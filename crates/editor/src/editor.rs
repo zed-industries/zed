@@ -396,9 +396,31 @@ pub enum SelectMode {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
-    SingleLine { auto_width: bool },
-    AutoHeight { max_lines: usize },
-    Full,
+    SingleLine {
+        auto_width: bool,
+    },
+    AutoHeight {
+        max_lines: usize,
+    },
+    Full {
+        /// When set to `true`, the editor will scale its UI elements with the buffer font size.
+        scale_ui_elements_with_buffer_font_size: bool,
+        /// When set to `true`, the editor will render a background for the active line.
+        show_active_line_background: bool,
+    },
+}
+
+impl EditorMode {
+    pub fn full() -> Self {
+        Self::Full {
+            scale_ui_elements_with_buffer_font_size: true,
+            show_active_line_background: true,
+        }
+    }
+
+    pub fn is_full(&self) -> bool {
+        matches!(self, Self::Full { .. })
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1198,7 +1220,7 @@ impl Editor {
     pub fn multi_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, None, window, cx)
+        Self::new(EditorMode::full(), buffer, None, window, cx)
     }
 
     pub fn auto_width(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -1232,7 +1254,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, project, window, cx)
+        Self::new(EditorMode::full(), buffer, project, window, cx)
     }
 
     pub fn for_multibuffer(
@@ -1241,7 +1263,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new(EditorMode::Full, buffer, project, window, cx)
+        Self::new(EditorMode::full(), buffer, project, window, cx)
     }
 
     pub fn clone(&self, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -1329,7 +1351,7 @@ impl Editor {
             .then(|| language_settings::SoftWrap::None);
 
         let mut project_subscriptions = Vec::new();
-        if mode == EditorMode::Full {
+        if mode.is_full() {
             if let Some(project) = project.as_ref() {
                 project_subscriptions.push(cx.subscribe_in(
                     project,
@@ -1417,7 +1439,7 @@ impl Editor {
         };
 
         let breakpoint_store = match (mode, project.as_ref()) {
-            (EditorMode::Full, Some(project)) => Some(project.read(cx).breakpoint_store()),
+            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store()),
             _ => None,
         };
 
@@ -1468,7 +1490,7 @@ impl Editor {
             show_scrollbars: true,
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
-            show_gutter: mode == EditorMode::Full,
+            show_gutter: mode.is_full(),
             show_line_numbers: None,
             use_relative_line_numbers: None,
             show_git_diff_gutter: None,
@@ -1510,7 +1532,7 @@ impl Editor {
             collapse_matches: false,
             workspace: None,
             input_enabled: true,
-            use_modal_editing: mode == EditorMode::Full,
+            use_modal_editing: mode.is_full(),
             read_only: false,
             use_autoclose: true,
             use_auto_surround: true,
@@ -1527,7 +1549,7 @@ impl Editor {
             edit_prediction_preview: EditPredictionPreview::Inactive {
                 released_too_fast: false,
             },
-            inline_diagnostics_enabled: mode == EditorMode::Full,
+            inline_diagnostics_enabled: mode.is_full(),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -1635,7 +1657,7 @@ impl Editor {
         this.scroll_manager.show_scrollbars(window, cx);
         jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut this, &buffer, cx);
 
-        if mode == EditorMode::Full {
+        if mode.is_full() {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
 
@@ -1697,7 +1719,7 @@ impl Editor {
         let mode = match self.mode {
             EditorMode::SingleLine { .. } => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
-            EditorMode::Full => "full",
+            EditorMode::Full { .. } => "full",
         };
 
         if EditorSettings::jupyter_enabled(cx) {
@@ -1982,6 +2004,10 @@ impl Editor {
 
     pub fn mode(&self) -> EditorMode {
         self.mode
+    }
+
+    pub fn set_mode(&mut self, mode: EditorMode) {
+        self.mode = mode;
     }
 
     pub fn collaboration_hub(&self) -> Option<&dyn CollaborationHub> {
@@ -3006,7 +3032,7 @@ impl Editor {
             return;
         }
 
-        if self.mode == EditorMode::Full
+        if self.mode.is_full()
             && self.change_selections(Some(Autoscroll::fit()), window, cx, |s| s.try_cancel())
         {
             return;
@@ -3049,7 +3075,7 @@ impl Editor {
             return true;
         }
 
-        if self.mode == EditorMode::Full && self.active_diagnostics.is_some() {
+        if self.mode.is_full() && self.active_diagnostics.is_some() {
             self.dismiss_diagnostics(cx);
             return true;
         }
@@ -3130,6 +3156,7 @@ impl Editor {
         let mut new_selections = Vec::with_capacity(selections.len());
         let mut new_autoclose_regions = Vec::new();
         let snapshot = self.buffer.read(cx).read(cx);
+        let mut clear_linked_edit_ranges = false;
 
         for (selection, autoclose_region) in
             self.selections_with_autoclose_regions(selections, &snapshot)
@@ -3357,6 +3384,8 @@ impl Editor {
                                 .extend(edits.into_iter().map(|range| (range, text.clone())));
                         }
                     }
+                } else {
+                    clear_linked_edit_ranges = true;
                 }
             }
 
@@ -3367,6 +3396,9 @@ impl Editor {
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
+            if clear_linked_edit_ranges {
+                this.linked_edit_ranges.clear();
+            }
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
@@ -4031,7 +4063,7 @@ impl Editor {
     }
 
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
-        if self.semantics_provider.is_none() || self.mode != EditorMode::Full {
+        if self.semantics_provider.is_none() || !self.mode.is_full() {
             return;
         }
 
@@ -5166,13 +5198,16 @@ impl Editor {
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
-        let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
+        let newest_selection_adjusted = self.selections.newest_adjusted(cx).clone();
+        let buffer = self.buffer.read(cx);
         if newest_selection.head().diff_base_anchor.is_some() {
             return None;
         }
-        let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
-        let (end_buffer, end) = buffer.text_anchor_for_position(newest_selection.end, cx)?;
+        let (start_buffer, start) =
+            buffer.text_anchor_for_position(newest_selection_adjusted.start, cx)?;
+        let (end_buffer, end) =
+            buffer.text_anchor_for_position(newest_selection_adjusted.end, cx)?;
         if start_buffer != end_buffer {
             return None;
         }
@@ -5536,7 +5571,7 @@ impl Editor {
         buffer_position: language::Anchor,
         cx: &App,
     ) -> EditPredictionSettings {
-        if self.mode != EditorMode::Full
+        if !self.mode.is_full()
             || !self.show_inline_completions_override.unwrap_or(true)
             || self.inline_completions_disabled_in_scope(buffer, buffer_position, cx)
         {
@@ -8819,15 +8854,6 @@ impl Editor {
         });
     }
 
-    fn breakpoint_at_cursor_head(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<(Anchor, Breakpoint)> {
-        let cursor_position: Point = self.selections.newest(cx).head();
-        self.breakpoint_at_row(cursor_position.row, window, cx)
-    }
-
     pub(crate) fn breakpoint_at_row(
         &self,
         row: u32,
@@ -8837,6 +8863,15 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let breakpoint_position = snapshot.buffer_snapshot.anchor_before(Point::new(row, 0));
 
+        self.breakpoint_at_anchor(breakpoint_position, &snapshot, cx)
+    }
+
+    pub(crate) fn breakpoint_at_anchor(
+        &self,
+        breakpoint_position: Anchor,
+        snapshot: &EditorSnapshot,
+        cx: &mut Context<Self>,
+    ) -> Option<(Anchor, Breakpoint)> {
         let project = self.project.clone()?;
 
         let buffer_id = breakpoint_position.buffer_id.or_else(|| {
@@ -8894,29 +8929,51 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (anchor, bp) = self
-            .breakpoint_at_cursor_head(window, cx)
-            .unwrap_or_else(|| {
-                let cursor_position: Point = self.selections.newest(cx).head();
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            let breakpoint = breakpoint.unwrap_or_else(|| Breakpoint {
+                message: None,
+                state: BreakpointState::Enabled,
+                condition: None,
+                hit_condition: None,
+            });
 
-                let breakpoint_position = self
-                    .snapshot(window, cx)
+            self.add_edit_breakpoint_block(
+                anchor,
+                &breakpoint,
+                BreakpointPromptEditAction::Log,
+                window,
+                cx,
+            );
+        }
+    }
+
+    fn breakpoints_at_cursors(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<(Anchor, Option<Breakpoint>)> {
+        let snapshot = self.snapshot(window, cx);
+        let cursors = self
+            .selections
+            .disjoint_anchors()
+            .into_iter()
+            .map(|selection| {
+                let cursor_position: Point = selection.head().to_point(&snapshot.buffer_snapshot);
+
+                let breakpoint_position = snapshot
                     .display_snapshot
                     .buffer_snapshot
                     .anchor_after(Point::new(cursor_position.row, 0));
+                let breakpoint = self
+                    .breakpoint_at_anchor(breakpoint_position, &snapshot, cx)
+                    .map(|(anchor, breakpoint)| (anchor, Some(breakpoint)));
 
-                (
-                    breakpoint_position,
-                    Breakpoint {
-                        message: None,
-                        state: BreakpointState::Enabled,
-                        condition: None,
-                        hit_condition: None,
-                    },
-                )
-            });
+                breakpoint.unwrap_or_else(|| (breakpoint_position, None))
+            })
+            // There might be multiple cursors on the same line; all of them should have the same anchors though as their breakpoints positions, which makes it possible to sort and dedup the list.
+            .collect::<HashMap<Anchor, _>>();
 
-        self.add_edit_breakpoint_block(anchor, &bp, BreakpointPromptEditAction::Log, window, cx);
+        cursors.into_iter().collect()
     }
 
     pub fn enable_breakpoint(
@@ -8925,15 +8982,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
-            if breakpoint.is_disabled() {
-                self.edit_breakpoint_at_anchor(
-                    anchor,
-                    breakpoint,
-                    BreakpointEditAction::InvertState,
-                    cx,
-                );
-            }
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            let Some(breakpoint) = breakpoint.filter(|breakpoint| breakpoint.is_disabled()) else {
+                continue;
+            };
+            self.edit_breakpoint_at_anchor(
+                anchor,
+                breakpoint,
+                BreakpointEditAction::InvertState,
+                cx,
+            );
         }
     }
 
@@ -8943,15 +9001,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
-            if breakpoint.is_enabled() {
-                self.edit_breakpoint_at_anchor(
-                    anchor,
-                    breakpoint,
-                    BreakpointEditAction::InvertState,
-                    cx,
-                );
-            }
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            let Some(breakpoint) = breakpoint.filter(|breakpoint| breakpoint.is_enabled()) else {
+                continue;
+            };
+            self.edit_breakpoint_at_anchor(
+                anchor,
+                breakpoint,
+                BreakpointEditAction::InvertState,
+                cx,
+            );
         }
     }
 
@@ -8961,25 +9020,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let edit_action = BreakpointEditAction::Toggle;
-
-        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
-            self.edit_breakpoint_at_anchor(anchor, breakpoint, edit_action, cx);
-        } else {
-            let cursor_position: Point = self.selections.newest(cx).head();
-
-            let breakpoint_position = self
-                .snapshot(window, cx)
-                .display_snapshot
-                .buffer_snapshot
-                .anchor_after(Point::new(cursor_position.row, 0));
-
-            self.edit_breakpoint_at_anchor(
-                breakpoint_position,
-                Breakpoint::new_standard(),
-                edit_action,
-                cx,
-            );
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            if let Some(breakpoint) = breakpoint {
+                self.edit_breakpoint_at_anchor(
+                    anchor,
+                    breakpoint,
+                    BreakpointEditAction::Toggle,
+                    cx,
+                );
+            } else {
+                self.edit_breakpoint_at_anchor(
+                    anchor,
+                    Breakpoint::new_standard(),
+                    BreakpointEditAction::Toggle,
+                    cx,
+                );
+            }
         }
     }
 
@@ -11964,6 +12020,54 @@ impl Editor {
         Ok(())
     }
 
+    pub fn find_next_match(
+        &mut self,
+        _: &FindNextMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let selections = self.selections.disjoint_anchors();
+        match selections.first() {
+            Some(first) if selections.len() >= 2 => {
+                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select_ranges([first.range()]);
+                });
+            }
+            _ => self.select_next(
+                &SelectNext {
+                    replace_newest: true,
+                },
+                window,
+                cx,
+            )?,
+        }
+        Ok(())
+    }
+
+    pub fn find_previous_match(
+        &mut self,
+        _: &FindPreviousMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let selections = self.selections.disjoint_anchors();
+        match selections.last() {
+            Some(last) if selections.len() >= 2 => {
+                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select_ranges([last.range()]);
+                });
+            }
+            _ => self.select_previous(
+                &SelectPrevious {
+                    replace_newest: true,
+                },
+                window,
+                cx,
+            )?,
+        }
+        Ok(())
+    }
+
     pub fn toggle_comments(
         &mut self,
         action: &ToggleComments,
@@ -14175,12 +14279,28 @@ impl Editor {
             }
         };
 
+        let transaction_id_prev = buffer.read_with(cx, |b, cx| b.last_transaction_id(cx));
+        let selections_prev = transaction_id_prev
+            .and_then(|transaction_id_prev| {
+                // default to selections as they were after the last edit, if we have them,
+                // instead of how they are now.
+                // This will make it so that editing, moving somewhere else, formatting, then undoing the format
+                // will take you back to where you made the last edit, instead of staying where you scrolled
+                self.selection_history
+                    .transaction(transaction_id_prev)
+                    .map(|t| t.0.clone())
+            })
+            .unwrap_or_else(|| {
+                log::info!("Failed to determine selections from before format. Falling back to selections when format was initiated");
+                self.selections.disjoint_anchors()
+            });
+
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
         let format = project.update(cx, |project, cx| {
             project.format(buffers, target, true, trigger, cx)
         });
 
-        cx.spawn_in(window, async move |_, cx| {
+        cx.spawn_in(window, async move |editor, cx| {
             let transaction = futures::select_biased! {
                 transaction = format.log_err().fuse() => transaction,
                 () = timeout => {
@@ -14199,6 +14319,19 @@ impl Editor {
                     cx.notify();
                 })
                 .ok();
+
+            if let Some(transaction_id_now) =
+                buffer.read_with(cx, |b, cx| b.last_transaction_id(cx))?
+            {
+                let has_new_transaction = transaction_id_prev != Some(transaction_id_now);
+                if has_new_transaction {
+                    _ = editor.update(cx, |editor, _| {
+                        editor
+                            .selection_history
+                            .insert_transaction(transaction_id_now, selections_prev);
+                    });
+                }
+            }
 
             Ok(())
         })
@@ -17220,7 +17353,7 @@ impl Editor {
         let project_settings = ProjectSettings::get_global(cx);
         self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
 
-        if self.mode == EditorMode::Full {
+        if self.mode.is_full() {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
             if self.show_inline_diagnostics != show_inline_diagnostics {
@@ -19504,7 +19637,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()
             },
-            EditorMode::Full => TextStyle {
+            EditorMode::Full { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
@@ -19522,7 +19655,7 @@ impl Render for Editor {
         let background = match self.mode {
             EditorMode::SingleLine { .. } => cx.theme().system().transparent,
             EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
-            EditorMode::Full => cx.theme().colors().editor_background,
+            EditorMode::Full { .. } => cx.theme().colors().editor_background,
         };
 
         EditorElement::new(

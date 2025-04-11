@@ -2998,11 +2998,11 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "default_height": 320,
   "default_model": {
     "provider": "zed.dev",
-    "model": "claude-3-5-sonnet-latest"
+    "model": "claude-3-7-sonnet-latest"
   },
   "editor_model": {
     "provider": "zed.dev",
-    "model": "claude-3-5-sonnet-latest"
+    "model": "claude-3-7-sonnet-latest"
   }
 }
 ```

@@ -1,35 +1,55 @@
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::cell::{Ref, RefCell};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
+use fs::Fs;
 use futures::FutureExt as _;
 use futures::future::{self, BoxFuture, Shared};
 use gpui::{
-    App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Subscription, Task,
-    prelude::*,
+    App, BackgroundExecutor, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString,
+    Subscription, Task, prelude::*,
 };
 use heed::Database;
 use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
-use project::Project;
-use prompt_store::PromptBuilder;
+use project::{Project, Worktree};
+use prompt_store::{ProjectContext, PromptBuilder, RulesFileContext, WorktreeContext};
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
 
-use crate::thread::{
-    DetailedSummaryState, MessageId, ProjectSnapshot, Thread, ThreadEvent, ThreadId,
-};
+use crate::thread::{DetailedSummaryState, MessageId, ProjectSnapshot, Thread, ThreadId};
+
+const RULES_FILE_NAMES: [&'static str; 6] = [
+    ".rules",
+    ".cursorrules",
+    ".windsurfrules",
+    ".clinerules",
+    ".github/copilot-instructions.md",
+    "CLAUDE.md",
+];
 
 pub fn init(cx: &mut App) {
     ThreadsDatabase::init(cx);
+}
+
+/// A system prompt shared by all threads created by this ThreadStore
+#[derive(Clone, Default)]
+pub struct SharedProjectContext(Rc<RefCell<Option<ProjectContext>>>);
+
+impl SharedProjectContext {
+    pub fn borrow(&self) -> Ref<Option<ProjectContext>> {
+        self.0.borrow()
+    }
 }
 
 pub struct ThreadStore {
@@ -39,43 +59,187 @@ pub struct ThreadStore {
     context_server_manager: Entity<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
+    project_context: SharedProjectContext,
     _subscriptions: Vec<Subscription>,
 }
 
+pub struct RulesLoadingError {
+    pub message: SharedString,
+}
+
+impl EventEmitter<RulesLoadingError> for ThreadStore {}
+
 impl ThreadStore {
-    pub fn new(
+    pub fn load(
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut App,
-    ) -> Result<Entity<Self>> {
-        let this = cx.new(|cx| {
-            let context_server_factory_registry = ContextServerFactoryRegistry::default_global(cx);
-            let context_server_manager = cx.new(|cx| {
-                ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
-            });
-            let settings_subscription =
-                cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
-                    this.load_default_profile(cx);
-                });
+    ) -> Task<Entity<Self>> {
+        let thread_store = cx.new(|cx| Self::new(project, tools, prompt_builder, cx));
+        let reload = thread_store.update(cx, |store, cx| store.reload_system_prompt(cx));
+        cx.foreground_executor().spawn(async move {
+            reload.await;
+            thread_store
+        })
+    }
 
-            let this = Self {
-                project,
-                tools,
-                prompt_builder,
-                context_server_manager,
-                context_server_tool_ids: HashMap::default(),
-                threads: Vec::new(),
-                _subscriptions: vec![settings_subscription],
-            };
-            this.load_default_profile(cx);
-            this.register_context_server_handlers(cx);
-            this.reload(cx).detach_and_log_err(cx);
-
-            this
+    fn new(
+        project: Entity<Project>,
+        tools: Arc<ToolWorkingSet>,
+        prompt_builder: Arc<PromptBuilder>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let context_server_factory_registry = ContextServerFactoryRegistry::default_global(cx);
+        let context_server_manager = cx.new(|cx| {
+            ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
         });
+        let settings_subscription =
+            cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
+                this.load_default_profile(cx);
+            });
+        let project_subscription = cx.subscribe(&project, Self::handle_project_event);
 
-        Ok(this)
+        let this = Self {
+            project,
+            tools,
+            prompt_builder,
+            context_server_manager,
+            context_server_tool_ids: HashMap::default(),
+            threads: Vec::new(),
+            project_context: SharedProjectContext::default(),
+            _subscriptions: vec![settings_subscription, project_subscription],
+        };
+        this.load_default_profile(cx);
+        this.register_context_server_handlers(cx);
+        this.reload(cx).detach_and_log_err(cx);
+        this
+    }
+
+    fn handle_project_event(
+        &mut self,
+        _project: Entity<Project>,
+        event: &project::Event,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+                self.reload_system_prompt(cx).detach();
+            }
+            project::Event::WorktreeUpdatedEntries(_, items) => {
+                if items.iter().any(|(path, _, _)| {
+                    RULES_FILE_NAMES
+                        .iter()
+                        .any(|name| path.as_ref() == Path::new(name))
+                }) {
+                    self.reload_system_prompt(cx).detach();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn reload_system_prompt(&self, cx: &mut Context<Self>) -> Task<()> {
+        let project = self.project.read(cx);
+        let tasks = project
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                Self::load_worktree_info_for_system_prompt(
+                    project.fs().clone(),
+                    worktree.read(cx),
+                    cx,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(async move |this, cx| {
+            let results = futures::future::join_all(tasks).await;
+            let worktrees = results
+                .into_iter()
+                .map(|(worktree, rules_error)| {
+                    if let Some(rules_error) = rules_error {
+                        this.update(cx, |_, cx| cx.emit(rules_error)).ok();
+                    }
+                    worktree
+                })
+                .collect::<Vec<_>>();
+            this.update(cx, |this, _cx| {
+                *this.project_context.0.borrow_mut() = Some(ProjectContext::new(worktrees));
+            })
+            .ok();
+        })
+    }
+
+    fn load_worktree_info_for_system_prompt(
+        fs: Arc<dyn Fs>,
+        worktree: &Worktree,
+        cx: &App,
+    ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
+        let root_name = worktree.root_name().into();
+        let abs_path = worktree.abs_path();
+
+        let rules_task = Self::load_worktree_rules_file(fs, worktree, cx);
+        let Some(rules_task) = rules_task else {
+            return Task::ready((
+                WorktreeContext {
+                    root_name,
+                    abs_path,
+                    rules_file: None,
+                },
+                None,
+            ));
+        };
+
+        cx.spawn(async move |_| {
+            let (rules_file, rules_file_error) = match rules_task.await {
+                Ok(rules_file) => (Some(rules_file), None),
+                Err(err) => (
+                    None,
+                    Some(RulesLoadingError {
+                        message: format!("{err}").into(),
+                    }),
+                ),
+            };
+            let worktree_info = WorktreeContext {
+                root_name,
+                abs_path,
+                rules_file,
+            };
+            (worktree_info, rules_file_error)
+        })
+    }
+
+    fn load_worktree_rules_file(
+        fs: Arc<dyn Fs>,
+        worktree: &Worktree,
+        cx: &App,
+    ) -> Option<Task<Result<RulesFileContext>>> {
+        let selected_rules_file = RULES_FILE_NAMES
+            .into_iter()
+            .filter_map(|name| {
+                worktree
+                    .entry_for_path(name)
+                    .filter(|entry| entry.is_file())
+                    .map(|entry| (entry.path.clone(), worktree.absolutize(&entry.path)))
+            })
+            .next();
+
+        // Note that Cline supports `.clinerules` being a directory, but that is not currently
+        // supported. This doesn't seem to occur often in GitHub repositories.
+        selected_rules_file.map(|(path_in_worktree, abs_path)| {
+            let fs = fs.clone();
+            cx.background_spawn(async move {
+                let abs_path = abs_path?;
+                let text = fs.load(&abs_path).await.with_context(|| {
+                    format!("Failed to load assistant rules file {:?}", abs_path)
+                })?;
+                anyhow::Ok(RulesFileContext {
+                    path_in_worktree,
+                    abs_path: abs_path.into(),
+                    text: text.trim().to_string(),
+                })
+            })
+        })
     }
 
     pub fn context_server_manager(&self) -> Entity<ContextServerManager> {
@@ -107,6 +271,7 @@ impl ThreadStore {
                 self.project.clone(),
                 self.tools.clone(),
                 self.prompt_builder.clone(),
+                self.project_context.clone(),
                 cx,
             )
         })
@@ -134,19 +299,10 @@ impl ThreadStore {
                         this.project.clone(),
                         this.tools.clone(),
                         this.prompt_builder.clone(),
+                        this.project_context.clone(),
                         cx,
                     )
                 })
-            })?;
-
-            let (system_prompt_context, load_error) = thread
-                .update(cx, |thread, cx| thread.load_system_prompt_context(cx))?
-                .await;
-            thread.update(cx, |thread, cx| {
-                thread.set_system_prompt_context(system_prompt_context);
-                if let Some(load_error) = load_error {
-                    cx.emit(ThreadEvent::ShowError(load_error));
-                }
             })?;
 
             Ok(thread)
@@ -491,7 +647,7 @@ impl ThreadsDatabase {
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
-                let database_path = paths::support_dir().join("threads/threads-db.1.mdb");
+                let database_path = paths::data_dir().join("threads/threads-db.1.mdb");
                 async move { ThreadsDatabase::new(database_path, executor) }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))

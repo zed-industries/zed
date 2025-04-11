@@ -987,6 +987,16 @@ impl BufferSearchBar {
         cx.notify();
     }
 
+    pub fn clear_search_within_ranges(
+        &mut self,
+        search_options: SearchOptions,
+        cx: &mut Context<Self>,
+    ) {
+        self.search_options = search_options;
+        self.adjust_query_regex_language(cx);
+        cx.notify();
+    }
+
     fn select_next_match(
         &mut self,
         _: &SelectNextMatch,
@@ -1231,6 +1241,8 @@ impl BufferSearchBar {
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
                             self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                             false,
+                            self.search_options
+                                .contains(SearchOptions::ONE_MATCH_PER_LINE),
                             Default::default(),
                             Default::default(),
                             None,

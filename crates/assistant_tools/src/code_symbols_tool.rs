@@ -179,11 +179,9 @@ pub async fn file_outline(
 
     // Wait until the buffer has been fully parsed, so that we can read its outline.
     let mut parse_status = buffer.read_with(cx, |buffer, _| buffer.parse_status())?;
-    while parse_status
-        .recv()
-        .await
-        .map_or(false, |status| status != ParseStatus::Idle)
-    {}
+    while *parse_status.borrow() != ParseStatus::Idle {
+        parse_status.changed().await?;
+    }
 
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
     let Some(outline) = snapshot.outline(None) else {

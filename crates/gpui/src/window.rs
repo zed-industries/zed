@@ -845,6 +845,7 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
+                        window.modifiers = window.platform_window.modifiers();
                         window
                             .activation_observers
                             .clone()
@@ -3092,6 +3093,7 @@ impl Window {
                             value: Arc::new(paths.clone()),
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
+                            cursor_style: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {

@@ -44,7 +44,7 @@ use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AgentDiff, InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown,
+    AgentDiff, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown,
     OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
@@ -70,7 +70,7 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &NewPromptEditor, window, cx| {
+                .register_action(|workspace, _: &NewTextThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
@@ -194,10 +194,12 @@ impl AssistantPanel {
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
             let tools = Arc::new(ToolWorkingSet::default());
-            let thread_store = workspace.update(cx, |workspace, cx| {
-                let project = workspace.project().clone();
-                ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
-            })??;
+            let thread_store = workspace
+                .update(cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    ThreadStore::load(project, tools.clone(), prompt_builder.clone(), cx)
+                })?
+                .await;
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             let context_store = workspace
@@ -863,7 +865,11 @@ impl AssistantPanel {
                         .truncate()
                         .into_any_element()
                 } else {
-                    change_title_editor.clone().into_any_element()
+                    div()
+                        .ml_2()
+                        .w_full()
+                        .child(change_title_editor.clone())
+                        .into_any_element()
                 }
             }
             ActiveView::PromptEditor => {
@@ -1084,7 +1090,7 @@ impl AssistantPanel {
                                             |menu, _window, _cx| {
                                                 menu.action(
                                                     "New Text Thread",
-                                                    NewPromptEditor.boxed_clone(),
+                                                    NewTextThread.boxed_clone(),
                                                 )
                                                 .when(!is_empty, |menu| {
                                                     menu.action(
@@ -1292,6 +1298,7 @@ impl AssistantPanel {
                 let configuration_error_ref = &configuration_error;
 
                 parent
+                    .overflow_hidden()
                     .p_1p5()
                     .justify_end()
                     .gap_1()

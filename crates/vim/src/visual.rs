@@ -1155,8 +1155,7 @@ mod test {
                     fox ˇjumps over
                     the lazy dog"})
             .await;
-        cx.simulate_shared_keystrokes("shift-v shift-4 shift-y")
-            .await;
+        cx.simulate_shared_keystrokes("shift-v $ shift-y").await;
         cx.shared_state().await.assert_eq(indoc! {"
                     The quick brown
                     ˇfox jumps over

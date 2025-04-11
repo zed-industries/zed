@@ -49,7 +49,9 @@
       "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd"
+      "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "f3": "editor::FindNextMatch",
+      "shift-f3": "editor::FindPreviousMatch"
     }
   },
   {

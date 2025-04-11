@@ -625,12 +625,13 @@
     "context": "AgentPanel",
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "ctrl-alt-n": "agent::NewPromptEditor",
+      "ctrl-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenConfiguration",
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
+      "shift-escape": "agent::ExpandMessageEditor",
       "ctrl-e": "agent::ChatMode",
       "ctrl-alt-e": "agent::RemoveAllContext"
     }
@@ -644,9 +645,8 @@
   },
   {
     "context": "AgentPanel && prompt_editor",
-    "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "agent::NewPromptEditor",
+      "cmd-n": "agent::NewTextThread",
       "cmd-alt-t": "agent::NewThread"
     }
   },
@@ -660,7 +660,6 @@
   },
   {
     "context": "EditMessageEditor > Editor",
-    "use_key_equivalents": true,
     "bindings": {
       "escape": "menu::Cancel",
       "enter": "menu::Confirm",
@@ -669,7 +668,6 @@
   },
   {
     "context": "AgentFeedbackMessageEditor > Editor",
-    "use_key_equivalents": true,
     "bindings": {
       "escape": "menu::Cancel",
       "enter": "menu::Confirm",
@@ -801,7 +799,6 @@
   },
   {
     "context": "GitPanel",
-    "use_key_equivalents": true,
     "bindings": {
       "ctrl-g ctrl-g": "git::Fetch",
       "ctrl-g up": "git::Push",

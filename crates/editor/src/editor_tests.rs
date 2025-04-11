@@ -5874,6 +5874,83 @@ async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_undo_format_scrolls_to_last_edit_pos(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        line 1
+        line 2
+        linˇe 3
+        line 4
+        line 5
+    "});
+
+    // Make an edit
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("X", window, cx);
+    });
+
+    // Move cursor to a different position
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([Point::new(4, 2)..Point::new(4, 2)]);
+        });
+    });
+
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        linXe 3
+        line 4
+        liˇne 5
+    "});
+
+    cx.lsp
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                "PREFIX ".to_string(),
+            )]))
+        });
+
+    cx.update_editor(|editor, window, cx| editor.format(&Default::default(), window, cx))
+        .unwrap()
+        .await
+        .unwrap();
+
+    cx.assert_editor_state(indoc! {"
+        PREFIX line 1
+        line 2
+        linXe 3
+        line 4
+        liˇne 5
+    "});
+
+    // Undo formatting
+    cx.update_editor(|editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+    });
+
+    // Verify cursor moved back to position after edit
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        linXˇe 3
+        line 4
+        line 5
+    "});
+}
+
+#[gpui::test]
 async fn test_select_next_with_multiple_carets(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -7756,77 +7833,81 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
     cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    fake_server
-        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-            );
-            assert_eq!(params.options.tab_size, 4);
-            Ok(Some(vec![lsp::TextEdit::new(
-                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
-                ", ".to_string(),
-            )]))
-        })
-        .next()
-        .await;
-    cx.executor().start_waiting();
-    save.await;
+    {
+        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+            move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                );
+                assert_eq!(params.options.tab_size, 4);
+                Ok(Some(vec![lsp::TextEdit::new(
+                    lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                    ", ".to_string(),
+                )]))
+            },
+        );
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
 
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.text(cx)),
-        "one, two\nthree\n"
-    );
-    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.text(cx)),
+            "one, two\nthree\n"
+        );
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    }
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("one\ntwo\nthree\n", window, cx)
-    });
-    assert!(cx.read(|cx| editor.is_dirty(cx)));
+    {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("one\ntwo\nthree\n", window, cx)
+        });
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
 
-    // Ensure we can still save even if formatting hangs.
-    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
-        move |params, _| async move {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-            );
-            futures::future::pending::<()>().await;
-            unreachable!()
-        },
-    );
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    cx.executor().advance_clock(super::FORMAT_TIMEOUT);
-    cx.executor().start_waiting();
-    save.await;
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.text(cx)),
-        "one\ntwo\nthree\n"
-    );
-    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+        // Ensure we can still save even if formatting hangs.
+        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+            move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                );
+                futures::future::pending::<()>().await;
+                unreachable!()
+            },
+        );
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().advance_clock(super::FORMAT_TIMEOUT);
+        cx.executor().start_waiting();
+        save.await;
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.text(cx)),
+            "one\ntwo\nthree\n"
+        );
+    }
 
     // For non-dirty buffer, no formatting request should be sent
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    let _pending_format_request = fake_server
-        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+    {
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
             panic!("Should not be invoked on non-dirty buffer");
-        })
-        .next();
-    cx.executor().start_waiting();
-    save.await;
+        });
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
+    }
 
     // Set rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
@@ -7839,28 +7920,28 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         );
     });
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("somehting_new\n", window, cx)
-    });
-    assert!(cx.read(|cx| editor.is_dirty(cx)));
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    fake_server
-        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-            );
-            assert_eq!(params.options.tab_size, 8);
-            Ok(Some(vec![]))
-        })
-        .next()
-        .await;
-    cx.executor().start_waiting();
-    save.await;
+    {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("somehting_new\n", window, cx)
+        });
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
+        let _formatting_request_signal = fake_server
+            .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                );
+                assert_eq!(params.options.tab_size, 8);
+                Ok(Some(vec![]))
+            });
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
+    }
 }
 
 #[gpui::test]
@@ -7972,7 +8053,7 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -8340,6 +8421,272 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         editor.update(cx, |editor, cx| editor.text(cx)),
         "one\ntwo\nthree\n"
     );
+}
+
+#[gpui::test]
+async fn test_multiple_formatters(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.remove_trailing_whitespace_on_save = Some(true);
+        settings.defaults.formatter =
+            Some(language_settings::SelectedFormatter::List(FormatterList(
+                vec![
+                    Formatter::LanguageServer { name: None },
+                    Formatter::CodeActions(
+                        [
+                            ("code-action-1".into(), true),
+                            ("code-action-2".into(), true),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                ]
+                .into(),
+            )))
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), "one  \ntwo   \nthree".into())
+        .await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["the-command-for-code-action-1".into()],
+                    ..Default::default()
+                }),
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    cx.executor().start_waiting();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |_params, _| async move {
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                "applied-formatting\n".to_string(),
+            )]))
+        },
+    );
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.context.only,
+                Some(vec!["code-action-1".into(), "code-action-2".into()])
+            );
+            let uri = lsp::Url::from_file_path(path!("/file.rs")).unwrap();
+            Ok(Some(vec![
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    kind: Some("code-action-1".into()),
+                    edit: Some(lsp::WorkspaceEdit::new(
+                        [(
+                            uri.clone(),
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                                "applied-code-action-1-edit\n".to_string(),
+                            )],
+                        )]
+                        .into_iter()
+                        .collect(),
+                    )),
+                    command: Some(lsp::Command {
+                        command: "the-command-for-code-action-1".into(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    kind: Some("code-action-2".into()),
+                    edit: Some(lsp::WorkspaceEdit::new(
+                        [(
+                            uri.clone(),
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                                "applied-code-action-2-edit\n".to_string(),
+                            )],
+                        )]
+                        .into_iter()
+                        .collect(),
+                    )),
+                    ..Default::default()
+                }),
+            ]))
+        },
+    );
+
+    fake_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>({
+        move |params, _| async move { Ok(params) }
+    });
+
+    let command_lock = Arc::new(futures::lock::Mutex::new(()));
+    fake_server.set_request_handler::<lsp::request::ExecuteCommand, _, _>({
+        let fake = fake_server.clone();
+        let lock = command_lock.clone();
+        move |params, _| {
+            assert_eq!(params.command, "the-command-for-code-action-1");
+            let fake = fake.clone();
+            let lock = lock.clone();
+            async move {
+                lock.lock().await;
+                fake.server
+                    .request::<lsp::request::ApplyWorkspaceEdit>(lsp::ApplyWorkspaceEditParams {
+                        label: None,
+                        edit: lsp::WorkspaceEdit {
+                            changes: Some(
+                                [(
+                                    lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
+                                    vec![lsp::TextEdit {
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(0, 0),
+                                        ),
+                                        new_text: "applied-code-action-1-command\n".into(),
+                                    }],
+                                )]
+                                .into_iter()
+                                .collect(),
+                            ),
+                            ..Default::default()
+                        },
+                    })
+                    .await
+                    .unwrap();
+                Ok(Some(json!(null)))
+            }
+        }
+    });
+
+    cx.executor().start_waiting();
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-2-edit
+                applied-code-action-1-command
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+            "#
+            .unindent()
+        );
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+        assert_eq!(editor.text(cx), "one  \ntwo   \nthree");
+    });
+
+    // Perform a manual edit while waiting for an LSP command
+    // that's being run as part of a formatting code action.
+    let lock_guard = command_lock.lock().await;
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+            "#
+            .unindent()
+        );
+
+        editor.buffer.update(cx, |buffer, cx| {
+            let ix = buffer.len(cx);
+            buffer.edit([(ix..ix, "edited\n")], None, cx);
+        });
+    });
+
+    // Allow the LSP command to proceed. Because the buffer was edited,
+    // the second code action will not be run.
+    drop(lock_guard);
+    format.await;
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-1-command
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+                edited
+            "#
+            .unindent()
+        );
+
+        // The manual edit is undone first, because it is the last thing the user did
+        // (even though the command completed afterwards).
+        editor.undo(&Default::default(), window, cx);
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-1-command
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+            "#
+            .unindent()
+        );
+
+        // All the formatting (including the command, which completed after the manual edit)
+        // is undone together.
+        editor.undo(&Default::default(), window, cx);
+        assert_eq!(editor.text(cx), "one  \ntwo   \nthree");
+    });
 }
 
 #[gpui::test]
@@ -14153,7 +14500,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -14612,7 +14959,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
     });
 
     let editor =
-        cx.add_window(|window, cx| Editor::new(EditorMode::Full, multi_buffer, None, window, cx));
+        cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
             for (buffer, diff_base) in [
@@ -14723,7 +15070,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
     });
 
     let editor =
-        cx.add_window(|window, cx| Editor::new(EditorMode::Full, multi_buffer, None, window, cx));
+        cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
             let diff = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
@@ -16279,7 +16626,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     });
 
     let editor = cx.add_window(|window, cx| {
-        Editor::new(EditorMode::Full, multibuffer, Some(project), window, cx)
+        Editor::new(EditorMode::full(), multibuffer, Some(project), window, cx)
     });
     cx.run_until_parked();
 
@@ -16796,7 +17143,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 
     let editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -16923,7 +17270,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer.clone(),
             Some(project.clone()),
             window,
@@ -17080,7 +17427,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
 
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -17198,7 +17545,7 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -17248,7 +17595,7 @@ async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContex
             ],
             cx,
         );
-        let mut editor = Editor::new(EditorMode::Full, multi_buffer.clone(), None, window, cx);
+        let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
 
         let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
         // fold all but the second buffer, so that we test navigating between two
@@ -17560,7 +17907,7 @@ async fn assert_highlighted_edits(
 ) {
     let window = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(text, cx);
-        Editor::new(EditorMode::Full, buffer, None, window, cx)
+        Editor::new(EditorMode::full(), buffer, None, window, cx)
     });
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
@@ -17652,7 +17999,15 @@ fn add_log_breakpoint_at_cursor(
     cx: &mut Context<Editor>,
 ) {
     let (anchor, bp) = editor
-        .breakpoint_at_cursor_head(window, cx)
+        .breakpoints_at_cursors(window, cx)
+        .first()
+        .and_then(|(anchor, bp)| {
+            if let Some(bp) = bp {
+                Some((*anchor, bp.clone()))
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| {
             let cursor_position: Point = editor.selections.newest(cx).head();
 
@@ -17718,7 +18073,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -17835,7 +18190,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -18010,7 +18365,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,

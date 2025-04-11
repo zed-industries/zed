@@ -130,6 +130,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             wait: false,
             open_new_workspace: None,
             env: None,
+            user_data_dir: args.user_data_dir.clone(),
         }
     };
 
