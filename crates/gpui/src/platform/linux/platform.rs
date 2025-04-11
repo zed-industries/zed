@@ -440,7 +440,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| Some(common.menus.clone()))
     }
 
-    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {}
+    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {
+        // todo(linux)
+    }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(

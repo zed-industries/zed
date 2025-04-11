@@ -399,8 +399,12 @@ async-tungstenite = "0.29.1"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
-aws-credential-types = { version = "1.2.2", features = ["hardcoded-credentials"] }
-aws-sdk-bedrockruntime = { version = "1.80.0", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.2", features = [
+    "hardcoded-credentials",
+] }
+aws-sdk-bedrockruntime = { version = "1.80.0", features = [
+    "behavior-version-latest",
+] }
 aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
@@ -615,12 +619,10 @@ features = [
 [workspace.dependencies.windows]
 version = "0.61"
 features = [
-    "Foundation_Collections",
     "Foundation_Numerics",
     "Storage_Search",
     "Storage_Streams",
     "System_Threading",
-    "UI_StartScreen",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
@@ -647,6 +649,7 @@ features = [
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
+    "Win32_System_Variant",
     "Win32_System_WinRT",
     "Win32_UI_Controls",
     "Win32_UI_HiDpi",
@@ -654,6 +657,7 @@ features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ]
 
