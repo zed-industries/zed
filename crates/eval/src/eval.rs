@@ -103,16 +103,16 @@ fn main() {
                 let example_name = example_path.file_name().unwrap().to_string_lossy();
                 match result {
                     Err(err) => {
-                        println!("{}: 💥 {:?}", example_name, err);
+                        println!("💥 {:<30}: {:?}", example_name, err);
                     }
                     Ok(judge_output) => {
                         const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
 
                         println!(
-                            "{}: {} {}",
+                            "{} {:<30}: {}",
+                            SCORES[judge_output.score.min(5) as usize],
                             example_name,
                             judge_output.score,
-                            SCORES[judge_output.score.min(5) as usize]
                         );
                         judge_scores.push(judge_output.score);
                     }
