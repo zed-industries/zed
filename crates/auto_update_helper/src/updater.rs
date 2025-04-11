@@ -18,146 +18,118 @@ use crate::windows_impl::WM_JOB_UPDATED;
 // So if you add or remove a call to `retry_loop`, make sure to update this number too.
 pub(crate) const JOBS_COUNT: usize = 6;
 
-macro_rules! log_err {
-    ($e:expr, $s:literal) => {
-        match $e {
-            Ok(_) => true,
-            Err(e) => {
-                log::error!("{}: {}", $s, e);
-                false
-            }
-        }
-    };
-}
-
 pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
 
     // Delete old files
     retry_loop(hwnd, || {
         let zed_executable = app_dir.join("Zed.exe");
-        if !zed_executable.exists() {
-            log::warn!("Old file not found: {}", zed_executable.display());
-            return true;
-        }
         log::info!("Removing old file: {}", zed_executable.display());
-        log_err!(
-            std::fs::remove_file(zed_executable),
-            "Failed to remove old file"
-        )
+        std::fs::remove_file(zed_executable)
     })?;
     retry_loop(hwnd, || {
         let zed_cli = app_dir.join("bin\\zed.exe");
-        if !zed_cli.exists() {
-            log::warn!("Old file not found: {}", zed_cli.display());
-            return true;
-        }
         log::info!("Removing old file: {}", zed_cli.display());
-        log_err!(std::fs::remove_file(zed_cli), "Failed to remove old file")
+        std::fs::remove_file(zed_cli)
     })?;
 
     // Copy new files
     retry_loop(hwnd, || {
         let zed_executable_source = app_dir.join("install\\Zed.exe");
-        if !zed_executable_source.exists() {
-            log::warn!("New file not found: {}", zed_executable_source.display());
-            return true;
-        }
         let zed_executable_dest = app_dir.join("Zed.exe");
         log::info!(
             "Copying new file {} to {}",
             zed_executable_source.display(),
             zed_executable_dest.display()
         );
-        log_err!(
-            std::fs::copy(zed_executable_source, zed_executable_dest),
-            "Failed to copy new file"
-        )
+        std::fs::copy(zed_executable_source, zed_executable_dest)
     })?;
     retry_loop(hwnd, || {
         let zed_cli_source = app_dir.join("install\\bin\\zed.exe");
-        if !zed_cli_source.exists() {
-            log::warn!("New file not found: {}", zed_cli_source.display());
-            return true;
-        }
         let zed_cli_dest = app_dir.join("bin\\zed.exe");
         log::info!(
             "Copying new file {} to {}",
             zed_cli_source.display(),
             zed_cli_dest.display()
         );
-        log_err!(
-            std::fs::copy(zed_cli_source, zed_cli_dest),
-            "Failed to copy new file"
-        )
+        std::fs::copy(zed_cli_source, zed_cli_dest)
     })?;
 
     // Post cleanup jobs
     retry_loop(hwnd, || {
         let updates_folder = app_dir.join("updates");
-        if !updates_folder.exists() {
-            log::warn!("Directory not found: {}", updates_folder.display());
-            return true;
-        }
         log::info!("Cleaning up: {}", updates_folder.display());
-        log_err!(
-            std::fs::remove_dir_all(updates_folder),
-            "Failed to remove directory"
-        )
+        std::fs::remove_dir_all(updates_folder)
     })?;
     retry_loop(hwnd, || {
         let installer_folder = app_dir.join("install");
-        if !installer_folder.exists() {
-            log::warn!("Directory not found: {}", installer_folder.display());
-            return true;
-        }
         log::info!("Cleaning up: {}", installer_folder.display());
-        log_err!(
-            std::fs::remove_dir_all(installer_folder),
-            "Failed to remove directory"
-        )
+        std::fs::remove_dir_all(installer_folder)
     })?;
 
     Ok(())
 }
 
 #[cfg(not(test))]
-fn retry_loop(hwnd: Option<HWND>, f: impl Fn() -> bool) -> Result<()> {
+fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Result<()> {
     let start = Instant::now();
-    while start.elapsed().as_secs() <= 1 {
-        // if the function returns true, we assume the update was successful
-        // and we post a message to the main thread to notify it
-        if f() {
-            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
-            return Ok(());
+    while start.elapsed().as_secs() <= 2 {
+        match f() {
+            Ok(_) => {
+                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                return Ok(());
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    log::warn!("File or folder not found.");
+                    unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                    return Ok(());
+                } else {
+                    log::error!("Operation failed: {}", e);
+                    // wait for a bit before retrying
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
         }
-        // if the function returns false, we assume the update failed
-        // and we wait for a bit before retrying
-        std::thread::sleep(Duration::from_millis(10));
     }
     Err(anyhow::anyhow!("Timed out"))
 }
 
 #[cfg(test)]
-fn retry_loop(hwnd: Option<HWND>, _: impl Fn() -> bool) -> Result<()> {
+fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Result<()> {
     let start = Instant::now();
-    while start.elapsed().as_secs() <= 1 {
+    while start.elapsed().as_secs() <= 2 {
         let result = if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
             match config.as_str() {
                 "err" => {
                     std::thread::sleep(Duration::from_millis(500));
-                    false
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Simulated error",
+                    ))
                 }
                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
         } else {
-            true
+            Ok(())
         };
-        if result {
-            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
-            return Ok(());
+        match result {
+            Ok(_) => {
+                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                return Ok(());
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    log::warn!("File or folder not found.");
+                    unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                    return Ok(());
+                } else {
+                    log::error!("Operation failed: {}", e);
+                    // wait for a bit before retrying
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
         }
-        std::thread::sleep(Duration::from_millis(10));
     }
     Err(anyhow::anyhow!("Timed out"))
 }
