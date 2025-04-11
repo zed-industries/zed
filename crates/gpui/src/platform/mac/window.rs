@@ -1568,7 +1568,7 @@ extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     }
 }
 
-fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
+pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
     unsafe { NSProcessInfo::processInfo(nil).isOperatingSystemAtLeastVersion(version) }
 }
 
