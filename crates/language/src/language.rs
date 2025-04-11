@@ -550,13 +550,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     /// Returns a list of code actions supported by a given LspAdapter
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        Some(vec![
-            CodeActionKind::EMPTY,
-            CodeActionKind::QUICKFIX,
-            CodeActionKind::REFACTOR,
-            CodeActionKind::REFACTOR_EXTRACT,
-            CodeActionKind::SOURCE,
-        ])
+        None
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {

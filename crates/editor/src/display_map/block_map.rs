@@ -89,7 +89,7 @@ pub enum BlockPlacement<T> {
 }
 
 impl<T> BlockPlacement<T> {
-    fn start(&self) -> &T {
+    pub fn start(&self) -> &T {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
@@ -187,9 +187,9 @@ impl BlockPlacement<Anchor> {
 }
 
 pub struct CustomBlock {
-    id: CustomBlockId,
+    pub id: CustomBlockId,
     placement: BlockPlacement<Anchor>,
-    height: Option<u32>,
+    pub height: Option<u32>,
     style: BlockStyle,
     render: Arc<Mutex<RenderBlock>>,
     priority: usize,

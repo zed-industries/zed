@@ -2774,6 +2774,7 @@ impl EditorElement {
         } else {
             element.layout_as_root(size(available_width, quantized_height.into()), window, cx)
         };
+        let mut element_height_in_lines = ((final_size.height / line_height).ceil() as u32).max(1);
 
         let mut row = block_row_start;
         let mut x_offset = px(0.);
@@ -2781,15 +2782,14 @@ impl EditorElement {
 
         if let BlockId::Custom(custom_block_id) = block_id {
             if block.has_height() {
-                let mut element_height_in_lines =
-                    ((final_size.height / line_height).ceil() as u32).max(1);
-
-                if block.place_near() && element_height_in_lines == 1 {
+                if block.place_near() {
                     if let Some((x_target, line_width)) = x_position {
                         let margin = em_width * 2;
+
                         if line_width + final_size.width + margin
                             < editor_width + gutter_dimensions.full_width()
                             && !row_block_types.contains_key(&(row - 1))
+                            && element_height_in_lines == 1
                         {
                             x_offset = line_width + margin;
                             row = row - 1;
@@ -2809,7 +2809,9 @@ impl EditorElement {
                 }
             }
         }
-        row_block_types.insert(row, is_block);
+        for i in 0..element_height_in_lines {
+            row_block_types.insert(row + i, is_block);
+        }
 
         (element, final_size, row, x_offset)
     }

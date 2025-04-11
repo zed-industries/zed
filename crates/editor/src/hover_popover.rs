@@ -90,7 +90,7 @@ pub fn show_keyboard_hover(
 }
 
 pub struct InlayHover {
-    pub range: InlayHighlight,
+    pub(crate) range: InlayHighlight,
     pub tooltip: HoverBlock,
 }
 
@@ -593,6 +593,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         },
         syntax: cx.theme().syntax().clone(),
         selection_background_color: { cx.theme().players().local().selection },
+        height_is_multiple_of_line_height: true,
         heading: StyleRefinement::default()
             .font_weight(FontWeight::BOLD)
             .text_base()
@@ -662,7 +663,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
 
 #[derive(Default, Debug)]
 pub struct HoverState {
-    pub info_popovers: Vec<InfoPopover>,
+    pub(crate) info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
     pub triggered_from: Option<Anchor>,
     pub info_task: Option<Task<Option<()>>>,

@@ -1,13 +1,14 @@
 use super::*;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{
     DisplayPoint, GutterDimensions,
     display_map::{Block, BlockContext, DisplayRow},
 };
-use gpui::{AvailableSpace, Stateful, TestAppContext, VisualTestContext, px};
+use gpui::{Stateful, TestAppContext, VisualTestContext, px, size};
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, PointUtf16, Rope, Unclipped,
 };
+use lsp::LanguageServerId;
 use pretty_assertions::assert_eq;
 use project::FakeFs;
 use rand::{Rng, rngs::StdRng, seq::IteratorRandom as _};
@@ -151,27 +152,46 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
 
     // Open the project diagnostics view while there are already diagnostics.
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new_with_context(
-            1,
-            true,
-            project.clone(),
-            workspace.downgrade(),
-            window,
-            cx,
-        )
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
         .await;
+
+    let expected = indoc::indoc! {
+       "§ main.rs
+       §
+       fn main() {
+           let x = vec![];
+       § move occurs because `x` has type `Vec<char>`, which does not implement
+       § the `Copy` trait (back)
+           let y = vec![];
+       § move occurs because `y` has type `Vec<char>`, which does not implement
+       § the `Copy` trait (back)
+           a(x); § value moved here (back)
+           b(y); § value moved here
+           // comment 1
+           // comment 2
+           c(y);
+       § use of moved value value used here after move
+       § hint: move occurs because `y` has type `Vec<char>`, which does not
+       § implement the `Copy` trait
+           d(x);
+       § use of moved value value used here after move
+       § hint: move occurs because `x` has type `Vec<char>`, which does not
+       § implement the `Copy` trait
+       § hint: value moved here
+       }"
+    };
+    let actual = editor_content_with_blocks(&editor, cx);
+    pretty_assertions::assert_eq!(expected, actual);
     assert_eq!(
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(15), EXCERPT_HEADER.into()),
-            (DisplayRow(16), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(25), EXCERPT_HEADER.into()),
         ]
     );
@@ -250,17 +270,14 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(7), FILE_HEADER.into()),
-            (DisplayRow(9), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(22), EXCERPT_HEADER.into()),
-            (DisplayRow(23), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(32), EXCERPT_HEADER.into()),
         ]
     );
@@ -364,19 +381,15 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     diagnostics
-        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(7), EXCERPT_HEADER.into()),
-            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(13), FILE_HEADER.into()),
-            (DisplayRow(15), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(28), EXCERPT_HEADER.into()),
-            (DisplayRow(29), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(38), EXCERPT_HEADER.into()),
         ]
     );
@@ -469,14 +482,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let workspace = window.root(cx).unwrap();
 
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new_with_context(
-            1,
-            true,
-            project.clone(),
-            workspace.downgrade(),
-            window,
-            cx,
-        )
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
@@ -512,14 +518,11 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
-        [
-            (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
-        ]
+        [(DisplayRow(0), FILE_HEADER.into()),]
     );
     assert_eq!(
         editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -560,15 +563,13 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language server's diagnostics are shown.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(6), EXCERPT_HEADER.into()),
-            (DisplayRow(7), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -628,15 +629,13 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Only the first language server's diagnostics are updated.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(7), EXCERPT_HEADER.into()),
-            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -686,15 +685,13 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     // Both language servers' diagnostics are updated.
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         editor_blocks(&editor, cx),
         [
             (DisplayRow(0), FILE_HEADER.into()),
-            (DisplayRow(2), DIAGNOSTIC_HEADER.into()),
             (DisplayRow(7), EXCERPT_HEADER.into()),
-            (DisplayRow(8), DIAGNOSTIC_HEADER.into()),
         ]
     );
     assert_eq!(
@@ -737,14 +734,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     let workspace = window.root(cx).unwrap();
 
     let mutated_diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new_with_context(
-            1,
-            true,
-            project.clone(),
-            workspace.downgrade(),
-            window,
-            cx,
-        )
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
 
     workspace.update_in(cx, |workspace, window, cx| {
@@ -829,7 +819,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                         .unwrap()
                 });
                 cx.executor()
-                    .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+                    .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
 
                 cx.run_until_parked();
             }
@@ -844,17 +834,10 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
     log::info!("constructing reference diagnostics view");
     let reference_diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new_with_context(
-            1,
-            true,
-            project.clone(),
-            workspace.downgrade(),
-            window,
-            cx,
-        )
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
     cx.executor()
-        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.run_until_parked();
 
     let mutated_excerpts = get_diagnostics_excerpts(&mutated_diagnostics, cx);
@@ -905,7 +888,7 @@ fn get_diagnostics_excerpts(
     diagnostics.update(cx, |diagnostics, cx| {
         let mut result = vec![];
         let mut excerpt_indices_by_id = HashMap::default();
-        diagnostics.excerpts.update(cx, |multibuffer, cx| {
+        diagnostics.multibuffer.update(cx, |multibuffer, cx| {
             let snapshot = multibuffer.snapshot(cx);
             for (id, buffer, range) in snapshot.excerpts() {
                 excerpt_indices_by_id.insert(id, result.len());
@@ -922,17 +905,17 @@ fn get_diagnostics_excerpts(
             }
         });
 
-        for state in &diagnostics.path_states {
-            for group in &state.diagnostic_groups {
-                for (ix, excerpt_id) in group.excerpts.iter().enumerate() {
-                    let excerpt_ix = excerpt_indices_by_id[excerpt_id];
-                    let excerpt = &mut result[excerpt_ix];
-                    excerpt.group_id = group.primary_diagnostic.diagnostic.group_id;
-                    excerpt.language_server = group.language_server_id;
-                    excerpt.primary = ix == group.primary_excerpt_ix;
-                }
-            }
-        }
+        // for state in &diagnostics.path_states {
+        //     for group in &state.diagnostic_groups {
+        //         for (ix, excerpt_id) in group.excerpts.iter().enumerate() {
+        //             let excerpt_ix = excerpt_indices_by_id[excerpt_id];
+        //             let excerpt = &mut result[excerpt_ix];
+        //             excerpt.group_id = group.primary_diagnostic.diagnostic.group_id;
+        //             excerpt.language_server = group.language_server_id;
+        //             excerpt.primary = ix == group.primary_excerpt_ix;
+        //         }
+        //     }
+        // }
 
         result
     })
@@ -1024,6 +1007,91 @@ fn random_diagnostic(
 const FILE_HEADER: &str = "file header";
 const EXCERPT_HEADER: &str = "excerpt header";
 
+fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> String {
+    cx.draw(
+        gpui::Point::default(),
+        size(px(1000.0), px(1000.0)),
+        |_, _| editor.clone(),
+    );
+    let (mut lines, blocks) = editor.update_in(cx, |editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let text = editor.display_text(cx);
+        let lines = text.lines().map(|s| s.to_string()).collect::<Vec<String>>();
+        let blocks = snapshot
+            .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
+            .map(|(row, block)| (row, block.clone()))
+            .collect::<Vec<_>>();
+        (lines, blocks)
+    });
+    for (row, block) in blocks {
+        match block {
+            Block::Custom(custom_block) => {
+                let content = editor::test::block_content_for_tests(custom_block.id, cx)
+                    .expect("block content not found");
+                if let Some(height) = custom_block.height {
+                    if height == 0 {
+                        lines[row.0 as usize - 1].push_str(" § ");
+                        lines[row.0 as usize - 1].push_str(&content);
+                    } else {
+                        let block_lines = content.lines().collect::<Vec<_>>();
+                        assert_eq!(block_lines.len(), height as usize);
+                        lines[row.0 as usize].push_str("§ ");
+                        lines[row.0 as usize].push_str(block_lines[0].trim_end());
+                        for i in 1..height as usize {
+                            lines[row.0 as usize + i].push_str("§ ");
+                            lines[row.0 as usize + i].push_str(block_lines[i].trim_end());
+                        }
+                    }
+                }
+            }
+            Block::FoldedBuffer {
+                first_excerpt,
+                height,
+            } => {
+                lines[row.0 as usize].push_str(&cx.update(|_, cx| {
+                    format!(
+                        "§ {}",
+                        first_excerpt
+                            .buffer
+                            .file()
+                            .unwrap()
+                            .file_name(cx)
+                            .to_string_lossy()
+                    )
+                }));
+                for row in row.0 + 1..row.0 + height {
+                    lines[row as usize].push_str("§");
+                }
+            }
+            Block::ExcerptBoundary {
+                excerpt,
+                height,
+                starts_new_buffer,
+            } => {
+                if starts_new_buffer {
+                    lines[row.0 as usize].push_str(&cx.update(|_, cx| {
+                        format!(
+                            "§ {}",
+                            excerpt
+                                .buffer
+                                .file()
+                                .unwrap()
+                                .file_name(cx)
+                                .to_string_lossy()
+                        )
+                    }));
+                } else {
+                    lines[row.0 as usize].push_str("§ -----")
+                }
+                for row in row.0 + 1..row.0 + height {
+                    lines[row as usize].push_str("§");
+                }
+            }
+        }
+    }
+    lines.join("\n")
+}
+
 fn editor_blocks(
     editor: &Entity<Editor>,
     cx: &mut VisualTestContext,
@@ -1031,7 +1099,7 @@ fn editor_blocks(
     let mut blocks = Vec::new();
     cx.draw(
         gpui::Point::default(),
-        AvailableSpace::min_size(),
+        size(px(1000.0), px(1000.0)),
         |window, cx| {
             editor.update(cx, |editor, cx| {
                 let snapshot = editor.snapshot(window, cx);

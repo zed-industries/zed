@@ -1,6 +1,7 @@
 pub mod parser;
 mod path_range;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::iter;
 use std::mem;
@@ -47,6 +48,7 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
     pub table_overflow_x_scroll: bool,
+    pub height_is_multiple_of_line_height: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -65,6 +67,7 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             heading: Default::default(),
             table_overflow_x_scroll: false,
+            height_is_multiple_of_line_height: false,
         }
     }
 }
@@ -190,6 +193,22 @@ impl Markdown {
 
     pub fn parsed_markdown(&self) -> &ParsedMarkdown {
         &self.parsed_markdown
+    }
+
+    pub fn escape(s: &str) -> Cow<str> {
+        let count = s.bytes().filter(|c| c.is_ascii_punctuation()).count();
+        if count > 0 {
+            let mut output = String::with_capacity(s.len() + count);
+            for c in s.chars() {
+                if c.is_ascii_punctuation() {
+                    output.push('\\')
+                }
+                output.push(c)
+            }
+            output.into()
+        } else {
+            s.into()
+        }
     }
 
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
@@ -354,6 +373,27 @@ impl MarkdownElement {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rendered_text(
+        markdown: Entity<Markdown>,
+        cx: &mut gpui::VisualTestContext,
+        style: impl FnOnce(&Window, &App) -> MarkdownStyle,
+    ) -> String {
+        use gpui::size;
+
+        let (text, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |window, cx| Self::new(markdown, style(window, cx)),
+        );
+        text.text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub fn code_block_renderer(mut self, variant: CodeBlockRenderer) -> Self {
         self.code_block_renderer = variant;
         self
@@ -483,9 +523,9 @@ impl MarkdownElement {
                                 pending: true,
                             };
                             window.focus(&markdown.focus_handle);
-                            window.prevent_default();
                         }
 
+                        window.prevent_default();
                         cx.notify();
                     }
                 } else if phase.capture() {
@@ -621,7 +661,9 @@ impl Element for MarkdownElement {
                     match tag {
                         MarkdownTag::Paragraph => {
                             builder.push_div(
-                                div().mb_2().line_height(rems(1.3)),
+                                div().when(!self.style.height_is_multiple_of_line_height, |el| {
+                                    el.mb_2().line_height(rems(1.3))
+                                }),
                                 range,
                                 markdown_end,
                             );
@@ -752,11 +794,11 @@ impl Element for MarkdownElement {
                             };
                             builder.push_div(
                                 div()
-                                    .mb_1()
+                                    .when(!self.style.height_is_multiple_of_line_height, |el| {
+                                        el.mb_1().gap_1().line_height(rems(1.3))
+                                    })
                                     .h_flex()
                                     .items_start()
-                                    .gap_1()
-                                    .line_height(rems(1.3))
                                     .child(bullet),
                                 range,
                                 markdown_end,
