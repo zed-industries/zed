@@ -14,7 +14,6 @@ doctest = false
 
 [features]
 neovim = ["nvim-rs", "async-compat", "async-trait", "tokio"]
-default = ["neovim"]
 
 [dependencies]
 anyhow.workspace = true

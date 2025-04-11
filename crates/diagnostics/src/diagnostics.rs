@@ -7,11 +7,10 @@ mod diagnostic_renderer;
 mod diagnostics_tests;
 
 use anyhow::Result;
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashMap};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
-    DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
-    PathKey,
+    DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{
@@ -22,7 +21,7 @@ use gpui::{
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, Point, ToTreeSitterPoint,
 };
-use lsp::LanguageServerId;
+use lsp::DiagnosticSeverity;
 use project::{DiagnosticSummary, Project, ProjectPath, project_settings::ProjectSettings};
 use settings::Settings;
 use std::{
@@ -66,20 +65,6 @@ struct ProjectDiagnosticsEditor {
     include_warnings: bool,
     update_excerpts_task: Option<Task<Result<()>>>,
     _subscription: Subscription,
-}
-
-struct PathState {
-    path: ProjectPath,
-    diagnostic_groups: Vec<DiagnosticGroupState>,
-}
-
-struct DiagnosticGroupState {
-    language_server_id: LanguageServerId,
-    primary_diagnostic: DiagnosticEntry<language::Anchor>,
-    primary_excerpt_ix: usize,
-    excerpts: Vec<ExcerptId>,
-    blocks: HashSet<CustomBlockId>,
-    block_count: usize,
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
@@ -363,10 +348,12 @@ impl ProjectDiagnosticsEditor {
         // let was_empty = self.path_states.is_empty();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
-        let editor = self.editor.downgrade();
-        let editor_snapshot = self
-            .editor
-            .update(cx, |editor, cx| editor.snapshot(window, cx));
+        let max_severity = if self.include_warnings {
+            DiagnosticSeverity::WARNING
+        } else {
+            DiagnosticSeverity::ERROR
+        };
+
         cx.spawn_in(window, async move |this, mut cx| {
             let diagnostics = buffer_snapshot
                 .diagnostics_in_range::<_, text::Point>(
@@ -385,7 +372,11 @@ impl ProjectDiagnosticsEditor {
             }
             let mut blocks: Vec<DiagnosticBlock> = Vec::new();
 
-            for (group_id, group) in grouped {
+            for (_, group) in grouped {
+                let group_severity = group.iter().map(|d| d.diagnostic.severity).min();
+                if !group_severity.is_some_and(|s| s <= max_severity) {
+                    continue;
+                }
                 let more = cx.update(|_, cx| {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,

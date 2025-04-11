@@ -50,7 +50,6 @@ impl DiagnosticRenderer {
             .iter()
             .position(|d| d.diagnostic.is_primary)
         else {
-            dbg!("ignoring", diagnostic_group);
             return Vec::new();
         };
         let primary = diagnostic_group[primary_ix].clone();
@@ -202,11 +201,13 @@ impl DiagnosticBlock {
                     let diagnostic = link.strip_prefix("file://#diagnostic-")?;
                     let (group_id, ix) = diagnostic.split_once('-')?;
 
-                    editor
+                    let ds = editor
                         .snapshot(window, cx)
                         .buffer_snapshot
                         .diagnostic_group(buffer_id, group_id.parse().ok()?)
-                        .nth(ix.parse().ok()?)
+                        .collect::<Vec<_>>();
+
+                    ds.into_iter().nth(ix.parse().ok()?)
                 });
                 let Some(diagnostic) = diagnostic else {
                     editor::hover_popover::open_markdown_url(link, window, cx);
