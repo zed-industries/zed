@@ -10014,6 +10014,178 @@ async fn test_completion_replacing_suffix_in_multicursors(cx: &mut TestAppContex
     apply_additional_edits.await.unwrap();
 }
 
+// This used to crash
+#[gpui::test]
+async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer_text = indoc! {"
+        fn main() {
+            10.satu;
+
+            //
+            // separate cursors so they open in different excerpts (manually reproducible)
+            //
+
+            10.satu20;
+        }
+    "};
+    let multibuffer_text_with_selections = indoc! {"
+        fn main() {
+            10.satuˇ;
+
+            //
+
+            //
+
+            10.satuˇ20;
+        }
+    "};
+    let expected_multibuffer = indoc! {"
+        fn main() {
+            10.saturating_sub()ˇ;
+
+            //
+
+            //
+
+            10.saturating_sub()ˇ;
+        }
+    "};
+
+    let first_excerpt_end = buffer_text.find("//").unwrap() + 3;
+    let second_excerpt_end = buffer_text.rfind("//").unwrap() - 4;
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": buffer_text,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    resolve_provider: None,
+                    ..lsp::CompletionOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+        multi_buffer.push_excerpts(
+            buffer.clone(),
+            [ExcerptRange::new(0..first_excerpt_end)],
+            cx,
+        );
+        multi_buffer.push_excerpts(
+            buffer.clone(),
+            [ExcerptRange::new(second_excerpt_end..buffer_text.len())],
+            cx,
+        );
+        multi_buffer
+    });
+
+    let editor = workspace
+        .update(cx, |_, window, cx| {
+            cx.new(|cx| {
+                Editor::new(
+                    EditorMode::Full,
+                    multi_buffer.clone(),
+                    Some(project.clone()),
+                    window,
+                    cx,
+                )
+            })
+        })
+        .unwrap();
+
+    let pane = workspace
+        .update(cx, |workspace, _, _| workspace.active_pane().clone())
+        .unwrap();
+    pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([
+                Point::new(1, 11)..Point::new(1, 11),
+                Point::new(7, 11)..Point::new(7, 11),
+            ])
+        });
+
+        assert_text_with_selections(editor, multibuffer_text_with_selections, cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+
+    fake_server
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            let completion_item = lsp::CompletionItem {
+                label: "saturating_sub()".into(),
+                text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                    lsp::InsertReplaceEdit {
+                        new_text: "saturating_sub()".to_owned(),
+                        insert: lsp::Range::new(
+                            lsp::Position::new(7, 7),
+                            lsp::Position::new(7, 11),
+                        ),
+                        replace: lsp::Range::new(
+                            lsp::Position::new(7, 7),
+                            lsp::Position::new(7, 13),
+                        ),
+                    },
+                )),
+                ..lsp::CompletionItem::default()
+            };
+
+            Ok(Some(lsp::CompletionResponse::Array(vec![completion_item])))
+        })
+        .next()
+        .await
+        .unwrap();
+
+    cx.condition(&editor, |editor, _| editor.context_menu_visible())
+        .await;
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor
+                .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, expected_multibuffer, cx);
+    })
+}
+
 #[gpui::test]
 async fn test_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
