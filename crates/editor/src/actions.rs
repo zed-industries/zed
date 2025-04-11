@@ -283,6 +283,8 @@ actions!(
         DuplicateSelection,
         ExpandMacroRecursively,
         FindAllReferences,
+        FindNextMatch,
+        FindPreviousMatch,
         Fold,
         FoldAll,
         FoldFunctionBodies,
