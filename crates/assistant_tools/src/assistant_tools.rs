@@ -21,6 +21,7 @@ mod schema;
 mod symbol_info_tool;
 mod terminal_tool;
 mod thinking_tool;
+mod websearch_tool;
 
 use std::sync::Arc;
 
@@ -29,6 +30,7 @@ use copy_path_tool::CopyPathTool;
 use gpui::App;
 use http_client::HttpClientWithUrl;
 use move_path_tool::MovePathTool;
+use websearch_tool::WebSearchTool;
 
 use crate::batch_tool::BatchTool;
 use crate::code_action_tool::CodeActionTool;
@@ -54,25 +56,26 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
 
     let registry = ToolRegistry::global(cx);
-    registry.register_tool(TerminalTool);
     registry.register_tool(BatchTool);
+    registry.register_tool(CodeActionTool);
+    registry.register_tool(CodeSymbolsTool);
+    registry.register_tool(CopyPathTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CreateFileTool);
-    registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
-    registry.register_tool(FindReplaceFileTool);
-    registry.register_tool(SymbolInfoTool);
-    registry.register_tool(CodeActionTool);
-    registry.register_tool(MovePathTool);
     registry.register_tool(DiagnosticsTool);
+    registry.register_tool(FetchTool::new(http_client));
+    registry.register_tool(FindReplaceFileTool);
     registry.register_tool(ListDirectoryTool);
+    registry.register_tool(MovePathTool);
     registry.register_tool(NowTool);
     registry.register_tool(OpenTool);
-    registry.register_tool(CodeSymbolsTool);
     registry.register_tool(PathSearchTool);
     registry.register_tool(ReadFileTool);
     registry.register_tool(RegexSearchTool);
     registry.register_tool(RenameTool);
+    registry.register_tool(SymbolInfoTool);
+    registry.register_tool(TerminalTool);
     registry.register_tool(ThinkingTool);
-    registry.register_tool(FetchTool::new(http_client));
+    registry.register_tool(WebSearchTool);
 }
