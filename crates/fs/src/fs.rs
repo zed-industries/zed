@@ -851,7 +851,7 @@ impl Watcher for RealWatcher {
 pub struct FakeFs {
     this: std::sync::Weak<Self>,
     // Use an unfair lock to ensure tests are deterministic.
-    state: Mutex<FakeFsState>,
+    state: Arc<Mutex<FakeFsState>>,
     executor: gpui::BackgroundExecutor,
 }
 
@@ -1038,7 +1038,7 @@ impl FakeFs {
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
             executor: executor.clone(),
-            state: Mutex::new(FakeFsState {
+            state: Arc::new(Mutex::new(FakeFsState {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
                     inode: 0,
                     mtime: MTime(UNIX_EPOCH),
@@ -1056,7 +1056,7 @@ impl FakeFs {
                 metadata_call_count: 0,
                 moves: Default::default(),
                 home_dir: None,
-            }),
+            })),
         });
 
         executor.spawn({
@@ -1722,11 +1722,25 @@ impl FakeFsEntry {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-struct FakeWatcher {}
+struct FakeWatcher {
+    tx: smol::channel::Sender<Vec<PathEvent>>,
+    original_path: PathBuf,
+    fs_state: Arc<Mutex<FakeFsState>>,
+    prefixes: Mutex<Vec<PathBuf>>,
+}
 
 #[cfg(any(test, feature = "test-support"))]
 impl Watcher for FakeWatcher {
-    fn add(&self, _: &Path) -> Result<()> {
+    fn add(&self, path: &Path) -> Result<()> {
+        if path.starts_with(&self.original_path) {
+            return Ok(());
+        }
+        self.fs_state
+            .try_lock()
+            .unwrap()
+            .event_txs
+            .push((path.to_owned(), self.tx.clone()));
+        self.prefixes.lock().push(path.to_owned());
         Ok(())
     }
 
@@ -2198,20 +2212,34 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let (tx, rx) = smol::channel::unbounded();
         let path = path.to_path_buf();
-        self.state.lock().event_txs.push((path.clone(), tx));
+        self.state.lock().event_txs.push((path.clone(), tx.clone()));
         let executor = self.executor.clone();
+        let watcher = Arc::new(FakeWatcher {
+            tx,
+            original_path: path.to_owned(),
+            fs_state: self.state.clone(),
+            prefixes: Mutex::new(vec![path.to_owned()]),
+        });
         (
-            Box::pin(futures::StreamExt::filter(rx, move |events| {
-                let result = events
-                    .iter()
-                    .any(|evt_path| evt_path.path.starts_with(&path));
-                let executor = executor.clone();
-                async move {
-                    executor.simulate_random_delay().await;
-                    result
+            Box::pin(futures::StreamExt::filter(rx, {
+                let watcher = watcher.clone();
+                move |events| {
+                    let result = events.iter().any(|evt_path| {
+                        let result = watcher
+                            .prefixes
+                            .lock()
+                            .iter()
+                            .any(|prefix| evt_path.path.starts_with(prefix));
+                        result
+                    });
+                    let executor = executor.clone();
+                    async move {
+                        executor.simulate_random_delay().await;
+                        result
+                    }
                 }
             })),
-            Arc::new(FakeWatcher {}),
+            watcher,
         )
     }
 

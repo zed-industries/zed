@@ -3040,9 +3040,6 @@ impl BackgroundScannerState {
                     );
                     return;
                 };
-                log::debug!(
-                    "building git repository, `.git` path in the worktree: {dot_git_path:?}"
-                );
 
                 parent_dir.into()
             }
@@ -3073,7 +3070,6 @@ impl BackgroundScannerState {
         fs: &dyn Fs,
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
-        log::trace!("insert git repository for {dot_git_path:?}");
         let work_dir_entry = self.snapshot.entry_for_path(work_directory.path_key().0)?;
         let work_directory_abs_path = self
             .snapshot
@@ -3097,8 +3093,6 @@ impl BackgroundScannerState {
             .join(&dot_git_path)
             .as_path()
             .into();
-
-        log::trace!("opened git repo for {dot_git_abs_path:?}");
 
         let mut common_dir_abs_path = dot_git_abs_path.clone();
         let mut repository_dir_abs_path = dot_git_abs_path.clone();
