@@ -96,10 +96,8 @@ pub fn to_esc_str(
     keyboard_mapper: &dyn KeyboardMapper,
 ) -> Option<String> {
     let modifiers = AlacModifiers::new(keystroke);
-    println!("keycode: {:?}, mode: {:?}", keystroke.code, modifiers);
 
     // Manual Bindings including modifiers
-    // todo(zjk)
     let manual_esc_str = match (keystroke.code, modifiers) {
         //Basic special keys
         (KeyCode::Tab, AlacModifiers::None) => Some("\x09".to_string()),
@@ -252,7 +250,6 @@ pub fn to_esc_str(
     // Automated bindings applying modifiers
     if modifiers.any() {
         let modifier_code = modifier_code(keystroke);
-        // todo(zjk)
         let modified_esc_str = match keystroke.code {
             KeyCode::Up => Some(format!("\x1b[1;{}A", modifier_code)),
             KeyCode::Down => Some(format!("\x1b[1;{}B", modifier_code)),
@@ -293,13 +290,10 @@ pub fn to_esc_str(
 
     if alt_is_meta && modifiers == AlacModifiers::Alt {
         if let Some(key) =
-            keyboard_mapper.keycode_to_face_with_shift(keystroke.code, keystroke.modifiers.shift)
+            keyboard_mapper.keycode_output_with_shift(keystroke.code, keystroke.modifiers.shift)
         {
             return Some(format!("\x1b{}", key));
         }
-        // if let Some(key) = retrieve_letter(keystroke.code, keystroke.modifiers.shift) {
-        //     return Some(format!("\x1b{}", key));
-        // }
     }
 
     None
@@ -328,38 +322,6 @@ fn modifier_code(keystroke: &Keystroke) -> u32 {
         modifier_code |= 1 << 2;
     }
     modifier_code + 1
-}
-
-fn retrieve_letter(keycode: KeyCode, shift: bool) -> Option<char> {
-    match keycode {
-        KeyCode::A => Some(if shift { 'A' } else { 'a' }),
-        KeyCode::B => Some(if shift { 'B' } else { 'b' }),
-        KeyCode::C => Some(if shift { 'C' } else { 'c' }),
-        KeyCode::D => Some(if shift { 'D' } else { 'd' }),
-        KeyCode::E => Some(if shift { 'E' } else { 'e' }),
-        KeyCode::F => Some(if shift { 'F' } else { 'f' }),
-        KeyCode::G => Some(if shift { 'G' } else { 'g' }),
-        KeyCode::H => Some(if shift { 'H' } else { 'h' }),
-        KeyCode::I => Some(if shift { 'I' } else { 'i' }),
-        KeyCode::J => Some(if shift { 'J' } else { 'j' }),
-        KeyCode::K => Some(if shift { 'K' } else { 'k' }),
-        KeyCode::L => Some(if shift { 'L' } else { 'l' }),
-        KeyCode::M => Some(if shift { 'M' } else { 'm' }),
-        KeyCode::N => Some(if shift { 'N' } else { 'n' }),
-        KeyCode::O => Some(if shift { 'O' } else { 'o' }),
-        KeyCode::P => Some(if shift { 'P' } else { 'p' }),
-        KeyCode::Q => Some(if shift { 'Q' } else { 'q' }),
-        KeyCode::R => Some(if shift { 'R' } else { 'r' }),
-        KeyCode::S => Some(if shift { 'S' } else { 's' }),
-        KeyCode::T => Some(if shift { 'T' } else { 't' }),
-        KeyCode::U => Some(if shift { 'U' } else { 'u' }),
-        KeyCode::V => Some(if shift { 'V' } else { 'v' }),
-        KeyCode::W => Some(if shift { 'W' } else { 'w' }),
-        KeyCode::X => Some(if shift { 'X' } else { 'x' }),
-        KeyCode::Y => Some(if shift { 'Y' } else { 'y' }),
-        KeyCode::Z => Some(if shift { 'Z' } else { 'z' }),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -608,15 +570,15 @@ mod test {
         let manual_esc_str_mapper = dbg!(generate_esc_str_mapper(&keyboard_mapper));
         let ascii_printable = ' '..='~';
         for character in ascii_printable {
-            // todo(zjk)
-            if character == ' ' {
-                continue;
-            }
+            let key = if character == ' ' {
+                "space".to_string()
+            } else {
+                character.to_string()
+            };
             assert_eq!(
                 to_esc_str(
                     &dbg!(
-                        Keystroke::parse(&format!("alt-{}", character), true, &keyboard_mapper)
-                            .unwrap()
+                        Keystroke::parse(&format!("alt-{}", key), true, &keyboard_mapper).unwrap()
                     ),
                     &TermMode::NONE,
                     true,

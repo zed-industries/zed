@@ -92,7 +92,7 @@ impl KeyboardMapper for MacKeyboardMapper {
         self.code_to_char.get(&code).cloned()
     }
 
-    fn keycode_to_face_with_shift(&self, code: KeyCode, shift: bool) -> Option<String> {
+    fn keycode_output_with_shift(&self, code: KeyCode, shift: bool) -> Option<String> {
         if shift {
             self.code_to_char_with_shift.get(&code).cloned()
         } else {

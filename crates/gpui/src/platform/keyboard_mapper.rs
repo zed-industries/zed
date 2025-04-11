@@ -7,7 +7,7 @@ pub trait KeyboardMapper {
     /// TODO:
     fn keycode_to_face(&self, code: KeyCode) -> Option<String>;
     /// TODO:
-    fn keycode_to_face_with_shift(&self, code: KeyCode, shift: bool) -> Option<String>;
+    fn keycode_output_with_shift(&self, code: KeyCode, shift: bool) -> Option<String>;
 }
 
 /// TODO:
@@ -72,13 +72,16 @@ impl KeyboardMapper for UsLayoutMapper {
         }
     }
 
-    fn keycode_to_face_with_shift(&self, code: KeyCode, shift: bool) -> Option<String> {
+    fn keycode_output_with_shift(&self, code: KeyCode, shift: bool) -> Option<String> {
+        if code == KeyCode::Space {
+            return Some(" ".to_string());
+        }
         if !shift {
             return self.keycode_to_face(code);
         }
-        if let Some(key) = self.keycode_to_face(code) {
-            let upper = key.clone().to_ascii_uppercase();
-            if key != upper {
+        if let Some(output) = self.keycode_to_face(code) {
+            let upper = output.to_uppercase();
+            if upper != output {
                 return Some(upper);
             }
         }
@@ -120,7 +123,7 @@ impl KeyboardMapper for EmptyMapper {
         None
     }
 
-    fn keycode_to_face_with_shift(&self, _: KeyCode, _: bool) -> Option<String> {
+    fn keycode_output_with_shift(&self, _: KeyCode, _: bool) -> Option<String> {
         None
     }
 }
