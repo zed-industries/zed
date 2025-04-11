@@ -16561,6 +16561,7 @@ dependencies = [
  "client",
  "collections",
  "gpui",
+ "serde",
  "workspace-hack",
 ]
 

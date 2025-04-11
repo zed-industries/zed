@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -13,7 +13,7 @@ use web_search::WebSearchRegistry;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchToolInput {
-    /// The query to search for.
+    /// The search term or question to query on the web.
     query: String,
 }
 
@@ -29,7 +29,7 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> String {
-        "Do a web search.".into()
+        "Search the web for information using your query. Use this when you need real-time information, facts, or data that might not be in your training. Results will include snippets and links from relevant web pages.".into()
     }
 
     fn icon(&self) -> IconName {
@@ -64,9 +64,8 @@ impl Tool for WebSearchTool {
 
         let search_task = provider.search(input.query, cx);
         cx.background_spawn(async move {
-            let results = search_task.await?;
-            dbg!(&results);
-            Ok("Got results".to_string())
+            let response = search_task.await?;
+            serde_json::to_string(&response).context("Failed to retrieve search results")
         })
     }
 }

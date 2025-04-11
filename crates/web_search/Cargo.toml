@@ -16,4 +16,5 @@ anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
 gpui.workspace = true
+serde.workspace = true
 workspace-hack.workspace = true

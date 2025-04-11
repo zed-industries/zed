@@ -1,7 +1,8 @@
 use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
-use std::sync::Arc;
+use serde::{Deserialize, Serialize};
+use std::{ops::Range, sync::Arc};
 
 pub fn init(cx: &mut App) {
     let registry = cx.new(|_cx| WebSearchRegistry::default());
@@ -11,15 +12,22 @@ pub fn init(cx: &mut App) {
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct WebSearchProviderId(pub SharedString);
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct WebSearchResponse {
     pub results: Vec<WebSearchResult>,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct WebSearchResult {
     pub summary: String,
+    pub citations: Vec<WebSearchCitation>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WebSearchCitation {
+    pub title: String,
     pub url: String,
+    pub range: Option<Range<usize>>,
 }
 
 pub trait WebSearchProvider {

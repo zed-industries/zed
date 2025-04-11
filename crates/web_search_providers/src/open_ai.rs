@@ -4,8 +4,10 @@ use anyhow::{Context as _, Result, anyhow};
 use futures::AsyncReadExt;
 use gpui::{App, AppContext, Task};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use serde::{Deserialize, Serialize};
-use web_search::{WebSearchProvider, WebSearchProviderId, WebSearchResponse};
+use serde::Deserialize;
+use web_search::{
+    WebSearchCitation, WebSearchProvider, WebSearchProviderId, WebSearchResponse, WebSearchResult,
+};
 
 const OPENAI_API_URL: &str = "https://api.openai.com/v1";
 
@@ -37,9 +39,10 @@ impl WebSearchProvider for OpenAiWebSearchProvider {
         let api_key_task = read_api_key(OPENAI_API_URL, cx);
         cx.background_spawn(async move {
             let api_key = api_key_task.await?;
-            let response = perform_web_search(client, &input, &api_key).await?;
-            println!("Response:\n{}", response);
-            todo!()
+            let response_json = perform_web_search(client, &input, &api_key).await?;
+            let parsed_response: OpenAiWebSearchResponse =
+                serde_json::from_str(&response_json).context("Failed to parse OpenAI response")?;
+            Ok(parsed_response.into())
         })
     }
 }
@@ -82,6 +85,77 @@ fn read_api_key(api_url: &str, cx: &mut App) -> Task<Result<String>> {
     cx.background_spawn(async move {
         let (_, api_key) = task.await?.context("credentials not found")?;
 
-        String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")
+        String::from_utf8(api_key).context("invalid API key")
     })
+}
+
+impl Into<WebSearchResponse> for OpenAiWebSearchResponse {
+    fn into(self) -> WebSearchResponse {
+        let mut results = Vec::new();
+        for item in self.output {
+            if let OutputItem::Message { content } = item {
+                for content_item in content {
+                    results.push(match content_item {
+                        MessageContent::OutputText { text, annotations } => WebSearchResult {
+                            summary: text,
+                            citations: annotations
+                                .into_iter()
+                                .map(|annotation| match annotation {
+                                    Annotation::UrlCitation {
+                                        title,
+                                        url,
+                                        start_index,
+                                        end_index,
+                                    } => WebSearchCitation {
+                                        title,
+                                        url,
+                                        range: Some(start_index..end_index),
+                                    },
+                                })
+                                .collect(),
+                        },
+                    })
+                }
+            }
+        }
+        WebSearchResponse { results }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiWebSearchResponse {
+    output: Vec<OutputItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum OutputItem {
+    #[serde(rename = "web_search_call")]
+    WebSearchCall,
+    #[serde(rename = "message")]
+    Message { content: Vec<MessageContent> },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum MessageContent {
+    #[serde(rename = "output_text")]
+    OutputText {
+        text: String,
+        annotations: Vec<Annotation>,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum Annotation {
+    #[serde(rename = "url_citation")]
+    UrlCitation {
+        #[allow(dead_code)]
+        start_index: usize,
+        #[allow(dead_code)]
+        end_index: usize,
+        title: String,
+        url: String,
+    },
 }
