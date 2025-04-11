@@ -32,8 +32,6 @@ settings.workspace = true
 toml.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
-
-[dev-dependencies]
 unindent.workspace = true
 
 [[bin]]

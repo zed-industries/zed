@@ -17,6 +17,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+use unindent::Unindent as _;
 use util::command::new_smol_command;
 
 use crate::AgentAppState;
@@ -252,26 +253,28 @@ fn parse_judge_output(response: &str) -> Result<JudgeOutput> {
     Ok(JudgeOutput { analysis, score })
 }
 
-fn get_tag<'a>(name: &'static str, response: &'a str) -> Result<&'a str> {
+fn get_tag<'a>(name: &'static str, response: &'a str) -> Result<String> {
     let start_tag = format!("<{}>", name);
     let end_tag = format!("</{}>", name);
 
     let start_ix = response
         .find(&start_tag)
         .context(format!("{} start tag not found", name))?;
-    let end_ix = response[start_ix..]
-        .find(&end_tag)
-        .context(format!("{} end tag not found", name))?;
-
     let content_start_ix = start_ix + start_tag.len();
-    anyhow::Ok(&response[content_start_ix..end_ix].trim())
+
+    let end_ix = content_start_ix
+        + response[content_start_ix..]
+            .find(&end_tag)
+            .context(format!("{} end tag not found", name))?;
+
+    let content = response[content_start_ix..end_ix].trim().unindent();
+
+    anyhow::Ok(content)
 }
 
 #[cfg(test)]
 #[test]
 fn test_parse_judge_output() {
-    use unindent::Unindent as _;
-
     let response = r#"
         <analysis>The model did a good job but there were still compilations errors.</analysis>
         <score>3</score>
