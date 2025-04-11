@@ -396,26 +396,33 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         cx.spawn_in(window, async move |this, cx| {
             let filtered_models = cx
                 .background_spawn(async move {
-                    let filter_models = |model_infos: &[ModelInfo]| {
-                        model_infos
-                            .iter()
-                            .filter(|model_info| {
-                                model_info
-                                    .model
-                                    .name()
-                                    .0
-                                    .to_lowercase()
-                                    .contains(&query.to_lowercase())
-                            })
-                            .cloned()
-                            .collect::<Vec<_>>()
+                    let matches = |info: &ModelInfo| {
+                        info.model
+                            .name()
+                            .0
+                            .to_lowercase()
+                            .contains(&query.to_lowercase())
                     };
 
-                    let recommended_models = filter_models(&all_models.recommended);
+                    let recommended_models = all_models
+                        .recommended
+                        .iter()
+                        .filter(|r| {
+                            configured_providers.contains(&r.model.provider_id()) && matches(r)
+                        })
+                        .cloned()
+                        .collect();
                     let mut other_models = IndexMap::default();
                     for (provider_id, models) in &all_models.other {
                         if configured_providers.contains(&provider_id) {
-                            other_models.insert(provider_id.clone(), filter_models(models));
+                            other_models.insert(
+                                provider_id.clone(),
+                                models
+                                    .iter()
+                                    .filter(|m| matches(m))
+                                    .cloned()
+                                    .collect::<Vec<_>>(),
+                            );
                         }
                     }
                     GroupedModels {
