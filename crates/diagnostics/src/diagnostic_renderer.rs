@@ -142,12 +142,12 @@ impl DiagnosticRenderer {
 }
 
 pub(crate) struct DiagnosticBlock {
-    initial_range: Range<Point>,
-    severity: DiagnosticSeverity,
-    group_id: usize,
-    id: usize,
-    buffer_id: BufferId,
-    markdown: Entity<Markdown>,
+    pub(crate) initial_range: Range<Point>,
+    pub(crate) severity: DiagnosticSeverity,
+    pub(crate) group_id: usize,
+    pub(crate) id: usize,
+    pub(crate) buffer_id: BufferId,
+    pub(crate) markdown: Entity<Markdown>,
 }
 
 impl DiagnosticBlock {

@@ -8,6 +8,7 @@ mod diagnostics_tests;
 
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet};
+use diagnostic_renderer::DiagnosticBlock;
 use editor::{
     AnchorRangeExt, DEFAULT_MULTIBUFFER_CONTEXT, DiagnosticRenderer, Editor, EditorEvent,
     ExcerptId, ExcerptRange, MultiBuffer, PathKey, RangeToAnchorExt, ToOffset, ToPoint,
@@ -397,18 +398,58 @@ impl ProjectDiagnosticsEditor {
                 .filter(|d| !(d.diagnostic.is_primary && d.diagnostic.is_unnecessary))
                 .collect::<Vec<_>>();
 
-            let mut excerpt_ranges = Vec::new();
-            for d in diagnostics.iter() {
+            let mut grouped: HashMap<usize, Vec<_>> = HashMap::default();
+            for entry in diagnostics {
+                grouped
+                    .entry(entry.diagnostic.group_id)
+                    .or_default()
+                    .push(entry)
+            }
+            let mut blocks: Vec<DiagnosticBlock> = Vec::new();
+
+            for (group_id, group) in grouped {
+                let more = cx.update(|_, cx| {
+                    crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+                        group,
+                        buffer_snapshot.remote_id(),
+                        cx,
+                    )
+                })?;
+
+                for item in more {
+                    let insert_pos = blocks
+                        .binary_search_by(|existing| {
+                            match existing.initial_range.start.cmp(&item.initial_range.start) {
+                                Ordering::Equal => item
+                                    .initial_range
+                                    .end
+                                    .cmp(&existing.initial_range.end)
+                                    .reverse(),
+                                other => other,
+                            }
+                        })
+                        .unwrap_or_else(|pos| pos);
+
+                    blocks.insert(insert_pos, item);
+                }
+            }
+
+            let mut excerpt_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+            for b in blocks.iter() {
                 let excerpt_range = context_range_for_entry(
-                    d.range.clone(),
+                    b.initial_range.clone(),
                     DEFAULT_MULTIBUFFER_CONTEXT,
                     buffer_snapshot.clone(),
                     &mut cx,
                 )
                 .await;
+                debug_assert!(
+                    excerpt_ranges.last().is_none()
+                        || excerpt_ranges.last().unwrap().context.start < excerpt_range.start
+                );
                 excerpt_ranges.push(ExcerptRange {
                     context: excerpt_range,
-                    primary: d.range.clone(),
+                    primary: b.initial_range.clone(),
                 })
             }
 
@@ -424,41 +465,20 @@ impl ProjectDiagnosticsEditor {
                 })
             })?;
 
-            let mut grouped: HashMap<usize, Vec<_>> = HashMap::default();
-            let mut anchors: HashMap<usize, Vec<_>> = HashMap::default();
-            for (entry, range) in diagnostics.into_iter().zip(anchor_ranges.into_iter()) {
-                anchors
-                    .entry(entry.diagnostic.group_id)
-                    .or_default()
-                    .push(range);
-                grouped
-                    .entry(entry.diagnostic.group_id)
-                    .or_default()
-                    .push(entry)
-            }
-
-            let mut editor_blocks = Vec::new();
-
-            for (group_id, group) in grouped {
-                let blocks = cx.update(|_, cx| {
-                    crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
-                        group,
-                        buffer_snapshot.remote_id(),
-                        cx,
-                    )
-                })?;
-                let anchors = anchors.remove(&group_id).unwrap();
-                for (anchor, block) in anchors.into_iter().zip(blocks.into_iter()) {
-                    let editor = editor.clone();
-                    editor_blocks.push(BlockProperties {
-                        placement: BlockPlacement::Near(anchor.start),
-                        height: Some(1),
-                        style: BlockStyle::Flex,
-                        render: Arc::new(move |bcx| block.render_block(editor.clone(), bcx)),
-                        priority: 1,
-                    })
-                }
-            }
+            let editor_blocks =
+                anchor_ranges
+                    .into_iter()
+                    .zip(blocks.into_iter())
+                    .map(|(anchor, block)| {
+                        let editor = editor.clone();
+                        BlockProperties {
+                            placement: BlockPlacement::Near(anchor.start),
+                            height: Some(1),
+                            style: BlockStyle::Flex,
+                            render: Arc::new(move |bcx| block.render_block(editor.clone(), bcx)),
+                            priority: 1,
+                        }
+                    });
 
             editor.update(cx, |editor, cx| {
                 editor.display_map.update(cx, |display_map, cx| {
