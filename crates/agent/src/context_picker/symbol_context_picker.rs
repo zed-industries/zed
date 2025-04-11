@@ -15,7 +15,7 @@ use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 
 pub struct SymbolContextPicker {
@@ -27,16 +27,10 @@ impl SymbolContextPicker {
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
-        confirm_behavior: ConfirmBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = SymbolContextPickerDelegate::new(
-            context_picker,
-            workspace,
-            context_store,
-            confirm_behavior,
-        );
+        let delegate = SymbolContextPickerDelegate::new(context_picker, workspace, context_store);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
@@ -59,7 +53,6 @@ pub struct SymbolContextPickerDelegate {
     context_picker: WeakEntity<ContextPicker>,
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
-    confirm_behavior: ConfirmBehavior,
     matches: Vec<SymbolEntry>,
     selected_index: usize,
 }
@@ -69,13 +62,11 @@ impl SymbolContextPickerDelegate {
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
-        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             context_picker,
             workspace,
             context_store,
-            confirm_behavior,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -135,7 +126,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(mat) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -143,7 +134,6 @@ impl PickerDelegate for SymbolContextPickerDelegate {
             return;
         };
 
-        let confirm_behavior = self.confirm_behavior;
         let add_symbol_task = add_symbol(
             mat.symbol.clone(),
             true,
@@ -153,15 +143,11 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         );
 
         let selected_index = self.selected_index;
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let included = add_symbol_task.await?;
-            this.update_in(cx, |this, window, cx| {
+            this.update(cx, |this, _| {
                 if let Some(mat) = this.delegate.matches.get_mut(selected_index) {
                     mat.is_included = included;
-                }
-                match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }
             })
         })
