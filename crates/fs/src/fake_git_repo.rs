@@ -21,12 +21,12 @@ pub struct FakeGitRepository {
     pub(crate) fs: Arc<FakeFs>,
     pub(crate) executor: BackgroundExecutor,
     pub(crate) dot_git_path: PathBuf,
+    pub(crate) repository_dir_path: PathBuf,
+    pub(crate) common_dir_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
-    pub path: PathBuf,
-    pub common_dir_path: PathBuf,
     pub event_emitter: smol::channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
@@ -38,14 +38,8 @@ pub struct FakeGitRepositoryState {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(
-        path: PathBuf,
-        common_dir_path: PathBuf,
-        event_emitter: smol::channel::Sender<PathBuf>,
-    ) -> Self {
+    pub fn new(event_emitter: smol::channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
-            path,
-            common_dir_path,
             event_emitter,
             head_contents: Default::default(),
             index_contents: Default::default(),
@@ -59,15 +53,6 @@ impl FakeGitRepositoryState {
 }
 
 impl FakeGitRepository {
-    fn with_state<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce(&mut FakeGitRepositoryState) -> T,
-    {
-        self.fs
-            .with_git_state(&self.dot_git_path, false, f)
-            .unwrap()
-    }
-
     fn with_state_async<F, T>(&self, write: bool, f: F) -> BoxFuture<'static, Result<T>>
     where
         F: 'static + Send + FnOnce(&mut FakeGitRepositoryState) -> Result<T>,
@@ -178,11 +163,11 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn path(&self) -> PathBuf {
-        self.with_state(|state| state.path.clone())
+        self.repository_dir_path.clone()
     }
 
     fn main_repository_path(&self) -> PathBuf {
-        self.with_state(|state| state.common_dir_path.clone())
+        self.common_dir_path.clone()
     }
 
     fn merge_message(&self) -> BoxFuture<Option<String>> {

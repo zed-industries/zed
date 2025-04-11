@@ -878,7 +878,7 @@ enum FakeFsEntry {
         mtime: MTime,
         len: u64,
         content: Vec<u8>,
-        // The path to the repository's git directory, if this is a gitfile.
+        // The path to the repository state directory, if this is a gitfile.
         git_dir_path: Option<PathBuf>,
     },
     Dir {
@@ -1282,9 +1282,14 @@ impl FakeFs {
         .boxed()
     }
 
-    pub fn with_git_state<T, F>(&self, dot_git: &Path, emit_git_event: bool, f: F) -> Result<T>
+    pub fn with_git_state_and_paths<T, F>(
+        &self,
+        dot_git: &Path,
+        emit_git_event: bool,
+        f: F,
+    ) -> Result<T>
     where
-        F: FnOnce(&mut FakeGitRepositoryState) -> T,
+        F: FnOnce(&mut FakeGitRepositoryState, &Path, &Path) -> T,
     {
         let mut state = self.state.lock();
         let entry = state.read_path(dot_git).context("open .git")?;
@@ -1294,14 +1299,12 @@ impl FakeFs {
             let repo_state = git_repo_state.get_or_insert_with(|| {
                 log::debug!("insert git state for {dot_git:?}");
                 Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    dot_git.to_path_buf(),
-                    dot_git.to_path_buf(),
                     state.git_event_tx.clone(),
                 )))
             });
             let mut repo_state = repo_state.lock();
 
-            let result = f(&mut repo_state);
+            let result = f(&mut repo_state, dot_git, dot_git);
 
             if emit_git_event {
                 state.emit_event([(dot_git, None)]);
@@ -1339,14 +1342,12 @@ impl FakeFs {
                 .ok_or_else(|| anyhow!("repository dir not contained in any .git"))?;
             let repo_state = git_repo_state.get_or_insert_with(|| {
                 Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    canonical_path.clone(),
-                    common_dir.to_owned(),
                     state.git_event_tx.clone(),
                 )))
             });
             let mut repo_state = repo_state.lock();
 
-            let result = f(&mut repo_state);
+            let result = f(&mut repo_state, &canonical_path, common_dir);
 
             if emit_git_event {
                 state.emit_event([(canonical_path, None)]);
@@ -1356,6 +1357,13 @@ impl FakeFs {
         } else {
             Err(anyhow!("not a valid git repository"))
         }
+    }
+
+    pub fn with_git_state<T, F>(&self, dot_git: &Path, emit_git_event: bool, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut FakeGitRepositoryState) -> T,
+    {
+        self.with_git_state_and_paths(dot_git, emit_git_event, |state, _, _| f(state))
     }
 
     pub fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
@@ -2210,13 +2218,19 @@ impl Fs for FakeFs {
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
         use util::ResultExt as _;
 
-        self.with_git_state(abs_dot_git, false, |_| {
-            Arc::new(fake_git_repo::FakeGitRepository {
-                fs: self.this.upgrade().unwrap(),
-                executor: self.executor.clone(),
-                dot_git_path: abs_dot_git.to_path_buf(),
-            }) as _
-        })
+        self.with_git_state_and_paths(
+            abs_dot_git,
+            false,
+            |_, repository_dir_path, common_dir_path| {
+                Arc::new(fake_git_repo::FakeGitRepository {
+                    fs: self.this.upgrade().unwrap(),
+                    executor: self.executor.clone(),
+                    dot_git_path: abs_dot_git.to_path_buf(),
+                    repository_dir_path: repository_dir_path.to_owned(),
+                    common_dir_path: common_dir_path.to_owned(),
+                }) as _
+            },
+        )
         .log_err()
     }
 
