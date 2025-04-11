@@ -3,6 +3,7 @@ pub use log as log_impl;
 
 mod env_config;
 pub mod scope_map;
+pub mod sink;
 
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
@@ -22,25 +23,40 @@ pub fn init_from_env() {
     }
 }
 
-/// because we are currently just wrapping the `log` crate in `zlog`,
-/// we need to work around the fact that the `log` crate only provides a
-/// single global level filter. In order to have more precise control until
-/// we no longer wrap `log`, we bump up the priority of log level so that it
-/// will be logged, even if the actual level is lower
-/// This is fine for now, as we use a `info` level filter by default in releases,
-/// which hopefully won't result in confusion like `warn` or `error` levels might.
-pub fn min_printed_log_level(level: log_impl::Level) -> log_impl::Level {
-    // this logic is defined based on the logic used in the `log` crate,
-    // which checks that a logs level is <= both of these values,
-    // so we take the minimum of the two values to ensure that check passes
-    let level_min_static = log_impl::STATIC_MAX_LEVEL;
-    let level_min_dynamic = log_impl::max_level();
-    if level <= level_min_static && level <= level_min_dynamic {
-        return level;
+pub struct Zlog {}
+
+impl log::Log for Zlog {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        scope_map::is_possibly_enabled_level(metadata.level())
     }
-    return log_impl::LevelFilter::min(level_min_static, level_min_dynamic)
-        .to_level()
-        .unwrap_or(level);
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let scope = match record.module_path_static() {
+            Some(module_path) => {
+                let crate_name = private::extract_crate_name_from_module_path(module_path);
+                private::scope_new(&[crate_name])
+            }
+            None => private::scope_new(&[]),
+        };
+        // FIXME: remove level from return
+        let (enabled, level) = scope_map::is_scope_enabled(&scope, record.metadata().level());
+        if !enabled {
+            return;
+        }
+        sink::submit(sink::Record {
+            scope,
+            level,
+            message: record.args(),
+        });
+    }
+
+    fn flush(&self) {
+        // todo: necessary?
+        sink::flush();
+    }
 }
 
 #[macro_export]
@@ -50,7 +66,11 @@ macro_rules! log {
         let logger = $logger;
         let (enabled, level) = $crate::scope_map::is_scope_enabled(&logger.scope, level);
         if enabled {
-            $crate::log_impl::log!(level, "[{}]: {}", &logger.fmt_scope(), format!($($arg)+));
+            $crate::sink::submit($crate::sink::Record {
+                scope: logger.scope,
+                level,
+                message: &format_args!($($arg)+),
+            });
         }
     }
 }
@@ -207,6 +227,7 @@ pub mod private {
 pub type Scope = [&'static str; SCOPE_DEPTH_MAX];
 pub type ScopeAlloc = [String; SCOPE_DEPTH_MAX];
 const SCOPE_STRING_SEP: &'static str = ".";
+const SCOPE_STRING_SEP_CHAR: char = '.';
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Logger {

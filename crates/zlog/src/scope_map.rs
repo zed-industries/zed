@@ -22,15 +22,42 @@ pub fn init_env_filter(filter: env_config::EnvFilter) {
     }
 }
 
+/// because we are currently just wrapping the `log` crate in `zlog`,
+/// we need to work around the fact that the `log` crate only provides a
+/// single global level filter. In order to have more precise control until
+/// we no longer wrap `log`, we bump up the priority of log level so that it
+/// will be logged, even if the actual level is lower
+/// This is fine for now, as we use a `info` level filter by default in releases,
+/// which hopefully won't result in confusion like `warn` or `error` levels might.
+pub fn min_printed_log_level(level: log_impl::Level) -> log_impl::Level {
+    // this logic is defined based on the logic used in the `log` crate,
+    // which checks that a logs level is <= both of these values,
+    // so we take the minimum of the two values to ensure that check passes
+    let level_min_static = log_impl::STATIC_MAX_LEVEL;
+    let level_min_dynamic = log_impl::max_level();
+    if level <= level_min_static && level <= level_min_dynamic {
+        return level;
+    }
+    return log_impl::LevelFilter::min(level_min_static, level_min_dynamic)
+        .to_level()
+        .unwrap_or(level);
+}
+
+pub fn is_possibly_enabled_level(level: log_impl::Level) -> bool {
+    // FIXME: should be based on the min allowed level currently
+    // i.e. the MIN enabled level that is configured, or GLOBAL_MIN_LEVEL if no additional configuration,
+    let level_min = min_printed_log_level(level);
+    return level <= level_min;
+}
+
 pub fn is_scope_enabled(scope: &Scope, level: log_impl::Level) -> (bool, log_impl::Level) {
-    let level_min = crate::min_printed_log_level(level);
+    let level_min = min_printed_log_level(level);
     if level <= level_min {
         // [FAST PATH]
         // if the message is at or below the minimum printed log level
         // (where error < warn < info etc) then always enable
         return (true, level);
     }
-
     let Ok(map) = SCOPE_MAP.read() else {
         // on failure, default to enabled detection done by `log` crate
         return (true, level);
