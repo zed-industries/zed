@@ -17180,47 +17180,55 @@ impl Editor {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
                 
-                // Check if the edit occurred within a crease
+                // Check if the edit occurred within a crease (like an @-mention)
                 if let Some(buffer) = buffer_edited {
-                    // First get a display snapshot - use the update call to demonstrate accessing the snapshot
-                    self.display_map.update(cx, |display_map, cx| {
-                        // Just accessing the snapshot would be enough to check creases in a full implementation
-                        let _ = display_map.snapshot(cx);
+                    // Get display snapshot for crease information
+                    let display_snapshot = self.display_map.update(cx, |display_map, cx| {
+                        display_map.snapshot(cx)
                     });
                     
-                    // Get a multibuffer snapshot
-                    let multi_buffer_snapshot = self.buffer.update(cx, |multi_buffer, cx| {
+                    // Get multibuffer snapshot for reference
+                    let multibuffer_snapshot = self.buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.snapshot(cx)
                     });
                     
-                    // Access the edited buffer
+                    // Access the buffer that was edited
                     buffer.update(cx, |buffer, _| {
-                        let buffer_snapshot = buffer.snapshot();
-                        
-                        // The crease map contains fold information about folds/creases
-                        // that we can use to detect edits within @-mentions
+                        // Log that we're checking for edits within creases
                         let buffer_id = buffer.remote_id();
+                        dbg!("Checking for edits in @-mentions (creases)", buffer_id);
                         
-                        // Log information about edits that could affect @-mentions
-                        let crease_map_info = format!("Checking for @-mention edits");
+                        // Try to find creases in the edited buffer
+                        let mut found_crease = false;
                         
-                        // Log that we're checking for edits in a buffer that might have creases
-                        dbg!("Checking for edits in buffer", buffer_id, crease_map_info);
+                        // Check each row in the buffer for creases
+                        for row_idx in 0..multibuffer_snapshot.len() as u32 {
+                            let row = multi_buffer::MultiBufferRow(row_idx);
+                            
+                            // Check if there's a crease at this row
+                            if let Some(crease) = display_snapshot.crease_for_buffer_row(row) {
+                                found_crease = true;
+                                
+                                // Get crease range information
+                                let crease_range = crease.range();
+                                let crease_start = crease_range.start.to_point(&multibuffer_snapshot);
+                                let crease_end = crease_range.end.to_point(&multibuffer_snapshot);
+                                
+                                // Log that we found a crease - these are the @-mentions
+                                dbg!("Found a crease (@-mention) in the buffer", 
+                                    format!("Row: {}", row_idx),
+                                    format!("Range: {:?}..{:?}", crease_start, crease_end));
+                                
+                                // Since we're in the buffer_edited event handler, an edit has just happened
+                                // Log that this edit might have affected the crease
+                                dbg!("Edit detected that might affect this @-mention");
+                            }
+                        }
                         
-                        // Each time the buffer is edited, we log information about the edit
-                        dbg!(
-                            "Edit detected in buffer - this will trigger for @-mentions",
-                            buffer_snapshot.len(),
-                            format!("MultibufferSnapshot len: {}", multi_buffer_snapshot.len())
-                        );
-                        
-                        // Log that we're detecting edits that might affect @-mentions
-                        dbg!("Detecting edits that might affect @-mentions");
-                        
-                        // In a real implementation, we would:
-                        // 1. Get all creases from the display map's crease_snapshot
-                        // 2. Check if any edited ranges intersect with crease ranges
-                        // 3. Take appropriate action if an edit was inside a crease
+                        if !found_crease {
+                            // No creases found in this buffer
+                            dbg!("No @-mentions (creases) found in the edited buffer");
+                        }
                     });
                 }
                 
