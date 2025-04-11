@@ -38,4 +38,5 @@ workspace-hack.workspace = true
 windows.workspace = true
 
 [dev-dependencies]
+itertools.workspace = true
 rand.workspace = true
