@@ -194,10 +194,12 @@ impl AssistantPanel {
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
             let tools = Arc::new(ToolWorkingSet::default());
-            let thread_store = workspace.update(cx, |workspace, cx| {
-                let project = workspace.project().clone();
-                ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
-            })??;
+            let thread_store = workspace
+                .update(cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    ThreadStore::load(project, tools.clone(), prompt_builder.clone(), cx)
+                })?
+                .await;
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             let context_store = workspace

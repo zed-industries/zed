@@ -69,7 +69,7 @@ pub enum AssistantProviderContentV1 {
     },
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct AssistantSettings {
     pub enabled: bool,
     pub button: bool,

@@ -19,7 +19,6 @@ test-support = [
 ]
 
 [dependencies]
-agent_rules.workspace = true
 anyhow.workspace = true
 assistant_context_editor.workspace = true
 assistant_settings.workspace = true
@@ -81,6 +80,7 @@ terminal.workspace = true
 terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
+thiserror.workspace = true
 time.workspace = true
 time_format.workspace = true
 ui.workspace = true
