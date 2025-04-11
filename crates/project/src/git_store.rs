@@ -3796,12 +3796,6 @@ impl Repository {
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &mut Context<Self>,
     ) {
-        self.paths_changed(
-            vec![git::repository::WORK_DIRECTORY_REPO_PATH.clone()],
-            updates_tx.clone(),
-            cx,
-        );
-
         let this = cx.weak_entity();
         let _ = self.send_keyed_job(
             Some(GitJobKey::ReloadGitState),
