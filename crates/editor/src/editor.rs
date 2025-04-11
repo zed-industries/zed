@@ -11549,16 +11549,15 @@ impl Editor {
             selections.clear();
             let mut stack = Vec::new();
             for row in range.start.row().0..=range.end.row().0 {
-                if let Some(selection) = self.selections.build_columnar_selection(
+                let selection = self.selections.build_columnar_selection(
                     &display_map,
                     DisplayRow(row),
                     &positions,
                     oldest_selection.reversed,
                     &text_layout_details,
-                ) {
-                    stack.push(selection.id);
-                    selections.push(selection);
-                }
+                );
+                stack.push(selection.id);
+                selections.push(selection);
             }
 
             if above {
@@ -11600,24 +11599,23 @@ impl Editor {
                             row.0 += 1;
                         }
 
-                        if let Some(new_selection) = self.selections.build_columnar_selection(
+                        let new_selection = self.selections.build_columnar_selection(
                             &display_map,
                             row,
                             &positions,
                             selection.reversed,
                             &text_layout_details,
-                        ) {
-                            state.stack.push(new_selection.id);
-                            if above {
-                                new_selections.push(new_selection);
-                                new_selections.push(selection);
-                            } else {
-                                new_selections.push(selection);
-                                new_selections.push(new_selection);
-                            }
-
-                            continue 'outer;
+                        );
+                        state.stack.push(new_selection.id);
+                        if above {
+                            new_selections.push(new_selection);
+                            new_selections.push(selection);
+                        } else {
+                            new_selections.push(selection);
+                            new_selections.push(new_selection);
                         }
+
+                        continue 'outer;
                     }
                 }
 
