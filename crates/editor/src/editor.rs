@@ -18853,143 +18853,158 @@ fn snippet_completions(
     buffer_position: text::Anchor,
     cx: &mut App,
 ) -> Task<Result<Vec<Completion>>> {
-    let language = buffer.read(cx).language_at(buffer_position);
-    let language_name = language.as_ref().map(|language| language.lsp_id());
+    let languages = buffer.read(cx).languages_at(buffer_position);
     let snippet_store = project.snippets().read(cx);
-    let snippets = snippet_store.snippets_for(language_name, cx);
 
-    if snippets.is_empty() {
+    let scopes: Vec<_> = languages
+        .iter()
+        .filter_map(|language| {
+            let language_name = language.lsp_id();
+            let snippets = snippet_store.snippets_for(Some(language_name), cx);
+
+            if snippets.is_empty() {
+                None
+            } else {
+                Some((language.default_scope(), snippets))
+            }
+        })
+        .collect();
+
+    if scopes.is_empty() {
         return Task::ready(Ok(vec![]));
     }
+
     let snapshot = buffer.read(cx).text_snapshot();
     let chars: String = snapshot
         .reversed_chars_for_range(text::Anchor::MIN..buffer_position)
         .collect();
-
-    let scope = language.map(|language| language.default_scope());
     let executor = cx.background_executor().clone();
 
     cx.background_spawn(async move {
-        let classifier = CharClassifier::new(scope).for_completion(true);
-        let mut last_word = chars
-            .chars()
-            .take_while(|c| classifier.is_word(*c))
-            .collect::<String>();
-        last_word = last_word.chars().rev().collect();
+        let mut all_results: Vec<Completion> = Vec::new();
+        for (scope, snippets) in scopes.into_iter() {
+            let classifier = CharClassifier::new(Some(scope)).for_completion(true);
+            let mut last_word = chars
+                .chars()
+                .take_while(|c| classifier.is_word(*c))
+                .collect::<String>();
+            last_word = last_word.chars().rev().collect();
 
-        if last_word.is_empty() {
-            return Ok(vec![]);
-        }
+            if last_word.is_empty() {
+                return Ok(vec![]);
+            }
 
-        let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
-        let to_lsp = |point: &text::Anchor| {
-            let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
-            point_to_lsp(end)
-        };
-        let lsp_end = to_lsp(&buffer_position);
+            let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
+            let to_lsp = |point: &text::Anchor| {
+                let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
+                point_to_lsp(end)
+            };
+            let lsp_end = to_lsp(&buffer_position);
 
-        let candidates = snippets
-            .iter()
-            .enumerate()
-            .flat_map(|(ix, snippet)| {
-                snippet
-                    .prefix
-                    .iter()
-                    .map(move |prefix| StringMatchCandidate::new(ix, &prefix))
-            })
-            .collect::<Vec<StringMatchCandidate>>();
-
-        let mut matches = fuzzy::match_strings(
-            &candidates,
-            &last_word,
-            last_word.chars().any(|c| c.is_uppercase()),
-            100,
-            &Default::default(),
-            executor,
-        )
-        .await;
-
-        // Remove all candidates where the query's start does not match the start of any word in the candidate
-        if let Some(query_start) = last_word.chars().next() {
-            matches.retain(|string_match| {
-                split_words(&string_match.string).any(|word| {
-                    // Check that the first codepoint of the word as lowercase matches the first
-                    // codepoint of the query as lowercase
-                    word.chars()
-                        .flat_map(|codepoint| codepoint.to_lowercase())
-                        .zip(query_start.to_lowercase())
-                        .all(|(word_cp, query_cp)| word_cp == query_cp)
+            let candidates = snippets
+                .iter()
+                .enumerate()
+                .flat_map(|(ix, snippet)| {
+                    snippet
+                        .prefix
+                        .iter()
+                        .map(move |prefix| StringMatchCandidate::new(ix, &prefix))
                 })
-            });
-        }
+                .collect::<Vec<StringMatchCandidate>>();
 
-        let matched_strings = matches
-            .into_iter()
-            .map(|m| m.string)
-            .collect::<HashSet<_>>();
+            let mut matches = fuzzy::match_strings(
+                &candidates,
+                &last_word,
+                last_word.chars().any(|c| c.is_uppercase()),
+                100,
+                &Default::default(),
+                executor.clone(),
+            )
+            .await;
 
-        let result: Vec<Completion> = snippets
-            .into_iter()
-            .filter_map(|snippet| {
-                let matching_prefix = snippet
-                    .prefix
-                    .iter()
-                    .find(|prefix| matched_strings.contains(*prefix))?;
-                let start = as_offset - last_word.len();
-                let start = snapshot.anchor_before(start);
-                let range = start..buffer_position;
-                let lsp_start = to_lsp(&start);
-                let lsp_range = lsp::Range {
-                    start: lsp_start,
-                    end: lsp_end,
-                };
-                Some(Completion {
-                    replace_range: range,
-                    new_text: snippet.body.clone(),
-                    source: CompletionSource::Lsp {
-                        insert_range: None,
-                        server_id: LanguageServerId(usize::MAX),
-                        resolved: true,
-                        lsp_completion: Box::new(lsp::CompletionItem {
-                            label: snippet.prefix.first().unwrap().clone(),
-                            kind: Some(CompletionItemKind::SNIPPET),
-                            label_details: snippet.description.as_ref().map(|description| {
-                                lsp::CompletionItemLabelDetails {
-                                    detail: Some(description.clone()),
-                                    description: None,
-                                }
+            // Remove all candidates where the query's start does not match the start of any word in the candidate
+            if let Some(query_start) = last_word.chars().next() {
+                matches.retain(|string_match| {
+                    split_words(&string_match.string).any(|word| {
+                        // Check that the first codepoint of the word as lowercase matches the first
+                        // codepoint of the query as lowercase
+                        word.chars()
+                            .flat_map(|codepoint| codepoint.to_lowercase())
+                            .zip(query_start.to_lowercase())
+                            .all(|(word_cp, query_cp)| word_cp == query_cp)
+                    })
+                });
+            }
+
+            let matched_strings = matches
+                .into_iter()
+                .map(|m| m.string)
+                .collect::<HashSet<_>>();
+
+            let mut result: Vec<Completion> = snippets
+                .iter()
+                .filter_map(|snippet| {
+                    let matching_prefix = snippet
+                        .prefix
+                        .iter()
+                        .find(|prefix| matched_strings.contains(*prefix))?;
+                    let start = as_offset - last_word.len();
+                    let start = snapshot.anchor_before(start);
+                    let range = start..buffer_position;
+                    let lsp_start = to_lsp(&start);
+                    let lsp_range = lsp::Range {
+                        start: lsp_start,
+                        end: lsp_end,
+                    };
+                    Some(Completion {
+                        replace_range: range,
+                        new_text: snippet.body.clone(),
+                        source: CompletionSource::Lsp {
+                            insert_range: None,
+                            server_id: LanguageServerId(usize::MAX),
+                            resolved: true,
+                            lsp_completion: Box::new(lsp::CompletionItem {
+                                label: snippet.prefix.first().unwrap().clone(),
+                                kind: Some(CompletionItemKind::SNIPPET),
+                                label_details: snippet.description.as_ref().map(|description| {
+                                    lsp::CompletionItemLabelDetails {
+                                        detail: Some(description.clone()),
+                                        description: None,
+                                    }
+                                }),
+                                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                                text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                    lsp::InsertReplaceEdit {
+                                        new_text: snippet.body.clone(),
+                                        insert: lsp_range,
+                                        replace: lsp_range,
+                                    },
+                                )),
+                                filter_text: Some(snippet.body.clone()),
+                                sort_text: Some(char::MAX.to_string()),
+                                ..lsp::CompletionItem::default()
                             }),
-                            insert_text_format: Some(InsertTextFormat::SNIPPET),
-                            text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                lsp::InsertReplaceEdit {
-                                    new_text: snippet.body.clone(),
-                                    insert: lsp_range,
-                                    replace: lsp_range,
-                                },
-                            )),
-                            filter_text: Some(snippet.body.clone()),
-                            sort_text: Some(char::MAX.to_string()),
-                            ..lsp::CompletionItem::default()
+                            lsp_defaults: None,
+                        },
+                        label: CodeLabel {
+                            text: matching_prefix.clone(),
+                            runs: Vec::new(),
+                            filter_range: 0..matching_prefix.len(),
+                        },
+                        icon_path: None,
+                        documentation: snippet.description.clone().map(|description| {
+                            CompletionDocumentation::SingleLine(description.into())
                         }),
-                        lsp_defaults: None,
-                    },
-                    label: CodeLabel {
-                        text: matching_prefix.clone(),
-                        runs: Vec::new(),
-                        filter_range: 0..matching_prefix.len(),
-                    },
-                    icon_path: None,
-                    documentation: snippet
-                        .description
-                        .clone()
-                        .map(|description| CompletionDocumentation::SingleLine(description.into())),
-                    insert_text_mode: None,
-                    confirm: None,
+                        insert_text_mode: None,
+                        confirm: None,
+                    })
                 })
-            })
-            .collect();
+                .collect();
 
-        Ok(result)
+            all_results.append(&mut result);
+        }
+
+        Ok(all_results)
     })
 }
 
