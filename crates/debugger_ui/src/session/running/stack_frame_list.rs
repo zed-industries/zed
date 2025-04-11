@@ -369,7 +369,6 @@ impl StackFrameList {
                     .child(
                         Label::new(stack_frame.name.clone())
                             .size(LabelSize::Small)
-                            .line_height_style(LineHeightStyle::UiLabel)
                             .truncate()
                             .when(should_deemphasize, |this| this.color(Color::Muted)),
                     )
