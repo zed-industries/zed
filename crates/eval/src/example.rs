@@ -34,8 +34,8 @@ pub struct Example {
     /// Content of the prompt.md file
     pub prompt: String,
 
-    /// Content of the rubric.md file
-    pub _rubric: String,
+    /// Content of the criteria.md file
+    pub criteria: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -46,17 +46,23 @@ pub struct RunOutput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeInput {
+    pub repository_diff: String,
+    pub criteria: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeOutput {
     pub analysis: String,
     pub score: u32,
 }
 
 impl Example {
-    /// Load an example from a directory containing base.toml, prompt.md, and rubric.md
+    /// Load an example from a directory containing base.toml, prompt.md, and criteria.md
     pub fn load_from_directory<P: AsRef<Path>>(dir_path: P) -> Result<Self> {
         let base_path = dir_path.as_ref().join("base.toml");
         let prompt_path = dir_path.as_ref().join("prompt.md");
-        let rubric_path = dir_path.as_ref().join("rubric.md");
+        let criteria_path = dir_path.as_ref().join("criteria.md");
 
         let mut base: ExampleBase = toml::from_str(&fs::read_to_string(&base_path)?)?;
         base.path = base.path.canonicalize()?;
@@ -64,7 +70,7 @@ impl Example {
         Ok(Example {
             base,
             prompt: fs::read_to_string(prompt_path)?,
-            _rubric: fs::read_to_string(rubric_path)?,
+            criteria: fs::read_to_string(criteria_path)?,
         })
     }
 
@@ -209,10 +215,9 @@ impl Example {
         handlebars.register_template_string(judge_prompt_name, judge_prompt)?;
         let prompt = handlebars.render(
             judge_prompt_name,
-            &RunOutput {
+            &JudgeInput {
                 repository_diff,
-                response_count: 0,
-                token_usage: TokenUsage::default(),
+                criteria: self.criteria.clone(),
             },
         )?;
 
@@ -222,10 +227,12 @@ impl Example {
                 content: vec![MessageContent::Text(prompt)],
                 cache: false,
             }],
-            temperature: Some(0.0),
+            temperature: None,
             tools: Vec::new(),
             stop: Vec::new(),
         };
+
+        dbg!(&request);
 
         let response = send_language_model_request(model, request, cx).await?;
         let mut lines = response.trim().lines();
@@ -247,19 +254,8 @@ impl Example {
     }
 
     pub async fn repository_diff(&self) -> Result<String> {
-        let staged_diff = run_git(&self.base.path, &["diff", "--staged"]).await?;
-        let unstaged_diff = run_git(&self.base.path, &["diff"]).await?;
-        let combined_diff = if unstaged_diff.is_empty() {
-            staged_diff
-        } else if staged_diff.is_empty() {
-            unstaged_diff
-        } else {
-            format!(
-                "# Staged changes\n{}\n\n# Unstaged changes\n{}",
-                staged_diff, unstaged_diff
-            )
-        };
-        Ok(combined_diff)
+        run_git(&self.base.path, &["add", "-N"]).await?;
+        run_git(&self.base.path, &["diff"]).await
     }
 }
 
@@ -293,6 +289,7 @@ pub async fn send_language_model_request(
             while let Some(chunk_result) = stream.stream.next().await {
                 match chunk_result {
                     Ok(chunk_str) => {
+                        print!("{}", &chunk_str);
                         full_response.push_str(&chunk_str);
                     }
                     Err(err) => {
