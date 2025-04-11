@@ -10,6 +10,7 @@ use smol::{
     Async,
     io::{AsyncRead, AsyncWrite},
 };
+use stream::WindowsStream;
 
 mod listener;
 mod socket;
@@ -30,6 +31,12 @@ impl UnixListener {
 }
 
 pub struct UnixStream(Async<stream::WindowsStream>);
+
+impl UnixStream {
+    pub fn connect(path: &Path) -> Result<Self> {
+        Ok(UnixStream(Async::new(WindowsStream::connect(path)?)?))
+    }
+}
 
 impl AsyncRead for UnixStream {
     fn poll_read(
@@ -63,36 +70,85 @@ impl AsyncWrite for UnixStream {
 mod tests {
     use std::io::{Read, Write};
 
-    use crate::{WindowsListener, stream::WindowsStream};
+    use smol::io::{AsyncReadExt, AsyncWriteExt};
+
+    use crate::{UnixListener, UnixStream, WindowsListener, stream::WindowsStream};
+
+    const SERVER_MESSAGE: &str = "Connection closed";
+    const CLIENT_MESSAGE: &str = "Hello, server!";
+    const BUFFER_SIZE: usize = 32;
 
     #[test]
     fn test_windows_listener() -> std::io::Result<()> {
         let temp = tempfile::tempdir()?;
         let socket = temp.path().join("socket.sock");
         let listener = WindowsListener::bind(&socket)?;
-        println!("Listener bound to {:?}", socket);
+
         // Server
         let server = std::thread::spawn(move || {
             let mut stream = listener.accept().unwrap();
-            let mut buffer = [0; 32];
+
+            // Read data from the client
+            let mut buffer = [0; BUFFER_SIZE];
             let bytes_read = stream.read(&mut buffer).unwrap();
             let string = String::from_utf8_lossy(&buffer[..bytes_read]);
-            println!("Server received: {}<-", string);
+            assert_eq!(string, CLIENT_MESSAGE);
 
-            stream.write_all(b"Connection closed").unwrap();
-            println!("Server sent: Connection closed.");
+            // Send a message back to the client
+            stream.write_all(SERVER_MESSAGE.as_bytes()).unwrap();
         });
 
+        // Client
         let mut client = WindowsStream::connect(&socket)?;
-        client.write_all(b"Hello, server!")?;
-        println!("Client sent: Hello, server!");
-        let mut buffer = [0; 32];
+
+        // Send data to the server
+        client.write_all(CLIENT_MESSAGE.as_bytes())?;
+        let mut buffer = [0; BUFFER_SIZE];
+
+        // Read the response from the server
         let bytes_read = client.read(&mut buffer)?;
         let string = String::from_utf8_lossy(&buffer[..bytes_read]);
-        println!("Client received: {}<-", string);
+        assert_eq!(string, SERVER_MESSAGE);
         client.flush()?;
 
         server.join().unwrap();
         Ok(())
+    }
+
+    #[test]
+    fn test_unix_listener() -> std::io::Result<()> {
+        smol::block_on(async {
+            let temp = tempfile::tempdir()?;
+            let socket = temp.path().join("socket.sock");
+            let listener = UnixListener::bind(&socket)?;
+
+            // Server
+            let server = smol::spawn(async move {
+                let mut stream = listener.accept().await.unwrap();
+
+                // Read data from the client
+                let mut buffer = [0; BUFFER_SIZE];
+                let bytes_read = stream.read(&mut buffer).await.unwrap();
+                let string = String::from_utf8_lossy(&buffer[..bytes_read]);
+                assert_eq!(string, CLIENT_MESSAGE);
+
+                // Send a message back to the client
+                stream.write_all(SERVER_MESSAGE.as_bytes()).await.unwrap();
+            });
+
+            // Client
+            let mut client = UnixStream::connect(&socket)?;
+            client.write_all(CLIENT_MESSAGE.as_bytes()).await?;
+
+            // Read the response from the server
+            let mut buffer = [0; BUFFER_SIZE];
+            let bytes_read = client.read(&mut buffer).await?;
+            let string = String::from_utf8_lossy(&buffer[..bytes_read]);
+            assert_eq!(string, "Connection closed");
+            client.flush().await?;
+
+            server.await;
+            Ok(())
+        })
     }
 }
