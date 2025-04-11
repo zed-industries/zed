@@ -963,7 +963,15 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
             .boxed_clone(),
         )
     } else if query.starts_with("se ") || query.starts_with("set ") {
-        return VimOption::possible_commands(query.split_once(" ").unwrap().1);
+        let (prefix, option) = query.split_once(' ').unwrap();
+        let mut commands = VimOption::possible_commands(option);
+        if !commands.is_empty() {
+            let query = prefix.to_string() + " " + option;
+            for command in &mut commands {
+                command.positions = generate_positions(&command.string, &query);
+            }
+        }
+        return commands;
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
