@@ -381,8 +381,8 @@ impl KeyCode {
         if let Some(key) = Self::parse_immutable(input) {
             return Ok((key, Modifiers::none(), None));
         }
-        if let Some((code, modifers)) = keyboard_mapper.parse(input, char_matching) {
-            return Ok((code, modifers, keyboard_mapper.keycode_to_face(code)));
+        if let Some((code, modifiers)) = keyboard_mapper.parse(input, char_matching) {
+            return Ok((code, modifiers, keyboard_mapper.keycode_to_face(code)));
         }
         Err(anyhow::anyhow!(
             "Error parsing keystroke to keycode: {input}"

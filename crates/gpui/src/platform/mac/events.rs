@@ -316,12 +316,12 @@ fn parse_keystroke(native_event: id) -> Keystroke {
     let may_have_char = !control && !command && !function;
 
     if let Some((code, face, key_char)) = parse_immutable_keys(scan_code, may_have_char) {
-        return dbg!(Keystroke {
+        return Keystroke {
             modifiers,
             code,
             face,
             key_char,
-        });
+        };
     }
 
     let key = chars_for_modified_key(scan_code, NO_MOD);
@@ -339,12 +339,12 @@ fn parse_keystroke(native_event: id) -> Keystroke {
         None
     };
 
-    dbg!(Keystroke {
+    Keystroke {
         modifiers,
         code,
         face: key,
         key_char,
-    })
+    }
 }
 
 const NO_MOD: u32 = 0;

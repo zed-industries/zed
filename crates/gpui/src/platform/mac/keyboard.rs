@@ -14,7 +14,7 @@ pub(crate) struct MacKeyboardMapper {
     char_to_code: HashMap<String, (KeyCode, Modifiers)>,
     code_to_char: HashMap<KeyCode, String>,
     code_to_char_with_shift: HashMap<KeyCode, String>,
-    manual_mappings: Option<HashMap<String, String>>,
+    key_equivalents: Option<HashMap<String, String>>,
 }
 
 impl MacKeyboardMapperManager {
@@ -56,7 +56,7 @@ impl MacKeyboardMapper {
             );
         }
         insert_letters_if_missing(&mut char_to_code);
-        let manual_mappings = get_mannual_mappings(layout);
+        let key_equivalents = get_mannual_mappings(layout);
         let elapsed = start.elapsed();
         println!(
             "MacKeyboardMapper::new() took {}ms or {}us",
@@ -68,7 +68,7 @@ impl MacKeyboardMapper {
             char_to_code,
             code_to_char,
             code_to_char_with_shift,
-            manual_mappings,
+            key_equivalents,
         }
     }
 }
@@ -76,7 +76,7 @@ impl MacKeyboardMapper {
 impl KeyboardMapper for MacKeyboardMapper {
     fn parse(&self, input: &str, char_matching: bool) -> Option<(KeyCode, Modifiers)> {
         let lookup_key = if !char_matching {
-            self.manual_mappings
+            self.key_equivalents
                 .as_ref()
                 .and_then(|mapper| mapper.get(input))
                 .map(String::as_str)
