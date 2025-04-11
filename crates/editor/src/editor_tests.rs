@@ -9949,6 +9949,9 @@ async fn test_completion_replacing_suffix_in_multicursors(cx: &mut TestAppContex
         6. ˇsuffix
         7. let ˇ //
         8. aaˇzz
+        9. buf.to_off«zzzzzˇ»suffix
+        10. buf.«ˇzzzzz»suffix
+        11. to_off«ˇzzzzz»
 
         buf.to_offˇsuffix  // newest cursor
     "};
@@ -9961,6 +9964,9 @@ async fn test_completion_replacing_suffix_in_multicursors(cx: &mut TestAppContex
         6. suffix
         7. let  //
         8. aazz
+        9. buf.to_offzzzzzsuffix
+        10. buf.zzzzzsuffix
+        11. to_offzzzzz
 
         buf.<to_off|suffix>  // newest cursor
     "};
@@ -9974,6 +9980,9 @@ async fn test_completion_replacing_suffix_in_multicursors(cx: &mut TestAppContex
         6. to_offsetˇsuffix
         7. let to_offsetˇ //
         8. aato_offsetˇzz
+        9. buf.to_offsetˇ
+        10. buf.to_offsetˇsuffix
+        11. to_offsetˇ
 
         buf.to_offsetˇ  // newest cursor
     "};
