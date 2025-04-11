@@ -32,8 +32,8 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AgentDiff, Chat, ChatMode, NewThread, OpenAgentDiff, RemoveAllContext, ThreadEvent,
-    ToggleContextPicker, ToggleProfileSelector,
+    AgentDiff, Chat, ChatMode, NewThread, OpenAgentDiff, RemoveAllContext, ToggleContextPicker,
+    ToggleProfileSelector,
 };
 
 pub struct MessageEditor {
@@ -235,8 +235,6 @@ impl MessageEditor {
         let refresh_task =
             refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
 
-        let system_prompt_context_task = self.thread.read(cx).load_system_prompt_context(cx);
-
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
         let git_store = self.project.read(cx).git_store().clone();
@@ -245,16 +243,6 @@ impl MessageEditor {
         cx.spawn(async move |this, cx| {
             let checkpoint = checkpoint.await.ok();
             refresh_task.await;
-            let (system_prompt_context, load_error) = system_prompt_context_task.await;
-
-            thread
-                .update(cx, |thread, cx| {
-                    thread.set_system_prompt_context(system_prompt_context);
-                    if let Some(load_error) = load_error {
-                        cx.emit(ThreadEvent::ShowError(load_error));
-                    }
-                })
-                .log_err();
 
             thread
                 .update(cx, |thread, cx| {

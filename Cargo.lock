@@ -52,7 +52,6 @@ dependencies = [
 name = "agent"
 version = "0.1.0"
 dependencies = [
- "agent_rules",
  "anyhow",
  "assistant_context_editor",
  "assistant_settings",
@@ -116,6 +115,7 @@ dependencies = [
  "terminal_view",
  "text",
  "theme",
+ "thiserror 2.0.12",
  "time",
  "time_format",
  "ui",
@@ -125,57 +125,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "agent_eval"
-version = "0.1.0"
-dependencies = [
- "agent",
- "anyhow",
- "assistant_tool",
- "assistant_tools",
- "clap",
- "client",
- "collections",
- "context_server",
- "dap",
- "env_logger 0.11.8",
- "fs",
- "futures 0.3.31",
- "gpui",
- "gpui_tokio",
- "language",
- "language_model",
- "language_models",
- "node_runtime",
- "project",
- "prompt_store",
- "release_channel",
- "reqwest_client",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "settings",
- "smol",
- "tempfile",
- "util",
- "walkdir",
- "workspace-hack",
-]
-
-[[package]]
-name = "agent_rules"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "fs",
- "gpui",
- "indoc",
- "prompt_store",
- "util",
- "workspace-hack",
- "worktree",
 ]
 
 [[package]]
@@ -4910,14 +4859,15 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "anyhow",
+ "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "client",
- "collections",
  "context_server",
  "dap",
  "env_logger 0.11.8",
  "fs",
+ "futures 0.3.31",
  "gpui",
  "gpui_tokio",
  "language",
@@ -4930,7 +4880,6 @@ dependencies = [
  "reqwest_client",
  "serde",
  "settings",
- "smol",
  "toml 0.8.20",
  "workspace-hack",
 ]
