@@ -6638,7 +6638,7 @@ impl Element for EditorElement {
                                 }
                             };
 
-                            if editor.set_wrap_width(wrap_width, cx) {
+                            if editor.set_wrap_width(wrap_width.map(|w| w.ceil()), cx) {
                                 editor.snapshot(window, cx)
                             } else {
                                 snapshot

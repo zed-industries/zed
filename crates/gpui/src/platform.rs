@@ -584,11 +584,11 @@ impl PlatformTextSystem for NoopTextSystem {
         let mut position = px(0.);
         let metrics = self.font_metrics(FontId(0));
         let em_width = font_size
-            * (self
+            * self
                 .advance(FontId(0), self.glyph_for_char(FontId(0), 'm').unwrap())
                 .unwrap()
                 .width
-                / metrics.units_per_em as f32);
+            / metrics.units_per_em as f32;
         let mut glyphs = SmallVec::default();
         for (ix, c) in text.char_indices() {
             if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
