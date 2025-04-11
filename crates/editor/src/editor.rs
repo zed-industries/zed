@@ -6365,9 +6365,20 @@ impl Editor {
         breakpoint_display_points
     }
 
+    fn edit_breakpoint_context_menu(
+        &self,
+        anchor: Anchor,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ui::ContextMenu> {
+        todo!()
+    }
+
     fn basic_breakpoint_context_menu(
         &self,
         anchor: Anchor,
+        edit_menu_position: (Anchor, gpui::Point<Pixels>),
+        is_edit_menu: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ui::ContextMenu> {
@@ -6442,6 +6453,27 @@ impl Editor {
                     })
                     .separator()
                 })
+                .entry("edit breakpoint", None, {
+                    let weak_editor = weak_editor.clone();
+                    move |window, cx| {
+                        weak_editor
+                            .update(cx, |editor, cx| {
+                                let context_menu =
+                                    editor.edit_breakpoint_context_menu(anchor, window, cx);
+                                let (source, clicked_point) = edit_menu_position;
+
+                                editor.mouse_context_menu = MouseContextMenu::pinned_to_editor(
+                                    editor,
+                                    source,
+                                    clicked_point,
+                                    context_menu,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    }
+                })
                 .when(breakpoint_is_at_row, |this| {
                     let weak_editor = weak_editor.clone();
                     let breakpoint = breakpoint.clone();
@@ -6486,98 +6518,60 @@ impl Editor {
                         .into_any_element()
                     })
                 })
-                .entry(set_breakpoint_msg, None, {
-                    let weak_editor = weak_editor.clone();
-                    let breakpoint = breakpoint.clone();
-                    move |_window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.edit_breakpoint_at_anchor(
-                                    anchor,
-                                    breakpoint.as_ref().clone(),
-                                    BreakpointEditAction::Toggle,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                })
-                .custom_entry(
-                    {
-                        let log_editor = log_editor.clone();
-                        let breakpoint = breakpoint.clone();
+                .when(!breakpoint_is_at_row, |this| {
+                    this.entry(set_breakpoint_msg, None, {
                         let weak_editor = weak_editor.clone();
-
-                        move |window, cx| {
-                            let label = Label::new("Log message");
-                            let log_editor = log_editor.clone();
-                            let breakpoint = breakpoint.clone();
-                            let weak_editor = weak_editor.clone();
-
-                            h_flex()
-                                .p_1()
-                                .gap_1()
-                                .size_full()
-                                .child(label)
-                                .child(Editor::render_breakpoint_menu_editor(
-                                    &log_editor.clone(),
-                                    window,
-                                    cx,
-                                ))
-                                .on_action(move |_: &menu::Confirm, _, cx| {
-                                    let log_message = log_editor.read(cx).text(cx);
-
-                                    weak_editor
-                                        .update(cx, |this, cx| {
-                                            this.edit_breakpoint_at_anchor(
-                                                anchor,
-                                                breakpoint.as_ref().clone(),
-                                                BreakpointEditAction::EditLogMessage(
-                                                    log_message.into(),
-                                                ),
-                                                cx,
-                                            );
-
-                                            this.mouse_context_menu = None;
-                                        })
-                                        .ok();
-                                })
-                                .into_any_element()
-
-                            //     weak_editor
-                            //         .update(cx, |this, cx| {
-                            //             this.add_edit_breakpoint_block(
-                            //                 anchor,
-                            //                 breakpoint.as_ref(),
-                            //                 BreakpointPromptEditAction::Log,
-                            //                 window,
-                            //                 cx,
-                            //             );
-                            //         })
-                            //         .log_err();
-                        }
-                    },
-                    {
                         let breakpoint = breakpoint.clone();
-                        let weak_editor = weak_editor.clone();
-                        let log_editor = log_editor.clone();
-
-                        move |_, cx| {
-                            let log_message = log_editor.read(cx).text(cx);
-
+                        move |_window, cx| {
                             weak_editor
                                 .update(cx, |this, cx| {
                                     this.edit_breakpoint_at_anchor(
                                         anchor,
                                         breakpoint.as_ref().clone(),
-                                        BreakpointEditAction::EditLogMessage(log_message.into()),
+                                        BreakpointEditAction::Toggle,
                                         cx,
                                     );
                                 })
-                                .ok();
+                                .log_err();
                         }
-                    },
-                )
+                    })
+                })
+                .when(is_edit_menu, |this| {
+                    this.custom_entry(
+                        {
+                            breakpoint_message_editor_element(
+                                anchor,
+                                breakpoint.clone(),
+                                BreakpointMessageKind::Log,
+                                log_editor.clone(),
+                                weak_editor.clone(),
+                            )
+                        },
+                        {
+                            let breakpoint = breakpoint.clone();
+                            let weak_editor = weak_editor.clone();
+                            let log_editor = log_editor.clone();
+
+                            move |_, cx| {
+                                let log_message = log_editor.read(cx).text(cx);
+
+                                weak_editor
+                                    .update(cx, |this, cx| {
+                                        this.edit_breakpoint_at_anchor(
+                                            anchor,
+                                            breakpoint.as_ref().clone(),
+                                            BreakpointEditAction::EditLogMessage(
+                                                log_message.into(),
+                                            ),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        },
+                    )
+                })
+
             // .entry(condition_breakpoint_msg, None, {
             //     let breakpoint = breakpoint.clone();
             //     let weak_editor = weak_editor.clone();
@@ -8887,8 +8881,13 @@ impl Editor {
             .snapshot(cx)
             .anchor_before(Point::new(display_row.0, 0u32));
 
-        let context_menu =
-            self.basic_breakpoint_context_menu(position.unwrap_or(source), window, cx);
+        let context_menu = self.basic_breakpoint_context_menu(
+            position.unwrap_or(source),
+            (source, clicked_point),
+            false,
+            window,
+            cx,
+        );
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
@@ -18132,6 +18131,58 @@ impl Editor {
         }
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
+    }
+}
+
+enum BreakpointMessageKind {
+    Log,
+    Conditional,
+    HitConditional,
+}
+
+fn breakpoint_message_editor_element(
+    anchor: Anchor,
+    breakpoint: Arc<Breakpoint>,
+    message_kind: BreakpointMessageKind,
+    message_editor: Entity<Editor>,
+    weak_editor: WeakEntity<Editor>,
+) -> impl Fn(&mut Window, &mut App) -> AnyElement {
+    let log_editor = message_editor.clone();
+    let breakpoint = breakpoint.clone();
+    let weak_editor = weak_editor.clone();
+
+    move |window, cx| {
+        let label = Label::new("Log message");
+        let log_editor = log_editor.clone();
+        let breakpoint = breakpoint.clone();
+        let weak_editor = weak_editor.clone();
+
+        h_flex()
+            .gap_1()
+            .size_full()
+            .child(label)
+            .child(Editor::render_breakpoint_menu_editor(
+                &log_editor.clone(),
+                window,
+                cx,
+            ))
+            .on_action(move |_: &menu::Confirm, _, cx| {
+                let log_message = log_editor.read(cx).text(cx);
+
+                weak_editor
+                    .update(cx, |this, cx| {
+                        this.edit_breakpoint_at_anchor(
+                            anchor,
+                            breakpoint.as_ref().clone(),
+                            BreakpointEditAction::EditLogMessage(log_message.into()),
+                            cx,
+                        );
+
+                        this.mouse_context_menu = None;
+                    })
+                    .ok();
+            })
+            .into_any_element()
     }
 }
 
