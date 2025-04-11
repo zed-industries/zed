@@ -3796,12 +3796,6 @@ impl Repository {
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &mut Context<Self>,
     ) {
-        self.paths_changed(
-            vec![git::repository::WORK_DIRECTORY_REPO_PATH.clone()],
-            updates_tx.clone(),
-            cx,
-        );
-
         let this = cx.weak_entity();
         let _ = self.send_keyed_job(
             Some(GitJobKey::ReloadGitState),
@@ -4054,7 +4048,7 @@ impl Repository {
                         for (repo_path, status) in &*statuses.entries {
                             changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
-                                if &cursor.item().unwrap().status == status {
+                                if cursor.item().is_some_and(|entry| entry.status == *status) {
                                     continue;
                                 }
                             }

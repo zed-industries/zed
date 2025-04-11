@@ -18,7 +18,8 @@ use crate::{
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
-        self, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT, hover_at,
+        self, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
+        POPOVER_RIGHT_OFFSET, hover_at,
     },
     inlay_hint_settings,
     items::BufferSearchHighlights,
@@ -3958,7 +3959,8 @@ impl EditorElement {
         for mut hover_popover in hover_popovers {
             let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
             let horizontal_offset =
-                (text_hitbox.top_right().x - (hovered_point.x + size.width)).min(Pixels::ZERO);
+                (text_hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
+                    .min(Pixels::ZERO);
 
             overall_height += HOVER_POPOVER_GAP + size.height;
 
@@ -4110,6 +4112,7 @@ impl EditorElement {
     fn layout_signature_help(
         &self,
         hitbox: &Hitbox,
+        text_hitbox: &Hitbox,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
         newest_selection_head: Option<DisplayPoint>,
@@ -4126,20 +4129,6 @@ impl EditorElement {
         let Some(newest_selection_head) = newest_selection_head else {
             return;
         };
-        let selection_row = newest_selection_head.row();
-        if selection_row < start_row {
-            return;
-        }
-        let Some(cursor_row_layout) = line_layouts.get(selection_row.minus(start_row) as usize)
-        else {
-            return;
-        };
-
-        let start_x = cursor_row_layout.x_for_index(newest_selection_head.column() as usize)
-            - scroll_pixel_position.x
-            + content_origin.x;
-        let start_y =
-            selection_row.as_f32() * line_height + content_origin.y - scroll_pixel_position.y;
 
         let max_size = size(
             (120. * em_width) // Default size
@@ -4158,18 +4147,42 @@ impl EditorElement {
                 None
             }
         });
-        if let Some(mut element) = maybe_element {
-            let window_size = window.viewport_size();
-            let size = element.layout_as_root(Size::<AvailableSpace>::default(), window, cx);
-            let mut point = point(start_x, start_y - size.height);
+        let Some(mut element) = maybe_element else {
+            return;
+        };
 
-            // Adjusting to ensure the popover does not overflow in the X-axis direction.
-            if point.x + size.width >= window_size.width {
-                point.x = window_size.width - size.width;
-            }
+        let selection_row = newest_selection_head.row();
+        let Some(cursor_row_layout) = (selection_row >= start_row)
+            .then(|| line_layouts.get(selection_row.minus(start_row) as usize))
+            .flatten()
+        else {
+            return;
+        };
 
-            window.defer_draw(element, point, 1)
-        }
+        let target_x = cursor_row_layout.x_for_index(newest_selection_head.column() as usize)
+            - scroll_pixel_position.x;
+        let target_y = selection_row.as_f32() * line_height - scroll_pixel_position.y;
+        let target_point = content_origin + point(target_x, target_y);
+
+        let actual_size = element.layout_as_root(max_size.into(), window, cx);
+        let overall_height = actual_size.height + HOVER_POPOVER_GAP;
+
+        let popover_origin = if target_point.y > overall_height {
+            point(target_point.x, target_point.y - actual_size.height)
+        } else {
+            point(
+                target_point.x,
+                target_point.y + line_height + HOVER_POPOVER_GAP,
+            )
+        };
+
+        let horizontal_offset = (text_hitbox.top_right().x
+            - POPOVER_RIGHT_OFFSET
+            - (popover_origin.x + actual_size.width))
+            .min(Pixels::ZERO);
+        let final_origin = point(popover_origin.x + horizontal_offset, popover_origin.y);
+
+        window.defer_draw(element, final_origin, 2);
     }
 
     fn paint_background(&self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
@@ -7415,6 +7428,7 @@ impl Element for EditorElement {
 
                     self.layout_signature_help(
                         &hitbox,
+                        &text_hitbox,
                         content_origin,
                         scroll_pixel_position,
                         newest_selection_head,

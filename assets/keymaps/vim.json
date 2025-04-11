@@ -203,6 +203,7 @@
       "c": "vim::PushChange",
       "shift-c": "vim::ChangeToEndOfLine",
       "d": "vim::PushDelete",
+      "delete": "vim::DeleteRight",
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "g shift-j": "vim::JoinLinesNoWhitespace",
@@ -538,6 +539,7 @@
     "bindings": {
       "d": "vim::CurrentLine",
       "s": "vim::PushDeleteSurrounds",
+      "v": "vim::PushForcedMotion", // "d v"
       "o": "editor::ToggleSelectedDiffHunks", // "d o"
       "shift-o": "git::ToggleStaged",
       "p": "git::Restore", // "d p"
@@ -586,6 +588,7 @@
     "context": "vim_operator == y",
     "bindings": {
       "y": "vim::CurrentLine",
+      "v": "vim::PushForcedMotion",
       "s": ["vim::PushAddSurrounds", {}]
     }
   },
