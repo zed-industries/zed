@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, WPARAM},
     UI::WindowsAndMessaging::PostMessageW,
@@ -25,12 +25,16 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
     retry_loop(hwnd, || {
         let zed_executable = app_dir.join("Zed.exe");
         log::info!("Removing old file: {}", zed_executable.display());
-        std::fs::remove_file(zed_executable)
+        std::fs::remove_file(&zed_executable).context(format!(
+            "Failed to remove old file {}",
+            zed_executable.display()
+        ))
     })?;
     retry_loop(hwnd, || {
         let zed_cli = app_dir.join("bin\\zed.exe");
         log::info!("Removing old file: {}", zed_cli.display());
-        std::fs::remove_file(zed_cli)
+        std::fs::remove_file(&zed_cli)
+            .context(format!("Failed to remove old file {}", zed_cli.display()))
     })?;
 
     // Copy new files
@@ -42,7 +46,11 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             zed_executable_source.display(),
             zed_executable_dest.display()
         );
-        std::fs::copy(zed_executable_source, zed_executable_dest)
+        std::fs::copy(&zed_executable_source, &zed_executable_dest).context(format!(
+            "Failed to copy new file {} to {}",
+            zed_executable_source.display(),
+            zed_executable_dest.display()
+        ))
     })?;
     retry_loop(hwnd, || {
         let zed_cli_source = app_dir.join("install\\bin\\zed.exe");
@@ -52,26 +60,36 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             zed_cli_source.display(),
             zed_cli_dest.display()
         );
-        std::fs::copy(zed_cli_source, zed_cli_dest)
+        std::fs::copy(&zed_cli_source, &zed_cli_dest).context(format!(
+            "Failed to copy new file {} to {}",
+            zed_cli_source.display(),
+            zed_cli_dest.display()
+        ))
     })?;
 
     // Post cleanup jobs
     retry_loop(hwnd, || {
         let updates_folder = app_dir.join("updates");
         log::info!("Cleaning up: {}", updates_folder.display());
-        std::fs::remove_dir_all(updates_folder)
+        std::fs::remove_dir_all(&updates_folder).context(format!(
+            "Failed to remove updates folder {}",
+            updates_folder.display()
+        ))
     })?;
     retry_loop(hwnd, || {
         let installer_folder = app_dir.join("install");
         log::info!("Cleaning up: {}", installer_folder.display());
-        std::fs::remove_dir_all(installer_folder)
+        std::fs::remove_dir_all(&installer_folder).context(format!(
+            "Failed to remove installer folder {}",
+            installer_folder.display()
+        ))
     })?;
 
     Ok(())
 }
 
 #[cfg(not(test))]
-fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Result<()> {
+fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> Result<R>) -> Result<()> {
     let start = Instant::now();
     while start.elapsed().as_secs() <= 2 {
         match f() {
@@ -79,13 +97,15 @@ fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Resu
                 unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
                 return Ok(());
             }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
+            Err(anyhow_err) => {
+                let io_err = anyhow_err.downcast_ref::<std::io::Error>().unwrap();
+                if io_err.kind() == std::io::ErrorKind::NotFound {
                     log::warn!("File or folder not found.");
                     unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
                     return Ok(());
                 } else {
-                    log::error!("Operation failed: {}", e);
+                    println!("Operation failed: {}", anyhow_err);
+                    log::error!("Operation failed: {}", anyhow_err);
                     // wait for a bit before retrying
                     std::thread::sleep(Duration::from_millis(10));
                 }
@@ -96,10 +116,10 @@ fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Resu
 }
 
 #[cfg(test)]
-fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Result<()> {
+fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> Result<R>) -> Result<()> {
     let start = Instant::now();
     while start.elapsed().as_secs() <= 2 {
-        let result = if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
+        let result: anyhow::Result<()> = if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
             match config.as_str() {
                 "err" => {
                     std::thread::sleep(Duration::from_millis(500));
@@ -107,6 +127,7 @@ fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Resu
                         std::io::ErrorKind::Other,
                         "Simulated error",
                     ))
+                    .context("Anyhow!")
                 }
                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
@@ -118,13 +139,14 @@ fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Resu
                 unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
                 return Ok(());
             }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
+            Err(anyhow_err) => {
+                let io_err = anyhow_err.downcast_ref::<std::io::Error>().unwrap();
+                if io_err.kind() == std::io::ErrorKind::NotFound {
                     log::warn!("File or folder not found.");
                     unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
                     return Ok(());
                 } else {
-                    log::error!("Operation failed: {}", e);
+                    log::error!("Operation failed: {}", anyhow_err);
                     // wait for a bit before retrying
                     std::thread::sleep(Duration::from_millis(10));
                 }
