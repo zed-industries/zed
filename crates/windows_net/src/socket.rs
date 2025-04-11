@@ -1,13 +1,10 @@
-use std::{
-    io::{Error, ErrorKind, Result},
-    path::Path,
-};
+use std::io::{Error, ErrorKind, Result};
 
 use windows::Win32::{
     Foundation::{HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS, SetHandleInformation},
     Networking::WinSock::{
-        ADDRESS_FAMILY, AF_UNIX, SEND_RECV_FLAGS, SOCK_STREAM, SOCKADDR, SOCKADDR_UN, SOCKET,
-        SOCKET_ERROR, WSA_FLAG_OVERLAPPED, WSASocketW, accept, closesocket, recv, send,
+        AF_UNIX, SEND_RECV_FLAGS, SOCK_STREAM, SOCKADDR, SOCKET, WSA_FLAG_OVERLAPPED,
+        WSAEWOULDBLOCK, WSASocketW, accept, closesocket, recv, send,
     },
 };
 
@@ -33,7 +30,17 @@ impl WindowsSocket {
     }
 
     pub(crate) fn accept(&self, storage: *mut SOCKADDR, len: &mut i32) -> Result<Self> {
-        Ok(Self(unsafe { accept(self.0, Some(storage), Some(len)) }?))
+        match unsafe { accept(self.0, Some(storage), Some(len)) } {
+            Ok(sock) => Ok(Self(sock)),
+            Err(err) => {
+                let wsa_err = unsafe { windows::Win32::Networking::WinSock::WSAGetLastError().0 };
+                if wsa_err == WSAEWOULDBLOCK.0 {
+                    Err(Error::new(ErrorKind::WouldBlock, "accept would block"))
+                } else {
+                    Err(err.into())
+                }
+            }
+        }
     }
 
     pub(crate) fn recv(&self, buf: &mut [u8]) -> Result<usize> {
