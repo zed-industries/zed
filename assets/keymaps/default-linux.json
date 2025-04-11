@@ -780,6 +780,7 @@
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "ctrl-enter": "git::Commit",
+      "ctrl-shift-enter": "git::Amend",
       "alt-enter": "menu::SecondaryConfirm",
       "delete": ["git::RestoreFile", { "skip_prompt": false }],
       "backspace": ["git::RestoreFile", { "skip_prompt": false }],
@@ -794,6 +795,7 @@
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
       "ctrl-enter": "git::Commit",
+      "ctrl-shift-enter": "git::Amend",
       "alt-l": "git::GenerateCommitMessage"
     }
   },
@@ -815,6 +817,7 @@
     "context": "GitDiff > Editor",
     "bindings": {
       "ctrl-enter": "git::Commit",
+      "ctrl-shift-enter": "git::Amend",
       "ctrl-space": "git::StageAll",
       "ctrl-shift-space": "git::UnstageAll"
     }
@@ -833,6 +836,7 @@
       "shift-tab": "git_panel::FocusChanges",
       "enter": "editor::Newline",
       "ctrl-enter": "git::Commit",
+      "ctrl-shift-enter": "git::Amend",
       "alt-up": "git_panel::FocusChanges",
       "alt-l": "git::GenerateCommitMessage"
     }
