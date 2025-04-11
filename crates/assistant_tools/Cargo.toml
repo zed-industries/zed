@@ -32,6 +32,7 @@ ui.workspace = true
 util.workspace = true
 worktree.workspace = true
 open = { workspace = true }
+web_search.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use crate::schema::json_schema_for;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, Entity, Task};
+use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
+use web_search::WebSearchRegistry;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchToolInput {
@@ -45,13 +46,27 @@ impl Tool for WebSearchTool {
 
     fn run(
         self: Arc<Self>,
-        _input: serde_json::Value,
+        input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Task<Result<String>> {
-        let text = "Did some googling".to_string();
-        Task::ready(Ok(text))
+        let input = match serde_json::from_value::<WebSearchToolInput>(input) {
+            Ok(input) => input,
+            Err(err) => return Task::ready(Err(anyhow!(err))),
+        };
+        let provider = WebSearchRegistry::read_global(cx)
+            .providers()
+            .next()
+            .unwrap()
+            .clone();
+
+        let search_task = provider.search(input.query, cx);
+        cx.background_spawn(async move {
+            let results = search_task.await?;
+            dbg!(&results);
+            Ok("Got results".to_string())
+        })
     }
 }

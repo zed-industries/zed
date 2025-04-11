@@ -722,6 +722,7 @@ dependencies = [
  "ui",
  "unindent",
  "util",
+ "web_search",
  "workspace",
  "workspace-hack",
  "worktree",
@@ -16553,6 +16554,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "web_search"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "gpui",
+ "workspace-hack",
+]
+
+[[package]]
+name = "web_search_providers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "gpui",
+ "web_search",
+ "workspace-hack",
+]
+
+[[package]]
 name = "webpki-root-certs"
 version = "0.26.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18228,6 +18252,8 @@ dependencies = [
  "uuid",
  "vim",
  "vim_mode_setting",
+ "web_search",
+ "web_search_providers",
  "welcome",
  "windows 0.61.1",
  "winresource",

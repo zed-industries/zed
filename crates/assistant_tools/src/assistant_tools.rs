@@ -21,7 +21,7 @@ mod schema;
 mod symbol_info_tool;
 mod terminal_tool;
 mod thinking_tool;
-mod websearch_tool;
+mod web_search_tool;
 
 use std::sync::Arc;
 
@@ -30,7 +30,7 @@ use copy_path_tool::CopyPathTool;
 use gpui::App;
 use http_client::HttpClientWithUrl;
 use move_path_tool::MovePathTool;
-use websearch_tool::WebSearchTool;
+use web_search_tool::WebSearchTool;
 
 use crate::batch_tool::BatchTool;
 use crate::code_action_tool::CodeActionTool;
