@@ -9424,24 +9424,25 @@ impl Editor {
         let buffer = &display_map.buffer_snapshot;
         let mut edits = Vec::new();
         if let Some(selection) = self.drag_selection.take() {
-            let start = selection.start;
-            let end = selection.end;
-            let text = buffer.text_for_range(start..end).collect::<String>();
+            let insert_point = display_map
+                .clip_point(point, Bias::Left)
+                .to_point(&display_map);
+            let text = buffer
+                .text_for_range(selection.start..selection.end)
+                .collect::<String>();
             if is_cut {
                 edits.push(((selection.start..selection.end), String::new()));
             }
-            let insert_position = display_map
-                .clip_point(point, Bias::Left)
-                .to_point(&display_map);
-            let insert_position = buffer.anchor_before(insert_position);
-            edits.push(((insert_position..insert_position), text));
+            let insert_anchor = buffer.anchor_before(insert_point.clone());
+            edits.push(((insert_anchor..insert_anchor), text));
+            let last_edit_start = insert_anchor.bias_left(buffer);
+            let last_edit_end = insert_anchor.bias_right(buffer);
             self.transact(window, cx, |this, window, cx| {
                 this.buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
-                let selections = this.selections.all::<usize>(cx);
                 this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select(selections);
+                    s.select_anchor_ranges([last_edit_start..last_edit_end]);
                 });
             });
         }
