@@ -617,7 +617,7 @@ fn confirm_completion_callback(
         let crease_icon_path = crease_icon_path.clone();
         let editor = editor.clone();
         window.defer(cx, move |window, cx| {
-            crate::context_picker::insert_crease_for_mention(
+            crate::context_picker::insert_fold_for_mention(
                 excerpt_id,
                 start,
                 content_len,

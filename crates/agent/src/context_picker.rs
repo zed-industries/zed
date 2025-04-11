@@ -509,7 +509,7 @@ fn recent_context_picker_entries(
     recent
 }
 
-pub(crate) fn insert_crease_for_mention(
+pub(crate) fn insert_fold_for_mention(
     excerpt_id: ExcerptId,
     crease_start: text::Anchor,
     content_len: usize,
@@ -535,6 +535,7 @@ pub(crate) fn insert_crease_for_mention(
                 crease_label,
                 editor_entity.downgrade(),
             ),
+            merge_adjacent: false,
             ..Default::default()
         };
 
@@ -548,8 +549,9 @@ pub(crate) fn insert_crease_for_mention(
             render_trailer,
         );
 
-        editor.insert_creases(vec![crease.clone()], cx);
-        editor.fold_creases(vec![crease], false, window, cx);
+        editor.display_map.update(cx, |display_map, cx| {
+            display_map.fold(vec![crease], cx);
+        });
     });
 }
 
