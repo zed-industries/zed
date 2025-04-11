@@ -4882,6 +4882,7 @@ dependencies = [
  "serde",
  "settings",
  "toml 0.8.20",
+ "unindent",
  "util",
  "workspace-hack",
 ]

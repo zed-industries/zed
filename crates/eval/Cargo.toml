@@ -18,6 +18,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
+handlebars.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
@@ -31,7 +32,9 @@ settings.workspace = true
 toml.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
-handlebars.workspace = true
+
+[dev-dependencies]
+unindent.workspace = true
 
 [[bin]]
 name = "eval"

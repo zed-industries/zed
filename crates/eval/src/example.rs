@@ -232,31 +232,75 @@ impl Example {
             stop: Vec::new(),
         };
 
-        dbg!(&request);
-
         let response = send_language_model_request(model, request, cx).await?;
-        let mut lines = response.trim().lines();
 
-        let score = lines
-            .next_back()
-            .context("error parsing score")?
-            .parse()
-            .context("error parsing score")?;
-
-        let mut analysis = String::new();
-        for line in lines {
-            analysis.push_str(line);
-            analysis.push('\n');
-        }
-        analysis.pop();
-
-        Ok(JudgeOutput { analysis, score })
+        Ok(parse_judge_output(&response)?)
     }
 
     pub async fn repository_diff(&self) -> Result<String> {
         run_git(&self.base.path, &["add", "-N"]).await?;
         run_git(&self.base.path, &["diff"]).await
     }
+}
+
+fn parse_judge_output(response: &str) -> Result<JudgeOutput> {
+    let analysis = get_tag("analysis", response)?.to_string();
+    let score = get_tag("score", response)?
+        .parse()
+        .context("error parsing score")?;
+
+    Ok(JudgeOutput { analysis, score })
+}
+
+fn get_tag<'a>(name: &'static str, response: &'a str) -> Result<&'a str> {
+    let start_tag = format!("<{}>", name);
+    let end_tag = format!("</{}>", name);
+
+    let start_ix = response
+        .find(&start_tag)
+        .context(format!("{} start tag not found", name))?;
+    let end_ix = response[start_ix..]
+        .find(&end_tag)
+        .context(format!("{} end tag not found", name))?;
+
+    let content_start_ix = start_ix + start_tag.len();
+    anyhow::Ok(&response[content_start_ix..end_ix].trim())
+}
+
+#[cfg(test)]
+#[test]
+fn test_parse_judge_output() {
+    use unindent::Unindent as _;
+
+    let response = r#"
+        <analysis>The model did a good job but there were still compilations errors.</analysis>
+        <score>3</score>
+    "#
+    .unindent();
+
+    let output = parse_judge_output(&response).unwrap();
+    assert_eq!(
+        output.analysis,
+        "The model did a good job but there were still compilations errors."
+    );
+    assert_eq!(output.score, 3);
+
+    let response = r#"
+        Text around ignored
+
+        <analysis>
+            Failed to compile:
+            - Error 1
+            - Error 2
+        </analysis>
+
+        <score>1</score>
+    "#
+    .unindent();
+
+    let output = parse_judge_output(&response).unwrap();
+    assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
+    assert_eq!(output.score, 1);
 }
 
 pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
