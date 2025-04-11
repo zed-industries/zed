@@ -177,7 +177,7 @@ impl MessageEditor {
         cx.notify();
     }
 
-    fn toggle_height(
+    fn expand_message_editor(
         &mut self,
         _: &ExpandMessageEditor,
         _window: &mut Window,
@@ -699,7 +699,7 @@ impl Render for MessageEditor {
                     .on_action(cx.listener(Self::remove_all_context))
                     .on_action(cx.listener(Self::move_up))
                     .on_action(cx.listener(Self::toggle_chat_mode))
-                    .on_action(cx.listener(Self::toggle_height))
+                    .on_action(cx.listener(Self::expand_message_editor))
                     .gap_2()
                     .p_2()
                     .bg(editor_bg_color)
