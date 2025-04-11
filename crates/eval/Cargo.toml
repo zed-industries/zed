@@ -29,7 +29,9 @@ reqwest_client.workspace = true
 serde.workspace = true
 settings.workspace = true
 toml.workspace = true
+util.workspace = true
 workspace-hack.workspace = true
+handlebars.workspace = true
 
 [[bin]]
 name = "eval"

@@ -4870,6 +4870,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
+ "handlebars 4.5.0",
  "language",
  "language_model",
  "language_models",
@@ -4881,6 +4882,7 @@ dependencies = [
  "serde",
  "settings",
  "toml 0.8.20",
+ "util",
  "workspace-hack",
 ]
 
