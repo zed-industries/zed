@@ -185,7 +185,7 @@ impl Markdown {
         &self.parsed_markdown
     }
 
-    pub fn escape<'a>(s: &'a str) -> Cow<'a, str> {
+    pub fn escape(s: &str) -> Cow<str> {
         let count = s.bytes().filter(|c| c.is_ascii_punctuation()).count();
         if count > 0 {
             let mut output = String::with_capacity(s.len() + count);
