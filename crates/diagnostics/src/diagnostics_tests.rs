@@ -62,7 +62,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
-    let uri = lsp::Url::parse("file:///test/main.rs").unwrap();
+    let uri = lsp::Url::from_file_path(path!("/test/main.rs")).unwrap();
 
     // Create some diagnostics
     lsp_store.update(cx, |lsp_store, cx| {
@@ -154,21 +154,22 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store.disk_based_diagnostics_started(language_server_id, cx);
         lsp_store
-            .update_diagnostic_entries(
+            .update_diagnostics(
                 language_server_id,
-                PathBuf::from(path!("/test/consts.rs")),
-                None,
-                vec![DiagnosticEntry {
-                    range: Unclipped(PointUtf16::new(0, 15))..Unclipped(PointUtf16::new(0, 15)),
-                    diagnostic: Diagnostic {
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/test/consts.rs")).unwrap(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 15),
+                            lsp::Position::new(0, 15),
+                        ),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
                         message: "mismatched types\nexpected `usize`, found `char`".to_string(),
-                        severity: DiagnosticSeverity::ERROR,
-                        is_primary: true,
-                        is_disk_based: true,
-                        group_id: 0,
                         ..Default::default()
-                    },
-                }],
+                    }],
+                    version: None,
+                },
+                &[],
                 cx,
             )
             .unwrap();
@@ -225,34 +226,33 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store.disk_based_diagnostics_started(language_server_id, cx);
         lsp_store
-            .update_diagnostic_entries(
+            .update_diagnostics(
                 language_server_id,
-                PathBuf::from(path!("/test/consts.rs")),
-                None,
-                vec![
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(0, 15))..Unclipped(PointUtf16::new(0, 15)),
-                        diagnostic: Diagnostic {
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/test/consts.rs")).unwrap(),
+                    diagnostics: vec![
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 15),
+                                lsp::Position::new(0, 15),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
                             message: "mismatched types\nexpected `usize`, found `char`".to_string(),
-                            severity: DiagnosticSeverity::ERROR,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 0,
                             ..Default::default()
                         },
-                    },
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(1, 15))..Unclipped(PointUtf16::new(1, 15)),
-                        diagnostic: Diagnostic {
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 15),
+                                lsp::Position::new(1, 15),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
                             message: "unresolved name `c`".to_string(),
-                            severity: DiagnosticSeverity::ERROR,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 1,
                             ..Default::default()
                         },
-                    },
-                ],
+                    ],
+                    version: None,
+                },
+                &[],
                 cx,
             )
             .unwrap();
@@ -335,21 +335,19 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store.disk_based_diagnostics_started(server_id_1, cx);
         lsp_store.disk_based_diagnostics_started(server_id_2, cx);
         lsp_store
-            .update_diagnostic_entries(
+            .update_diagnostics(
                 server_id_1,
-                PathBuf::from(path!("/test/main.js")),
-                None,
-                vec![DiagnosticEntry {
-                    range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 1)),
-                    diagnostic: Diagnostic {
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/test/main.js")).unwrap(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
                         message: "error 1".to_string(),
-                        severity: DiagnosticSeverity::WARNING,
-                        is_primary: true,
-                        is_disk_based: true,
-                        group_id: 1,
                         ..Default::default()
-                    },
-                }],
+                    }],
+                    version: None,
+                },
+                &[],
                 cx,
             )
             .unwrap();
@@ -379,21 +377,19 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     // The second language server finishes
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store
-            .update_diagnostic_entries(
+            .update_diagnostics(
                 server_id_2,
-                PathBuf::from(path!("/test/main.js")),
-                None,
-                vec![DiagnosticEntry {
-                    range: Unclipped(PointUtf16::new(1, 0))..Unclipped(PointUtf16::new(1, 1)),
-                    diagnostic: Diagnostic {
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/test/main.js")).unwrap(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 1)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
                         message: "warning 1".to_string(),
-                        severity: DiagnosticSeverity::ERROR,
-                        is_primary: true,
-                        is_disk_based: true,
-                        group_id: 2,
                         ..Default::default()
-                    },
-                }],
+                    }],
+                    version: None,
+                },
+                &[],
                 cx,
             )
             .unwrap();
@@ -422,30 +418,31 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store.disk_based_diagnostics_started(server_id_1, cx);
         lsp_store.disk_based_diagnostics_started(server_id_2, cx);
         lsp_store
-            .update_diagnostic_entries(
+            .update_diagnostics(
                 server_id_1,
-                PathBuf::from(path!("/test/main.js")),
-                None,
-                vec![DiagnosticEntry {
-                    range: Unclipped(PointUtf16::new(2, 0))..Unclipped(PointUtf16::new(2, 1)),
-                    diagnostic: Diagnostic {
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/test/main.js")).unwrap(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 1)),
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
                         message: "warning 2".to_string(),
-                        severity: DiagnosticSeverity::WARNING,
-                        is_primary: true,
-                        is_disk_based: true,
-                        group_id: 1,
                         ..Default::default()
-                    },
-                }],
+                    }],
+                    version: None,
+                },
+                &[],
                 cx,
             )
             .unwrap();
         lsp_store
-            .update_diagnostic_entries(
+            .update_diagnostics(
                 server_id_2,
-                PathBuf::from(path!("/test/main.rs")),
-                None,
-                vec![],
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/test/main.rs")).unwrap(),
+                    diagnostics: vec![],
+                    version: None,
+                },
+                &[],
                 cx,
             )
             .unwrap();
@@ -473,21 +470,19 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     // The second language server finishes.
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store
-            .update_diagnostic_entries(
+            .update_diagnostics(
                 server_id_2,
-                PathBuf::from(path!("/test/main.js")),
-                None,
-                vec![DiagnosticEntry {
-                    range: Unclipped(PointUtf16::new(3, 0))..Unclipped(PointUtf16::new(3, 1)),
-                    diagnostic: Diagnostic {
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/test/main.js")).unwrap(),
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(3, 0), lsp::Position::new(3, 1)),
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
                         message: "warning 2".to_string(),
-                        severity: DiagnosticSeverity::WARNING,
-                        is_primary: true,
-                        is_disk_based: true,
-                        group_id: 2,
                         ..Default::default()
-                    },
-                }],
+                    }],
+                    version: None,
+                },
+                &[],
                 cx,
             )
             .unwrap();
@@ -511,14 +506,6 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                  e();"
         }
     );
-}
-
-#[track_caller]
-fn editor_blocks<'a>(
-    editor: &'a Entity<Editor>,
-    cx: &'a TestAppContext,
-) -> Vec<(DisplayRow, &'a str)> {
-    todo!()
 }
 
 #[gpui::test(iterations = 20)]
