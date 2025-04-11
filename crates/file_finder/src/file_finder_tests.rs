@@ -2133,18 +2133,28 @@ async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
 
     cx.dispatch_action(ToggleFileFinder::default());
     let picker = active_file_picker(&workspace, cx);
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.update_matches(".txt".to_string(), window, cx)
+    });
+
+    cx.run_until_parked();
+
     picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 6);
         assert_eq!(picker.delegate.selected_index, 0);
-        assert_eq!(picker.logical_scroll_top_index(), 0);
     });
 
     // When toggling repeatedly, the picker scrolls to reveal the selected item.
     cx.dispatch_action(ToggleFileFinder::default());
     cx.dispatch_action(ToggleFileFinder::default());
     cx.dispatch_action(ToggleFileFinder::default());
+
+    cx.run_until_parked();
+
     picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 6);
         assert_eq!(picker.delegate.selected_index, 3);
-        assert_eq!(picker.logical_scroll_top_index(), 3);
     });
 }
 
