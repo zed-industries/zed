@@ -606,7 +606,7 @@ fn render_fold_icon_button(
                         .gap_1()
                         .child(
                             Icon::from_path(icon_path.clone())
-                                .size(IconSize::Small)
+                                .size(IconSize::XSmall)
                                 .color(Color::Muted),
                         )
                         .child(
