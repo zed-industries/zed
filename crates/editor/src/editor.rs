@@ -266,6 +266,12 @@ enum DocumentHighlightWrite {}
 enum InputComposition {}
 enum SelectedTextHighlight {}
 
+pub enum ConflictsOuter {}
+pub enum ConflictsOurs {}
+pub enum ConflictsTheirs {}
+pub enum ConflictsOursMarker {}
+pub enum ConflictsTheirsMarker {}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
     Yes,
@@ -1016,6 +1022,7 @@ struct RowHighlight {
     range: Range<Anchor>,
     color: Hsla,
     options: RowHighlightOptions,
+    type_id: TypeId,
 }
 
 #[derive(Clone, Debug)]
@@ -16390,6 +16397,7 @@ impl Editor {
                         index,
                         color,
                         options,
+                        type_id: TypeId::of::<T>(),
                     },
                 );
             }
@@ -16501,6 +16509,7 @@ impl Editor {
                                     include_gutter: highlight.options.include_gutter,
                                     border: None,
                                     background: highlight.color.into(),
+                                    type_id: Some(highlight.type_id),
                                 },
                             );
                         }
@@ -20348,25 +20357,8 @@ pub struct LineHighlight {
     pub background: Background,
     pub border: Option<gpui::Hsla>,
     pub include_gutter: bool,
+    pub type_id: Option<TypeId>,
 }
-
-//impl From<Hsla> for LineHighlight {
-//    fn from(hsla: Hsla) -> Self {
-//        Self {
-//            background: hsla.into(),
-//            border: None,
-//        }
-//    }
-//}
-
-//impl From<Background> for LineHighlight {
-//    fn from(background: Background) -> Self {
-//        Self {
-//            background,
-//            border: None,
-//        }
-//    }
-//}
 
 fn render_diff_hunk_controls(
     row: u32,

@@ -1,5 +1,6 @@
 use collections::{HashMap, HashSet};
 use editor::{
+    ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
     Editor, EditorEvent, ExcerptId, MultiBuffer, RowHighlightOptions,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
@@ -450,9 +451,3 @@ fn resolve_conflict(
         editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
     })
 }
-
-enum ConflictsOuter {}
-enum ConflictsOurs {}
-enum ConflictsTheirs {}
-enum ConflictsOursMarker {}
-enum ConflictsTheirsMarker {}
