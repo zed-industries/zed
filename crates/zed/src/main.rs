@@ -195,10 +195,10 @@ fn main() {
         return;
     }
 
-    zlog::init_from_env();
     if stdout_is_a_pty() {
-        init_stdout_logger();
+        zlog::init();
     } else {
+        zlog::process_env();
         init_logger();
     }
 

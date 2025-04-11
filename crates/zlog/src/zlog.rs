@@ -7,7 +7,13 @@ pub mod sink;
 
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
-pub fn init_from_env() {
+pub fn init() {
+    process_env();
+    log::set_logger(&ZLOG).expect("Logger should not be initialized twice");
+    log::set_max_level(log::LevelFilter::max());
+}
+
+pub fn process_env() {
     let Ok(env_config) = std::env::var("ZED_LOG").or_else(|_| std::env::var("RUST_LOG")) else {
         return;
     };
@@ -23,6 +29,8 @@ pub fn init_from_env() {
     }
 }
 
+static ZLOG: Zlog = Zlog {};
+
 pub struct Zlog {}
 
 impl log::Log for Zlog {
@@ -36,9 +44,11 @@ impl log::Log for Zlog {
         }
         let scope = match record.module_path_static() {
             Some(module_path) => {
+                // TODO: better module name -> scope translation
                 let crate_name = private::extract_crate_name_from_module_path(module_path);
                 private::scope_new(&[crate_name])
             }
+            // TODO: when do we hit this
             None => private::scope_new(&[]),
         };
         // FIXME: remove level from return
