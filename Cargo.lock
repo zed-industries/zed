@@ -3175,14 +3175,20 @@ dependencies = [
 name = "component_preview"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "collections",
  "component",
+ "db",
+ "futures 0.3.31",
  "gpui",
  "languages",
  "notifications",
  "project",
+ "serde",
  "ui",
+ "ui_input",
+ "util",
  "workspace",
  "workspace-hack",
 ]
