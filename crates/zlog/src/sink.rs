@@ -2,12 +2,22 @@ use std::io::Write;
 
 use crate::{SCOPE_STRING_SEP_CHAR, Scope};
 
+const LEVEL_OUTPUT_STRINGS: [&str; 5] = [
+    //
+    "ERROR", //
+    "WARN ", //
+    "INFO ", //
+    "DEBUG", //
+    "TRACE", //
+];
+
 pub fn submit(record: Record) {
     let mut stdout = std::io::stdout().lock();
     _ = writeln!(
         &mut stdout,
-        "{} [{}] {}",
-        record.level,
+        "{} {} [{}] {}",
+        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z"),
+        LEVEL_OUTPUT_STRINGS[record.level as usize],
         ScopeFmt(record.scope),
         record.message
     );
