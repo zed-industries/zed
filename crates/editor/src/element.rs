@@ -3890,7 +3890,15 @@ impl EditorElement {
                 )
             })?;
 
-            element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
+            element.prepaint_as_root(
+                position,
+                Size {
+                    width: AvailableSpace::Definite(Pixels(100.)),
+                    height: AvailableSpace::MinContent,
+                },
+                window,
+                cx,
+            );
             Some(element)
         })
     }
