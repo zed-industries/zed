@@ -40,6 +40,8 @@
   zlib,
   zstd,
 
+  pkgs, # TODO(nixpkgs-livekit-bump): temporary, should drop; see below
+
   withGLES ? false,
   profile ? "release",
 }:
@@ -141,6 +143,7 @@ let
           wayland
           gpu-lib
           xorg.libxcb
+          xorg.libX11
         ]
         ++ lib.optionals stdenv'.hostPlatform.isDarwin [
           apple-sdk_15
@@ -176,7 +179,45 @@ let
         };
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
-        LK_CUSTOM_WEBRTC = livekit-libwebrtc;
+
+        # TODO(nixpkgs-livekit-bump): stopgap until livekit is updated to m125
+        # in nixpkgs: https://github.com/NixOS/nixpkgs/pull/396016
+        LK_CUSTOM_WEBRTC = livekit-libwebrtc.overrideAttrs (prev: {
+          src = "${pkgs.callPackage ./webrtc-sources.nix {}}/src";
+
+          # just so we don't forget...
+          version = let
+            msg = ''
+              livekit-libwebrtc seems to have been updated in upstream, see if
+              we can drop our patches?
+
+              check: https://github.com/NixOS/nixpkgs/pull/396016
+            '';
+          in lib.warnIfNot (prev.version == "m114") msg "125-unstable-2025-03-04";
+
+          patches = lib.pipe prev.patches [
+            # drop: https://github.com/NixOS/nixpkgs/blob/2c8d3f48d33929642c1c12cd243df4cc7d2ce434/pkgs/by-name/li/livekit-libwebrtc/package.nix#L98
+            # https://github.com/zed-industries/webrtc/commit/08f7a701a2eda6407670508fc2154257a3c90308
+            (lib.ifilter0 (i: _: i != 3))
+            # add: https://boringssl.googlesource.com/boringssl/+/c70190368c7040c37c1d655f0690bcde2b109a0d
+            (p: p ++ [(pkgs.fetchpatch {
+              url = "https://github.com/google/boringssl/commit/c70190368c7040c37c1d655f0690bcde2b109a0d.patch";
+              hash = "sha256-xkmYulDOw5Ny5LOCl7rsheZSFbSF6md2NkZ3+azjFQk=";
+              stripLen = 1;
+              extraPrefix = "third_party/boringssl/src/";
+            })])
+          ];
+
+          # alt: add `src/third_party/depot_tools/` to $PATH (for vpython3)
+          nativeBuildInputs = prev.nativeBuildInputs ++ [
+            (pkgs.runCommand "vpython3" { } "mkdir -p $out/bin && ln -s ${pkgs.python3}/bin/python $out/bin/vpython3")
+          ];
+
+          # note: `pc:peerconnection` is now `pc:peer_connection`
+          ninjaFlags = builtins.map
+            (flag: if flag == "pc:peerconnection" then "pc:peer_connection" else flag)
+            prev.ninjaFlags;
+        });
 
         CARGO_PROFILE = profile;
         # need to handle some profiles specially https://github.com/rust-lang/cargo/issues/11053
@@ -204,13 +245,6 @@ let
         overrideVendorGitCheckout =
           let
             hasWebRtcSys = builtins.any (crate: crate.name == "webrtc-sys");
-            # we can't set $RUSTFLAGS because that clobbers the cargo config
-            # see https://github.com/rust-lang/cargo/issues/5376#issuecomment-2163350032
-            glesConfig = builtins.toFile "config.toml" ''
-              [target.'cfg(all())']
-              rustflags = ["--cfg", "gles"]
-            '';
-
             # `webrtc-sys` expects a staticlib; nixpkgs' `livekit-webrtc` has been patched to
             # produce a `dylib`... patching `webrtc-sys`'s build script is the easier option
             # TODO: send livekit sdk a PR to make this configurable
@@ -218,9 +252,6 @@ let
               ''
                 substituteInPlace webrtc-sys/build.rs --replace-fail \
                   "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
-              ''
-              + lib.optionalString withGLES ''
-                cat ${glesConfig} >> .cargo/config/config.toml
               '';
           in
           crates: drv:
@@ -246,6 +277,17 @@ craneLib.buildPackage (
     preBuild = ''
       ALLOW_MISSING_LICENSES=yes bash script/generate-licenses
       echo nightly > crates/zed/RELEASE_CHANNEL
+    '';
+
+    # we can't set $RUSTFLAGS because that clobbers the cargo config
+    # see https://github.com/rust-lang/cargo/issues/5376#issuecomment-2163350032
+    postPatch = let
+      glesConfig = builtins.toFile "config.toml" ''
+        [target.'cfg(all())']
+        rustflags = ["--cfg", "gles"]
+      '';
+    in lib.optionalString withGLES ''
+      cat ${glesConfig} >> .cargo/config/config.toml
     '';
 
     installPhase =
