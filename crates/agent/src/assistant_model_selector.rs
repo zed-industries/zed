@@ -88,7 +88,7 @@ impl Render for AssistantModelSelector {
             ModelType::InlineAssistant => model_registry.inline_assistant_model(),
         };
         let (model_name, model_icon) = match model {
-            Some(model) => (model.model.name().0, model.model.icon()),
+            Some(model) => (model.model.name().0, Some(model.provider.icon())),
             _ => (SharedString::from("No model selected"), None),
         };
 
@@ -99,10 +99,10 @@ impl Render for AssistantModelSelector {
                 .child(
                     h_flex()
                         .gap_0p5()
-                        .child(
-                            Icon::new(model_icon.expect("Model Icon"))
-                                .color(Color::Muted)
-                                .size(IconSize::Small),
+                        .children(
+                            model_icon.map(|icon| {
+                                Icon::new(icon).color(Color::Muted).size(IconSize::Small)
+                            }),
                         )
                         .child(
                             Label::new(model_name)

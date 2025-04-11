@@ -7,8 +7,7 @@ use gpui::{
     Focusable, Subscription, Task, WeakEntity, action_with_deprecated_aliases,
 };
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelRegistry,
+    AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
 };
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
@@ -146,17 +145,6 @@ impl LanguageModelSelector {
     }
 
     fn all_models(cx: &App) -> GroupedModels {
-        let map_model = |provider: &Arc<dyn LanguageModelProvider>,
-                         model: Arc<dyn LanguageModel>| {
-            let model = model.clone();
-            let icon = model.icon().unwrap_or(provider.icon());
-
-            ModelInfo {
-                model: model.clone(),
-                icon,
-            }
-        };
-
         let mut recommended = Vec::new();
         let mut recommended_set = HashSet::default();
         for provider in LanguageModelRegistry::global(cx)
@@ -170,7 +158,10 @@ impl LanguageModelSelector {
                 provider
                     .recommended_models(cx)
                     .into_iter()
-                    .map(move |model| map_model(&provider, model)),
+                    .map(move |model| ModelInfo {
+                        model: model.clone(),
+                        icon: provider.icon(),
+                    }),
             );
         }
 
@@ -187,7 +178,10 @@ impl LanguageModelSelector {
                         .filter_map(|model| {
                             let not_included =
                                 !recommended_set.contains(&(model.provider_id(), model.id()));
-                            not_included.then(|| map_model(&provider, model))
+                            not_included.then(|| ModelInfo {
+                                model: model.clone(),
+                                icon: provider.icon(),
+                            })
                         })
                         .collect::<Vec<_>>(),
                 )
