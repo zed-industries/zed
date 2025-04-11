@@ -194,10 +194,12 @@ impl AssistantPanel {
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
             let tools = Arc::new(ToolWorkingSet::default());
-            let thread_store = workspace.update(cx, |workspace, cx| {
-                let project = workspace.project().clone();
-                ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
-            })??;
+            let thread_store = workspace
+                .update(cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    ThreadStore::load(project, tools.clone(), prompt_builder.clone(), cx)
+                })?
+                .await;
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             let context_store = workspace
@@ -863,7 +865,11 @@ impl AssistantPanel {
                         .truncate()
                         .into_any_element()
                 } else {
-                    change_title_editor.clone().into_any_element()
+                    div()
+                        .ml_2()
+                        .w_full()
+                        .child(change_title_editor.clone())
+                        .into_any_element()
                 }
             }
             ActiveView::PromptEditor => {
@@ -1292,6 +1298,7 @@ impl AssistantPanel {
                 let configuration_error_ref = &configuration_error;
 
                 parent
+                    .overflow_hidden()
                     .p_1p5()
                     .justify_end()
                     .gap_1()

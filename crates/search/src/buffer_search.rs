@@ -987,6 +987,16 @@ impl BufferSearchBar {
         cx.notify();
     }
 
+    pub fn clear_search_within_ranges(
+        &mut self,
+        search_options: SearchOptions,
+        cx: &mut Context<Self>,
+    ) {
+        self.search_options = search_options;
+        self.adjust_query_regex_language(cx);
+        cx.notify();
+    }
+
     fn select_next_match(
         &mut self,
         _: &SelectNextMatch,

@@ -1501,7 +1501,6 @@ mod tests {
             .unindent(),
         );
 
-        eprintln!(">>>>>>>> git restore");
         let prev_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
@@ -1525,7 +1524,6 @@ mod tests {
             });
         assert_eq!(new_buffer_hunks.as_slice(), &[]);
 
-        eprintln!(">>>>>>>> modify");
         cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
             buffer_editor.set_text("different\n", window, cx);
             buffer_editor.save(false, project.clone(), window, cx)
@@ -1554,8 +1552,8 @@ mod tests {
             cx,
             &"
                 - original
-                + ˇdifferent
-            "
+                + different
+                  ˇ"
             .unindent(),
         );
     }

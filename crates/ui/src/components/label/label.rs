@@ -199,7 +199,7 @@ impl RenderOnce for Label {
 
 impl Component for Label {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::Typography
     }
 
     fn description() -> Option<&'static str> {

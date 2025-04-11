@@ -128,9 +128,9 @@ impl TasksModalDelegate {
     }
 }
 
-pub(crate) struct TasksModal {
+pub struct TasksModal {
     picker: Entity<Picker<TasksModalDelegate>>,
-    _subscription: Subscription,
+    _subscription: [Subscription; 2],
 }
 
 impl TasksModal {
@@ -156,9 +156,16 @@ impl TasksModal {
                 cx,
             )
         });
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
-        });
+        let _subscription = [
+            cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
+                cx.emit(DismissEvent);
+            }),
+            cx.subscribe(&picker, |_, _, event: &ShowAttachModal, cx| {
+                cx.emit(ShowAttachModal {
+                    debug_config: event.debug_config.clone(),
+                });
+            }),
+        ];
         Self {
             picker,
             _subscription,
@@ -179,7 +186,13 @@ impl Render for TasksModal {
     }
 }
 
+pub struct ShowAttachModal {
+    pub debug_config: DebugTaskDefinition,
+}
+
 impl EventEmitter<DismissEvent> for TasksModal {}
+impl EventEmitter<ShowAttachModal> for TasksModal {}
+impl EventEmitter<ShowAttachModal> for Picker<TasksModalDelegate> {}
 
 impl Focusable for TasksModal {
     fn focus_handle(&self, cx: &gpui::App) -> gpui::FocusHandle {
@@ -321,7 +334,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn confirm(
         &mut self,
         omit_history_entry: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) {
         let current_match_index = self.selected_index();
@@ -346,51 +359,52 @@ impl PickerDelegate for TasksModalDelegate {
             }
         }
 
-        self.workspace
-            .update(cx, |workspace, cx| {
-                match task.task_type() {
-                    TaskType::Debug(config) if config.locator.is_none() => {
-                        let Some(config): Option<DebugTaskDefinition> = task
-                            .resolved_debug_adapter_config()
-                            .and_then(|config| config.try_into().ok())
-                        else {
-                            return;
-                        };
-                        let project = workspace.project().clone();
+        match task.task_type() {
+            TaskType::Debug(config) if config.locator.is_none() => {
+                let Some(config): Option<DebugTaskDefinition> = task
+                    .resolved_debug_adapter_config()
+                    .and_then(|config| config.try_into().ok())
+                else {
+                    return;
+                };
 
-                        match &config.request {
-                            DebugRequestType::Attach(attach_config)
-                                if attach_config.process_id.is_none() =>
-                            {
-                                workspace.toggle_modal(window, cx, |window, cx| {
-                                    debugger_ui::attach_modal::AttachModal::new(
-                                        project,
-                                        config.clone(),
-                                        true,
-                                        window,
-                                        cx,
-                                    )
-                                });
-                            }
-                            _ => {
-                                project.update(cx, |project, cx| {
+                match &config.request {
+                    DebugRequestType::Attach(attach_config)
+                        if attach_config.process_id.is_none() =>
+                    {
+                        cx.emit(ShowAttachModal {
+                            debug_config: config.clone(),
+                        });
+                        return;
+                    }
+                    _ => {
+                        self.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.project().update(cx, |project, cx| {
                                     project
                                         .start_debug_session(config.into(), cx)
                                         .detach_and_log_err(cx);
                                 });
-                            }
-                        }
+                            })
+                            .ok();
                     }
-                    _ => schedule_resolved_task(
-                        workspace,
-                        task_source_kind,
-                        task,
-                        omit_history_entry,
-                        cx,
-                    ),
-                };
-            })
-            .ok();
+                }
+            }
+            _ => {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        schedule_resolved_task(
+                            workspace,
+                            task_source_kind,
+                            task,
+                            omit_history_entry,
+                            cx,
+                        );
+                    })
+                    .ok();
+            }
+        };
+
         cx.emit(DismissEvent);
     }
 
