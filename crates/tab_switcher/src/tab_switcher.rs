@@ -58,9 +58,9 @@ impl TabSwitcher {
             };
 
             tab_switcher.update(cx, |tab_switcher, cx| {
-                tab_switcher.picker.update(cx, |picker, cx| {
-                    picker.select_next(&menu::SelectNext, window, cx)
-                })
+                tab_switcher
+                    .picker
+                    .update(cx, |picker, cx| picker.cycle_selection(window, cx))
             });
         });
     }

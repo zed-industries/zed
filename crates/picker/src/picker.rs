@@ -485,6 +485,14 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn cycle_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.delegate.match_count();
+        let index = self.delegate.selected_index();
+        let new_index = if index + 1 == count { 0 } else { index + 1 };
+        self.set_selected_index(new_index, Some(Direction::Down), true, window, cx);
+        cx.notify();
+    }
+
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.delegate.should_dismiss() {
             self.delegate.dismissed(window, cx);

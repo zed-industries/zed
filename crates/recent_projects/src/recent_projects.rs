@@ -96,9 +96,9 @@ impl RecentProjects {
             };
 
             recent_projects.update(cx, |recent_projects, cx| {
-                recent_projects.picker.update(cx, |picker, cx| {
-                    picker.select_next(&menu::SelectNext, window, cx)
-                })
+                recent_projects
+                    .picker
+                    .update(cx, |picker, cx| picker.cycle_selection(window, cx))
             });
         });
     }
