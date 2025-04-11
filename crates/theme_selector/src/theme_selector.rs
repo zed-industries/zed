@@ -292,10 +292,13 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
             this.update(cx, |this, cx| {
                 this.delegate.matches = matches;
-                this.delegate.selected_index = this
-                    .delegate
-                    .selected_index
-                    .min(this.delegate.matches.len().saturating_sub(1));
+                this.delegate.selected_index = if query.is_empty() {
+                    this.delegate
+                        .selected_index
+                        .min(this.delegate.matches.len().saturating_sub(1))
+                } else {
+                    0
+                };
                 this.delegate.show_selected_theme(cx);
             })
             .log_err();
