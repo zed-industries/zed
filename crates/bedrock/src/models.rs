@@ -72,6 +72,7 @@ pub enum Model {
     MistralMixtral8x7BInstructV0,
     MistralMistralLarge2402V1,
     MistralMistralSmall2402V1,
+    MistralPixtralLarge2502V1,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -145,6 +146,7 @@ impl Model {
             Model::MistralMixtral8x7BInstructV0 => "mistral.mixtral-8x7b-instruct-v0:1",
             Model::MistralMistralLarge2402V1 => "mistral.mistral-large-2402-v1:0",
             Model::MistralMistralSmall2402V1 => "mistral.mistral-small-2402-v1:0",
+            Model::MistralPixtralLarge2502V1 => "mistral.pixtral-large-2502-v1:0",
             Self::Custom { name, .. } => name,
         }
     }
@@ -191,6 +193,7 @@ impl Model {
             Self::MistralMixtral8x7BInstructV0 => "Mistral Mixtral 8x7B Instruct V0",
             Self::MistralMistralLarge2402V1 => "Mistral Large 2402 V1",
             Self::MistralMistralSmall2402V1 => "Mistral Small 2402 V1",
+            Self::MistralPixtralLarge2502V1 => "Pixtral Large 25.02 V1",
             Self::Custom {
                 display_name, name, ..
             } => display_name.as_deref().unwrap_or(name),
@@ -205,7 +208,7 @@ impl Model {
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
-            _ => 200_000,
+            _ => 128_000,
         }
     }
 
@@ -302,7 +305,8 @@ impl Model {
             // Models available only in US
             (Model::Claude3Opus, "us")
             | (Model::Claude3_7Sonnet, "us")
-            | (Model::Claude3_7SonnetThinking, "us") => {
+            | (Model::Claude3_7SonnetThinking, "us")
+            | (Model::MistralPixtralLarge2502V1, "us") => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
