@@ -466,6 +466,7 @@ impl Component for KeyBinding {
     }
 
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let mapper = cx.keyboard_mapper().as_ref();
         Some(
             v_flex()
                 .gap_6()
@@ -476,7 +477,7 @@ impl Component for KeyBinding {
                             single_example(
                                 "Default",
                                 KeyBinding::new(
-                                    gpui::KeyBinding::new("ctrl-s", gpui::NoAction, None),
+                                    gpui::KeyBinding::new("ctrl-s", gpui::NoAction, None, mapper),
                                     cx,
                                 )
                                 .into_any_element(),
@@ -484,7 +485,7 @@ impl Component for KeyBinding {
                             single_example(
                                 "Mac Style",
                                 KeyBinding::new(
-                                    gpui::KeyBinding::new("cmd-s", gpui::NoAction, None),
+                                    gpui::KeyBinding::new("cmd-s", gpui::NoAction, None, mapper),
                                     cx,
                                 )
                                 .platform_style(PlatformStyle::Mac)
@@ -493,7 +494,7 @@ impl Component for KeyBinding {
                             single_example(
                                 "Windows Style",
                                 KeyBinding::new(
-                                    gpui::KeyBinding::new("ctrl-s", gpui::NoAction, None),
+                                    gpui::KeyBinding::new("ctrl-s", gpui::NoAction, None, mapper),
                                     cx,
                                 )
                                 .platform_style(PlatformStyle::Windows)
@@ -505,9 +506,12 @@ impl Component for KeyBinding {
                         "Vim Mode",
                         vec![single_example(
                             "Vim Mode Enabled",
-                            KeyBinding::new(gpui::KeyBinding::new("dd", gpui::NoAction, None), cx)
-                                .vim_mode(true)
-                                .into_any_element(),
+                            KeyBinding::new(
+                                gpui::KeyBinding::new("dd", gpui::NoAction, None, mapper),
+                                cx,
+                            )
+                            .vim_mode(true)
+                            .into_any_element(),
                         )],
                     ),
                     example_group_with_title(
@@ -516,7 +520,12 @@ impl Component for KeyBinding {
                             single_example(
                                 "Multiple Keys",
                                 KeyBinding::new(
-                                    gpui::KeyBinding::new("ctrl-k ctrl-b", gpui::NoAction, None),
+                                    gpui::KeyBinding::new(
+                                        "ctrl-k ctrl-b",
+                                        gpui::NoAction,
+                                        None,
+                                        mapper,
+                                    ),
                                     cx,
                                 )
                                 .into_any_element(),
@@ -524,7 +533,12 @@ impl Component for KeyBinding {
                             single_example(
                                 "With Shift",
                                 KeyBinding::new(
-                                    gpui::KeyBinding::new("shift-cmd-p", gpui::NoAction, None),
+                                    gpui::KeyBinding::new(
+                                        "shift-cmd-p",
+                                        gpui::NoAction,
+                                        None,
+                                        mapper,
+                                    ),
                                     cx,
                                 )
                                 .into_any_element(),
